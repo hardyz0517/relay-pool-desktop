@@ -5,7 +5,6 @@ pub(crate) use backup::{
 pub(crate) mod error;
 mod health_check;
 mod inspection;
-pub(crate) mod legacy_import;
 pub(crate) mod maintenance;
 pub(crate) mod migrations;
 pub(crate) use migrations::{
@@ -13,6 +12,7 @@ pub(crate) use migrations::{
 };
 mod read_session;
 pub(crate) use read_session::ReadSession;
+pub(crate) mod baseline_conversion_support;
 pub(crate) mod runtime;
 pub(crate) mod runtime_events;
 mod runtime_lifecycle;
@@ -22,8 +22,6 @@ pub(crate) mod settings_compat;
 pub(crate) mod stores;
 pub(crate) mod upgrade_fault;
 pub(crate) mod upgrade_journal;
-pub(crate) mod upgrade_recovery_executor;
-pub(crate) mod upgrade_recovery_plan;
 mod write_coordinator;
 mod write_session;
 pub(crate) use write_session::WriteSession;
@@ -33,5 +31,5 @@ mod differential_tests;
 
 pub(crate) use inspection::{
     inspect_relay_pool_database, read_encrypted_secrets, ReadOnlyDatabaseHealth,
-    ReadOnlyDatabaseInspection, StoredEncryptedSecret,
+    ReadOnlyDatabaseInspection, ReadOnlySchemaMetadata, StoredEncryptedSecret,
 };

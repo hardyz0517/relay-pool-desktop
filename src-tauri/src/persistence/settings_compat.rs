@@ -1,6 +1,6 @@
 use sqlx::SqliteConnection;
 
-use crate::persistence::{error::PersistenceError, write_session::WriteSession};
+use crate::persistence::error::PersistenceError;
 
 const LEGACY_TRAY_BEHAVIOR_ALIASES: [(&str, &str); 2] = [
     ("minimize-to-tray", "minimize_to_tray"),
@@ -14,12 +14,6 @@ pub(crate) fn canonical_tray_behavior(value: &str) -> Option<&str> {
             .iter()
             .find_map(|(alias, canonical)| (*alias == legacy).then_some(*canonical)),
     }
-}
-
-pub(crate) async fn repair_legacy_settings(
-    write: &mut WriteSession,
-) -> Result<u64, PersistenceError> {
-    repair_legacy_settings_in_connection(write.connection()).await
 }
 
 pub(crate) async fn repair_legacy_settings_in_connection(

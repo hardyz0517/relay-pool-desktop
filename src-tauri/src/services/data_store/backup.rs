@@ -141,10 +141,10 @@ async fn backup_selected_database_inner_async(
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or_else(|| "source database path has no valid file name".to_string())?;
-    if source_file_name != "relay-pool-desktop.sqlite3"
-        && source_file_name != "relay-pool-desktop-v2.sqlite3"
-    {
-        return Err("source database file name is not owned by Relay Pool".to_string());
+    if source_file_name != "relay-pool-desktop-v2.sqlite3" {
+        return Err(
+            "source database file name is not a supported generation 2 database".to_string(),
+        );
     }
 
     let backups_root = default_app_data.join("backups");
@@ -233,7 +233,7 @@ mod tests {
     #[test]
     fn wal_mode_backup_contains_committed_rows_and_passes_quick_check() {
         let root = temp_root("wal-backup");
-        let source = root.join("relay-pool-desktop.sqlite3");
+        let source = root.join("relay-pool-desktop-v2.sqlite3");
         let backup_root = root.join("app-data");
         let mut connection = open(&source);
         execute_batch(
@@ -255,7 +255,7 @@ mod tests {
     #[test]
     fn injected_backup_failures_leave_source_unchanged() {
         let root = temp_root("backup-failures");
-        let source = root.join("relay-pool-desktop.sqlite3");
+        let source = root.join("relay-pool-desktop-v2.sqlite3");
         let backup_root = root.join("app-data");
         let mut connection = open(&source);
         execute_batch(

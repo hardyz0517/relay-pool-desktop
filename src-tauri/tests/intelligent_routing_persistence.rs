@@ -111,26 +111,6 @@ fn projection_ingestion_migration_resets_only_derived_quality_state() {
 }
 
 #[test]
-fn generation_upgrade_rebuilds_revision_baseline_after_legacy_copy() {
-    let importer = read_source("src/persistence/legacy_import/import.rs");
-    assert!(importer.contains("rebuild_domain_revision_baseline(&mut write).await?"));
-    for scope in [
-        "station:' || id",
-        "station_account:' || id",
-        "station_key:' || id",
-        "station_group:' || id",
-        "model_alias:' || id",
-    ] {
-        assert!(
-            importer.contains(scope),
-            "legacy import must rebuild {scope} revisions"
-        );
-    }
-    assert!(importer.contains("legacy_monitor_policy_column"));
-    assert!(importer.contains("AS health_policy_mode"));
-}
-
-#[test]
 fn portable_reader_accepts_pre_cutover_health_tables_as_ignored_history() {
     let reader = read_source("src/services/portable_migration/schema_reader.rs");
     for table in ["station_endpoint_health", "station_key_health"] {

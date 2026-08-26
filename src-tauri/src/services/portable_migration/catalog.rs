@@ -620,6 +620,12 @@ const BALANCE_SNAPSHOTS_COLUMNS: &[&str] = &[
     "collected_at",
     "created_at",
     "updated_at",
+    "evidence_confidence",
+    "spendability_authority",
+    "observed_at_ms",
+    "valid_until_ms",
+    "evidence_profile_version",
+    "spendability_reason_code",
 ];
 const REQUEST_LOGS_COLUMNS: &[&str] = &[
     "id",
@@ -1297,6 +1303,13 @@ const CHANNEL_MONITOR_ATTEMPTS_COLUMNS: &[&str] = &[
     "output_tokens",
     "total_tokens",
     "error_summary",
+    "canonical_failure_class",
+    "failure_origin",
+    "failure_scope_kind",
+    "failure_dimension",
+    "evidence_code",
+    "evidence_confidence",
+    "classifier_profile_version",
     "created_at_ms",
 ];
 const CHANNEL_MONITOR_TARGET_RESULTS_COLUMNS: &[&str] = &[
@@ -1322,6 +1335,11 @@ const CHANNEL_MONITOR_TARGET_RESULTS_COLUMNS: &[&str] = &[
     "request_profile_hash",
     "traffic_equivalence",
     "latency_ms",
+    "availability_eligible",
+    "latency_eligible",
+    "exclusion_reason",
+    "technical_health_effect",
+    "disposition_profile_version",
     "ttfb_ms",
     "first_content_ms",
     "semantic_confidence",
@@ -1341,6 +1359,8 @@ const CHANNEL_MONITOR_BUCKET_ROLLUPS_COLUMNS: &[&str] = &[
     "degraded_count",
     "unavailable_count",
     "skipped_count",
+    "excluded_count",
+    "exclusion_counts_json",
     "failure_counts_json",
     "p50_latency_ms",
     "p95_latency_ms",
@@ -1937,10 +1957,16 @@ const CHANNEL_TARGET_RESULT_RULES: &[FieldRule] = &[FieldRule {
     name: "terminal_reason",
     transform: FieldTransform::RedactText,
 }];
-const CHANNEL_BUCKET_ROLLUP_RULES: &[FieldRule] = &[FieldRule {
-    name: "failure_counts_json",
-    transform: FieldTransform::BoundedJson,
-}];
+const CHANNEL_BUCKET_ROLLUP_RULES: &[FieldRule] = &[
+    FieldRule {
+        name: "failure_counts_json",
+        transform: FieldTransform::BoundedJson,
+    },
+    FieldRule {
+        name: "exclusion_counts_json",
+        transform: FieldTransform::BoundedJson,
+    },
+];
 const STATION_KEY_HEALTH_OBSERVATION_RULES: &[FieldRule] = &[FieldRule {
     name: "error_summary",
     transform: FieldTransform::RedactText,

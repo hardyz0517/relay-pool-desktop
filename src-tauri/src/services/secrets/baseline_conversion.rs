@@ -15,16 +15,16 @@ use sqlx::{
 use crate::{
     models::secrets::{canonical_secret_aad, mask_secret},
     persistence::{
-        self, migrations, schema_registry,
+        self,
+        baseline_conversion_support::{
+            observe_persistence_journal, remove_file_and_sync_parent, sha256_file,
+            write_baseline_conversion_journal_atomically, PersistenceJournalKind,
+            BASELINE_CONVERSION_JOURNAL_FILE,
+        },
+        migrations, schema_registry,
         settings_compat::repair_legacy_settings_in_connection,
-        upgrade_fault::NoUpgradeFaults,
         upgrade_journal::{
             BaselineConversionJournal, BaselineConversionPhase, UpgradeAttemptId, UtcTimestamp,
-        },
-        upgrade_recovery_executor::{
-            observe_persistence_journal, remove_file_and_sync_parent_with_faults, sha256_file,
-            write_baseline_conversion_journal_atomically, PersistenceJournalKind,
-            UPGRADE_JOURNAL_FILE,
         },
     },
     services::data_store::{
@@ -69,7 +69,7 @@ pub(crate) fn ensure_active_database_baseline(
     active_path: &Path,
     resolver: &DeviceKeyResolver,
 ) -> Result<BaselineConversionReport, String> {
-    let journal_path = default_data_dir.join(UPGRADE_JOURNAL_FILE);
+    let journal_path = default_data_dir.join(BASELINE_CONVERSION_JOURNAL_FILE);
     if journal_path.exists() {
         return resume_or_reject_journaled_conversion(
             default_data_dir,
@@ -110,7 +110,8 @@ pub(crate) fn initialize_fresh_database_at_baseline(
     apply_migrations_and_finalize(path, resolver)
 }
 
-pub(crate) fn initialize_pre_baseline_runtime_for_import(
+#[cfg(test)]
+pub(crate) fn initialize_pre_baseline_runtime_for_test(
     path: &Path,
 ) -> Result<crate::persistence::runtime::PersistenceRuntime, String> {
     if path.exists() {
@@ -141,13 +142,6 @@ pub(crate) fn initialize_pre_baseline_runtime_for_import(
         compatibility,
     ))
     .map_err(|error| format!("failed to open pre-baseline staging runtime: {error}"))
-}
-
-pub(crate) fn finalize_pre_baseline_database(
-    path: &Path,
-    resolver: &DeviceKeyResolver,
-) -> Result<(), String> {
-    apply_migrations_and_finalize(path, resolver)
 }
 
 pub(crate) fn record_successful_startup_metadata(
@@ -208,23 +202,6 @@ fn resume_or_reject_journaled_conversion(
                 }
                 BaselinePreconditionState::Invalid { schema_version } => Err(format!(
                     "baseline conversion journal is active but compatibility schema {schema_version} does not satisfy the local baseline precondition"
-                )),
-            }
-        }
-        PersistenceJournalKind::GenerationUpgrade => {
-            match baseline_precondition_state(active_path)? {
-                BaselinePreconditionState::EncryptedBaseline => {
-                    validate_baseline(active_path, resolver)?;
-                    Ok(BaselineConversionReport {
-                        converted: false,
-                        backup_path: None,
-                    })
-                }
-                BaselinePreconditionState::StructuralPreBaseline => Err(
-                    "generation upgrade journal is active; encrypted-secret baseline conversion will not run".to_string(),
-                ),
-                BaselinePreconditionState::Invalid { schema_version } => Err(format!(
-                    "generation upgrade journal is active and compatibility schema {schema_version} does not satisfy the local baseline precondition"
                 )),
             }
         }
@@ -1385,8 +1362,7 @@ fn persist_baseline_journal(
 }
 
 fn cleanup_baseline_journal(journal_path: &Path) -> Result<(), String> {
-    remove_file_and_sync_parent_with_faults(journal_path, &NoUpgradeFaults)
-        .map_err(redacted_journal_error)
+    remove_file_and_sync_parent(journal_path).map_err(redacted_journal_error)
 }
 
 fn wal_path(path: &Path) -> PathBuf {
@@ -1467,7 +1443,7 @@ mod tests {
         let app_data = root.path().join("app-data");
         let active = root.path().join("relay-pool-desktop-v2.sqlite3");
         let resolver = resolver_from_parts("device-key-v1", [42; 32]);
-        let runtime = initialize_pre_baseline_runtime_for_import(&active).expect("prebaseline db");
+        let runtime = initialize_pre_baseline_runtime_for_test(&active).expect("prebaseline db");
         block_on(runtime.write(|write| {
             Box::pin(async move {
                 sqlx::query(
@@ -1570,7 +1546,7 @@ mod tests {
         let app_data = root.path().join("app-data");
         let active = root.path().join("relay-pool-desktop-v2.sqlite3");
         let resolver = resolver_from_parts("device-key-v1", [55; 32]);
-        let runtime = initialize_pre_baseline_runtime_for_import(&active).expect("prebaseline db");
+        let runtime = initialize_pre_baseline_runtime_for_test(&active).expect("prebaseline db");
         block_on(runtime.close()).expect("close runtime");
         drop(runtime);
 
@@ -1601,7 +1577,7 @@ mod tests {
         let app_data = root.path().join("app-data");
         let active = root.path().join("relay-pool-desktop-v2.sqlite3");
         let resolver = resolver_from_parts("device-key-v1", [7; 32]);
-        let runtime = initialize_pre_baseline_runtime_for_import(&active).expect("prebaseline db");
+        let runtime = initialize_pre_baseline_runtime_for_test(&active).expect("prebaseline db");
         block_on(runtime.write(|write| {
             Box::pin(async move {
                 sqlx::query(
@@ -1671,9 +1647,9 @@ mod tests {
         let root = tempfile::tempdir().expect("tempdir");
         let app_data = root.path().join("app-data");
         let active = root.path().join("relay-pool-desktop-v2.sqlite3");
-        let journal_path = app_data.join(UPGRADE_JOURNAL_FILE);
+        let journal_path = app_data.join(BASELINE_CONVERSION_JOURNAL_FILE);
         let resolver = resolver_from_parts("device-key-v1", [11; 32]);
-        let runtime = initialize_pre_baseline_runtime_for_import(&active).expect("prebaseline db");
+        let runtime = initialize_pre_baseline_runtime_for_test(&active).expect("prebaseline db");
         block_on(runtime.write(|write| {
             Box::pin(async move {
                 sqlx::query(

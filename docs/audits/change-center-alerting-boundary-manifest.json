@@ -21,7 +21,6 @@
     "src-tauri/src/persistence/upgrade_fault.rs",
     "src-tauri/src/services/data_store/generation_upgrade.rs",
     "src-tauri/src/services/data_store/startup_upgrade_executor.rs",
-    "src-tauri/src/persistence/legacy_import/import.rs",
     "src-tauri/src/persistence/legacy_import/validate.rs",
     "src-tauri/src/services/data_store/alerting_upgrade.rs",
     "src-tauri/src/services/portable_migration/catalog.rs",

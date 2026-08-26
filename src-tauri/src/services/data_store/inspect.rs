@@ -1,8 +1,8 @@
 use std::{collections::BTreeMap, fs, path::Path};
 
 use crate::persistence::{
-    inspect_relay_pool_database, upgrade_recovery_executor::read_legacy_tombstone,
-    ReadOnlyDatabaseHealth, ReadOnlyDatabaseInspection,
+    inspect_relay_pool_database, ReadOnlyDatabaseHealth, ReadOnlyDatabaseInspection,
+    ReadOnlySchemaMetadata,
 };
 
 use super::types::{CandidateHealth, CandidateRole, DataStoreCandidate};
@@ -11,7 +11,6 @@ use super::types::{CandidateHealth, CandidateRole, DataStoreCandidate};
 pub(crate) struct InspectedDataStoreCandidate {
     pub candidate: DataStoreCandidate,
     pub contains_relay_pool_schema: bool,
-    pub is_legacy_tombstone: bool,
 }
 
 pub(crate) fn inspect_candidate(
@@ -52,42 +51,10 @@ async fn inspect_with_quick_check_async(
             role,
             CandidateHealth::Missing,
             false,
+            ReadOnlySchemaMetadata::unavailable(),
             BTreeMap::new(),
             None,
-            false,
         ));
-    }
-
-    match read_legacy_tombstone(path) {
-        Ok(Some(_)) => {
-            let metadata = fs::metadata(path).map_err(|error| {
-                format!(
-                    "failed to read candidate metadata {}: {error}",
-                    path.display()
-                )
-            })?;
-            return Ok(make_candidate(
-                path,
-                role,
-                CandidateHealth::InvalidSqlite,
-                false,
-                BTreeMap::new(),
-                Some(&metadata),
-                true,
-            ));
-        }
-        Ok(None) => {}
-        Err(_) => {
-            return Ok(make_candidate(
-                path,
-                role,
-                CandidateHealth::InvalidSqlite,
-                false,
-                BTreeMap::new(),
-                fs::metadata(path).ok().as_ref(),
-                false,
-            ));
-        }
     }
 
     let metadata = fs::metadata(path).map_err(|error| {
@@ -96,21 +63,22 @@ async fn inspect_with_quick_check_async(
             path.display()
         )
     })?;
-    let with_metadata = |health, schema, counts| {
+    let with_metadata = |health, schema, schema_metadata, counts| {
         make_candidate(
             path,
             role.clone(),
             health,
             schema,
+            schema_metadata,
             counts,
             Some(&metadata),
-            false,
         )
     };
     if quick_check_override.is_some_and(|value| !value.eq_ignore_ascii_case("ok")) {
         return Ok(with_metadata(
             CandidateHealth::IntegrityFailed,
             false,
+            ReadOnlySchemaMetadata::unavailable(),
             BTreeMap::new(),
         ));
     }
@@ -128,6 +96,7 @@ async fn inspect_with_quick_check_async(
     Ok(with_metadata(
         health,
         contains_relay_pool_schema,
+        inspection.schema_metadata,
         inspection.table_counts,
     ))
 }
@@ -137,9 +106,9 @@ fn make_candidate(
     role: CandidateRole,
     health: CandidateHealth,
     contains_relay_pool_schema: bool,
+    schema_metadata: ReadOnlySchemaMetadata,
     counts: BTreeMap<String, i64>,
     metadata: Option<&fs::Metadata>,
-    is_legacy_tombstone: bool,
 ) -> InspectedDataStoreCandidate {
     let size_bytes = metadata.map(fs::Metadata::len);
     let modified_at = metadata
@@ -153,21 +122,19 @@ fn make_candidate(
             path: path.display().to_string(),
             health,
             schema_compatible: contains_relay_pool_schema,
+            schema_version: schema_metadata.schema_version,
+            schema_metadata_consistent: schema_metadata.is_consistent,
             size_bytes,
             modified_at,
             counts,
         },
         contains_relay_pool_schema,
-        is_legacy_tombstone,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{inspect_candidate, inspect_with_quick_check};
-    use crate::persistence::{
-        upgrade_journal::UpgradeAttemptId, upgrade_recovery_executor::replace_legacy_with_tombstone,
-    };
     use crate::services::data_store::types::{CandidateHealth, CandidateRole};
     use sqlx::SqliteConnection;
     use std::{
@@ -180,7 +147,7 @@ mod tests {
     fn missing_invalid_and_integrity_failed_are_classified_without_creating_paths() {
         let missing = temp_root("missing")
             .join("absent")
-            .join("relay-pool-desktop.sqlite3");
+            .join("relay-pool-desktop-v2.sqlite3");
         let inspected = inspect_candidate(&missing, CandidateRole::Located).expect("missing");
         assert_eq!(inspected.candidate.health, CandidateHealth::Missing);
         assert!(!missing.exists() && !missing.parent().expect("parent").exists());
@@ -215,6 +182,46 @@ mod tests {
         assert_eq!(populated.candidate.counts.get("stations"), Some(&1));
         assert_eq!(populated.candidate.counts.get("station_keys"), Some(&1));
         assert_eq!(empty.candidate.counts.get("stations"), Some(&0));
+    }
+
+    #[test]
+    fn candidate_reads_a_consistent_schema_version_without_writing() {
+        let path = protected_db("schema-version", &[("stations", 1), ("settings", 1)]);
+        let mut connection = open(&path);
+        sql(
+            &mut connection,
+            "CREATE TABLE persistence_schema_compatibility (singleton_key INTEGER PRIMARY KEY, schema_version INTEGER NOT NULL);\
+             CREATE TABLE _sqlx_migrations (version INTEGER PRIMARY KEY, success INTEGER NOT NULL);\
+             INSERT INTO persistence_schema_compatibility (singleton_key, schema_version) VALUES (1, 55);\
+             INSERT INTO _sqlx_migrations (version, success) VALUES (55, 1);",
+        );
+        crate::services::data_store::test_support::close_database(connection);
+        let before = file_facts(&path);
+
+        let inspected = inspect_candidate(&path, CandidateRole::Active).expect("inspect");
+
+        assert_eq!(file_facts(&path), before);
+        assert_eq!(inspected.candidate.schema_version, Some(55));
+        assert!(inspected.candidate.schema_metadata_consistent);
+    }
+
+    #[test]
+    fn candidate_marks_disagreeing_schema_metadata_as_inconsistent() {
+        let path = protected_db("schema-mismatch", &[("stations", 1)]);
+        let mut connection = open(&path);
+        sql(
+            &mut connection,
+            "CREATE TABLE persistence_schema_compatibility (singleton_key INTEGER PRIMARY KEY, schema_version INTEGER NOT NULL);\
+             CREATE TABLE _sqlx_migrations (version INTEGER PRIMARY KEY, success INTEGER NOT NULL);\
+             INSERT INTO persistence_schema_compatibility (singleton_key, schema_version) VALUES (1, 55);\
+             INSERT INTO _sqlx_migrations (version, success) VALUES (54, 1);",
+        );
+        crate::services::data_store::test_support::close_database(connection);
+
+        let inspected = inspect_candidate(&path, CandidateRole::Active).expect("inspect");
+
+        assert_eq!(inspected.candidate.schema_version, Some(55));
+        assert!(!inspected.candidate.schema_metadata_consistent);
     }
 
     #[test]
@@ -255,23 +262,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn valid_tombstone_is_recognized_before_sqlite_open_without_exposing_attempt() {
-        let path = db_path("legacy-tombstone");
-        fs::write(&path, b"SQLite format 3\0legacy").expect("legacy");
-        let attempt =
-            UpgradeAttemptId::parse("019f7d50-9d44-7000-8000-000000000001").expect("attempt");
-        replace_legacy_with_tombstone(&path, &attempt).expect("tombstone");
-
-        let inspected = inspect_candidate(&path, CandidateRole::Active).expect("inspect");
-
-        assert!(inspected.is_legacy_tombstone);
-        assert_eq!(inspected.candidate.health, CandidateHealth::InvalidSqlite);
-        assert!(!inspected.contains_relay_pool_schema);
-        let summary = serde_json::to_string(&inspected.candidate).expect("summary");
-        assert!(!summary.contains(attempt.as_str()));
-    }
-
     fn protected_db(name: &str, tables: &[(&str, usize)]) -> PathBuf {
         let path = db_path(name);
         let mut connection = open(&path);
@@ -291,7 +281,7 @@ mod tests {
     fn db_path(name: &str) -> PathBuf {
         let root = temp_root(name);
         fs::create_dir_all(&root).expect("root");
-        root.join("relay-pool-desktop.sqlite3")
+        root.join("relay-pool-desktop-v2.sqlite3")
     }
 
     fn temp_root(name: &str) -> PathBuf {

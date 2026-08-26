@@ -217,6 +217,6 @@ mod tests {
         let root =
             std::env::temp_dir().join(format!("relay-pool-secret-validation-{name}-{unique}"));
         fs::create_dir_all(&root).expect("root");
-        root.join("relay-pool-desktop.sqlite3")
+        root.join("relay-pool-desktop-v2.sqlite3")
     }
 }

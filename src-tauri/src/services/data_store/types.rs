@@ -27,7 +27,6 @@ pub enum RecoveryReason {
     UnsupportedSchemaVersion,
     InconsistentSchemaMetadata,
     PendingRelocation,
-    UpgradeRecoveryRequired,
     SystemCredentialMissing,
     SystemCredentialUnavailable,
     SystemCredentialPermissionDenied,
@@ -36,6 +35,52 @@ pub enum RecoveryReason {
     SystemCredentialInternal,
     PortableMigrationManualRecoveryRequired,
     PortableMigrationKeyUnavailable,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum StartupUpgradeStage {
+    Probe,
+    Migrate,
+    Validate,
+    Ready,
+    Blocked,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StartupUpgradeStatus {
+    pub stage: StartupUpgradeStage,
+    pub current_schema_version: Option<i64>,
+    pub target_schema_version: i64,
+    pub failure_reason: Option<RecoveryReason>,
+    pub failure_stage: Option<StartupUpgradeStage>,
+}
+
+impl StartupUpgradeStatus {
+    fn initial() -> Self {
+        Self {
+            stage: StartupUpgradeStage::Probe,
+            current_schema_version: None,
+            target_schema_version: crate::persistence::current_schema_version(),
+            failure_reason: None,
+            failure_stage: None,
+        }
+    }
+
+    fn blocked(
+        current_schema_version: Option<i64>,
+        reason: RecoveryReason,
+        failure_stage: StartupUpgradeStage,
+    ) -> Self {
+        Self {
+            stage: StartupUpgradeStage::Blocked,
+            current_schema_version,
+            target_schema_version: crate::persistence::current_schema_version(),
+            failure_reason: Some(reason),
+            failure_stage: Some(failure_stage),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,6 +155,8 @@ pub struct DataStoreCandidate {
     pub path: String,
     pub health: CandidateHealth,
     pub schema_compatible: bool,
+    pub schema_version: Option<i64>,
+    pub schema_metadata_consistent: bool,
     pub size_bytes: Option<u64>,
     pub modified_at: Option<String>,
     pub counts: BTreeMap<String, i64>,
@@ -151,6 +198,7 @@ pub struct DataStoreStartupState {
     default_data_dir: PathBuf,
     pub(crate) relocation_intent: Option<DataStoreRelocationIntent>,
     database_generation: DatabaseGeneration,
+    startup_upgrade: StartupUpgradeStatus,
 }
 
 impl DataStoreStartupState {
@@ -160,12 +208,21 @@ impl DataStoreStartupState {
         default_data_dir: PathBuf,
         relocation_intent: Option<DataStoreRelocationIntent>,
     ) -> Self {
+        let startup_upgrade = match &decision {
+            StartupDecision::NeedsRecovery { reason } => {
+                StartupUpgradeStatus::blocked(None, reason.clone(), StartupUpgradeStage::Probe)
+            }
+            StartupDecision::Ready { .. }
+            | StartupDecision::FirstRun { .. }
+            | StartupDecision::Conflict { .. } => StartupUpgradeStatus::initial(),
+        };
         Self {
             decision,
             candidates,
             default_data_dir,
             relocation_intent,
-            database_generation: DatabaseGeneration::One,
+            database_generation: DatabaseGeneration::Two,
+            startup_upgrade,
         }
     }
 
@@ -178,6 +235,46 @@ impl DataStoreStartupState {
         self.database_generation
     }
 
+    pub(crate) fn startup_upgrade(&self) -> &StartupUpgradeStatus {
+        &self.startup_upgrade
+    }
+
+    pub(crate) fn set_startup_upgrade_stage(
+        &mut self,
+        stage: StartupUpgradeStage,
+        current_schema_version: Option<i64>,
+    ) {
+        debug_assert!(
+            stage != StartupUpgradeStage::Blocked,
+            "blocked startup upgrades must carry a typed recovery reason"
+        );
+        self.startup_upgrade = StartupUpgradeStatus {
+            stage,
+            current_schema_version,
+            target_schema_version: crate::persistence::current_schema_version(),
+            failure_reason: None,
+            failure_stage: None,
+        };
+    }
+
+    pub(crate) fn enter_recovery(
+        &mut self,
+        reason: RecoveryReason,
+        current_schema_version: Option<i64>,
+    ) {
+        let failure_stage = match self.startup_upgrade.stage {
+            StartupUpgradeStage::Probe
+            | StartupUpgradeStage::Migrate
+            | StartupUpgradeStage::Validate => self.startup_upgrade.stage.clone(),
+            StartupUpgradeStage::Ready | StartupUpgradeStage::Blocked => StartupUpgradeStage::Probe,
+        };
+        self.decision = StartupDecision::NeedsRecovery {
+            reason: reason.clone(),
+        };
+        self.startup_upgrade =
+            StartupUpgradeStatus::blocked(current_schema_version, reason, failure_stage);
+    }
+
     #[cfg(test)]
     pub fn view(&self) -> DataStoreStartupView {
         DataStoreStartupView {
@@ -188,5 +285,67 @@ impl DataStoreStartupState {
 
     pub(crate) fn default_data_dir(&self) -> &Path {
         &self.default_data_dir
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DataStoreStartupState, RecoveryReason, StartupDecision, StartupUpgradeStage};
+    use std::path::PathBuf;
+
+    #[test]
+    fn recovery_decision_always_exposes_a_blocked_typed_upgrade_status() {
+        let mut state = DataStoreStartupState::new(
+            StartupDecision::NeedsRecovery {
+                reason: RecoveryReason::Missing,
+            },
+            Vec::new(),
+            PathBuf::from("C:/RelayPool"),
+            None,
+        );
+
+        assert_eq!(state.startup_upgrade().stage, StartupUpgradeStage::Blocked);
+        assert_eq!(
+            state.startup_upgrade().failure_reason,
+            Some(RecoveryReason::Missing)
+        );
+        assert_eq!(
+            state.startup_upgrade().failure_stage,
+            Some(StartupUpgradeStage::Probe)
+        );
+
+        state.enter_recovery(RecoveryReason::KeyMismatch, Some(15));
+
+        assert_eq!(state.startup_upgrade().stage, StartupUpgradeStage::Blocked);
+        assert_eq!(state.startup_upgrade().current_schema_version, Some(15));
+        assert_eq!(
+            state.startup_upgrade().failure_reason,
+            Some(RecoveryReason::KeyMismatch)
+        );
+        assert_eq!(
+            state.startup_upgrade().failure_stage,
+            Some(StartupUpgradeStage::Probe)
+        );
+    }
+
+    #[test]
+    fn recovery_retains_the_typed_stage_where_upgrade_failed() {
+        let mut state = DataStoreStartupState::new(
+            StartupDecision::Ready {
+                candidate_id: "active".to_string(),
+            },
+            Vec::new(),
+            PathBuf::from("C:/RelayPool"),
+            None,
+        );
+        state.set_startup_upgrade_stage(StartupUpgradeStage::Migrate, Some(55));
+
+        state.enter_recovery(RecoveryReason::SchemaMigrationFailed, Some(55));
+
+        assert_eq!(state.startup_upgrade().stage, StartupUpgradeStage::Blocked);
+        assert_eq!(
+            state.startup_upgrade().failure_stage,
+            Some(StartupUpgradeStage::Migrate)
+        );
     }
 }

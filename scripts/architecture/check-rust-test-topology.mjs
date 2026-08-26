@@ -30,12 +30,8 @@ const legacySourceAssembly = new Set([
   "operational_health_projection.rs",
   "operational_pricing_projection.rs",
   "operational_projector_contract.rs",
-  "persistence_fault_matrix.rs",
   "persistence_runtime.rs",
   "persistence_sessions.rs",
-  "persistence_startup_cutover.rs",
-  "persistence_upgrade.rs",
-  "persistence_upgrade_recovery.rs",
   "pricing_group_monitor_status.rs",
   "provider_conformance.rs",
   "proxy_lifecycle_concurrency.rs",
@@ -103,21 +99,6 @@ for (const migrated of [
   const source = await readFile(path.join(testsRoot, migrated), "utf8");
   assert.match(source, /relay_pool_desktop_lib::test_support/u, `${migrated} must use the real crate test boundary`);
 }
-
-const persistenceFaultMatrix = await readFile(
-  path.join(testsRoot, "persistence_fault_matrix.rs"),
-  "utf8",
-);
-assert.match(
-  persistenceFaultMatrix,
-  /relay_pool_desktop_lib::test_support::runtime_composition_scenarios/u,
-  "persistence_fault_matrix.rs must exercise runtime composition through the real crate boundary",
-);
-assert.doesNotMatch(
-  persistenceFaultMatrix,
-  /runtime_composition\.rs|\bReadyServiceBundle\b|\bregister_ready_services(?:_in)?\b/u,
-  "persistence_fault_matrix.rs must not restore the deleted five-slot runtime-composition path",
-);
 
 const runtimeComposition = await readFile(
   path.join(root, "src-tauri", "src", "runtime_composition.rs"),

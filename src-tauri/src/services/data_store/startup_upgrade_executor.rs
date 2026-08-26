@@ -60,7 +60,9 @@ pub(crate) fn execute_startup_upgrade_plan(
             }
             StartupUpgradeStep::EnsureSecretBaseline => {
                 let journal_existed = default_data_dir
-                    .join(persistence::upgrade_recovery_executor::UPGRADE_JOURNAL_FILE)
+                    .join(
+                        persistence::baseline_conversion_support::BASELINE_CONVERSION_JOURNAL_FILE,
+                    )
                     .exists();
                 ensure_active_database_baseline(default_data_dir, final_path, device_keys)
                     .map_err(|error| {

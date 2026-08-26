@@ -11,7 +11,7 @@ use sqlx::{
 use crate::{
     persistence::{
         self,
-        upgrade_recovery_executor::{observe_persistence_journal, PersistenceJournalKind},
+        baseline_conversion_support::{observe_persistence_journal, PersistenceJournalKind},
     },
     services::data_store::types::RecoveryReason,
     services::secrets::baseline_conversion::{
@@ -49,7 +49,6 @@ pub(crate) enum StartupKeyRequirementProbe {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum StartupJournalProbe {
     Missing,
-    GenerationUpgrade,
     BaselineConversion,
     Invalid,
     NotChecked,
@@ -296,7 +295,6 @@ async fn read_key_requirement(
 fn read_journal_probe(path: &Path) -> StartupJournalProbe {
     match observe_persistence_journal(path).kind {
         PersistenceJournalKind::Missing => StartupJournalProbe::Missing,
-        PersistenceJournalKind::GenerationUpgrade => StartupJournalProbe::GenerationUpgrade,
         PersistenceJournalKind::BaselineConversion => StartupJournalProbe::BaselineConversion,
         PersistenceJournalKind::Invalid => StartupJournalProbe::Invalid,
     }

@@ -6,8 +6,11 @@ use std::{
 use serde::Serialize;
 
 use super::{
-    config::{installation_marker_exists, read_config},
-    types::{CandidateHealth, CandidateRole, DataStoreStartupState, StartupDecision},
+    config::{installation_marker_exists, read_config_v3},
+    types::{
+        CandidateHealth, CandidateRole, DataStoreStartupState, StartupDecision,
+        StartupUpgradeStatus,
+    },
 };
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -17,6 +20,7 @@ pub(crate) struct DataStoreDiagnosticReport {
     pub config_version: Option<u32>,
     pub config_read_error: Option<&'static str>,
     pub installation_marker: bool,
+    pub startup_upgrade: StartupUpgradeStatus,
     pub decision: DiagnosticDecision,
     pub candidates: Vec<DiagnosticCandidate>,
 }
@@ -45,6 +49,8 @@ pub(crate) struct DiagnosticCandidate {
     pub role: CandidateRole,
     pub health: CandidateHealth,
     pub schema_compatible: bool,
+    pub schema_version: Option<i64>,
+    pub schema_metadata_consistent: bool,
     pub size_bytes: Option<u64>,
     pub modified_at: Option<String>,
     pub counts: std::collections::BTreeMap<String, i64>,
@@ -55,7 +61,7 @@ pub(crate) fn build_diagnostic_report(
     state: &DataStoreStartupState,
 ) -> Result<DataStoreDiagnosticReport, String> {
     let (config, config_read_error) =
-        match read_config(&default_data_dir.join("relay-pool-data-dir.json")) {
+        match read_config_v3(&default_data_dir.join("relay-pool-data-dir.json")) {
             Ok(config) => (config, None),
             Err(_) => (None, Some("unreadable")),
         };
@@ -64,6 +70,7 @@ pub(crate) fn build_diagnostic_report(
         config_version: config.map(|config| config.version),
         config_read_error,
         installation_marker: installation_marker_exists(default_data_dir),
+        startup_upgrade: state.startup_upgrade().clone(),
         decision: diagnostic_decision(&state.decision),
         candidates: state
             .candidates
@@ -74,6 +81,8 @@ pub(crate) fn build_diagnostic_report(
                 role: candidate.role.clone(),
                 health: candidate.health.clone(),
                 schema_compatible: candidate.schema_compatible,
+                schema_version: candidate.schema_version,
+                schema_metadata_consistent: candidate.schema_metadata_consistent,
                 size_bytes: candidate.size_bytes,
                 modified_at: candidate.modified_at.clone(),
                 counts: candidate.counts.clone(),
@@ -107,7 +116,7 @@ mod tests {
     use super::{build_diagnostic_report, DiagnosticDecision};
     use crate::services::data_store::types::{
         CandidateHealth, CandidateRole, DataStoreCandidate, DataStoreStartupState, RecoveryReason,
-        StartupDecision,
+        StartupDecision, StartupUpgradeStage,
     };
     use std::{collections::BTreeMap, fs, time::SystemTime};
 
@@ -128,11 +137,13 @@ mod tests {
                 reason: RecoveryReason::Missing,
             },
             vec![DataStoreCandidate {
-                id: "active:D:/Users/Alice/RelayPool/relay-pool-desktop.sqlite3".to_string(),
+                id: "active:D:/Users/Alice/RelayPool/relay-pool-desktop-v2.sqlite3".to_string(),
                 role: CandidateRole::Active,
-                path: "D:/Users/Alice/RelayPool/relay-pool-desktop.sqlite3".to_string(),
+                path: "D:/Users/Alice/RelayPool/relay-pool-desktop-v2.sqlite3".to_string(),
                 health: CandidateHealth::Healthy,
                 schema_compatible: true,
+                schema_version: Some(55),
+                schema_metadata_consistent: true,
                 size_bytes: Some(4096),
                 modified_at: Some("2026-07-17T00:00:00Z".to_string()),
                 counts,
@@ -146,9 +157,14 @@ mod tests {
 
         assert!(serialized.contains("candidate-1"));
         assert!(serialized.contains("stations"));
+        assert_eq!(report.startup_upgrade.stage, StartupUpgradeStage::Blocked);
+        assert_eq!(
+            report.startup_upgrade.failure_reason,
+            Some(RecoveryReason::Missing)
+        );
         for secret in [
             "Alice",
-            "RelayPool/relay-pool-desktop.sqlite3",
+            "RelayPool/relay-pool-desktop-v2.sqlite3",
             "Sensitive Station",
             "https://secret.example/v1",
             "sk-sensitive",
@@ -188,8 +204,8 @@ mod tests {
         let conflict = DataStoreStartupState::new(
             StartupDecision::Conflict {
                 candidate_ids: vec![
-                    "active:D:/Users/Alice/RelayPool/relay-pool-desktop.sqlite3".to_string(),
-                    "source:E:/Sensitive/relay-pool-desktop.sqlite3".to_string(),
+                    "active:D:/Users/Alice/RelayPool/relay-pool-desktop-v2.sqlite3".to_string(),
+                    "source:E:/Sensitive/relay-pool-desktop-v2.sqlite3".to_string(),
                 ],
             },
             Vec::new(),
@@ -206,7 +222,7 @@ mod tests {
         assert!(!conflict_json.contains("candidateIds"));
         assert!(!conflict_json.contains("Alice"));
         assert!(!conflict_json.contains("Sensitive"));
-        assert!(!conflict_json.contains("relay-pool-desktop.sqlite3"));
+        assert!(!conflict_json.contains("relay-pool-desktop-v2.sqlite3"));
     }
 
     #[test]

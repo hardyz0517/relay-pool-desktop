@@ -33,9 +33,6 @@ ALTER TABLE channel_monitor_bucket_rollups ADD COLUMN excluded_count INTEGER NOT
 ALTER TABLE channel_monitor_bucket_rollups ADD COLUMN exclusion_counts_json TEXT NOT NULL DEFAULT '{}'
     CHECK (json_valid(exclusion_counts_json) AND json_type(exclusion_counts_json) = 'object');
 
-CREATE INDEX idx_balance_snapshots_spendability_latest
-    ON balance_snapshots(station_id, station_key_id, scope, updated_at DESC, created_at DESC, id DESC);
-
 UPDATE persistence_schema_compatibility
 SET schema_version = 56,
     updated_by_migration = 56,

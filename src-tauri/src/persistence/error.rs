@@ -80,6 +80,14 @@ pub(crate) enum PersistenceError {
     DatabaseBusy,
     #[error("migration failed: {0}")]
     MigrationFailed(String),
+    #[error(
+        "migration checksum mismatch for version {version} (expected {expected}, actual {actual})"
+    )]
+    MigrationChecksumMismatch {
+        version: i64,
+        expected: String,
+        actual: String,
+    },
 }
 
 impl From<sqlx::Error> for PersistenceError {

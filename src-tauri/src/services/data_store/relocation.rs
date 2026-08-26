@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::persistence::{
-    create_verified_backup_from_path, upgrade_recovery_executor::UPGRADE_JOURNAL_FILE,
+    baseline_conversion_support::BASELINE_CONVERSION_JOURNAL_FILE, create_verified_backup_from_path,
 };
 
 use super::{
@@ -108,12 +108,15 @@ fn configured_generation(default_data_dir: &Path) -> Result<DatabaseGeneration, 
     Ok(
         read_config_v3(&default_data_dir.join(DATA_DIR_CONFIG_FILE))?
             .map(|config| config.database_generation)
-            .unwrap_or(DatabaseGeneration::One),
+            .unwrap_or(DatabaseGeneration::Two),
     )
 }
 
 fn ensure_no_upgrade_journal(default_data_dir: &Path) -> Result<(), String> {
-    if default_data_dir.join(UPGRADE_JOURNAL_FILE).exists() {
+    if default_data_dir
+        .join(BASELINE_CONVERSION_JOURNAL_FILE)
+        .exists()
+    {
         return Err(
             "data relocation is unavailable while a persistence upgrade is in progress".to_string(),
         );
@@ -176,7 +179,7 @@ fn unique_suffix() -> u128 {
 #[cfg(test)]
 mod tests {
     use crate::services::data_store::config::{
-        read_config, read_config_v3, write_config_v3, DataDirConfigV3, DatabaseGeneration,
+        read_config_v3, write_config_v3, DataDirConfigV3, DatabaseGeneration,
     };
     use crate::services::data_store::relocation::{
         apply_trusted_relocation, write_relocation_intent,
@@ -189,8 +192,8 @@ mod tests {
         time::SystemTime,
     };
 
-    const DATABASE_FILE: &str = "relay-pool-desktop.sqlite3";
-    const DATABASE_FILE_V2: &str = "relay-pool-desktop-v2.sqlite3";
+    const DATABASE_FILE: &str = "relay-pool-desktop-v2.sqlite3";
+    const DATABASE_FILE_V2: &str = DATABASE_FILE;
     const CONFIG_FILE: &str = "relay-pool-data-dir.json";
 
     #[test]
@@ -215,7 +218,7 @@ mod tests {
         assert_eq!(relocated, target);
         assert_eq!(station_count(&target.join(DATABASE_FILE)), 2);
         assert_eq!(station_count(&source.join(DATABASE_FILE)), 2);
-        let config = read_config(&default_data_dir.join(CONFIG_FILE))
+        let config = read_config_v3(&default_data_dir.join(CONFIG_FILE))
             .expect("read config")
             .expect("config");
         assert_eq!(config.active_data_dir, Some(target));
@@ -321,41 +324,15 @@ mod tests {
     }
 
     #[test]
-    fn non_trusted_legacy_config_is_not_relocated() {
-        let root = temp_root("legacy-intent");
-        let default_data_dir = root.join("default");
-        let source = root.join("source");
-        let target = root.join("target");
-        fs::create_dir_all(&default_data_dir).expect("default");
-        fs::write(
-            default_data_dir.join(CONFIG_FILE),
-            format!(
-                r#"{{"pendingDataDir":"{}","sourceDataDir":"{}"}}"#,
-                slash(&target),
-                slash(&source)
-            ),
-        )
-        .expect("legacy config");
-
-        assert!(
-            read_config(&default_data_dir.join(CONFIG_FILE))
-                .expect("config")
-                .expect("present")
-                .version
-                == 1
-        );
-        assert!(!target.join(DATABASE_FILE).exists());
-    }
-
-    #[test]
     fn upgrade_journal_blocks_new_relocation_intent_before_config_write() {
         let root = temp_root("journal-blocks-intent");
         let default_data_dir = root.join("default");
         let source = root.join("source");
         let target = root.join("target");
         fs::create_dir_all(&default_data_dir).expect("default");
-        let journal = default_data_dir
-            .join(crate::persistence::upgrade_recovery_executor::UPGRADE_JOURNAL_FILE);
+        let journal = default_data_dir.join(
+            crate::persistence::baseline_conversion_support::BASELINE_CONVERSION_JOURNAL_FILE,
+        );
         fs::write(&journal, b"protected-upgrade-journal").expect("journal");
 
         let error = write_relocation_intent(&default_data_dir, &source, &target)
@@ -378,8 +355,9 @@ mod tests {
         create_station_db(&source, "source-station");
         write_relocation_intent(&default_data_dir, &source, &target).expect("intent");
         let config = default_data_dir.join(CONFIG_FILE);
-        let journal = default_data_dir
-            .join(crate::persistence::upgrade_recovery_executor::UPGRADE_JOURNAL_FILE);
+        let journal = default_data_dir.join(
+            crate::persistence::baseline_conversion_support::BASELINE_CONVERSION_JOURNAL_FILE,
+        );
         fs::write(&journal, b"protected-upgrade-journal").expect("journal");
         let before_source = fs::read(source.join(DATABASE_FILE)).expect("source bytes");
         let before_config = fs::read(&config).expect("config bytes");

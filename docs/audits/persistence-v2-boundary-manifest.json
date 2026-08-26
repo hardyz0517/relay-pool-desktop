@@ -3,7 +3,7 @@
     "evidence": {
         "captured_at": "2026-07-21",
         "method": "AST dependency and export gate plus release-source legacy persistence absence scan",
-        "scope_note": "The release source has no legacy database implementation or temporary legacy consumers. The only compatibility boundary is the fail-closed v0.3.1 import module consumed by startup.",
+        "scope_note": "The release source has no legacy database implementation, import path, or temporary legacy consumers. Startup accepts only the generation-2 data store.",
         "physical_appdatabase_path_count": 0,
         "consumer_unit_count": 0,
         "consumer_evidence_entry_count": 0
@@ -48,10 +48,10 @@
         ],
         "persistence": [],
         "services::data_store::config": [
-            "DataDirConfigV2",
+            "DataDirConfigV3",
             "create_installation_marker",
             "installation_marker_exists",
-            "read_config"
+            "read_config_v3"
         ],
         "services::proxy::response_body": [
             "dual_terminal_buffered_lifecycle_finalizing_stream",
@@ -1887,11 +1887,6 @@
         },
         {
             "from": "lib",
-            "to": "persistence::upgrade_recovery_executor",
-            "temporary": false
-        },
-        {
-            "from": "lib",
             "to": "runtime_composition",
             "temporary": false
         },
@@ -2108,11 +2103,6 @@
         {
             "from": "persistence",
             "to": "persistence::upgrade_journal",
-            "temporary": false
-        },
-        {
-            "from": "persistence",
-            "to": "persistence::upgrade_recovery_plan",
             "temporary": false
         },
         {
@@ -2372,11 +2362,6 @@
         },
         {
             "from": "services::data_store",
-            "to": "persistence::legacy_import",
-            "temporary": false
-        },
-        {
-            "from": "services::data_store",
             "to": "persistence::runtime",
             "temporary": false
         },
@@ -2388,16 +2373,6 @@
         {
             "from": "services::data_store",
             "to": "persistence::upgrade_journal",
-            "temporary": false
-        },
-        {
-            "from": "services::data_store",
-            "to": "persistence::upgrade_recovery_executor",
-            "temporary": false
-        },
-        {
-            "from": "services::data_store",
-            "to": "persistence::upgrade_recovery_plan",
             "temporary": false
         },
         {
@@ -2822,11 +2797,6 @@
         },
         {
             "from": "services::secrets",
-            "to": "persistence::upgrade_recovery_executor",
-            "temporary": false
-        },
-        {
-            "from": "services::secrets",
             "to": "services::data_store::atomic_file",
             "temporary": false
         },
@@ -3178,11 +3148,6 @@
         {
             "from": "persistence::stores::health_observation_store",
             "to": "models::health",
-            "temporary": false
-        },
-        {
-            "from": "persistence::legacy_import",
-            "to": "persistence::settings_compat",
             "temporary": false
         },
         {
@@ -5358,13 +5323,9 @@
     ],
     "temporary_legacy_consumers": [],
     "temporary_legacy_paths": [],
-    "allowed_consumers": {
-        "persistence::legacy_import": [
-            "services::data_store::generation_upgrade"
-        ]
-    },
+    "allowed_consumers": {},
     "fan_in_baseline": {
-        "DataDirConfigV2": {
+        "DataDirConfigV3": {
             "direct_consumer_modules": 2
         },
         "LifecycleFinalizationLease": {

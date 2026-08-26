@@ -19,7 +19,7 @@ const matrix = [
   {
     risk: "healthy default database",
     source: startupSource,
-    evidence: ["legacy-default", "StartupDecision::Ready"],
+    evidence: ["healthy-default", "StartupDecision::Ready"],
     cargoFilter: "startup_orchestration_discovers_without_mutation_or_trust_leaks",
   },
   {
@@ -39,12 +39,6 @@ const matrix = [
     source: inspectSource,
     evidence: ["invalid-header", "quick-check", "CandidateHealth::IntegrityFailed"],
     cargoFilter: "missing_invalid_and_integrity_failed_are_classified_without_creating_paths",
-  },
-  {
-    risk: "legacy v1 source pending",
-    source: startupSource,
-    evidence: ["legacy-pending", "RecoveryReason::PendingRelocation"],
-    cargoFilter: "startup_orchestration_discovers_without_mutation_or_trust_leaks",
   },
   {
     risk: "empty pending with populated source",
@@ -77,22 +71,10 @@ const matrix = [
     cargoFilter: "relocation_copies_wal_source_consistently_to_missing_target_and_commits_active",
   },
   {
-    risk: "config commit failure",
-    source: configSource,
-    evidence: ["failed-replace", "failed_replace_preserves_previous_config_and_ignores_temp_file"],
-    cargoFilter: "failed_replace_preserves_previous_config_and_ignores_temp_file",
-  },
-  {
     risk: "backup or validation failure keeps source active",
     source: relocationSource,
     evidence: ["bad-source", "relocation_backup_or_validation_failure_keeps_source_active"],
     cargoFilter: "relocation_backup_or_validation_failure_keeps_source_active",
-  },
-  {
-    risk: "legacy relocation intent is not trusted",
-    source: relocationSource,
-    evidence: ["legacy-intent", "non_trusted_legacy_config_is_not_relocated"],
-    cargoFilter: "non_trusted_legacy_config_is_not_relocated",
   },
 ];
 

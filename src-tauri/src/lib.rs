@@ -35,12 +35,11 @@ pub use services::secrets::{
 
 use crate::background_tasks::{BlockingExecutor, ExitCoordinator, ExitReason};
 use services::data_store::{
-    config::DatabaseGeneration,
     inspect_startup,
     relocation::apply_trusted_relocation,
     startup_probe::probe_upgrade_state_with_journal,
     startup_upgrade_plan::{plan_upgrade, StartupUpgradePlan},
-    types::{DataStoreStartupState, RecoveryReason, StartupDecision},
+    types::{DataStoreStartupState, RecoveryReason, StartupDecision, StartupUpgradeStage},
 };
 use services::portable_migration::recovery::{
     complete_portable_activation, recover_portable_activation_for_startup,
@@ -448,9 +447,7 @@ fn prepare_data_store(
                 observability::runtime::bootstrap::emit(
                     persistence::runtime_events::relocation_recovery_required(),
                 );
-                startup_state.decision = StartupDecision::NeedsRecovery {
-                    reason: RecoveryReason::PendingRelocation,
-                };
+                startup_state.enter_recovery(RecoveryReason::PendingRelocation, None);
                 return Ok(PreparedDataStore::Recovery(startup_state));
             }
         }
@@ -463,64 +460,64 @@ fn prepare_data_store(
                 .iter()
                 .find(|candidate| candidate.id == candidate_id)
             else {
-                startup_state.decision = StartupDecision::NeedsRecovery {
-                    reason: RecoveryReason::Missing,
-                };
+                startup_state.enter_recovery(RecoveryReason::Missing, None);
                 return Ok(PreparedDataStore::Recovery(startup_state));
             };
             let db_path = PathBuf::from(&candidate.path);
             let Some(active_data_dir) = db_path.parent().map(Path::to_path_buf) else {
-                startup_state.decision = StartupDecision::NeedsRecovery {
-                    reason: RecoveryReason::Missing,
-                };
+                startup_state.enter_recovery(RecoveryReason::Missing, None);
                 return Ok(PreparedDataStore::Recovery(startup_state));
             };
-            if startup_state.database_generation() == DatabaseGeneration::Two {
-                let journal_path = default_data_dir
-                    .join(persistence::upgrade_recovery_executor::UPGRADE_JOURNAL_FILE);
-                match probe_upgrade_state_with_journal(
-                    &db_path,
-                    Some(&journal_path),
-                    Some(device_keys.active_key_id().as_str()),
-                )
-                {
-                    Ok(probe) => match plan_upgrade(&probe) {
+            startup_state.set_startup_upgrade_stage(StartupUpgradeStage::Probe, None);
+            let journal_path = default_data_dir
+                .join(persistence::baseline_conversion_support::BASELINE_CONVERSION_JOURNAL_FILE);
+            match probe_upgrade_state_with_journal(
+                &db_path,
+                Some(&journal_path),
+                Some(device_keys.active_key_id().as_str()),
+            ) {
+                Ok(probe) => {
+                    startup_state.set_startup_upgrade_stage(
+                        StartupUpgradeStage::Probe,
+                        Some(probe.compatibility_schema_version),
+                    );
+                    match plan_upgrade(&probe) {
                         StartupUpgradePlan::Execute(steps) => {
+                            startup_state.set_startup_upgrade_stage(
+                                StartupUpgradeStage::Migrate,
+                                Some(probe.compatibility_schema_version),
+                            );
                             services::data_store::generation_upgrade::prepare_generation_two_with_resolver(
-                                &default_data_dir,
-                                &active_data_dir,
-                                Some(&db_path),
-                                Some(&steps),
-                                device_keys,
-                            )
+                            &default_data_dir,
+                            &active_data_dir,
+                            Some(&db_path),
+                            Some(&steps),
+                            device_keys,
+                        )
                         }
                         StartupUpgradePlan::NeedsRecovery(reason) => {
-                            observability::runtime::bootstrap::emit(persistence::runtime_events::startup_plan_recovery_required());
-                            startup_state.decision = StartupDecision::NeedsRecovery {
-                                reason: reason.recovery_reason(),
-                            };
+                            observability::runtime::bootstrap::emit(
+                                persistence::runtime_events::startup_plan_recovery_required(),
+                            );
+                            startup_state.enter_recovery(
+                                reason.recovery_reason(),
+                                Some(probe.compatibility_schema_version),
+                            );
                             return Ok(PreparedDataStore::Recovery(startup_state));
                         }
-                    },
-                    Err(error) => {
-                        observability::runtime::bootstrap::emit(persistence::runtime_events::startup_probe_recovery_required());
-                        startup_state.decision = StartupDecision::NeedsRecovery {
-                            reason: error.recovery_reason(),
-                        };
-                        return Ok(PreparedDataStore::Recovery(startup_state));
                     }
                 }
-            } else {
-                services::data_store::generation_upgrade::prepare_generation_two_with_resolver(
-                    &default_data_dir,
-                    &active_data_dir,
-                    Some(&db_path),
-                    None,
-                    device_keys,
-                )
+                Err(error) => {
+                    observability::runtime::bootstrap::emit(
+                        persistence::runtime_events::startup_probe_recovery_required(),
+                    );
+                    startup_state.enter_recovery(error.recovery_reason(), None);
+                    return Ok(PreparedDataStore::Recovery(startup_state));
+                }
             }
         }
         StartupDecision::FirstRun { default_data_dir } => {
+            startup_state.set_startup_upgrade_stage(StartupUpgradeStage::Migrate, None);
             services::data_store::generation_upgrade::prepare_generation_two_with_resolver(
                 &default_data_dir,
                 &default_data_dir,
@@ -529,26 +526,50 @@ fn prepare_data_store(
                 device_keys,
             )
         }
-        StartupDecision::NeedsRecovery { .. } | StartupDecision::Conflict { .. } => {
+        StartupDecision::NeedsRecovery { reason } => {
+            let current_schema_version = startup_state.startup_upgrade().current_schema_version;
+            startup_state.enter_recovery(reason, current_schema_version);
+            return Ok(PreparedDataStore::Recovery(startup_state));
+        }
+        StartupDecision::Conflict { .. } => {
             return Ok(PreparedDataStore::Recovery(startup_state));
         }
     };
 
     match persistence {
         Ok((runtime, database_path)) => {
-            let mut ready_state = inspect_startup(&startup_default_data_dir).map_err(|error| {
-                format!("failed to verify data store startup after database open: {error}")
-            })?;
+            let probed_schema_version = startup_state.startup_upgrade().current_schema_version;
+            startup_state
+                .set_startup_upgrade_stage(StartupUpgradeStage::Validate, probed_schema_version);
+            let mut ready_state = match inspect_startup(&startup_default_data_dir) {
+                Ok(state) => state,
+                Err(_) => {
+                    startup_state.enter_recovery(
+                        RecoveryReason::InconsistentSchemaMetadata,
+                        probed_schema_version,
+                    );
+                    return Ok(PreparedDataStore::Recovery(startup_state));
+                }
+            };
             if matches!(ready_state.decision, StartupDecision::Ready { .. }) {
+                ready_state.set_startup_upgrade_stage(
+                    StartupUpgradeStage::Ready,
+                    Some(persistence::current_schema_version()),
+                );
                 Ok(PreparedDataStore::Ready {
                     runtime: Arc::new(runtime),
                     database_path,
                     startup_state: ready_state,
                 })
             } else {
-                ready_state.decision = StartupDecision::NeedsRecovery {
-                    reason: RecoveryReason::InconsistentSchemaMetadata,
-                };
+                ready_state.set_startup_upgrade_stage(
+                    StartupUpgradeStage::Validate,
+                    probed_schema_version,
+                );
+                ready_state.enter_recovery(
+                    RecoveryReason::InconsistentSchemaMetadata,
+                    probed_schema_version,
+                );
                 Ok(PreparedDataStore::Recovery(ready_state))
             }
         }
@@ -557,7 +578,8 @@ fn prepare_data_store(
                 persistence::runtime_events::startup_recovery_required(),
             );
             let reason = error.recovery_reason();
-            startup_state.decision = StartupDecision::NeedsRecovery { reason };
+            let current_schema_version = startup_state.startup_upgrade().current_schema_version;
+            startup_state.enter_recovery(reason, current_schema_version);
             Ok(PreparedDataStore::Recovery(startup_state))
         }
     }
@@ -593,7 +615,7 @@ fn startup_has_recovery_evidence(
 ) -> bool {
     !startup_state.candidates.is_empty()
         || default_data_dir
-            .join(persistence::upgrade_recovery_executor::UPGRADE_JOURNAL_FILE)
+            .join(persistence::baseline_conversion_support::BASELINE_CONVERSION_JOURNAL_FILE)
             .exists()
         || default_data_dir
             .join("portable-migration-activation-journal.json")
@@ -630,7 +652,7 @@ fn portable_manual_startup_state(
             None,
         )
     });
-    startup_state.decision = StartupDecision::NeedsRecovery { reason };
+    startup_state.enter_recovery(reason, None);
     startup_state
 }
 
@@ -699,9 +721,8 @@ fn initialize_secret_material_for_startup(
                     })
                 }
                 Err(error) => {
-                    startup_state.decision = StartupDecision::NeedsRecovery {
-                        reason: recovery_reason_for_device_key_error(error.kind()),
-                    };
+                    startup_state
+                        .enter_recovery(recovery_reason_for_device_key_error(error.kind()), None);
                     Ok(StartupSecretMaterial {
                         manager: None,
                         first_run_key_id: None,
@@ -711,9 +732,7 @@ fn initialize_secret_material_for_startup(
             }
         }
         StartupDecision::FirstRun { .. } => {
-            startup_state.decision = StartupDecision::NeedsRecovery {
-                reason: RecoveryReason::SystemCredentialMissing,
-            };
+            startup_state.enter_recovery(RecoveryReason::SystemCredentialMissing, None);
             Ok(StartupSecretMaterial {
                 manager: None,
                 first_run_key_id: None,
@@ -730,11 +749,10 @@ fn initialize_secret_material_for_startup(
                     startup_state,
                 }),
                 Err(error) => {
-                    startup_state.decision = StartupDecision::NeedsRecovery {
-                        reason: recovery_reason_for_existing_database_device_key_error(
-                            error.kind(),
-                        ),
-                    };
+                    startup_state.enter_recovery(
+                        recovery_reason_for_existing_database_device_key_error(error.kind()),
+                        None,
+                    );
                     Ok(StartupSecretMaterial {
                         manager: None,
                         first_run_key_id: None,
@@ -759,7 +777,7 @@ fn initialize_secret_material_for_startup(
                     } else {
                         recovery_reason_for_device_key_error(error.kind())
                     };
-                    startup_state.decision = StartupDecision::NeedsRecovery { reason };
+                    startup_state.enter_recovery(reason, None);
                     Ok(StartupSecretMaterial {
                         manager: None,
                         first_run_key_id: None,
@@ -1065,9 +1083,7 @@ pub fn run() {
                         if let Err(close_error) = tauri::async_runtime::block_on(runtime.close()) {
                             observability::runtime::bootstrap::emit(persistence::runtime_events::runtime_close_failed());
                         }
-                        startup_state.decision = StartupDecision::NeedsRecovery {
-                            reason: RecoveryReason::SystemCredentialInternal,
-                        };
+                        startup_state.enter_recovery(RecoveryReason::SystemCredentialInternal, None);
                         app.manage(secret_manager);
                         app.manage(startup_state);
                         DataStoreRuntimeOwner::new(None, installation_lease)

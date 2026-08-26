@@ -391,7 +391,7 @@ fn boundary_manifest_rejects_malformed_allowed_edges() {
 fn boundary_manifest_rejects_malformed_fan_in_limit() {
     let fan_in_path = write_manifest_fixture(|value| {
         value["fan_in_baseline"] = serde_json::json!({
-            "DataDirConfigV2": {"direct_consumer_modules": "two"}
+            "DataDirConfigV3": {"direct_consumer_modules": "two"}
         });
     });
     let fan_in_result = BoundaryManifest::load(&fan_in_path);
@@ -704,23 +704,6 @@ fn fan_out_root_limit_includes_descendant_modules() {
     ]);
 
     graph.assert_max_fan_out(&BTreeMap::from([("application".to_owned(), 0)]));
-}
-
-#[test]
-fn compatibility_consumer_scan_ignores_cfg_test_paths() {
-    let consumers = external_consumers_from_source_modules(
-        &[
-            (
-                "application",
-                "#[cfg(test)] fn inspect(_: crate::persistence::legacy_import::Legacy) {}",
-            ),
-            ("persistence::legacy_import", "pub struct Legacy;"),
-        ],
-        "persistence::legacy_import",
-    )
-    .expect("scan compatibility consumer fixture");
-
-    assert!(consumers.is_empty(), "test-only consumer must be ignored");
 }
 
 #[test]

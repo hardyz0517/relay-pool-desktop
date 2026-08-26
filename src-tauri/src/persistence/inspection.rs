@@ -20,6 +20,13 @@ pub(crate) enum ReadOnlyDatabaseHealth {
 pub(crate) struct ReadOnlyDatabaseInspection {
     pub(crate) health: ReadOnlyDatabaseHealth,
     pub(crate) table_counts: BTreeMap<String, i64>,
+    pub(crate) schema_metadata: ReadOnlySchemaMetadata,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ReadOnlySchemaMetadata {
+    pub(crate) schema_version: Option<i64>,
+    pub(crate) is_consistent: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,6 +47,7 @@ pub(crate) async fn inspect_relay_pool_database(
             return Ok(ReadOnlyDatabaseInspection {
                 health: classify_open_error(&error),
                 table_counts: BTreeMap::new(),
+                schema_metadata: ReadOnlySchemaMetadata::unavailable(),
             });
         }
     };
@@ -70,6 +78,7 @@ async fn inspect_open_connection(
             return Ok(ReadOnlyDatabaseInspection {
                 health: ReadOnlyDatabaseHealth::InvalidSqlite,
                 table_counts: BTreeMap::new(),
+                schema_metadata: ReadOnlySchemaMetadata::unavailable(),
             });
         }
     };
@@ -77,6 +86,7 @@ async fn inspect_open_connection(
         return Ok(ReadOnlyDatabaseInspection {
             health: ReadOnlyDatabaseHealth::IntegrityFailed,
             table_counts: BTreeMap::new(),
+            schema_metadata: ReadOnlySchemaMetadata::unavailable(),
         });
     }
 
@@ -93,6 +103,48 @@ async fn inspect_open_connection(
     Ok(ReadOnlyDatabaseInspection {
         health: ReadOnlyDatabaseHealth::Healthy,
         table_counts,
+        schema_metadata: inspect_schema_metadata(connection).await?,
+    })
+}
+
+impl ReadOnlySchemaMetadata {
+    pub(crate) const fn unavailable() -> Self {
+        Self {
+            schema_version: None,
+            is_consistent: false,
+        }
+    }
+}
+
+async fn inspect_schema_metadata(
+    connection: &mut SqliteConnection,
+) -> Result<ReadOnlySchemaMetadata, sqlx::Error> {
+    let compatibility_schema_version =
+        if table_exists(connection, "persistence_schema_compatibility").await? {
+            sqlx::query_scalar::<_, i64>(
+            "SELECT schema_version FROM persistence_schema_compatibility WHERE singleton_key = 1",
+        )
+        .fetch_optional(&mut *connection)
+        .await?
+        } else {
+            None
+        };
+    let applied_schema_version = if table_exists(connection, "_sqlx_migrations").await? {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT version FROM _sqlx_migrations WHERE success = 1 ORDER BY version DESC LIMIT 1",
+        )
+        .fetch_optional(&mut *connection)
+        .await?
+    } else {
+        None
+    };
+
+    Ok(ReadOnlySchemaMetadata {
+        schema_version: compatibility_schema_version.or(applied_schema_version),
+        is_consistent: matches!(
+            (compatibility_schema_version, applied_schema_version),
+            (Some(compatibility), Some(applied)) if compatibility == applied
+        ),
     })
 }
 

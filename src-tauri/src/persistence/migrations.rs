@@ -1,12 +1,15 @@
 use std::{
     borrow::Cow,
-    path::{Path, PathBuf},
-    time::Duration,
+    fs::{self, File, OpenOptions},
+    io::{self, Write},
+    path::{Component, Path, PathBuf},
+    time::{Duration, UNIX_EPOCH},
 };
 
+use serde::{Deserialize, Serialize};
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
-    Executor, Sqlite,
+    Executor, Row, Sqlite,
 };
 
 use crate::persistence::{
@@ -19,6 +22,50 @@ use crate::persistence::{
     schema_compatibility::{decide_open_mode, load_schema_compatibility, BinaryCompatibility},
     schema_registry,
 };
+
+const SCHEMA_UPGRADE_BACKUP_MANIFEST_VERSION: u32 = 1;
+const SCHEMA_UPGRADE_BACKUP_MANIFEST_SUFFIX: &str = ".backup-manifest.json";
+
+// Database files created by the 2026-08-25 build contain this checksum for
+// migration 55. The source file was subsequently amended before it was
+// committed. Keep this compatibility entry until those databases have passed
+// the repair; unknown checksum drift remains a hard failure.
+const LEGACY_MIGRATION_55_CHECKSUM: [u8; 48] = [
+    0x3D, 0xDD, 0x99, 0xB4, 0xA9, 0xCF, 0xDC, 0xBE, 0xA0, 0x65, 0xFC, 0xA8, 0xBA, 0x08, 0x83, 0xF6,
+    0x4E, 0x07, 0x4D, 0xAC, 0xD8, 0x88, 0xC2, 0xBD, 0x55, 0xF6, 0x3A, 0x8D, 0x2B, 0x56, 0xB4, 0x62,
+    0x47, 0x43, 0x72, 0xAC, 0xB3, 0xB4, 0xDA, 0xB2, 0x42, 0x44, 0xD6, 0x53, 0x91, 0x78, 0xAC, 0xF8,
+];
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SchemaUpgradeBackupManifest {
+    manifest_version: u32,
+    source_schema: i64,
+    target_schema: i64,
+    source_identity: SchemaUpgradeSourceIdentity,
+    backup_file_name: String,
+    backup_identity: SchemaUpgradeFileIdentity,
+}
+
+/// A metadata-only identity keeps retry checks constant-time even for multi-GB
+/// databases. The installation lease prevents concurrent writes by Relay Pool.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SchemaUpgradeFileIdentity {
+    volume_serial: Option<u64>,
+    file_id: Option<u64>,
+    length: u64,
+    modified_unix_seconds: Option<u64>,
+    modified_nanoseconds: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SchemaUpgradeSourceIdentity {
+    database: SchemaUpgradeFileIdentity,
+    wal: Option<SchemaUpgradeFileIdentity>,
+    journal: Option<SchemaUpgradeFileIdentity>,
+}
 
 pub(crate) fn migrator() -> &'static sqlx::migrate::Migrator {
     static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./src/persistence/migrations");
@@ -122,10 +169,11 @@ pub(crate) async fn upgrade_existing_v2_database(
         )
         .await?;
     }
+    reconcile_historical_migration_checksums(&pool).await?;
     pool.close().await;
 
-    let backup_path = schema_upgrade_backup_path(path, schema_version)?;
-    create_verified_backup_from_path(path, &backup_path).await?;
+    let backup_path =
+        ensure_schema_upgrade_backup(path, schema_version, current_schema_version()).await?;
 
     let pool = migration_pool_existing(path).await?;
     if let Err(error) = migrator().run(&pool).await {
@@ -176,11 +224,11 @@ pub(crate) async fn upgrade_existing_v2_database_to_schema(
             "generation 2 schema is not eligible for a bounded upgrade".to_string(),
         ));
     }
+    reconcile_historical_migration_checksums(&pool).await?;
     pool.close().await;
 
     let backup_path =
-        schema_upgrade_backup_path_to_schema(path, compatibility.schema_version, target_schema)?;
-    create_verified_backup_from_path(path, &backup_path).await?;
+        ensure_schema_upgrade_backup(path, compatibility.schema_version, target_schema).await?;
 
     let pool = migration_pool_existing(path).await?;
     let bounded = migrator_through(target_schema)?;
@@ -198,6 +246,88 @@ pub(crate) async fn upgrade_existing_v2_database_to_schema(
     }
     validate_read_only_sqlite(path).await?;
     Ok(Some(backup_path))
+}
+
+/// SQLx deliberately rejects modified applied migrations. One released build
+/// shipped migration 55 before the file was amended in source control, so we
+/// repair that exact, known checksum only after checking its durable effects.
+/// This is intentionally a preflight: SQLx must see the canonical checksum
+/// before it evaluates the rest of the migration chain.
+async fn reconcile_historical_migration_checksums(
+    pool: &sqlx::SqlitePool,
+) -> Result<(), PersistenceError> {
+    let rows = sqlx::query(
+        "SELECT version, checksum FROM _sqlx_migrations WHERE success = 1 ORDER BY version",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    for row in rows {
+        let version: i64 = row.try_get("version")?;
+        let actual: Vec<u8> = row.try_get("checksum")?;
+        let migration = migrator()
+            .iter()
+            .find(|migration| migration.version == version)
+            .ok_or_else(|| PersistenceError::MigrationChecksumMismatch {
+                version,
+                expected: "migration missing from registry".to_string(),
+                actual: hex_checksum(&actual),
+            })?;
+        let expected = migration.checksum.as_ref();
+        if actual.as_slice() == expected {
+            continue;
+        }
+
+        if version == 55 && actual.as_slice() == LEGACY_MIGRATION_55_CHECKSUM {
+            verify_legacy_migration_55_postcondition(pool).await?;
+            sqlx::query(
+                "UPDATE _sqlx_migrations SET checksum = ?1 WHERE version = ?2 AND success = 1",
+            )
+            .bind(expected)
+            .bind(version)
+            .execute(pool)
+            .await?;
+            continue;
+        }
+
+        return Err(PersistenceError::MigrationChecksumMismatch {
+            version,
+            expected: hex_checksum(expected),
+            actual: hex_checksum(&actual),
+        });
+    }
+    Ok(())
+}
+
+async fn verify_legacy_migration_55_postcondition(
+    pool: &sqlx::SqlitePool,
+) -> Result<(), PersistenceError> {
+    let schema_version: i64 = sqlx::query_scalar(
+        "SELECT schema_version FROM persistence_schema_compatibility WHERE singleton_key = 1",
+    )
+    .fetch_one(pool)
+    .await?;
+    if schema_version != 55 {
+        return Err(PersistenceError::InvariantViolation(
+            "legacy migration 55 checksum matched but schema metadata is not 55".to_string(),
+        ));
+    }
+    let historical_defaults: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM settings WHERE key = 'collector_timeout_seconds' AND trim(value) = '15'",
+    )
+    .fetch_one(pool)
+    .await?;
+    if historical_defaults != 0 {
+        return Err(PersistenceError::InvariantViolation(
+            "legacy migration 55 checksum matched but collector timeout postcondition is not satisfied"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn hex_checksum(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02X}")).collect()
 }
 
 pub(crate) fn current_binary_compatibility() -> BinaryCompatibility {
@@ -244,18 +374,215 @@ async fn migration_pool_existing(
         .await?)
 }
 
-fn schema_upgrade_backup_path(
+async fn ensure_schema_upgrade_backup(
     database_path: &Path,
     source_schema: i64,
+    target_schema: i64,
 ) -> Result<PathBuf, PersistenceError> {
-    let parent = database_path.parent().ok_or(PersistenceError::IoFailed {
-        kind: std::io::ErrorKind::InvalidInput,
-    })?;
-    Ok(parent.join("backups").join(format!(
-        "relay-pool-v2-schema-{source_schema}-to-{}-{}.sqlite3",
-        current_schema_version(),
-        uuid::Uuid::now_v7()
+    let source_identity = capture_source_identity(database_path)?;
+    let backups_root = schema_upgrade_backups_root(database_path)?;
+    if let Some(existing) = find_reusable_schema_upgrade_backup(
+        &backups_root,
+        source_schema,
+        target_schema,
+        &source_identity,
+    ) {
+        return Ok(existing);
+    }
+
+    let backup_path =
+        schema_upgrade_backup_path_to_schema(database_path, source_schema, target_schema)?;
+    create_verified_backup_from_path(database_path, &backup_path).await?;
+
+    if capture_source_identity(database_path)? != source_identity {
+        return Err(PersistenceError::InvariantViolation(
+            "database source changed while creating the schema upgrade backup".to_string(),
+        ));
+    }
+
+    let backup_identity = database_file_identity(&backup_path)?;
+    let backup_file_name = backup_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            PersistenceError::InvariantViolation(
+                "schema upgrade backup has no valid file name".to_string(),
+            )
+        })?
+        .to_owned();
+    write_schema_upgrade_backup_manifest(
+        &backup_path,
+        &SchemaUpgradeBackupManifest {
+            manifest_version: SCHEMA_UPGRADE_BACKUP_MANIFEST_VERSION,
+            source_schema,
+            target_schema,
+            source_identity,
+            backup_file_name,
+            backup_identity,
+        },
+    )?;
+    Ok(backup_path)
+}
+
+fn schema_upgrade_backups_root(database_path: &Path) -> Result<PathBuf, PersistenceError> {
+    database_path
+        .parent()
+        .map(|parent| parent.join("backups"))
+        .ok_or(PersistenceError::IoFailed {
+            kind: std::io::ErrorKind::InvalidInput,
+        })
+}
+
+fn capture_source_identity(path: &Path) -> Result<SchemaUpgradeSourceIdentity, PersistenceError> {
+    Ok(SchemaUpgradeSourceIdentity {
+        database: database_file_identity(path)?,
+        wal: optional_database_file_identity(&sqlite_sidecar_path(path, "-wal"))?,
+        journal: optional_database_file_identity(&sqlite_sidecar_path(path, "-journal"))?,
+    })
+}
+
+fn optional_database_file_identity(
+    path: &Path,
+) -> Result<Option<SchemaUpgradeFileIdentity>, PersistenceError> {
+    if path.exists() {
+        let identity = database_file_identity(path)?;
+        // SQLite may materialize an empty WAL while a read-only connection is opened.
+        // It contains no source state and must not make an otherwise stable source
+        // appear modified between the pre- and post-backup snapshots.
+        if identity.length == 0 {
+            Ok(None)
+        } else {
+            Ok(Some(identity))
+        }
+    } else {
+        Ok(None)
+    }
+}
+
+fn sqlite_sidecar_path(database_path: &Path, suffix: &str) -> PathBuf {
+    PathBuf::from(format!("{}{}", database_path.display(), suffix))
+}
+
+fn database_file_identity(path: &Path) -> Result<SchemaUpgradeFileIdentity, PersistenceError> {
+    let file = File::open(path)?;
+    let metadata = file.metadata()?;
+    let (volume_serial, file_id) = platform_file_identity(&file)?;
+    let (modified_unix_seconds, modified_nanoseconds) = metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| (Some(duration.as_secs()), Some(duration.subsec_nanos())))
+        .unwrap_or((None, None));
+    Ok(SchemaUpgradeFileIdentity {
+        volume_serial,
+        file_id,
+        length: metadata.len(),
+        modified_unix_seconds,
+        modified_nanoseconds,
+    })
+}
+
+#[cfg(windows)]
+fn platform_file_identity(file: &File) -> Result<(Option<u64>, Option<u64>), PersistenceError> {
+    use std::{mem, os::windows::io::AsRawHandle};
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+    };
+
+    let mut info = unsafe { mem::zeroed::<BY_HANDLE_FILE_INFORMATION>() };
+    let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) };
+    if ok == 0 {
+        return Err(PersistenceError::IoFailed {
+            kind: io::Error::last_os_error().kind(),
+        });
+    }
+    let file_id = (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow);
+    Ok((Some(u64::from(info.dwVolumeSerialNumber)), Some(file_id)))
+}
+
+#[cfg(not(windows))]
+fn platform_file_identity(_file: &File) -> Result<(Option<u64>, Option<u64>), PersistenceError> {
+    Ok((None, None))
+}
+
+fn find_reusable_schema_upgrade_backup(
+    backups_root: &Path,
+    source_schema: i64,
+    target_schema: i64,
+    source_identity: &SchemaUpgradeSourceIdentity,
+) -> Option<PathBuf> {
+    let entries = fs::read_dir(backups_root).ok()?;
+    entries.filter_map(Result::ok).find_map(|entry| {
+        let manifest_path = entry.path();
+        let file_name = manifest_path.file_name()?.to_str()?;
+        if !manifest_path.is_file() || !file_name.ends_with(SCHEMA_UPGRADE_BACKUP_MANIFEST_SUFFIX) {
+            return None;
+        }
+        let manifest = read_schema_upgrade_backup_manifest(&manifest_path)?;
+        if manifest.manifest_version != SCHEMA_UPGRADE_BACKUP_MANIFEST_VERSION
+            || manifest.source_schema != source_schema
+            || manifest.target_schema != target_schema
+            || manifest.source_identity != *source_identity
+        {
+            return None;
+        }
+        let backup_path = backup_path_from_manifest(backups_root, &manifest.backup_file_name)?;
+        let actual_backup_identity = database_file_identity(&backup_path).ok()?;
+        (actual_backup_identity == manifest.backup_identity).then_some(backup_path)
+    })
+}
+
+fn backup_path_from_manifest(backups_root: &Path, backup_file_name: &str) -> Option<PathBuf> {
+    let path = Path::new(backup_file_name);
+    matches!(path.components().next(), Some(Component::Normal(_))).then_some(())?;
+    (path.components().count() == 1).then_some(backups_root.join(path))
+}
+
+fn schema_upgrade_backup_manifest_path(backup_path: &Path) -> Result<PathBuf, PersistenceError> {
+    let file_name = backup_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            PersistenceError::InvariantViolation(
+                "schema upgrade backup has no valid manifest name".to_string(),
+            )
+        })?;
+    Ok(backup_path.with_file_name(format!(
+        "{file_name}{SCHEMA_UPGRADE_BACKUP_MANIFEST_SUFFIX}"
     )))
+}
+
+fn read_schema_upgrade_backup_manifest(path: &Path) -> Option<SchemaUpgradeBackupManifest> {
+    serde_json::from_slice(&fs::read(path).ok()?).ok()
+}
+
+fn write_schema_upgrade_backup_manifest(
+    backup_path: &Path,
+    manifest: &SchemaUpgradeBackupManifest,
+) -> Result<(), PersistenceError> {
+    let manifest_path = schema_upgrade_backup_manifest_path(backup_path)?;
+    let temporary_path = manifest_path.with_file_name(format!(
+        "{}.tmp",
+        manifest_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| PersistenceError::InvariantViolation(
+                "schema upgrade backup manifest has no valid file name".to_string(),
+            ))?
+    ));
+    let bytes = serde_json::to_vec_pretty(manifest).map_err(|_| {
+        PersistenceError::InvariantViolation(
+            "failed to serialize schema upgrade backup manifest".to_string(),
+        )
+    })?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary_path)?;
+    file.write_all(&bytes)?;
+    file.sync_all()?;
+    fs::rename(temporary_path, manifest_path)?;
+    Ok(())
 }
 
 fn schema_upgrade_backup_path_to_schema(
@@ -298,7 +625,7 @@ pub(crate) fn migrator_through(
 
 #[cfg(test)]
 mod tests {
-    use std::borrow::Cow;
+    use std::{borrow::Cow, fs};
 
     use sha2::{Digest, Sha384};
     use sqlx::{migrate::Migrator, Connection, Row};
@@ -466,6 +793,105 @@ mod tests {
             "writable"
         );
         runtime.close().await.expect("close runtime");
+    }
+
+    #[tokio::test]
+    async fn schema_55_to_56_migration_reaches_its_declared_postcondition() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join("relay-pool-v2.sqlite3");
+        initialize_database_through(&path, 55).await;
+
+        let backup = upgrade_existing_v2_database_to_schema(&path, 56)
+            .await
+            .expect("upgrade schema 55 to 56")
+            .expect("schema 55 upgrade creates backup");
+
+        assert_eq!(database_schema_version(&backup).await, 55);
+        assert_eq!(database_schema_version(&path).await, 56);
+    }
+
+    #[tokio::test]
+    async fn known_legacy_schema_55_checksum_is_reconciled_before_upgrade() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join("relay-pool-v2.sqlite3");
+        initialize_database_through(&path, 55).await;
+        let pool = migration_pool_existing(&path).await.expect("open database");
+        sqlx::query("UPDATE _sqlx_migrations SET checksum = ?1 WHERE version = 55")
+            .bind(LEGACY_MIGRATION_55_CHECKSUM.as_slice())
+            .execute(&pool)
+            .await
+            .expect("install legacy checksum");
+        pool.close().await;
+
+        upgrade_existing_v2_database_to_schema(&path, 56)
+            .await
+            .expect("legacy checksum is safely reconciled");
+        assert_eq!(database_schema_version(&path).await, 56);
+    }
+
+    #[tokio::test]
+    async fn unknown_historical_checksum_drift_is_rejected_without_repair() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join("relay-pool-v2.sqlite3");
+        initialize_database_through(&path, 55).await;
+        let pool = migration_pool_existing(&path).await.expect("open database");
+        sqlx::query("UPDATE _sqlx_migrations SET checksum = ?1 WHERE version = 55")
+            .bind(vec![0xA5_u8; 48])
+            .execute(&pool)
+            .await
+            .expect("install unknown checksum");
+        let error = reconcile_historical_migration_checksums(&pool)
+            .await
+            .expect_err("unknown checksum drift must fail closed");
+        assert!(matches!(
+            error,
+            PersistenceError::MigrationChecksumMismatch { version: 55, .. }
+        ));
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn schema_upgrade_backup_reuses_only_a_matching_verified_manifest() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join("relay-pool-v2.sqlite3");
+        initialize_database_through(&path, 55).await;
+        let backups_root = root.path().join("backups");
+        fs::create_dir_all(&backups_root).expect("backup root");
+        fs::write(
+            backups_root.join("interrupted-schema-55-to-56.sqlite3.tmp"),
+            b"incomplete backup",
+        )
+        .expect("incomplete backup artifact");
+        fs::write(
+            backups_root.join("interrupted-schema-55-to-56.sqlite3.tmp-journal"),
+            b"incomplete journal artifact",
+        )
+        .expect("incomplete journal artifact");
+
+        let first = ensure_schema_upgrade_backup(&path, 55, 56)
+            .await
+            .expect("first backup");
+        let first_manifest = schema_upgrade_backup_manifest_path(&first).expect("manifest path");
+        assert!(first.is_file());
+        assert!(first_manifest.is_file());
+
+        let second = ensure_schema_upgrade_backup(&path, 55, 56)
+            .await
+            .expect("reused backup");
+        assert_eq!(second, first, "unchanged source reuses the verified backup");
+
+        write_migration_canary(&path).await;
+        let third = ensure_schema_upgrade_backup(&path, 55, 56)
+            .await
+            .expect("backup after source change");
+        assert_ne!(third, first, "source change requires a fresh backup");
+        assert!(third.is_file());
+        assert!(backups_root
+            .join("interrupted-schema-55-to-56.sqlite3.tmp")
+            .is_file());
+        assert!(backups_root
+            .join("interrupted-schema-55-to-56.sqlite3.tmp-journal")
+            .is_file());
     }
 
     #[tokio::test]
