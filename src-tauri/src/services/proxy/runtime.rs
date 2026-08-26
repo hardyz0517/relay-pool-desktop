@@ -975,7 +975,7 @@ mod tests {
             ExecutionCredentialError, ExecutionCredentialResolver, SecretBytes, SecretRef,
         },
         application::routing_execution_reader::RoutingExecutionReadError,
-        models::{pricing::UpsertPricingRuleInput, routing::RouteEndpointKind},
+        models::{pricing::UpsertModelBasePriceInput, routing::RouteEndpointKind},
         services::proxy::{
             lifecycle::{
                 attempt::AttemptTerminalRecord,
@@ -990,6 +990,41 @@ mod tests {
     };
 
     use super::*;
+
+    async fn seed_token_base_price(fixture: &V2ProxyTestFixture, model: &str) {
+        fixture
+            .services
+            .pricing
+            .upsert_model_base_price(UpsertModelBasePriceInput {
+                id: Some(format!("test-price-{model}")),
+                provider: "fixture".to_string(),
+                model: model.to_string(),
+                input_price: Some(5.0),
+                output_price: Some(30.0),
+                input_price_priority: None,
+                output_price_priority: None,
+                cache_creation_price: None,
+                cache_creation_price_priority: None,
+                cache_creation_price_above_1hr: None,
+                cache_read_price: None,
+                cache_read_price_priority: None,
+                long_context_input_token_threshold: None,
+                long_context_input_cost_multiplier: None,
+                long_context_output_cost_multiplier: None,
+                supports_service_tier: false,
+                supports_prompt_caching: false,
+                currency: "USD".to_string(),
+                unit: "per_1m_tokens".to_string(),
+                source_url: "https://fixture.invalid/pricing".to_string(),
+                source_label: "fixture".to_string(),
+                source_checked_at: Some("1".to_string()),
+                enabled: true,
+                built_in: false,
+                note: None,
+            })
+            .await
+            .expect("model base price");
+    }
 
     struct DropObservedStore {
         dropped: Arc<AtomicBool>,
@@ -1484,37 +1519,8 @@ mod tests {
             br#"{"id":"chatcmpl-v2","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop","index":0}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#.to_vec(),
         )]);
         let fixture = V2ProxyTestFixture::new().await;
-        let seeded = fixture.seed_candidate(upstream.base_url.as_str()).await;
-        fixture
-            .services
-            .pricing
-            .upsert_pricing_rule(UpsertPricingRuleInput {
-                id: Some("runtime-token-price".to_string()),
-                station_id: seeded.station_id,
-                station_key_id: Some(seeded.station_key_id),
-                group_binding_id: None,
-                group_name: None,
-                tier_label: None,
-                model: "gpt-test".to_string(),
-                input_price: Some(5.0),
-                output_price: Some(30.0),
-                fixed_price: None,
-                rate_multiplier: None,
-                currency: "USD".to_string(),
-                unit: "per_1m_tokens".to_string(),
-                price_type: "token".to_string(),
-                base_price_source: None,
-                normalization_status: Some("complete".to_string()),
-                source: "manual".to_string(),
-                confidence: 1.0,
-                enabled: true,
-                note: None,
-                collected_at: Some("1".to_string()),
-                valid_from: None,
-                valid_until: None,
-            })
-            .await
-            .expect("pricing rule");
+        fixture.seed_candidate(upstream.base_url.as_str()).await;
+        seed_token_base_price(&fixture, "gpt-test").await;
         let runtime = ProxyRuntimeState::for_tests();
         let started = runtime.start(fixture.config(0)).await.expect("start v2");
 
@@ -1604,37 +1610,8 @@ data: [DONE]
             .to_vec(),
         )]);
         let fixture = V2ProxyTestFixture::new().await;
-        let seeded = fixture.seed_candidate(upstream.base_url.as_str()).await;
-        fixture
-            .services
-            .pricing
-            .upsert_pricing_rule(UpsertPricingRuleInput {
-                id: Some("runtime-stream-token-price".to_string()),
-                station_id: seeded.station_id,
-                station_key_id: Some(seeded.station_key_id),
-                group_binding_id: None,
-                group_name: None,
-                tier_label: None,
-                model: "gpt-test".to_string(),
-                input_price: Some(5.0),
-                output_price: Some(30.0),
-                fixed_price: None,
-                rate_multiplier: None,
-                currency: "USD".to_string(),
-                unit: "per_1m_tokens".to_string(),
-                price_type: "token".to_string(),
-                base_price_source: None,
-                normalization_status: Some("complete".to_string()),
-                source: "manual".to_string(),
-                confidence: 1.0,
-                enabled: true,
-                note: None,
-                collected_at: Some("1".to_string()),
-                valid_from: None,
-                valid_until: None,
-            })
-            .await
-            .expect("stream pricing rule");
+        fixture.seed_candidate(upstream.base_url.as_str()).await;
+        seed_token_base_price(&fixture, "gpt-test").await;
         let runtime = ProxyRuntimeState::for_tests();
         let started = runtime.start(fixture.config(0)).await.expect("start v2");
 

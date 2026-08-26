@@ -40,7 +40,6 @@ fn workspace_from_rows(rows: PricingComparisonRows) -> PricingComparisonWorkspac
         station_keys: rows.station_keys,
         group_bindings: rows.group_bindings,
         group_rates: rows.group_rates,
-        pricing_rules: rows.pricing_rules,
         developer_mode_enabled: rows.developer_mode_enabled,
     }
 }

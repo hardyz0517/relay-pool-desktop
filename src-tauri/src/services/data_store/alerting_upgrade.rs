@@ -179,7 +179,7 @@ async fn copy_history_page_bounded(
     let rows = if legacy_table_exists {
         sqlx::query(
             "SELECT id, severity, event_type, object_type, object_id, station_id,
-                    station_key_id, pricing_rule_id, request_log_id, old_value_json,
+                    station_key_id, request_log_id, old_value_json,
                     new_value_json, impact_json, source, detected_at, created_at, updated_at
              FROM change_events
              WHERE (?1 IS NULL OR updated_at < ?1 OR (updated_at = ?1 AND id < ?2))
@@ -974,7 +974,6 @@ mod tests {
                             object_id TEXT,
                             station_id TEXT,
                             station_key_id TEXT,
-                            pricing_rule_id TEXT,
                             request_log_id TEXT,
                             old_value_json TEXT,
                             new_value_json TEXT,

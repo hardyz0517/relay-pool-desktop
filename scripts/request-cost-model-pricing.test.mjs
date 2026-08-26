@@ -67,14 +67,20 @@ assert.match(
 
 assert.match(
   pricingStoreSource,
-  /CASE WHEN lower\(r\.model\) = lower\(\?2\) THEN 0 ELSE 1 END/,
-  "route economics lookup should prefer pricing rules for the requested model",
+  /FROM model_base_prices p[\s\S]*?lower\(p\.model\) = lower\(\?2\)/,
+  "route economics lookup should select the requested model from model base prices",
 );
 
 assert.match(
   pricingStoreSource,
-  /CASE WHEN r\.input_price IS NOT NULL OR r\.output_price IS NOT NULL OR r\.fixed_price IS NOT NULL THEN 0 ELSE 1 END/,
-  "route economics lookup should prefer price-bearing rules over group-rate-only rows",
+  /LEFT JOIN station_group_bindings b ON b\.id = k\.group_binding_id/,
+  "route economics lookup should apply the key's current group binding multiplier",
+);
+
+assert.doesNotMatch(
+  pricingStoreSource,
+  /pricing_rules|fixed_price/,
+  "current route economics lookup must not depend on the removed legacy pricing fields",
 );
 
 console.log("request cost model pricing contract passed");

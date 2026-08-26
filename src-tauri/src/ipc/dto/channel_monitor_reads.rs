@@ -282,6 +282,8 @@ fn fixture_monitor() -> ChannelMonitor {
         enabled: true,
         pause_on_zero_balance: true,
         balance_paused: false,
+        proxy_mode: "inherit".into(),
+        proxy_url: None,
         protocol_kind: "open_ai_chat".into(),
         client_profile_id: "standard_api".into(),
         client_profile_version: 1,

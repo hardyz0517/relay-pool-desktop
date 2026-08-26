@@ -77,10 +77,8 @@ pub struct MonitoringTransportResponse {
     pub http_status: u16,
     pub content_type: Option<String>,
     pub body: Vec<u8>,
-    #[cfg(test)]
     pub first_headers_latency_ms: u64,
-    #[cfg(test)]
-    pub first_content_latency_ms: u64,
+    pub first_content_latency_ms: Option<u64>,
     pub total_latency_ms: u64,
     #[cfg(test)]
     pub response_bytes: usize,
@@ -180,10 +178,8 @@ impl MonitoringTransport {
             http_status: response.status.as_u16(),
             content_type,
             body: response.body.to_vec(),
-            #[cfg(test)]
             first_headers_latency_ms: total_latency_ms,
-            #[cfg(test)]
-            first_content_latency_ms: total_latency_ms,
+            first_content_latency_ms: Some(total_latency_ms),
             total_latency_ms,
             #[cfg(test)]
             response_bytes,
@@ -223,10 +219,14 @@ impl MonitoringTransport {
         H: FnMut(&[u8]) + Send,
     {
         let started = Instant::now();
+        let mut first_content_latency_ms = None;
         let stream_response = match self.outbound_request(&request) {
             Ok(outbound_request) => self
                 .client
                 .execute_stream(outbound_request, cancellation_token, |chunk| {
+                    if first_content_latency_ms.is_none() {
+                        first_content_latency_ms = Some(elapsed_ms(started.elapsed()));
+                    }
                     on_chunk(chunk);
                     Ok(())
                 })
@@ -249,10 +249,8 @@ impl MonitoringTransport {
             // A streaming success is deliberately not retained. The protocol
             // reducer receives each chunk above and owns only bounded state.
             body: Vec::new(),
-            #[cfg(test)]
-            first_headers_latency_ms: total_latency_ms,
-            #[cfg(test)]
-            first_content_latency_ms: total_latency_ms,
+            first_headers_latency_ms: stream_response.headers_latency_ms,
+            first_content_latency_ms,
             total_latency_ms,
             #[cfg(test)]
             response_bytes: stream_response.body_bytes,

@@ -370,7 +370,7 @@ mod tests {
             routing_engine::request::{CanonicalRouteRequest, RouteKind, RouteRequestClassifier},
         },
         models::{
-            pricing::UpsertPricingRuleInput,
+            pricing::UpsertModelBasePriceInput,
             routing::{RoutingGroupFilter, RoutingPolicy, RuntimeRoutingSettings},
         },
         services::proxy::test_support::V2ProxyTestFixture,
@@ -383,33 +383,35 @@ mod tests {
         fixture
             .services
             .pricing
-            .upsert_pricing_rule(UpsertPricingRuleInput {
-                id: Some("repository-exact-price".to_string()),
-                station_id: seeded.station_id.clone(),
-                station_key_id: Some(seeded.station_key_id.clone()),
-                group_binding_id: None,
-                group_name: None,
-                tier_label: None,
+            .upsert_model_base_price(UpsertModelBasePriceInput {
+                id: Some("repository-token-price".to_string()),
+                provider: "fixture".to_string(),
                 model: "gpt-5".to_string(),
-                input_price: None,
-                output_price: None,
-                fixed_price: Some(0.37),
-                rate_multiplier: None,
+                input_price: Some(0.37),
+                output_price: Some(0.74),
+                input_price_priority: None,
+                output_price_priority: None,
+                cache_creation_price: None,
+                cache_creation_price_priority: None,
+                cache_creation_price_above_1hr: None,
+                cache_read_price: None,
+                cache_read_price_priority: None,
+                long_context_input_token_threshold: None,
+                long_context_input_cost_multiplier: None,
+                long_context_output_cost_multiplier: None,
+                supports_service_tier: false,
+                supports_prompt_caching: false,
                 currency: "USD".to_string(),
-                unit: "per_request".to_string(),
-                price_type: "fixed".to_string(),
-                base_price_source: None,
-                normalization_status: Some("complete".to_string()),
-                source: "manual".to_string(),
-                confidence: 0.99,
+                unit: "per_1m_tokens".to_string(),
+                source_url: "https://fixture.invalid/pricing".to_string(),
+                source_label: "fixture".to_string(),
+                source_checked_at: Some("123457".to_string()),
                 enabled: true,
+                built_in: false,
                 note: None,
-                collected_at: Some("123457".to_string()),
-                valid_from: None,
-                valid_until: None,
             })
             .await
-            .expect("pricing rule");
+            .expect("model base price");
 
         let request = RouteRequestClassifier::classify(
             CanonicalRouteRequest {
@@ -467,7 +469,7 @@ mod tests {
         assert_eq!(candidate.station_key_id, seeded.station_key_id);
         assert_eq!(candidate.pricing.basis, RoutingCostBasis::ExactPrice);
         assert_eq!(candidate.pricing.status_label, "priced");
-        assert_eq!(candidate.pricing.estimated_fixed_price, Some(0.37));
+        assert_eq!(candidate.pricing.estimated_input_price, Some(0.37));
         let profile = snapshot
             .profiles
             .get(&seeded.station_key_id)

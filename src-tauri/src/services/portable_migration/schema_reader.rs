@@ -72,9 +72,6 @@ const TRUSTED_INDEXES_V1: &[&str] = &[
     "idx_notification_deliveries_delivery_key",
     "idx_notification_deliveries_incident_episode_created",
     "idx_notification_deliveries_status_scheduled",
-    "idx_pricing_rules_comparison",
-    "idx_pricing_rules_selection",
-    "idx_pricing_rules_station_model",
     "idx_provider_drafts_active_updated",
     "idx_provider_drafts_single_active_create",
     "idx_remote_station_keys_discovery_order",
@@ -564,7 +561,7 @@ mod tests {
 
         assert_eq!(fingerprint.sha256, fixture);
         assert_eq!(fingerprint.table_count, EXPECTED_USER_TABLE_COUNT_V1);
-        assert_eq!(fingerprint.index_count, 79);
+        assert_eq!(fingerprint.index_count, 76);
     }
 
     #[tokio::test]

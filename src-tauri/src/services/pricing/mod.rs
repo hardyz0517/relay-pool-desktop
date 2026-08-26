@@ -4,7 +4,6 @@ pub struct RequestPricingParts<'a> {
     pub station_key_id: &'a str,
     pub station_id: Option<&'a str>,
     pub model: Option<&'a str>,
-    pub pricing_rule_id: Option<&'a str>,
     pub pricing_model: Option<&'a str>,
     pub group_binding_id: Option<&'a str>,
     pub rate_multiplier: Option<f64>,
@@ -12,12 +11,10 @@ pub struct RequestPricingParts<'a> {
     pub price_confidence: Option<f64>,
     pub base_input_price: Option<f64>,
     pub base_output_price: Option<f64>,
-    pub base_fixed_price: Option<f64>,
     pub base_cache_creation_price: Option<f64>,
     pub base_cache_read_price: Option<f64>,
     pub estimated_input_price: Option<f64>,
     pub estimated_output_price: Option<f64>,
-    pub fixed_price: Option<f64>,
     pub estimated_cache_creation_price: Option<f64>,
     pub estimated_cache_read_price: Option<f64>,
     pub price_currency: Option<&'a str>,
@@ -44,7 +41,6 @@ pub fn pricing_context_from_pricing_parts(
         group_binding_id: parts.group_binding_id.map(ToString::to_string),
         base_input_price: parts.base_input_price,
         base_output_price: parts.base_output_price,
-        base_fixed_price: parts.base_fixed_price,
         base_cache_creation_price: parts.base_cache_creation_price,
         base_cache_read_price: parts.base_cache_read_price,
         currency: parts.price_currency.unwrap_or("unknown").to_string(),
@@ -55,7 +51,6 @@ pub fn pricing_context_from_pricing_parts(
         rate_collected_at: parts.collected_at.map(ToString::to_string),
         estimated_input_price: parts.estimated_input_price,
         estimated_output_price: parts.estimated_output_price,
-        estimated_fixed_price: parts.fixed_price,
         estimated_cache_creation_price: parts.estimated_cache_creation_price,
         estimated_cache_read_price: parts.estimated_cache_read_price,
         pricing_status,
@@ -72,24 +67,18 @@ fn pricing_status_from_parts(parts: &RequestPricingParts<'_>) -> PricingStatus {
         Some("base_price_with_group_rate") => PricingStatus::Priced,
         Some("complete") => PricingStatus::Priced,
         Some("group_rate_only")
-            if parts.estimated_input_price.is_none()
-                && parts.estimated_output_price.is_none()
-                && parts.fixed_price.is_none() =>
+            if parts.estimated_input_price.is_none() && parts.estimated_output_price.is_none() =>
         {
             PricingStatus::MissingModelPrice
         }
         _ if parts.group_binding_id.is_some()
             && parts.rate_multiplier.is_none()
             && parts.estimated_input_price.is_none()
-            && parts.estimated_output_price.is_none()
-            && parts.fixed_price.is_none() =>
+            && parts.estimated_output_price.is_none() =>
         {
             PricingStatus::MissingRate
         }
-        _ if parts.estimated_input_price.is_some()
-            || parts.estimated_output_price.is_some()
-            || parts.fixed_price.is_some() =>
-        {
+        _ if parts.estimated_input_price.is_some() || parts.estimated_output_price.is_some() => {
             PricingStatus::Priced
         }
         _ => PricingStatus::Unpriced,
@@ -98,9 +87,6 @@ fn pricing_status_from_parts(parts: &RequestPricingParts<'_>) -> PricingStatus {
 
 fn pricing_parts_source_chain(parts: &RequestPricingParts<'_>) -> Vec<String> {
     let mut chain = Vec::new();
-    if let Some(rule_id) = parts.pricing_rule_id {
-        chain.push(format!("pricing_rule:{rule_id}"));
-    }
     if let Some(model) = parts.pricing_model {
         chain.push(format!("model:{model}"));
     }
@@ -114,10 +100,7 @@ fn pricing_parts_source_chain(parts: &RequestPricingParts<'_>) -> Vec<String> {
 }
 
 fn pricing_parts_reason(parts: &RequestPricingParts<'_>) -> Option<String> {
-    if parts.estimated_input_price.is_some()
-        || parts.estimated_output_price.is_some()
-        || parts.fixed_price.is_some()
-    {
+    if parts.estimated_input_price.is_some() || parts.estimated_output_price.is_some() {
         return None;
     }
     Some(
@@ -140,7 +123,6 @@ mod tests {
             station_key_id: "key-1",
             station_id: Some("station-1"),
             model: Some("gpt-5.4-mini"),
-            pricing_rule_id: Some("rule-1"),
             pricing_model: Some("gpt-5.4-mini"),
             group_binding_id: Some("binding-1"),
             rate_multiplier: Some(0.8),
@@ -148,12 +130,10 @@ mod tests {
             price_confidence: Some(0.9),
             base_input_price: None,
             base_output_price: None,
-            base_fixed_price: None,
             base_cache_creation_price: None,
             base_cache_read_price: None,
             estimated_input_price: Some(0.3),
             estimated_output_price: Some(1.8),
-            fixed_price: None,
             estimated_cache_creation_price: None,
             estimated_cache_read_price: None,
             price_currency: Some("USD"),
@@ -167,7 +147,6 @@ mod tests {
         assert_eq!(
             context.source_chain,
             vec![
-                "pricing_rule:rule-1".to_string(),
                 "model:gpt-5.4-mini".to_string(),
                 "group_binding:binding-1".to_string(),
                 "pricing_source:model_base_price".to_string(),
@@ -181,7 +160,6 @@ mod tests {
             station_key_id: "key-1",
             station_id: Some("station-1"),
             model: Some("gpt-5.4-mini"),
-            pricing_rule_id: None,
             pricing_model: Some("gpt-5.4-mini"),
             group_binding_id: Some("binding-1"),
             rate_multiplier: None,
@@ -189,12 +167,10 @@ mod tests {
             price_confidence: Some(0.5),
             base_input_price: None,
             base_output_price: None,
-            base_fixed_price: None,
             base_cache_creation_price: None,
             base_cache_read_price: None,
             estimated_input_price: None,
             estimated_output_price: None,
-            fixed_price: None,
             estimated_cache_creation_price: None,
             estimated_cache_read_price: None,
             price_currency: Some("USD"),
@@ -214,7 +190,6 @@ mod tests {
             station_key_id: "key-1",
             station_id: Some("station-1"),
             model: Some("gpt-5.4-mini"),
-            pricing_rule_id: None,
             pricing_model: Some("gpt-5.4-mini"),
             group_binding_id: Some("binding-1"),
             rate_multiplier: None,
@@ -222,12 +197,10 @@ mod tests {
             price_confidence: Some(0.5),
             base_input_price: Some(0.25),
             base_output_price: Some(2.0),
-            base_fixed_price: None,
             base_cache_creation_price: None,
             base_cache_read_price: None,
             estimated_input_price: None,
             estimated_output_price: None,
-            fixed_price: None,
             estimated_cache_creation_price: None,
             estimated_cache_read_price: None,
             price_currency: Some("USD"),
@@ -247,7 +220,6 @@ mod tests {
             station_key_id: "key-1",
             station_id: Some("station-1"),
             model: Some("gpt-5.4-mini"),
-            pricing_rule_id: None,
             pricing_model: Some("gpt-5.4-mini"),
             group_binding_id: None,
             rate_multiplier: Some(1.0),
@@ -255,12 +227,10 @@ mod tests {
             price_confidence: Some(0.8),
             base_input_price: Some(0.375),
             base_output_price: Some(2.25),
-            base_fixed_price: None,
             base_cache_creation_price: Some(0.46875),
             base_cache_read_price: Some(0.0375),
             estimated_input_price: Some(0.375),
             estimated_output_price: Some(2.25),
-            fixed_price: None,
             estimated_cache_creation_price: Some(0.46875),
             estimated_cache_read_price: Some(0.0375),
             price_currency: Some("USD"),

@@ -101,7 +101,12 @@ function ChannelStatusCard({ row }: ChannelStatusCardProps) {
       </div>
 
       <div className="mt-3 grid grid-cols-2 gap-2">
-        <MetricTile icon={<Timer className="h-3.5 w-3.5" />} label="模型延迟" value={row.latencyLabel} />
+        <MetricTile
+          icon={<Timer className="h-3.5 w-3.5" />}
+          label="模型延迟"
+          value={row.latencyLabel}
+          title={`总耗时：${row.latencyLabel}\n首包：${row.ttfbLabel}\n首字：${row.firstContentLabel}`}
+        />
         <MetricTile icon={<Gauge className="h-3.5 w-3.5" />} label="端点 Ping" value={row.endpointPingLabel} />
       </div>
 
@@ -140,9 +145,9 @@ function ChannelStatusCard({ row }: ChannelStatusCardProps) {
   );
 }
 
-function MetricTile({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
+function MetricTile({ icon, label, value, title }: { icon: ReactNode; label: string; value: string; title?: string }) {
   return (
-    <div className="min-w-0 rounded-[8px] border border-border bg-surface-subtle px-3 py-2.5">
+    <div className="min-w-0 rounded-[8px] border border-border bg-surface-subtle px-3 py-2.5" title={title}>
       <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground/70">
         {icon}
         <span className="truncate">{label}</span>

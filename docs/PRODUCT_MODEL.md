@@ -10,7 +10,7 @@ Relay Pool Desktop uses a deliberately split product model so collection, routin
 - `Collector / 信息采集` = works around `Station`.
 - `Router / 路由` = works around `Station Key`.
 - `Channel Status / 渠道状态` = works around `Key / Channel`.
-- `Pricing Rule / 价格规则` = normalized pricing data for station / group / model.
+- `Model Base Price / 模型基础价格` = normalized provider/model pricing data.
 - `Balance Snapshot / 余额快照` = normalized balance or quota state with explicit units.
 - `Request Cost / 请求成本` = per-request usage and estimated cost metadata.
 - `Group Binding / 分组绑定` = durable relationship between a station, its groups, and routeable station keys.
@@ -75,23 +75,24 @@ It owns:
 - health status
 - future router integration
 
-## Pricing Rule
+## Model Base Price
 
-`Pricing Rule` is normalized price data derived from a station snapshot, manual entry, or collector source.
+`Model Base Price` is the canonical price catalog for a provider/model. Station-specific pricing
+uses the model base price together with the station group's effective multiplier.
 
 It owns:
 
-- station
-- group / tier
+- provider
 - model
 - input price
 - output price
+- cache prices and long-context modifiers
+- service-tier and prompt-caching capabilities
 - currency
 - unit
 - source
-- confidence
 - enabled state
-- collected time
+- built-in state and source-check time
 
 ## Balance Snapshot
 
@@ -121,7 +122,7 @@ It owns:
 - estimated output cost
 - estimated total cost
 - cost currency
-- pricing rule source
+- model base price and multiplier source
 - cost status
 
 ## Channel Status / Status Monitoring
@@ -208,7 +209,7 @@ It owns:
 - manual action requirement
 - linked collector snapshot
 
-`collector_snapshots` remains useful for redacted debugging and audit, but product pages should prefer `collector_runs`, `station_group_bindings`, `group_rate_records`, `balance_snapshots`, and `pricing_rules`.
+`collector_snapshots` remains useful for redacted debugging and audit, but product pages should prefer `collector_runs`, `model_base_prices`, `station_group_bindings`, `group_rate_records`, and `balance_snapshots`.
 
 ## Secret
 

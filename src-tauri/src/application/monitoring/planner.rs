@@ -11,6 +11,12 @@ pub(crate) enum ProtocolSelection {
     Explicit(ProtocolKind),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MonitorProxyConfig {
+    pub(crate) mode: String,
+    pub(crate) url: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct MonitorPlanningSnapshot {
     pub(crate) id: String,
@@ -24,6 +30,7 @@ pub(crate) struct MonitorPlanningSnapshot {
     pub(crate) retry_policy: RetryPolicy,
     pub(crate) risk_policy: RiskPolicy,
     pub(crate) health_policy: HealthPolicy,
+    pub(crate) proxy: MonitorProxyConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

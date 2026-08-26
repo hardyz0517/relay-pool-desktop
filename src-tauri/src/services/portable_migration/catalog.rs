@@ -96,7 +96,7 @@ pub(crate) enum CatalogError {
 // The v1 catalog describes the post-alerting-cutover user schema. Historical
 // `change_events` is intentionally absent; the six alerting tables below are
 // the durable replacement and must be recognized by portable migration.
-pub(crate) const EXPECTED_USER_TABLE_COUNT_V1: usize = 78;
+pub(crate) const EXPECTED_USER_TABLE_COUNT_V1: usize = 77;
 
 pub(crate) fn migration_data_catalog() -> &'static [TableCatalog] {
     TABLES
@@ -563,33 +563,6 @@ const MODEL_ALIASES_COLUMNS: &[&str] = &[
     "created_at",
     "updated_at",
 ];
-const PRICING_RULES_COLUMNS: &[&str] = &[
-    "id",
-    "station_id",
-    "station_key_id",
-    "group_binding_id",
-    "group_name",
-    "tier_label",
-    "model",
-    "input_price",
-    "output_price",
-    "fixed_price",
-    "rate_multiplier",
-    "currency",
-    "unit",
-    "price_type",
-    "base_price_source",
-    "normalization_status",
-    "source",
-    "confidence",
-    "enabled",
-    "note",
-    "collected_at",
-    "valid_from",
-    "valid_until",
-    "created_at",
-    "updated_at",
-];
 const BALANCE_SNAPSHOTS_COLUMNS: &[&str] = &[
     "id",
     "station_id",
@@ -675,12 +648,7 @@ const REQUEST_LOGS_COLUMNS: &[&str] = &[
     "estimated_input_cost",
     "estimated_output_cost",
     "estimated_total_cost",
-    "base_input_cost",
-    "base_output_cost",
-    "base_fixed_cost",
-    "base_total_cost",
     "cost_currency",
-    "pricing_rule_id",
     "pricing_source",
     "cost_status",
     "usage_status",
@@ -1104,7 +1072,6 @@ const CHANGE_EVENT_OCCURRENCES_COLUMNS: &[&str] = &[
     "object_id",
     "station_id",
     "station_key_id",
-    "pricing_rule_id",
     "request_log_id",
     "source",
     "reason_code",
@@ -2171,15 +2138,6 @@ const TABLES: &[TableCatalog] = &[
         DependencyStage::Routing,
         true,
         MODEL_ALIASES_COLUMNS,
-        &[],
-    ),
-    table(
-        "pricing_rules",
-        TablePolicy::Include,
-        DataCategory::CoreData,
-        DependencyStage::Pricing,
-        true,
-        PRICING_RULES_COLUMNS,
         &[],
     ),
     table(

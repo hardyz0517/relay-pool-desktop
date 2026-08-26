@@ -409,7 +409,6 @@ pub struct RouteCandidateExplanation {
     pub reasons: Vec<String>,
     pub rejection_reasons: Vec<String>,
     pub mapped_model: Option<String>,
-    pub pricing_rule_id: Option<String>,
     pub group_binding_id: Option<String>,
     pub rate_multiplier: Option<f64>,
     pub normalization_status: Option<String>,

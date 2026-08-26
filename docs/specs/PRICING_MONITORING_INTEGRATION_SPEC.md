@@ -75,7 +75,7 @@
 
 | 数据 | 所属事实来源 | 联动层职责 |
 |---|---|---|
-| 价格、倍率、价格更新时间 | `pricing_rules`、`station_group_bindings`、`group_rate_records` | 读取并按现有规则展示 |
+| 模型基础价格、倍率、价格更新时间 | `model_base_prices`、`station_group_bindings`、`group_rate_records` | 读取并按现有模型基础价格与分组倍率展示 |
 | 分组身份 | `station_group_bindings` | 解析价格行与 Key 的关系 |
 | Key 是否存在、Key 顺序 | `station_keys` | 构造监控候选 |
 | Monitor Definition 是否启用 | `channel_monitors` | 过滤监控候选 |

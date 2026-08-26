@@ -64,7 +64,6 @@ const VALIDATED_TABLES: &[&str] = &[
     "collector_snapshots",
     "station_group_bindings",
     "group_rate_records",
-    "pricing_rules",
     "model_base_prices",
     "balance_snapshots",
     "channel_monitor_request_templates",

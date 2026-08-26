@@ -128,7 +128,7 @@ export function ChannelStatusTable({
                   <BodyCell>
                     <div
                       className="flex items-center gap-2"
-                      title={`最近探测：${statusLabel(row.latestProbeTone)}`}
+                      title={`最近探测：${statusLabel(row.latestProbeTone)}\n总耗时：${row.latencyLabel}\n首包：${row.ttfbLabel}\n首字：${row.firstContentLabel}`}
                     >
                       <span
                         role="img"
@@ -157,7 +157,7 @@ export function ChannelStatusTable({
                       ) : (
                         <IconButton
                           label="立即运行"
-                          disabled={actionPending || !row.enabled}
+                          disabled={actionPending}
                           onClick={() => onRunNow(row)}
                         >
                           <Play className="h-4 w-4" />

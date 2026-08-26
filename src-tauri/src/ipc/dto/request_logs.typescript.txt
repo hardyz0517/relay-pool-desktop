@@ -10,8 +10,7 @@ export type RequestLogDto = {
   totalTokens: number | null; cacheCreationTokens: number | null; cacheReadTokens: number | null;
   reasoningEffort: string | null; firstTokenMs: number | null; billingMode: string | null;
   estimatedInputCost: number | null; estimatedOutputCost: number | null; estimatedTotalCost: number | null;
-  baseInputCost: number | null; baseOutputCost: number | null; baseFixedCost: number | null;
-  baseTotalCost: number | null; costCurrency: string | null; pricingRuleId: string | null;
+  costCurrency: string | null;
   pricingSource: string | null; costStatus: string | null; groupBindingId: string | null;
   normalizationStatus: string | null; balanceScope: string | null; economicContextJson: string | null;
   createdAt: string;

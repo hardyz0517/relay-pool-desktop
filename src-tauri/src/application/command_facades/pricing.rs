@@ -7,8 +7,8 @@ use crate::{
     },
     models::{
         pricing::{
-            BalanceSnapshot, ModelBasePrice, PricingRule, RequestKind, ResolvedPricingContext,
-            UpsertBalanceSnapshotInput, UpsertModelBasePriceInput, UpsertPricingRuleInput,
+            BalanceSnapshot, ModelBasePrice, RequestKind, ResolvedPricingContext,
+            UpsertBalanceSnapshotInput, UpsertModelBasePriceInput,
         },
         pricing_group_monitoring::{
             PricingGroupMonitorStatusInput, PricingGroupMonitorStatusWorkspace,
@@ -88,13 +88,6 @@ impl PricingCommandFacade {
         Arc::clone(&self.model_price_sync)
     }
 
-    pub(crate) async fn list_pricing_rules(
-        &self,
-        limit: PageLimit,
-    ) -> Result<Vec<PricingRule>, ApplicationError> {
-        self.pricing.list_pricing_rules(limit).await
-    }
-
     pub(crate) async fn list_model_base_prices(
         &self,
         limit: PageLimit,
@@ -119,17 +112,6 @@ impl PricingCommandFacade {
     ) -> Result<Vec<ModelBasePrice>, ApplicationError> {
         let _ = limit;
         self.model_price_sync.reset_to_builtins().await
-    }
-
-    pub(crate) async fn upsert_pricing_rule(
-        &self,
-        input: UpsertPricingRuleInput,
-    ) -> Result<PricingRule, ApplicationError> {
-        self.pricing.upsert_pricing_rule(input).await
-    }
-
-    pub(crate) async fn delete_pricing_rule(&self, id: String) -> Result<(), ApplicationError> {
-        self.pricing.delete_pricing_rule(id).await
     }
 
     pub(crate) async fn resolve_station_key_pricing_context(

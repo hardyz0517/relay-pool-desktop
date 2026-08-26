@@ -235,7 +235,7 @@ fingerprint = semantic_fingerprint()
 target_tables = {
     "settings", "secrets", "stations", "station_credentials", "station_keys",
     "remote_station_keys", "station_key_capabilities", "model_aliases", "collector_runs",
-    "collector_snapshots", "station_group_bindings", "group_rate_records", "pricing_rules",
+    "collector_snapshots", "station_group_bindings", "group_rate_records",
     "model_base_prices", "balance_snapshots", "channel_monitor_request_templates",
     "channel_monitors", "request_logs", "request_attempts", "change_events",
 }

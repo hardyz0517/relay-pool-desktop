@@ -142,7 +142,7 @@ function TargetResultsTable({ targets }: { targets: ChannelMonitorTargetResultRe
                 <TableHead>请求档案</TableHead>
                 <TableHead>尝试</TableHead>
                 <TableHead>健康写回</TableHead>
-                <TableHead className="text-right">延迟</TableHead>
+                <TableHead className="text-right">耗时</TableHead>
               </tr>
             </thead>
             <tbody>
@@ -179,7 +179,9 @@ function TargetResultsTable({ targets }: { targets: ChannelMonitorTargetResultRe
                       {healthWritebackText(target)}
                     </div>
                   </TableCell>
-                  <TableCell className="text-right font-medium">{formatLatency(target.latencyMs)}</TableCell>
+                  <TableCell className="text-right">
+                    <LatencyBreakdown firstContentMs={target.firstContentMs} latencyMs={target.latencyMs} />
+                  </TableCell>
                 </tr>
               ))}
             </tbody>
@@ -206,7 +208,7 @@ function AttemptList({ attempts, loading }: { attempts: ChannelMonitorAttemptRec
                   {outcomeLabel(attempt.outcome)}
                 </StatusBadge>
                 <span className="text-muted-foreground">HTTP {attempt.httpStatus ?? "--"}</span>
-                <span className="font-medium text-foreground">{formatLatency(attempt.latencyMs)}</span>
+                <LatencyBreakdown firstContentMs={attempt.firstContentMs} latencyMs={attempt.latencyMs} />
               </div>
             </div>
             <div className="mt-1 flex min-w-0 flex-wrap gap-x-3 gap-y-1 text-muted-foreground">
@@ -225,6 +227,21 @@ function AttemptList({ attempts, loading }: { attempts: ChannelMonitorAttemptRec
         )}
       </div>
     </section>
+  );
+}
+
+function LatencyBreakdown({
+  firstContentMs,
+  latencyMs,
+}: {
+  firstContentMs: number | null;
+  latencyMs: number | null;
+}) {
+  return (
+    <span className="inline-flex flex-col items-end gap-0.5 whitespace-nowrap leading-4">
+      <span className="text-success-foreground">首字&nbsp;{formatLatency(firstContentMs)}</span>
+      <span className="font-medium text-foreground">总耗时&nbsp;{formatLatency(latencyMs)}</span>
+    </span>
   );
 }
 

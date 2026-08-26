@@ -102,7 +102,8 @@ impl MonitoringStatusQueryRepository {
                    requested_model, effective_model, used_fallback, attempt_count,
                    decisive_attempt_id, protocol_kind, resolved_adapter_kind,
                    resolved_dialect, client_profile_id, client_profile_version,
-                   request_profile_hash, traffic_equivalence, latency_ms,
+                   request_profile_hash, traffic_equivalence, latency_ms, ttfb_ms,
+                   first_content_ms,
                    availability_eligible, latency_eligible, exclusion_reason,
                    technical_health_effect, semantic_confidence,
                    started_at_ms, finished_at_ms
@@ -134,7 +135,8 @@ impl MonitoringStatusQueryRepository {
             SELECT id, execution_id, monitor_id, station_id, station_key_id,
                    model, model_role, model_index, attempt_number, protocol_kind,
                    client_profile_id, client_profile_version, request_profile_hash,
-                   transport_mode, started_at_ms, finished_at_ms, latency_ms,
+                   transport_mode, started_at_ms, finished_at_ms, latency_ms, ttfb_ms,
+                   first_content_ms,
                    http_status, outcome, failure_kind, retryable, response_model,
                    content_extracted, validation_passed, output_bytes, error_summary
             FROM channel_monitor_attempts
@@ -343,6 +345,8 @@ impl MonitoringStatusQueryRepository {
                     tr.terminal_reason,
                     a.http_status,
                     tr.latency_ms,
+                    tr.ttfb_ms,
+                    tr.first_content_ms,
                     tr.finished_at_ms,
                     tr.used_fallback,
                     tr.semantic_confidence,
@@ -362,7 +366,7 @@ impl MonitoringStatusQueryRepository {
             )
             SELECT id, execution_id, monitor_id, station_key_id,
                    terminal_outcome, terminal_failure_kind, terminal_reason,
-                   http_status, latency_ms, finished_at_ms, used_fallback,
+                   http_status, latency_ms, ttfb_ms, first_content_ms, finished_at_ms, used_fallback,
                    semantic_confidence, attempt_count, effective_model
             FROM ranked
             WHERE rn <=
@@ -391,6 +395,8 @@ impl MonitoringStatusQueryRepository {
                     terminal_reason: row.get("terminal_reason"),
                     http_status: row.get("http_status"),
                     latency_ms: row.get("latency_ms"),
+                    ttfb_ms: row.get("ttfb_ms"),
+                    first_content_ms: row.get("first_content_ms"),
                     checked_at_ms: row.get("finished_at_ms"),
                     used_fallback: row.get::<i64, _>("used_fallback") != 0,
                     semantic_confidence: row.get("semantic_confidence"),
@@ -693,6 +699,8 @@ fn target_result_from_row(row: SqliteRow) -> ChannelMonitorTargetResultRecord {
         request_profile_hash: row.get("request_profile_hash"),
         traffic_equivalence: row.get("traffic_equivalence"),
         latency_ms: row.get("latency_ms"),
+        ttfb_ms: row.get("ttfb_ms"),
+        first_content_ms: row.get("first_content_ms"),
         availability_eligible: row.get::<i64, _>("availability_eligible") != 0,
         latency_eligible: row.get::<i64, _>("latency_eligible") != 0,
         exclusion_reason: row.get("exclusion_reason"),
@@ -722,6 +730,8 @@ fn attempt_from_row(row: SqliteRow) -> ChannelMonitorAttemptRecord {
         started_at_ms: row.get("started_at_ms"),
         finished_at_ms: row.get("finished_at_ms"),
         latency_ms: row.get("latency_ms"),
+        ttfb_ms: row.get("ttfb_ms"),
+        first_content_ms: row.get("first_content_ms"),
         http_status: row.get("http_status"),
         outcome: row.get("outcome"),
         failure_kind: row.get("failure_kind"),

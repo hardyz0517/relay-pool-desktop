@@ -45,7 +45,8 @@ export type ChannelStatusEndpointPingDto = {
 export type ChannelStatusLatestResultDto = {
   targetResultId: string; executionId: string; outcome: ChannelStatusOutcomeDto;
   failureKind: string | null; terminalReason: string | null;
-  httpStatus: number | null; latencyMs: number | null; finishedAtMs: number | null;
+  httpStatus: number | null; latencyMs: number | null; ttfbMs: number | null;
+  firstContentMs: number | null; finishedAtMs: number | null;
   semanticConfidence: string; usedFallback: boolean; attemptCount: number; effectiveModel: string | null;
 };
 
@@ -57,7 +58,8 @@ export type ChannelStatusRunningExecutionDto = {
 export type ChannelStatusRecentPointDto = {
   targetResultId: string; executionId: string; outcome: ChannelStatusOutcomeDto;
   failureKind: string | null; terminalReason: string | null;
-  httpStatus: number | null; latencyMs: number | null; checkedAtMs: number | null;
+  httpStatus: number | null; latencyMs: number | null; ttfbMs: number | null;
+  firstContentMs: number | null; checkedAtMs: number | null;
   usedFallback: boolean; semanticConfidence: string; attemptCount: number; effectiveModel: string | null;
 };
 

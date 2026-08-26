@@ -26,7 +26,7 @@ Default exports may include:
 - pricing and balance metadata
 - request log metadata without prompt or response text
 
-Default imports may create stations, key metadata, pricing rules, aliases, and routing settings. They do not silently overwrite existing secrets. A user must paste new secret values through the normal credential forms.
+Default imports may create stations, key metadata, model base prices, aliases, and routing settings. They do not silently overwrite existing secrets. A user must paste new secret values through the normal credential forms.
 
 ## Local Backups
 

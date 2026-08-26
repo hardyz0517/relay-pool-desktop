@@ -332,7 +332,6 @@ fn pricing_context_for_request(
             unit: None,
             estimated_input_price: None,
             estimated_output_price: None,
-            estimated_fixed_price: None,
             estimated_cache_creation_price: None,
             estimated_cache_read_price: None,
             status_label: "not_applicable".to_string(),
@@ -356,7 +355,6 @@ fn pricing_context_for_request(
             unit: Some("rate_multiplier".to_string()),
             estimated_input_price: None,
             estimated_output_price: None,
-            estimated_fixed_price: None,
             estimated_cache_creation_price: None,
             estimated_cache_read_price: None,
             status_label: "multiplier_proxy".to_string(),
@@ -374,7 +372,6 @@ fn pricing_context_for_request(
         unit: None,
         estimated_input_price: None,
         estimated_output_price: None,
-        estimated_fixed_price: None,
         estimated_cache_creation_price: None,
         estimated_cache_read_price: None,
         status_label: "unpriced".to_string(),
@@ -913,7 +910,7 @@ mod tests {
     }
 
     #[test]
-    fn runtime_candidate_projection_prefers_exact_request_pricing_over_multiplier_proxy() {
+    fn runtime_candidate_projection_uses_token_base_price_over_multiplier_proxy() {
         let now_ms = 1_800_000_000_000;
         let settings = RuntimeRoutingSettings {
             policy: RoutingPolicy::CostStableFirst,
@@ -951,9 +948,8 @@ mod tests {
             resolved_model: "gpt-5-mini".to_string(),
             request_kind: RequestKind::Text,
             group_binding_id: None,
-            base_input_price: None,
+            base_input_price: Some(0.5),
             base_output_price: None,
-            base_fixed_price: Some(0.5),
             base_cache_creation_price: None,
             base_cache_read_price: None,
             currency: "USD".to_string(),
@@ -962,14 +958,13 @@ mod tests {
             effective_rate_multiplier: Some(0.8),
             rate_source: Some("collector".to_string()),
             rate_collected_at: Some("2026-07-31T02:00:00Z".to_string()),
-            estimated_input_price: None,
+            estimated_input_price: Some(0.4),
             estimated_output_price: None,
-            estimated_fixed_price: Some(0.5),
             estimated_cache_creation_price: None,
             estimated_cache_read_price: None,
             pricing_status: PricingStatus::Priced,
             confidence: 0.95,
-            source_chain: vec!["pricing_rule".to_string(), "model_base_price".to_string()],
+            source_chain: vec!["model_base_price".to_string()],
             reason: None,
             resolved_at: "2026-07-31T02:00:00Z".to_string(),
         };
@@ -982,12 +977,11 @@ mod tests {
         .expect("projection");
 
         assert_eq!(projection.pricing.basis, RoutingCostBasis::ExactPrice);
-        assert_eq!(projection.pricing.comparison_value, Some(0.5));
-        assert_eq!(projection.pricing.estimated_fixed_price, Some(0.5));
+        assert_eq!(projection.pricing.comparison_value, Some(0.4));
         assert_eq!(projection.pricing.currency.as_deref(), Some("USD"));
         assert_eq!(
             projection.pricing.source_chain,
-            vec!["pricing_rule".to_string(), "model_base_price".to_string()]
+            vec!["model_base_price".to_string()]
         );
         assert_eq!(
             projection.pricing.observed_at.as_deref(),

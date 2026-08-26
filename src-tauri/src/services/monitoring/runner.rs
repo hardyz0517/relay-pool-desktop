@@ -25,10 +25,12 @@ use crate::{
     },
     background_tasks::{TaskFailure, TaskId, TaskRunContext, TaskSpec, TaskSupervisor},
     models::monitoring::{RunChannelMonitorReceipt, TriggerKind},
+    outbound::ProxyPolicy,
     outbound::{AsyncOutboundClient, AsyncOutboundClientConfig},
     services::{
-        endpoint_ping::ping_station_endpoint,
+        endpoint_ping::ping_station_endpoint_with_proxy,
         monitoring::orchestrator_transport::ProbeExecutorTransport,
+        outbound::{proxy_policy_from_mode, resolve_proxy_config},
     },
 };
 use futures_util::future::{join_all, BoxFuture};
@@ -57,6 +59,7 @@ pub(crate) fn compose_monitoring_runner(services: &AppServices) -> Arc<Monitorin
         services.monitoring.clone(),
         services.routing.clone(),
         services.credentials.clone(),
+        services.settings.clone(),
         AsyncOutboundClient::new(AsyncOutboundClientConfig::monitoring_budget()),
     ))
 }
@@ -65,6 +68,7 @@ pub(crate) struct MonitoringRunner {
     monitoring: Arc<MonitoringService>,
     routing: Arc<RoutingService>,
     credentials: Arc<CredentialService>,
+    settings: Arc<crate::application::settings::SettingsService>,
     outbound: AsyncOutboundClient,
     manual_tx: mpsc::Sender<PreparedMonitoringExecution>,
     manual_rx: Mutex<Option<mpsc::Receiver<PreparedMonitoringExecution>>>,
@@ -78,6 +82,7 @@ impl MonitoringRunner {
         monitoring: Arc<MonitoringService>,
         routing: Arc<RoutingService>,
         credentials: Arc<CredentialService>,
+        settings: Arc<crate::application::settings::SettingsService>,
         outbound: AsyncOutboundClient,
     ) -> Self {
         let (manual_tx, manual_rx) = mpsc::channel(MANUAL_QUEUE_CAPACITY);
@@ -85,6 +90,7 @@ impl MonitoringRunner {
             monitoring,
             routing,
             credentials,
+            settings,
             outbound,
             manual_tx,
             manual_rx: Mutex::new(Some(manual_rx)),
@@ -206,6 +212,18 @@ impl MonitoringRunner {
             .load_monitoring_target_snapshots()
             .await
             .map_err(|error| error.to_string())?;
+        let settings = self
+            .settings
+            .load()
+            .await
+            .map_err(|error| error.to_string())?;
+        let proxy_config = resolve_proxy_config(
+            &snapshot.proxy.mode,
+            snapshot.proxy.url.clone(),
+            &settings.collector_proxy_mode,
+            settings.collector_proxy_url.clone(),
+        );
+        let proxy = proxy_policy_from_mode(&proxy_config.mode, proxy_config.url.as_deref())?;
         let targets = target_snapshots_for_scope(&snapshot, &routing_targets);
         let plan = ProbePlanner
             .build_plan(snapshot.clone(), &targets, trigger_kind)
@@ -217,6 +235,7 @@ impl MonitoringRunner {
             targets,
             routing_targets,
             plan,
+            proxy,
             cancellation_token: CancellationToken::new(),
             registration: None,
         })
@@ -263,6 +282,7 @@ impl MonitoringRunner {
                 self.outbound.clone(),
                 prepared.cancellation_token.clone(),
                 endpoints,
+                prepared.proxy.clone(),
             ),
             self.monitoring.clone(),
             prepared.plan.monitor_id.clone(),
@@ -309,11 +329,13 @@ impl MonitoringRunner {
                 let outbound = self.outbound.clone();
                 let routing = Arc::clone(&self.routing);
                 let cancellation_token = prepared.cancellation_token.clone();
+                let proxy = prepared.proxy.clone();
                 async move {
-                    let probe = ping_station_endpoint(
+                    let probe = ping_station_endpoint_with_proxy(
                         &outbound,
                         &target.base_url,
                         ENDPOINT_PING_TIMEOUT,
+                        proxy,
                         cancellation_token.clone(),
                     )
                     .await;
@@ -353,6 +375,7 @@ struct PreparedMonitoringExecution {
     targets: Vec<TargetCapabilitySnapshot>,
     routing_targets: Vec<RoutingMonitoringTargetSnapshot>,
     plan: ProbePlan,
+    proxy: ProxyPolicy,
     cancellation_token: CancellationToken,
     registration: Option<LiveExecutionRegistration>,
 }

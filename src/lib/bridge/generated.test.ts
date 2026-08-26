@@ -28,7 +28,6 @@ import {
   deleteChannelMonitor,
   deleteChannelMonitorTemplate,
   deleteModelAlias,
-  deletePricingRule,
   deleteRemoteStationKey,
   deleteStationKey,
   deleteStation,
@@ -71,7 +70,6 @@ import {
   listRequestLogs,
   listRecentRouteDecisions,
   listModelAliases,
-  listPricingRules,
   listStationEndpointHealth,
   listStationKeyHealth,
   listStationKeys,
@@ -112,7 +110,6 @@ import {
   upsertBalanceSnapshot,
   upsertModelAlias,
   upsertModelBasePrice,
-  upsertPricingRule,
   updaterNetworkConfig,
   upsertStationGroupBinding,
   type CreateStationInputDto,
@@ -433,6 +430,8 @@ describe("generated settings/stations transport envelopes", () => {
       executionTimeoutMs: 30_000,
       enabled: true,
       pauseOnZeroBalance: true,
+      proxyMode: "inherit" as const,
+      proxyUrl: null,
       intervalSeconds: 60,
       jitterSeconds: 5,
       timeoutSeconds: 15,
@@ -641,7 +640,6 @@ describe("generated settings/stations transport envelopes", () => {
   });
 
   it("sends pricing reads through generated envelopes", async () => {
-    await listPricingRules();
     await listModelBasePrices();
     await resolveStationKeyPricingContext({
       stationKeyId: "key-1",
@@ -651,7 +649,6 @@ describe("generated settings/stations transport envelopes", () => {
     await loadPricingComparisonWorkspace();
 
     expect(transport.invoke.mock.calls).toEqual([
-      ["list_pricing_rules", { input: {} }],
       ["list_model_base_prices", { input: {} }],
       [
         "resolve_station_key_pricing_context",
@@ -695,42 +692,12 @@ describe("generated settings/stations transport envelopes", () => {
       builtIn: false,
       note: null,
     };
-    const rule = {
-      id: null,
-      stationId: "station-1",
-      stationKeyId: null,
-      groupBindingId: null,
-      groupName: null,
-      tierLabel: null,
-      model: "fixture-model",
-      inputPrice: 1,
-      outputPrice: 2,
-      fixedPrice: null,
-      rateMultiplier: 1,
-      currency: "USD",
-      unit: "M",
-      priceType: "token",
-      basePriceSource: null,
-      normalizationStatus: null,
-      source: "manual",
-      confidence: 1,
-      enabled: true,
-      note: null,
-      collectedAt: null,
-      validFrom: null,
-      validUntil: null,
-    };
-
     await upsertModelBasePrice(basePrice);
     await resetModelBasePricesToBuiltins();
-    await upsertPricingRule(rule);
-    await deletePricingRule({ id: "rule-1" });
 
     expect(transport.invoke.mock.calls).toEqual([
       ["upsert_model_base_price", { input: basePrice }],
       ["reset_model_base_prices_to_builtins", { input: {} }],
-      ["upsert_pricing_rule", { input: rule }],
-      ["delete_pricing_rule", { input: { id: "rule-1" } }],
     ]);
   });
 

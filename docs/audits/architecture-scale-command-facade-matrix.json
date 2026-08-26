@@ -397,11 +397,6 @@
       ],
       "commands": [
         {
-          "command": "list_pricing_rules",
-          "use_case": "list_pricing_rules",
-          "dependencies": ["PricingService"]
-        },
-        {
           "command": "list_model_base_prices",
           "use_case": "list_model_base_prices",
           "dependencies": ["PricingService"]
@@ -414,16 +409,6 @@
         {
           "command": "reset_model_base_prices_to_builtins",
           "use_case": "reset_model_base_prices_to_builtins",
-          "dependencies": ["PricingService"]
-        },
-        {
-          "command": "upsert_pricing_rule",
-          "use_case": "upsert_pricing_rule",
-          "dependencies": ["PricingService"]
-        },
-        {
-          "command": "delete_pricing_rule",
-          "use_case": "delete_pricing_rule",
           "dependencies": ["PricingService"]
         },
         {

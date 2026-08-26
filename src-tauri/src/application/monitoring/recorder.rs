@@ -31,6 +31,8 @@ pub(crate) struct RecordedAttempt {
     pub(crate) attempt_number: u8,
     pub(crate) started_at_ms: i64,
     pub(crate) finished_at_ms: i64,
+    pub(crate) ttfb_ms: Option<u64>,
+    pub(crate) first_content_ms: Option<u64>,
     pub(crate) outcome: ProbeOutcome,
     pub(crate) failure_kind: Option<FailureKind>,
     pub(crate) retryable: bool,

@@ -296,7 +296,6 @@ pub(crate) struct SelectedAttemptCostSnapshot {
     pub(crate) unit: Option<String>,
     pub(crate) estimated_input_price: Option<f64>,
     pub(crate) estimated_output_price: Option<f64>,
-    pub(crate) estimated_fixed_price: Option<f64>,
     pub(crate) estimated_cache_creation_price: Option<f64>,
     pub(crate) estimated_cache_read_price: Option<f64>,
 }
@@ -375,10 +374,6 @@ impl SelectedAttemptCostSnapshot {
                 .estimated_output_price
                 .map(currency_units_to_micro)
                 .map(clamp_f64_to_i64),
-            fixed_price_micro: self
-                .estimated_fixed_price
-                .map(currency_units_to_micro)
-                .map(clamp_f64_to_i64),
             status_label: self.pricing_status_label.clone(),
         }
     }
@@ -389,8 +384,7 @@ impl SelectedAttemptCostSnapshot {
         }
         if self.unit.as_deref().is_some_and(|unit| {
             !unit.eq_ignore_ascii_case("M") && !unit.eq_ignore_ascii_case("per_1m_tokens")
-        }) && self.estimated_fixed_price.is_none()
-        {
+        }) {
             return None;
         }
         self.currency.as_ref().filter(|value| !value.is_empty())?;
@@ -438,10 +432,6 @@ impl SelectedAttemptCostSnapshot {
                 currency_units_to_micro(price) * usage.output_tokens.max(0) as f64 / 1_000_000.0;
             has_component = true;
         }
-        if let Some(price) = self.estimated_fixed_price.filter(|value| value.is_finite()) {
-            total += currency_units_to_micro(price);
-            has_component = true;
-        }
         has_component.then(|| clamp_f64_to_i64(total))
     }
 }
@@ -470,7 +460,6 @@ fn interrupted_cost_snapshot(attempt_id: AttemptId) -> AttemptCostSnapshot {
             currency: None,
             input_unit_price_micro: None,
             output_unit_price_micro: None,
-            fixed_price_micro: None,
             status_label: "trace_incomplete".to_string(),
         },
         AttemptUsageSnapshot {
@@ -504,7 +493,6 @@ mod tests {
             unit: Some("per_1m_tokens".to_string()),
             estimated_input_price: Some(5.0),
             estimated_output_price: Some(30.0),
-            estimated_fixed_price: None,
             estimated_cache_creation_price: None,
             estimated_cache_read_price: None,
         };
@@ -528,7 +516,6 @@ mod tests {
             unit: Some("M".to_string()),
             estimated_input_price: Some(1.0),
             estimated_output_price: Some(10.0),
-            estimated_fixed_price: None,
             estimated_cache_creation_price: Some(1.25),
             estimated_cache_read_price: Some(0.1),
         }

@@ -1,31 +1,3 @@
-export type PricingRule = {
-  id: string;
-  stationId: string;
-  stationKeyId: string | null;
-  groupBindingId: string | null;
-  groupName: string | null;
-  tierLabel: string | null;
-  model: string;
-  inputPrice: number | null;
-  outputPrice: number | null;
-  fixedPrice: number | null;
-  rateMultiplier: number | null;
-  currency: string;
-  unit: string;
-  priceType: string;
-  basePriceSource: string | null;
-  normalizationStatus: string;
-  source: string;
-  confidence: number;
-  enabled: boolean;
-  note: string | null;
-  collectedAt: string | null;
-  validFrom: string | null;
-  validUntil: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
-
 export type ModelBasePrice = {
   id: string;
   provider: string;
@@ -197,32 +169,6 @@ export type UpsertModelBasePriceInput = {
   note: string | null;
 };
 
-export type UpsertPricingRuleInput = {
-  id?: string | null;
-  stationId: string;
-  stationKeyId: string | null;
-  groupBindingId: string | null;
-  groupName: string | null;
-  tierLabel: string | null;
-  model: string;
-  inputPrice: number | null;
-  outputPrice: number | null;
-  fixedPrice: number | null;
-  rateMultiplier: number | null;
-  currency: string;
-  unit: string;
-  priceType: string;
-  basePriceSource: string | null;
-  normalizationStatus: string | null;
-  source: string;
-  confidence: number;
-  enabled: boolean;
-  note: string | null;
-  collectedAt: string | null;
-  validFrom: string | null;
-  validUntil: string | null;
-};
-
 export type ResolvedPricingContext = {
   stationKeyId: string;
   stationId: string;
@@ -232,7 +178,6 @@ export type ResolvedPricingContext = {
   groupBindingId: string | null;
   baseInputPrice: number | null;
   baseOutputPrice: number | null;
-  baseFixedPrice: number | null;
   baseCacheCreationPrice: number | null;
   baseCacheReadPrice: number | null;
   currency: string;
@@ -243,7 +188,6 @@ export type ResolvedPricingContext = {
   rateCollectedAt: string | null;
   estimatedInputPrice: number | null;
   estimatedOutputPrice: number | null;
-  estimatedFixedPrice: number | null;
   estimatedCacheCreationPrice: number | null;
   estimatedCacheReadPrice: number | null;
   pricingStatus: PricingStatus;
@@ -260,12 +204,7 @@ export type RequestCost = {
   estimatedInputCost: number | null;
   estimatedOutputCost: number | null;
   estimatedTotalCost: number | null;
-  baseInputCost: number | null;
-  baseOutputCost: number | null;
-  baseFixedCost: number | null;
-  baseTotalCost: number | null;
   costCurrency: string | null;
-  pricingRuleId: string | null;
   pricingSource: string | null;
   costStatus: string | null;
 };

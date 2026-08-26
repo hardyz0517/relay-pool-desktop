@@ -208,9 +208,6 @@ export class DemoBackend implements BackendClient {
     getPortableImportRecoveryState: () => this.rejectUnsupported("data_migration"),
   };
   readonly economics: BackendClient["economics"] = {
-    listPricingRules: () => this.rejectUnsupported("economics"),
-    upsertPricingRule: () => this.rejectUnsupported("economics"),
-    deletePricingRule: (_id: string) => this.rejectUnsupported("economics"),
     resolveStationKeyPricingContext: (_stationKeyId: string, _requestedModel: string) =>
       this.rejectUnsupported("economics"),
     listModelBasePrices: () => this.rejectUnsupported("economics"),

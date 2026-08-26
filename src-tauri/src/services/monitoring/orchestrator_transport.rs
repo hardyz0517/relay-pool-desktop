@@ -40,6 +40,7 @@ pub(crate) struct ProbeTargetEndpoint {
 pub(crate) struct ProbeExecutorTransport {
     client: AsyncOutboundClient,
     cancellation_token: CancellationToken,
+    proxy: ProxyPolicy,
     targets: BTreeMap<String, ProbeTargetEndpoint>,
 }
 
@@ -48,10 +49,12 @@ impl ProbeExecutorTransport {
         client: AsyncOutboundClient,
         cancellation_token: CancellationToken,
         endpoints: impl IntoIterator<Item = ProbeTargetEndpoint>,
+        proxy: ProxyPolicy,
     ) -> Self {
         Self {
             client,
             cancellation_token,
+            proxy,
             targets: endpoints
                 .into_iter()
                 .map(|endpoint| (endpoint.station_key_id.clone(), endpoint))
@@ -95,6 +98,7 @@ impl ProbeTransport for ProbeExecutorTransport {
         };
         let client = self.client.clone();
         let cancellation_token = self.cancellation_token.clone();
+        let proxy = self.proxy.clone();
         Box::pin(async move {
             let now_ms = now_ms();
             let remaining_ms = request.deadline_at_ms.saturating_sub(now_ms).max(1) as u64;
@@ -108,7 +112,7 @@ impl ProbeTransport for ProbeExecutorTransport {
                 client,
                 MonitoringTransportConfig {
                     base_url: endpoint.base_url.clone(),
-                    proxy: ProxyPolicy::Direct,
+                    proxy,
                     #[cfg(test)]
                     timeouts: TimeoutPolicy {
                         connect_timeout: Duration::from_secs(10),
@@ -148,6 +152,8 @@ impl ProbeTransport for ProbeExecutorTransport {
                 retryable: output.retryable,
                 retry_after_ms: None,
                 latency_ms: output.latency_ms,
+                ttfb_ms: output.ttfb_ms,
+                first_content_ms: output.first_content_ms,
                 http_status: output.http_status,
                 response_model: output.response_model,
                 output_bytes: output.output_bytes,

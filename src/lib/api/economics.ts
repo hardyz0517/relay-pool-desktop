@@ -4,20 +4,7 @@ import type {
   ModelPriceSyncConfig,
   UpsertBalanceSnapshotInput,
   UpsertModelBasePriceInput,
-  UpsertPricingRuleInput,
 } from "@/lib/types/economics";
-
-export function listPricingRules() {
-  return getActiveBackendClient().economics.listPricingRules();
-}
-
-export function upsertPricingRule(input: UpsertPricingRuleInput) {
-  return getActiveBackendClient().economics.upsertPricingRule(input);
-}
-
-export function deletePricingRule(id: string) {
-  return getActiveBackendClient().economics.deletePricingRule(id);
-}
 
 export function resolveStationKeyPricingContext(
   stationKeyId: string,

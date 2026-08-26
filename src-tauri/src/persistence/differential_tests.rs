@@ -1108,47 +1108,6 @@ async fn routing_service_loads_v2_runtime_candidates_and_workflow_queries() {
     .expect("balance");
     sqlx::query(
         r#"
-        INSERT INTO pricing_rules (
-            id, station_id, station_key_id, group_binding_id, group_name, tier_label,
-            model, input_price, output_price, fixed_price, rate_multiplier,
-            currency, unit, price_type, base_price_source, normalization_status,
-            source, confidence, enabled, note, collected_at, valid_from, valid_until,
-            created_at, updated_at
-        ) VALUES (
-            'pricing-routing',
-            ?1,
-            'routing-key',
-            'binding-a',
-            'Bound Group A',
-            'Tier 1',
-            'gpt-5',
-            NULL,
-            NULL,
-            0.42,
-            NULL,
-            'USD',
-            'per_request',
-            'fixed',
-            'manual',
-            'complete',
-            'manual',
-            0.93,
-            1,
-            'routing exact price',
-            '123457',
-            NULL,
-            NULL,
-            '123457',
-            '123457'
-        )
-        "#,
-    )
-    .bind(&station.id)
-    .execute(&mut connection)
-    .await
-    .expect("pricing rule");
-    sqlx::query(
-        r#"
         INSERT INTO model_aliases (
             id, client_model, upstream_model, enabled, note, created_at, updated_at
         ) VALUES (
@@ -1244,22 +1203,14 @@ async fn routing_service_loads_v2_runtime_candidates_and_workflow_queries() {
     assert_eq!(economics.manual_rate_updated_at.as_deref(), Some("123456"));
     assert_eq!(economics.rate_source.as_deref(), Some("manual"));
     assert_eq!(priced_candidates.len(), 1);
-    let pricing_context = priced_candidates[0]
-        .pricing_context
-        .as_ref()
-        .expect("request-scoped pricing context");
-    assert_eq!(pricing_context.pricing_status.as_str(), "priced");
-    assert_eq!(pricing_context.estimated_fixed_price, Some(0.42));
     let projection = route_projection_from_runtime_candidate_with_pricing(
         &request,
         priced_candidates[0].candidate.clone(),
         priced_candidates[0].pricing_context.as_ref(),
     )
     .expect("priced projection");
-    assert_eq!(projection.pricing.basis, RoutingCostBasis::ExactPrice);
-    assert_eq!(projection.pricing.comparison_value, Some(0.42));
-    assert_eq!(projection.pricing.currency.as_deref(), Some("USD"));
-    assert_eq!(projection.pricing.status_label, "priced");
+    assert_eq!(projection.pricing.basis, RoutingCostBasis::MultiplierProxy);
+    assert_eq!(projection.pricing.comparison_value, Some(1.5));
     assert!(candidates[0].api_key_secret.is_some());
     assert!(matches!(
         candidates[0]

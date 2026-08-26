@@ -53,17 +53,6 @@ const candidates = derivePricingGroupDisplayCandidates({
       bindingStatus: "available",
     }),
     binding({
-      id: "binding-rule-fallback",
-      stationId: "station-a",
-      groupKeyHash: "local-rule",
-      groupIdHash: "remote-rule",
-      groupName: "rule only",
-      userRateMultiplier: null,
-      effectiveRateMultiplier: null,
-      defaultRateMultiplier: null,
-      bindingStatus: "available",
-    }),
-    binding({
       id: "binding-missing",
       stationId: "station-a",
       groupKeyHash: "local-missing",
@@ -104,17 +93,6 @@ const candidates = derivePricingGroupDisplayCandidates({
       checkedAt: "2026-07-08T03:00:00.000Z",
     }),
   ],
-  pricingRules: [
-    pricingRule({
-      id: "rule-fallback",
-      stationId: "station-a",
-      groupBindingId: "binding-rule-fallback",
-      groupName: "rule only",
-      model: "gpt-5-mini",
-      rateMultiplier: 0.42,
-      enabled: true,
-    }),
-  ],
 });
 
 assert.deepEqual(
@@ -126,7 +104,6 @@ assert.deepEqual(
     groupRateRecordId: candidate.groupRateRecordId,
     groupName: candidate.groupName,
     groupMultiplier: candidate.groupMultiplier,
-    pricingRuleId: candidate.pricingRuleId,
   })),
   [
     {
@@ -137,20 +114,9 @@ assert.deepEqual(
       groupRateRecordId: "rate-current",
       groupName: "default",
       groupMultiplier: 0.8,
-      pricingRuleId: null,
-    },
-    {
-      identityKey: "binding:binding-rule-fallback",
-      stationName: "Station A",
-      stationKeyName: null,
-      groupBindingId: "binding-rule-fallback",
-      groupRateRecordId: null,
-      groupName: "rule only",
-      groupMultiplier: 0.42,
-      pricingRuleId: "rule-fallback",
     },
   ],
-  "pricing candidates should reuse current group facts, suppress shadow rates, hide missing groups, and use pricingRules only as multiplier fallback",
+  "pricing candidates should reuse current group facts, suppress shadow rates, and hide groups without a resolved multiplier",
 );
 
 const projectionSource = await readFile("src/lib/projections/pricingFacts.ts", "utf8");
@@ -161,9 +127,8 @@ assert.ok(
 assert.ok(
   !projectionSource.includes('from "@/features/') &&
     !projectionSource.includes("invoke<") &&
-    !projectionSource.includes("getLocalAccessKey") &&
-    !projectionSource.includes("upsertPricingRule"),
-  "pricing projection should stay pure and must not import feature modules, call Tauri, read secrets, or write pricing rules",
+    !projectionSource.includes("getLocalAccessKey"),
+  "pricing projection should stay pure and must not import feature modules, call Tauri, or read secrets",
 );
 
 function station(id, name, creditPerCny) {
@@ -263,37 +228,6 @@ function rate(overrides) {
     rawJsonRedacted: null,
     checkedAt: "2026-07-08T00:00:00.000Z",
     createdAt: "2026-07-08T00:00:00.000Z",
-    ...overrides,
-  };
-}
-
-function pricingRule(overrides) {
-  return {
-    id: "rule",
-    stationId: "station",
-    stationKeyId: null,
-    groupBindingId: null,
-    groupName: null,
-    tierLabel: null,
-    model: "gpt-5-mini",
-    inputPrice: null,
-    outputPrice: null,
-    fixedPrice: null,
-    rateMultiplier: null,
-    currency: "CNY",
-    unit: "multiplier",
-    priceType: "rate_multiplier",
-    basePriceSource: null,
-    normalizationStatus: "normalized",
-    source: "test",
-    confidence: 1,
-    enabled: true,
-    note: null,
-    collectedAt: "2026-07-08T00:00:00.000Z",
-    validFrom: null,
-    validUntil: null,
-    createdAt: "2026-07-08T00:00:00.000Z",
-    updatedAt: "2026-07-08T00:00:00.000Z",
     ...overrides,
   };
 }

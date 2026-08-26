@@ -243,6 +243,10 @@ fn attempt_row(
         started_at_ms: attempt.started_at_ms,
         finished_at_ms: Some(attempt.finished_at_ms),
         latency_ms: Some((attempt.finished_at_ms - attempt.started_at_ms).max(0)),
+        ttfb_ms: attempt.ttfb_ms.and_then(|value| i64::try_from(value).ok()),
+        first_content_ms: attempt
+            .first_content_ms
+            .and_then(|value| i64::try_from(value).ok()),
         http_status: attempt.http_status.map(i64::from),
         outcome: attempt.outcome.as_str().to_string(),
         failure_kind: attempt
@@ -303,6 +307,12 @@ fn target_row(
         .unwrap_or(SemanticConfidence::ProtocolValidated);
     let latency_ms =
         decisive_attempt.map(|attempt| (attempt.finished_at_ms - attempt.started_at_ms).max(0));
+    let ttfb_ms = decisive_attempt
+        .and_then(|attempt| attempt.ttfb_ms)
+        .and_then(|value| i64::try_from(value).ok());
+    let first_content_ms = decisive_attempt
+        .and_then(|attempt| attempt.first_content_ms)
+        .and_then(|value| i64::try_from(value).ok());
     let started_at_ms = execution
         .attempts
         .iter()
@@ -346,6 +356,8 @@ fn target_row(
         request_profile_hash: target.request_profile_hash.clone(),
         traffic_equivalence: target_traffic_equivalence(target_plan.client_profile.id).to_string(),
         latency_ms,
+        ttfb_ms,
+        first_content_ms,
         semantic_confidence: semantic_confidence.as_str().to_string(),
         availability_eligible: disposition.availability_eligible,
         latency_eligible: disposition.latency_eligible,

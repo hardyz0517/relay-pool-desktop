@@ -43,7 +43,6 @@ function changeEvent(id, status, overrides = {}) {
     objectId: id,
     stationId: id,
     stationKeyId: null,
-    pricingRuleId: null,
     requestLogId: null,
     oldValueJson: null,
     newValueJson: null,

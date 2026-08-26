@@ -141,7 +141,6 @@ function checkRoutingKernelIsPure() {
 
 function checkFrontendTruthIsRegistered() {
   const truthPatterns = [
-    /\bfunction\s+firstMatchingPricingRule\b/u,
     /\bfunction\s+derivePricingGroupDisplayCandidates\b/u,
     /\bfunction\s+deriveStationGroupDisplayFacts\b/u,
     /\bexport\s+function\s+deriveStationGroupDisplayFacts\b/u,

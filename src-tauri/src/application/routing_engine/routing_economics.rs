@@ -12,7 +12,6 @@ pub(crate) use crate::application::operational_facts::candidate_projector::Route
 )]
 #[derive(Debug, Clone, Default)]
 pub struct RouteCandidateEconomics {
-    pub pricing_rule_id: Option<String>,
     pub pricing_model: Option<String>,
     pub group_binding_id: Option<String>,
     pub rate_multiplier: Option<f64>,
@@ -20,10 +19,8 @@ pub struct RouteCandidateEconomics {
     pub price_confidence: Option<f64>,
     pub base_input_price: Option<f64>,
     pub base_output_price: Option<f64>,
-    pub base_fixed_price: Option<f64>,
     pub estimated_input_price: Option<f64>,
     pub estimated_output_price: Option<f64>,
-    pub fixed_price: Option<f64>,
     pub price_currency: Option<String>,
     pub pricing_source: Option<String>,
     pub balance_status: Option<String>,

@@ -86,7 +86,6 @@ fn route_plan_candidate_from_projection(
             unit: projected.pricing.unit.clone(),
             estimated_input_price: projected.pricing.estimated_input_price,
             estimated_output_price: projected.pricing.estimated_output_price,
-            estimated_fixed_price: projected.pricing.estimated_fixed_price,
             estimated_cache_creation_price: projected.pricing.estimated_cache_creation_price,
             estimated_cache_read_price: projected.pricing.estimated_cache_read_price,
             status_label: projected.pricing.status_label.clone(),

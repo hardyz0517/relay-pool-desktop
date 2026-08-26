@@ -36,6 +36,16 @@ const LEGACY_MIGRATION_55_CHECKSUM: [u8; 48] = [
     0x47, 0x43, 0x72, 0xAC, 0xB3, 0xB4, 0xDA, 0xB2, 0x42, 0x44, 0xD6, 0x53, 0x91, 0x78, 0xAC, 0xF8,
 ];
 
+// Database files created by the 2026-08-26 build contain this checksum for
+// migration 57. The source migration was subsequently amended before the
+// next release. Reconcile this exact checksum only after verifying the
+// durable postconditions of the destructive pricing cleanup.
+const LEGACY_MIGRATION_57_CHECKSUM: [u8; 48] = [
+    0x39, 0xE2, 0x2D, 0x81, 0x60, 0x00, 0x89, 0x3C, 0xFC, 0xD8, 0x15, 0x25, 0x1C, 0x5A, 0x1F, 0x07,
+    0x76, 0xB9, 0x3C, 0x10, 0xAE, 0xAE, 0x3A, 0xB6, 0x3D, 0x6D, 0x42, 0xE6, 0xB2, 0x0C, 0xF2, 0x4D,
+    0x85, 0x52, 0x1E, 0xA2, 0x43, 0xF0, 0x0B, 0x76, 0xCC, 0xA4, 0x76, 0x95, 0x38, 0x69, 0x50, 0x83,
+];
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SchemaUpgradeBackupManifest {
@@ -169,13 +179,16 @@ pub(crate) async fn upgrade_existing_v2_database(
         )
         .await?;
     }
-    reconcile_historical_migration_checksums(&pool).await?;
     pool.close().await;
 
     let backup_path =
         ensure_schema_upgrade_backup(path, schema_version, current_schema_version()).await?;
 
     let pool = migration_pool_existing(path).await?;
+    if let Err(error) = reconcile_historical_migration_checksums(&pool).await {
+        pool.close().await;
+        return Err(error);
+    }
     if let Err(error) = migrator().run(&pool).await {
         pool.close().await;
         return Err(error.into());
@@ -224,13 +237,16 @@ pub(crate) async fn upgrade_existing_v2_database_to_schema(
             "generation 2 schema is not eligible for a bounded upgrade".to_string(),
         ));
     }
-    reconcile_historical_migration_checksums(&pool).await?;
     pool.close().await;
 
     let backup_path =
         ensure_schema_upgrade_backup(path, compatibility.schema_version, target_schema).await?;
 
     let pool = migration_pool_existing(path).await?;
+    if let Err(error) = reconcile_historical_migration_checksums(&pool).await {
+        pool.close().await;
+        return Err(error);
+    }
     let bounded = migrator_through(target_schema)?;
     if let Err(error) = bounded.run(&pool).await {
         pool.close().await;
@@ -251,8 +267,8 @@ pub(crate) async fn upgrade_existing_v2_database_to_schema(
 /// SQLx deliberately rejects modified applied migrations. One released build
 /// shipped migration 55 before the file was amended in source control, so we
 /// repair that exact, known checksum only after checking its durable effects.
-/// This is intentionally a preflight: SQLx must see the canonical checksum
-/// before it evaluates the rest of the migration chain.
+/// Callers create a verified pre-upgrade backup before reaching this point,
+/// because the schema 57 repair can discard obsolete price fields.
 async fn reconcile_historical_migration_checksums(
     pool: &sqlx::SqlitePool,
 ) -> Result<(), PersistenceError> {
@@ -280,6 +296,19 @@ async fn reconcile_historical_migration_checksums(
 
         if version == 55 && actual.as_slice() == LEGACY_MIGRATION_55_CHECKSUM {
             verify_legacy_migration_55_postcondition(pool).await?;
+            sqlx::query(
+                "UPDATE _sqlx_migrations SET checksum = ?1 WHERE version = ?2 AND success = 1",
+            )
+            .bind(expected)
+            .bind(version)
+            .execute(pool)
+            .await?;
+            continue;
+        }
+
+        if version == 57 && actual.as_slice() == LEGACY_MIGRATION_57_CHECKSUM {
+            complete_legacy_migration_57_cleanup(pool).await?;
+            verify_legacy_migration_57_postcondition(pool).await?;
             sqlx::query(
                 "UPDATE _sqlx_migrations SET checksum = ?1 WHERE version = ?2 AND success = 1",
             )
@@ -320,6 +349,138 @@ async fn verify_legacy_migration_55_postcondition(
     if historical_defaults != 0 {
         return Err(PersistenceError::InvariantViolation(
             "legacy migration 55 checksum matched but collector timeout postcondition is not satisfied"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// The released schema-57 file removed the old pricing table and linkage, but
+/// left three unused request-log price columns. The canonical migration later
+/// removed those columns too. This repair is restricted to the exact released
+/// checksum and runs only after a verified backup has been made.
+async fn complete_legacy_migration_57_cleanup(
+    pool: &sqlx::SqlitePool,
+) -> Result<(), PersistenceError> {
+    let schema_version: i64 = sqlx::query_scalar(
+        "SELECT schema_version FROM persistence_schema_compatibility WHERE singleton_key = 1",
+    )
+    .fetch_one(pool)
+    .await?;
+    if schema_version != 57 {
+        return Err(PersistenceError::InvariantViolation(
+            "legacy migration 57 checksum matched but schema metadata is not 57".to_string(),
+        ));
+    }
+
+    let legacy_table_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'pricing_rules'",
+    )
+    .fetch_one(pool)
+    .await?;
+    let legacy_occurrence_column_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('change_event_occurrences') WHERE name = 'pricing_rule_id'",
+    )
+    .fetch_one(pool)
+    .await?;
+    let legacy_reference_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master
+         WHERE sql IS NOT NULL AND lower(sql) LIKE '%pricing_rules%'",
+    )
+    .fetch_one(pool)
+    .await?;
+    let foreign_key_violation_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM pragma_foreign_key_check")
+            .fetch_one(pool)
+            .await?;
+    if legacy_table_count != 0
+        || legacy_occurrence_column_count != 0
+        || legacy_reference_count != 0
+        || foreign_key_violation_count != 0
+    {
+        return Err(PersistenceError::InvariantViolation(
+            "legacy migration 57 checksum matched but pricing cleanup is unsafe to complete"
+                .to_string(),
+        ));
+    }
+
+    let mut transaction = pool.begin().await?;
+    for column in ["base_input_cost", "base_output_cost", "base_total_cost"] {
+        let exists: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('request_logs') WHERE name = ?1",
+        )
+        .bind(column)
+        .fetch_one(&mut *transaction)
+        .await?;
+        if exists != 0 {
+            let statement = match column {
+                "base_input_cost" => "ALTER TABLE request_logs DROP COLUMN base_input_cost",
+                "base_output_cost" => "ALTER TABLE request_logs DROP COLUMN base_output_cost",
+                "base_total_cost" => "ALTER TABLE request_logs DROP COLUMN base_total_cost",
+                _ => unreachable!("legacy schema 57 repair has a fixed column list"),
+            };
+            sqlx::query(statement).execute(&mut *transaction).await?;
+        }
+    }
+    transaction.commit().await?;
+    Ok(())
+}
+
+async fn verify_legacy_migration_57_postcondition(
+    pool: &sqlx::SqlitePool,
+) -> Result<(), PersistenceError> {
+    let schema_version: i64 = sqlx::query_scalar(
+        "SELECT schema_version FROM persistence_schema_compatibility WHERE singleton_key = 1",
+    )
+    .fetch_one(pool)
+    .await?;
+    if schema_version != 57 {
+        return Err(PersistenceError::InvariantViolation(
+            "legacy migration 57 checksum matched but schema metadata is not 57".to_string(),
+        ));
+    }
+
+    let request_log_table_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'request_logs'",
+    )
+    .fetch_one(pool)
+    .await?;
+    let legacy_table_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'pricing_rules'",
+    )
+    .fetch_one(pool)
+    .await?;
+    let legacy_column_count: i64 = sqlx::query_scalar(
+        "SELECT
+            (SELECT COUNT(*) FROM pragma_table_info('request_logs')
+             WHERE name IN (
+                 'base_fixed_cost', 'base_input_cost', 'base_output_cost',
+                 'base_total_cost', 'pricing_rule_id'
+             ))
+            + (SELECT COUNT(*) FROM pragma_table_info('change_event_occurrences')
+               WHERE name = 'pricing_rule_id')",
+    )
+    .fetch_one(pool)
+    .await?;
+    let legacy_reference_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master
+         WHERE sql IS NOT NULL AND lower(sql) LIKE '%pricing_rules%'",
+    )
+    .fetch_one(pool)
+    .await?;
+    let foreign_key_violation_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM pragma_foreign_key_check")
+            .fetch_one(pool)
+            .await?;
+
+    if request_log_table_count != 1
+        || legacy_table_count != 0
+        || legacy_column_count != 0
+        || legacy_reference_count != 0
+        || foreign_key_violation_count != 0
+    {
+        return Err(PersistenceError::InvariantViolation(
+            "legacy migration 57 checksum matched but pricing cleanup postcondition is not satisfied"
                 .to_string(),
         ));
     }
@@ -811,6 +972,140 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn schema_56_to_57_discards_legacy_pricing_rules_after_verified_backup() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join("relay-pool-v2.sqlite3");
+        initialize_database_through(&path, 56).await;
+
+        let pool = migration_pool_existing(&path)
+            .await
+            .expect("schema 56 pool");
+        sqlx::query(
+            "INSERT INTO stations (
+                id, name, station_type, website_url, api_base_url, created_at, updated_at
+             ) VALUES (
+                'station-legacy', 'Legacy station', 'sub2api',
+                'https://example.test', 'https://example.test/v1', '1', '1'
+             )",
+        )
+        .execute(&pool)
+        .await
+        .expect("legacy station");
+        sqlx::query(
+            "INSERT INTO pricing_rules (
+                id, station_id, model, fixed_price, currency, unit, price_type,
+                normalization_status, source, created_at, updated_at
+             ) VALUES (
+                'pricing-rule-legacy', 'station-legacy', 'legacy-model', 42.0, 'USD',
+                'per_request', 'fixed', 'legacy_fixed', 'fixture', '1', '1'
+             )",
+        )
+        .execute(&pool)
+        .await
+        .expect("legacy pricing rule");
+        sqlx::query(
+            "INSERT INTO request_logs (
+                id, request_id, started_at, method, path, endpoint, status, created_at,
+                base_input_cost, base_output_cost, base_fixed_cost, base_total_cost,
+                pricing_rule_id
+             ) VALUES (
+                'request-legacy', 'request-legacy', '1', 'POST', '/v1/chat/completions',
+                'chat_completions', 'success', '1', 0.4, 0.8, 42.0, 43.2,
+                'pricing-rule-legacy'
+             )",
+        )
+        .execute(&pool)
+        .await
+        .expect("legacy request log");
+        sqlx::query(
+            "INSERT INTO change_event_occurrences (
+                id, source_observation_key, event_type, category, observation_kind, severity,
+                object_type, station_id, pricing_rule_id, request_log_id, source,
+                observed_at_ms, created_at_ms, seen_at_ms
+             ) VALUES (
+                'occurrence-legacy', 'legacy:pricing-rule-legacy', 'pricing_rule_changed',
+                'audit_change', 'change', 'warning', 'pricing_rule', 'station-legacy',
+                'pricing-rule-legacy', 'request-legacy', 'fixture', 100, 101, 102
+             )",
+        )
+        .execute(&pool)
+        .await
+        .expect("legacy occurrence");
+        pool.close().await;
+
+        let backup = upgrade_existing_v2_database_to_schema(&path, 57)
+            .await
+            .expect("schema 56 upgrade")
+            .expect("schema 56 upgrade backup");
+        assert_eq!(database_schema_version(&backup).await, 56);
+        assert_eq!(database_schema_version(&path).await, 57);
+
+        let pool = migration_pool_existing(&path)
+            .await
+            .expect("schema 57 pool");
+        let legacy_table_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'pricing_rules'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("pricing rules table check");
+        assert_eq!(legacy_table_count, 0);
+        for (table, column) in [
+            ("request_logs", "base_input_cost"),
+            ("request_logs", "base_output_cost"),
+            ("request_logs", "base_fixed_cost"),
+            ("request_logs", "base_total_cost"),
+            ("request_logs", "pricing_rule_id"),
+            ("change_event_occurrences", "pricing_rule_id"),
+        ] {
+            let column_count: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM pragma_table_info(?1) WHERE name = ?2")
+                    .bind(table)
+                    .bind(column)
+                    .fetch_one(&pool)
+                    .await
+                    .expect("legacy column check");
+            assert_eq!(column_count, 0, "{table}.{column} must be removed");
+        }
+        let retained: (String, String, Option<String>, Option<i64>) = sqlx::query_as(
+            "SELECT source_observation_key, source, request_log_id, seen_at_ms
+             FROM change_event_occurrences WHERE id = 'occurrence-legacy'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("retained occurrence");
+        assert_eq!(retained.0, "legacy:pricing-rule-legacy");
+        assert_eq!(retained.1, "fixture");
+        assert_eq!(retained.2.as_deref(), Some("request-legacy"));
+        assert_eq!(retained.3, Some(102));
+        let retained_request_log_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM request_logs WHERE id = 'request-legacy'")
+                .fetch_one(&pool)
+                .await
+                .expect("retained request log");
+        assert_eq!(retained_request_log_count, 1);
+        let foreign_key_violations = sqlx::query("PRAGMA foreign_key_check")
+            .fetch_all(&pool)
+            .await
+            .expect("foreign key check");
+        assert!(foreign_key_violations.is_empty());
+        pool.close().await;
+
+        let backup_pool = migration_pool_existing(&backup)
+            .await
+            .expect("open verified pre-upgrade backup");
+        let legacy_costs: (Option<f64>, Option<f64>, Option<f64>, Option<f64>) = sqlx::query_as(
+            "SELECT base_input_cost, base_output_cost, base_fixed_cost, base_total_cost
+             FROM request_logs WHERE id = 'request-legacy'",
+        )
+        .fetch_one(&backup_pool)
+        .await
+        .expect("legacy costs in backup");
+        assert_eq!(legacy_costs, (Some(0.4), Some(0.8), Some(42.0), Some(43.2)));
+        backup_pool.close().await;
+    }
+
+    #[tokio::test]
     async fn known_legacy_schema_55_checksum_is_reconciled_before_upgrade() {
         let root = tempfile::tempdir().expect("tempdir");
         let path = root.path().join("relay-pool-v2.sqlite3");
@@ -827,6 +1122,81 @@ mod tests {
             .await
             .expect("legacy checksum is safely reconciled");
         assert_eq!(database_schema_version(&path).await, 56);
+    }
+
+    #[tokio::test]
+    async fn known_legacy_schema_57_checksum_is_reconciled_before_upgrade() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join("relay-pool-v2.sqlite3");
+        initialize_database_through(&path, 57).await;
+        let pool = migration_pool_existing(&path).await.expect("open database");
+        sqlx::query("UPDATE _sqlx_migrations SET checksum = ?1 WHERE version = 57")
+            .bind(LEGACY_MIGRATION_57_CHECKSUM.as_slice())
+            .execute(&pool)
+            .await
+            .expect("install legacy checksum");
+        pool.close().await;
+
+        upgrade_existing_v2_database_to_schema(&path, 58)
+            .await
+            .expect("legacy checksum is safely reconciled");
+        assert_eq!(database_schema_version(&path).await, 58);
+    }
+
+    #[tokio::test]
+    async fn legacy_schema_57_completion_runs_after_backup_and_removes_leftover_prices() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join("relay-pool-v2.sqlite3");
+        initialize_database_through(&path, 57).await;
+        let pool = migration_pool_existing(&path).await.expect("open database");
+        for statement in [
+            "ALTER TABLE request_logs ADD COLUMN base_input_cost REAL",
+            "ALTER TABLE request_logs ADD COLUMN base_output_cost REAL",
+            "ALTER TABLE request_logs ADD COLUMN base_total_cost REAL",
+        ] {
+            sqlx::query(statement)
+                .execute(&pool)
+                .await
+                .expect("restore released schema 57 column");
+        }
+        sqlx::query("UPDATE _sqlx_migrations SET checksum = ?1 WHERE version = 57")
+            .bind(LEGACY_MIGRATION_57_CHECKSUM.as_slice())
+            .execute(&pool)
+            .await
+            .expect("install legacy checksum");
+        pool.close().await;
+
+        let backup = upgrade_existing_v2_database_to_schema(&path, 58)
+            .await
+            .expect("legacy schema 57 is safely completed")
+            .expect("verified pre-repair backup");
+        assert_eq!(database_schema_version(&path).await, 58);
+
+        let pool = migration_pool_existing(&path)
+            .await
+            .expect("upgraded database");
+        let leftover_column_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('request_logs')
+             WHERE name IN ('base_input_cost', 'base_output_cost', 'base_total_cost')",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("read repaired schema");
+        assert_eq!(leftover_column_count, 0);
+        pool.close().await;
+
+        let backup_pool = migration_pool_existing(&backup)
+            .await
+            .expect("open pre-repair backup");
+        let backed_up_column_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('request_logs')
+             WHERE name IN ('base_input_cost', 'base_output_cost', 'base_total_cost')",
+        )
+        .fetch_one(&backup_pool)
+        .await
+        .expect("read backup schema");
+        assert_eq!(backed_up_column_count, 3);
+        backup_pool.close().await;
     }
 
     #[tokio::test]

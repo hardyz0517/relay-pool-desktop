@@ -243,7 +243,6 @@ export function LogsPage({ deepLink, onOpenRoutingDeepLink }: LogsPageProps = {}
                   <PropertyRow label="成本" value={formatRequestCost(selected)} />
                   <PropertyRow label="计费模式" value={selected.billingMode ?? "未记录"} />
                   <PropertyRow label="成本状态" value={pricingStatusLabel(selected.costStatus)} />
-                  <PropertyRow label="价格规则" value={selected.pricingRuleId ?? "未命中"} />
                   <PropertyRow label="价格来源" value={selected.pricingSource ?? "未知"} />
                   <PropertyRow label="价格状态" value={normalizationLabel(selected.normalizationStatus ?? selected.costStatus)} />
                   <PropertyRow label="分组绑定" value={selected.groupBindingId ?? "未记录"} />

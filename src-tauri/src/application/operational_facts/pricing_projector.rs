@@ -114,7 +114,6 @@ pub(crate) struct RequestCostComparisonContext {
     pub(crate) unit: Option<String>,
     pub(crate) estimated_input_price: Option<f64>,
     pub(crate) estimated_output_price: Option<f64>,
-    pub(crate) estimated_fixed_price: Option<f64>,
     pub(crate) estimated_cache_creation_price: Option<f64>,
     pub(crate) estimated_cache_read_price: Option<f64>,
     pub(crate) status_label: String,
@@ -137,7 +136,6 @@ pub(crate) fn request_cost_comparison_context(
             unit: None,
             estimated_input_price: None,
             estimated_output_price: None,
-            estimated_fixed_price: None,
             estimated_cache_creation_price: None,
             estimated_cache_read_price: None,
             status_label: "not_applicable".to_string(),
@@ -156,7 +154,6 @@ pub(crate) fn request_cost_comparison_context(
             unit: None,
             estimated_input_price: None,
             estimated_output_price: None,
-            estimated_fixed_price: None,
             estimated_cache_creation_price: None,
             estimated_cache_read_price: None,
             status_label: "unpriced".to_string(),
@@ -165,16 +162,14 @@ pub(crate) fn request_cost_comparison_context(
             confidence: None,
         };
     };
-    let basis = if pricing.estimated_fixed_price.is_some()
-        || pricing.estimated_input_price.is_some()
-        || pricing.estimated_output_price.is_some()
-    {
-        RoutingCostBasis::ExactPrice
-    } else if pricing.effective_rate_multiplier.is_some() {
-        RoutingCostBasis::MultiplierProxy
-    } else {
-        RoutingCostBasis::Unpriced
-    };
+    let basis =
+        if pricing.estimated_input_price.is_some() || pricing.estimated_output_price.is_some() {
+            RoutingCostBasis::ExactPrice
+        } else if pricing.effective_rate_multiplier.is_some() {
+            RoutingCostBasis::MultiplierProxy
+        } else {
+            RoutingCostBasis::Unpriced
+        };
     let reason = match (basis, &pricing.pricing_status) {
         (RoutingCostBasis::ExactPrice, _) => None,
         (RoutingCostBasis::MultiplierProxy, _) => Some("cost_first_multiplier_proxy"),
@@ -197,7 +192,6 @@ pub(crate) fn request_cost_comparison_context(
         unit: known_field(&pricing.unit),
         estimated_input_price: pricing.estimated_input_price,
         estimated_output_price: pricing.estimated_output_price,
-        estimated_fixed_price: pricing.estimated_fixed_price,
         estimated_cache_creation_price: pricing.estimated_cache_creation_price,
         estimated_cache_read_price: pricing.estimated_cache_read_price,
         status_label: pricing.pricing_status.as_str().to_string(),
@@ -211,9 +205,6 @@ pub(crate) fn request_cost_comparison_context(
 }
 
 fn exact_comparison_value(pricing: &ResolvedPricingContext) -> Option<f64> {
-    if let Some(fixed_price) = pricing.estimated_fixed_price {
-        return Some(fixed_price);
-    }
     match (
         pricing.estimated_input_price,
         pricing.estimated_output_price,
@@ -250,73 +241,7 @@ fn pricing_parts_from_resolution(
     let mut owned = OwnedPricingParts::default();
 
     if let Some(resolution) = resolution {
-        let base_price = resolution.model_base_price.as_ref();
-        if let Some(rule) = resolution.pricing_rule.as_ref() {
-            let has_rule_price = rule.input_price.is_some()
-                || rule.output_price.is_some()
-                || rule.fixed_price.is_some();
-            if !has_rule_price {
-                if let Some(base_price) = base_price {
-                    let group_binding_id = rule
-                        .group_binding_id
-                        .clone()
-                        .or_else(|| resolution.group_binding_id.clone());
-                    let raw_multiplier = rule.rate_multiplier.or(resolution.group_rate_multiplier);
-                    if let Some(multiplier) =
-                        effective_rate_multiplier(raw_multiplier, resolution.credit_per_cny)
-                    {
-                        owned.rate_multiplier = Some(multiplier);
-                        owned.normalization_status = Some("base_price_with_group_rate".to_string());
-                        owned.estimated_input_price =
-                            base_price.input_price.map(|price| price * multiplier);
-                        owned.estimated_output_price =
-                            base_price.output_price.map(|price| price * multiplier);
-                        owned.estimated_cache_creation_price = base_price
-                            .cache_creation_price
-                            .map(|price| price * multiplier);
-                        owned.estimated_cache_read_price =
-                            base_price.cache_read_price.map(|price| price * multiplier);
-                    } else if group_binding_id.is_some() {
-                        owned.pricing_rule_id = Some(rule.id.clone());
-                        owned.normalization_status = Some("missing_rate".to_string());
-                    }
-                    if owned.rate_multiplier.is_some() || owned.pricing_rule_id.is_some() {
-                        owned.pricing_model = Some(base_price.model.clone());
-                        owned.group_binding_id = group_binding_id;
-                        owned.price_confidence =
-                            Some(rule.confidence.min(base_price_confidence(base_price)));
-                        owned.base_input_price = base_price.input_price;
-                        owned.base_output_price = base_price.output_price;
-                        owned.base_cache_creation_price = base_price.cache_creation_price;
-                        owned.base_cache_read_price = base_price.cache_read_price;
-                        owned.price_currency = Some(base_price.currency.clone());
-                        owned.pricing_source = Some("model_base_price".to_string());
-                        owned.collected_at = rule
-                            .collected_at
-                            .clone()
-                            .or_else(|| base_price.source_checked_at.clone());
-                    }
-                }
-            }
-
-            if owned.pricing_model.is_none() {
-                owned.pricing_rule_id = Some(rule.id.clone());
-                owned.pricing_model = Some(rule.model.clone());
-                owned.group_binding_id = rule.group_binding_id.clone();
-                owned.rate_multiplier = rule.rate_multiplier;
-                owned.normalization_status = Some(rule.normalization_status.clone());
-                owned.price_confidence = Some(rule.confidence);
-                owned.base_input_price = rule.input_price;
-                owned.base_output_price = rule.output_price;
-                owned.base_fixed_price = rule.fixed_price;
-                owned.estimated_input_price = rule.input_price;
-                owned.estimated_output_price = rule.output_price;
-                owned.fixed_price = rule.fixed_price;
-                owned.price_currency = Some(rule.currency.clone());
-                owned.pricing_source = Some(rule.source.clone());
-                owned.collected_at = rule.collected_at.clone();
-            }
-        } else if let Some(base_price) = base_price {
+        if let Some(base_price) = resolution.model_base_price.as_ref() {
             if let Some(multiplier) = effective_rate_multiplier(
                 resolution.group_rate_multiplier,
                 resolution.credit_per_cny,
@@ -373,6 +298,20 @@ fn pricing_parts_from_resolution(
             owned.base_cache_read_price = base_price.cache_read_price;
             owned.price_currency = Some(base_price.currency.clone());
             owned.pricing_source = Some("model_base_price".to_string());
+        } else if let Some(multiplier) =
+            effective_rate_multiplier(resolution.group_rate_multiplier, resolution.credit_per_cny)
+        {
+            owned.group_binding_id = resolution.group_binding_id.clone();
+            owned.rate_multiplier = Some(multiplier);
+            owned.normalization_status = Some("group_rate_only".to_string());
+            owned.price_confidence = resolution.group_confidence.or(Some(0.8));
+            owned.collected_at = resolution.group_collected_at.clone();
+            owned.pricing_source = Some("station_group_binding".to_string());
+        } else if resolution.group_binding_id.is_some() {
+            owned.group_binding_id = resolution.group_binding_id.clone();
+            owned.normalization_status = Some("missing_rate".to_string());
+            owned.price_confidence = resolution.group_confidence.or(Some(0.8));
+            owned.collected_at = resolution.group_collected_at.clone();
         }
     }
 
@@ -405,7 +344,6 @@ fn base_price_confidence(price: &SelectedModelBasePriceRow) -> f64 {
 
 #[derive(Default)]
 struct OwnedPricingParts {
-    pricing_rule_id: Option<String>,
     pricing_model: Option<String>,
     group_binding_id: Option<String>,
     rate_multiplier: Option<f64>,
@@ -413,12 +351,10 @@ struct OwnedPricingParts {
     price_confidence: Option<f64>,
     base_input_price: Option<f64>,
     base_output_price: Option<f64>,
-    base_fixed_price: Option<f64>,
     base_cache_creation_price: Option<f64>,
     base_cache_read_price: Option<f64>,
     estimated_input_price: Option<f64>,
     estimated_output_price: Option<f64>,
-    fixed_price: Option<f64>,
     estimated_cache_creation_price: Option<f64>,
     estimated_cache_read_price: Option<f64>,
     price_currency: Option<String>,
@@ -437,7 +373,6 @@ impl OwnedPricingParts {
             station_key_id,
             station_id,
             model: Some(requested_model),
-            pricing_rule_id: self.pricing_rule_id.as_deref(),
             pricing_model: self.pricing_model.as_deref(),
             group_binding_id: self.group_binding_id.as_deref(),
             rate_multiplier: self.rate_multiplier,
@@ -445,12 +380,10 @@ impl OwnedPricingParts {
             price_confidence: self.price_confidence,
             base_input_price: self.base_input_price,
             base_output_price: self.base_output_price,
-            base_fixed_price: self.base_fixed_price,
             base_cache_creation_price: self.base_cache_creation_price,
             base_cache_read_price: self.base_cache_read_price,
             estimated_input_price: self.estimated_input_price,
             estimated_output_price: self.estimated_output_price,
-            fixed_price: self.fixed_price,
             estimated_cache_creation_price: self.estimated_cache_creation_price,
             estimated_cache_read_price: self.estimated_cache_read_price,
             price_currency: self.price_currency.as_deref(),

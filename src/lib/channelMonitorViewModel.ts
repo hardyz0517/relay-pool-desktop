@@ -23,6 +23,8 @@ export type ChannelMonitorDraft = {
   templateId: string;
   enabled: boolean;
   pauseOnZeroBalance: boolean;
+  proxyMode: "inherit" | "direct" | "system" | "manual";
+  proxyUrl: string;
   protocolKind: ChannelMonitorProtocolKind;
   clientProfileId: ChannelMonitorClientProfileId;
   clientProfileVersion: string;
@@ -167,6 +169,8 @@ export function createStationKeyMonitorInput(
     templateId: template.id,
     enabled: true,
     pauseOnZeroBalance: true,
+    proxyMode: "inherit",
+    proxyUrl: "",
     protocolKind: template.endpointKind === "responses" ? "open_ai_responses" : "open_ai_chat",
     clientProfileId: "standard_api",
     clientProfileVersion: 1,
@@ -203,6 +207,8 @@ export function updateStationKeyMonitorEnabledInput(
     templateId: monitor.templateId,
     enabled,
     pauseOnZeroBalance: monitor.pauseOnZeroBalance,
+    proxyMode: monitor.proxyMode,
+    proxyUrl: monitor.proxyUrl ?? "",
     protocolKind: monitor.protocolKind,
     clientProfileId: monitor.clientProfileId,
     clientProfileVersion: monitor.clientProfileVersion,
@@ -245,6 +251,8 @@ export function createEmptyMonitorDraft(
     templateId: firstTemplate?.id ?? "",
     enabled: true,
     pauseOnZeroBalance: true,
+    proxyMode: "inherit",
+    proxyUrl: "",
     protocolKind,
     clientProfileId: "standard_api",
     clientProfileVersion: String(standardProfile?.version ?? 1),
@@ -274,6 +282,8 @@ export function monitorToDraft(monitor: ChannelMonitor): ChannelMonitorDraft {
     templateId: monitor.templateId,
     enabled: monitor.enabled,
     pauseOnZeroBalance: monitor.pauseOnZeroBalance,
+    proxyMode: monitor.proxyMode,
+    proxyUrl: monitor.proxyUrl ?? "",
     protocolKind: monitor.protocolKind,
     clientProfileId: monitor.clientProfileId,
     clientProfileVersion: String(monitor.clientProfileVersion),
@@ -303,6 +313,8 @@ export function monitorToCreateInput(monitor: ChannelMonitor, name = `${monitor.
     templateId: monitor.templateId,
     enabled: monitor.enabled,
     pauseOnZeroBalance: monitor.pauseOnZeroBalance,
+    proxyMode: monitor.proxyMode,
+    proxyUrl: monitor.proxyUrl,
     protocolKind: monitor.protocolKind,
     clientProfileId: monitor.clientProfileId,
     clientProfileVersion: monitor.clientProfileVersion,
@@ -340,6 +352,8 @@ export function draftToMonitorInput(draft: ChannelMonitorDraft): CreateChannelMo
     templateId: draft.templateId,
     enabled: draft.enabled,
     pauseOnZeroBalance: draft.pauseOnZeroBalance,
+    proxyMode: draft.proxyMode ?? "inherit",
+    proxyUrl: (draft.proxyMode ?? "inherit") === "manual" && (draft.proxyUrl ?? "").trim() ? (draft.proxyUrl ?? "").trim() : null,
     protocolKind: draft.protocolKind,
     clientProfileId: draft.clientProfileId,
     clientProfileVersion: toInteger(draft.clientProfileVersion),
@@ -452,6 +466,21 @@ export function validateMonitorDraft(
   if (!isInRange(riskDailyProbeBudget, 1, 10_000)) return "每日探测预算需在 1 到 10000 之间";
   if (!isInRange(healthFailureThreshold, 1, 20) || !isInRange(healthRecoveryThreshold, 1, 20)) return "健康阈值需在 1 到 20 之间";
   if (draft.healthPolicyMode === "authoritative" && draft.clientProfileId !== "standard_api") return "权威健康写回只能使用标准 API Profile";
+  const proxyMode = draft.proxyMode ?? "inherit";
+  const proxyUrl = draft.proxyUrl ?? "";
+  if (proxyMode === "manual") {
+    if (!proxyUrl.trim()) return "请输入代理地址";
+    try {
+      const url = new URL(proxyUrl.trim());
+      if (!['http:', 'https:', 'socks5:', 'socks5h:'].includes(url.protocol) || url.username || url.password) {
+        return "代理地址格式无效";
+      }
+    } catch {
+      return "代理地址格式无效";
+    }
+  } else if (proxyUrl.trim()) {
+    return "只有手动代理模式可以填写代理地址";
+  }
   return null;
 }
 

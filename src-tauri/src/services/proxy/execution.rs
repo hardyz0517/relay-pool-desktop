@@ -2524,7 +2524,6 @@ impl ProxyExecutionResponse {
                     unit: candidate.pricing.unit.clone(),
                     estimated_input_price: candidate.pricing.estimated_input_price,
                     estimated_output_price: candidate.pricing.estimated_output_price,
-                    estimated_fixed_price: candidate.pricing.estimated_fixed_price,
                     estimated_cache_creation_price: candidate
                         .pricing
                         .estimated_cache_creation_price,
@@ -3309,8 +3308,6 @@ fn billing_mode_for_pricing(pricing: &RoutePlanPricingSnapshot) -> Option<String
     }
     if pricing.estimated_input_price.is_some() || pricing.estimated_output_price.is_some() {
         Some("token".to_string())
-    } else if pricing.estimated_fixed_price.is_some() {
-        Some("per_request".to_string())
     } else {
         match pricing
             .unit
@@ -4330,7 +4327,6 @@ mod tests {
                 unit: None,
                 estimated_input_price: None,
                 estimated_output_price: None,
-                estimated_fixed_price: None,
                 estimated_cache_creation_price: None,
                 estimated_cache_read_price: None,
                 status_label: "test".to_string(),
@@ -5037,7 +5033,6 @@ mod tests {
                             unit: None,
                             estimated_input_price: None,
                             estimated_output_price: None,
-                            estimated_fixed_price: None,
                             estimated_cache_creation_price: None,
                             estimated_cache_read_price: None,
                             status_label: "test".to_string(),

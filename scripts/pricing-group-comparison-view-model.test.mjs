@@ -24,6 +24,8 @@ async function importPricingComparisonViewModel() {
   const groupCategoriesPath = join(tempRoot, "groupCategories.mjs");
   const groupFactsPath = join(tempRoot, "groupFacts.mjs");
   const pricingFactsPath = join(tempRoot, "pricingFacts.mjs");
+  const pricingGroupRefsPath = join(tempRoot, "pricingGroupRefs.mjs");
+  const formattersPath = join(tempRoot, "formatters.mjs");
   const viewModelPath = join(tempRoot, "pricingComparisonViewModel.mjs");
   await transpileTsFile("src/lib/groupCategories.ts", groupCategoriesPath);
   await transpileTsFile("src/lib/projections/groupFacts.ts", groupFactsPath, [
@@ -32,9 +34,13 @@ async function importPricingComparisonViewModel() {
   await transpileTsFile("src/lib/projections/pricingFacts.ts", pricingFactsPath, [
     ['@/lib/projections/groupFacts', "./groupFacts.mjs"],
   ]);
+  await transpileTsFile("src/lib/projections/pricingGroupRefs.ts", pricingGroupRefsPath);
+  await transpileTsFile("src/lib/formatters.ts", formattersPath);
   await transpileTsFile("src/features/pricing/pricingComparisonViewModel.ts", viewModelPath, [
     ["../../lib/projections/pricingFacts", "./pricingFacts.mjs"],
     ["../../lib/groupCategories", "./groupCategories.mjs"],
+    ["@/lib/projections/pricingGroupRefs", "./pricingGroupRefs.mjs"],
+    ["@/lib/formatters", "./formatters.mjs"],
   ]);
   return import(`file://${viewModelPath.replaceAll("\\", "/")}`);
 }
@@ -55,7 +61,6 @@ const view = buildPricingComparisonViewModel({
     group("station-b", "grok", "grok_fast", 0.7, { platform: "grok" }),
   ],
   groupRates: [],
-  pricingRules: [],
   filters: {
     groupType: "all",
     query: "",
@@ -101,7 +106,6 @@ const gptOnly = buildPricingComparisonViewModel({
     group("station-a", "gpt-image", "GPT画图分组", 2, { platform: "openai" }),
   ],
   groupRates: [],
-  pricingRules: [],
   filters: {
     groupType: "gpt",
     query: "",
@@ -119,7 +123,6 @@ const search = buildPricingComparisonViewModel({
   stationKeys: [stationKey("station-a", "key-a", "生产 Key")],
   groupBindings: [group("station-a", "gpt", "gpt普通分组", 0.8, { platform: "openai" }, "key-a")],
   groupRates: [],
-  pricingRules: [],
   filters: {
     groupType: "all",
     query: "生产",

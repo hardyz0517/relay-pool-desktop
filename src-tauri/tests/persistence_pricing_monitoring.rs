@@ -153,10 +153,6 @@ async fn schema_eight_query_plans_use_growth_indexes() {
             "EXPLAIN QUERY PLAN SELECT id FROM balance_snapshots WHERE station_id = 's' AND scope = 'station' ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT 1",
             "idx_balance_snapshots_latest_station_scope",
         ),
-        (
-            "EXPLAIN QUERY PLAN SELECT id FROM pricing_rules INDEXED BY idx_pricing_rules_comparison ORDER BY enabled DESC, station_id ASC, model ASC, updated_at DESC, created_at DESC, id DESC LIMIT 20",
-            "idx_pricing_rules_comparison",
-        ),
     ];
     for (sql, expected_index) in cases {
         let details = sqlx::query(sql)

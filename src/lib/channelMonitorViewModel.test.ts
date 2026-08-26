@@ -83,6 +83,24 @@ describe("channel monitor V2 view model", () => {
     expect(draftToMonitorInput(draft).pauseOnZeroBalance).toBe(true);
   });
 
+  it("defaults monitor network access to inheriting the global proxy", () => {
+    const draft = validDraft();
+    const input = draftToMonitorInput(draft);
+
+    expect(draft.proxyMode).toBe("inherit");
+    expect(draft.proxyUrl).toBe("");
+    expect(input.proxyMode).toBe("inherit");
+    expect(input.proxyUrl).toBeNull();
+  });
+
+  it("validates manual proxy addresses and clears them for non-manual modes", () => {
+    const draft = validDraft();
+
+    expect(validateMonitorDraft({ ...draft, proxyMode: "manual", proxyUrl: "http://127.0.0.1:7890" }, { templates, keys: [], capabilities })).toBeNull();
+    expect(validateMonitorDraft({ ...draft, proxyMode: "manual", proxyUrl: "http://user:pass@127.0.0.1:7890" }, { templates, keys: [], capabilities })).toBe("代理地址格式无效");
+    expect(draftToMonitorInput({ ...draft, proxyMode: "direct", proxyUrl: "" }).proxyUrl).toBeNull();
+  });
+
   it("validates protocol and Profile capabilities together", () => {
     const draft = validDraft();
 

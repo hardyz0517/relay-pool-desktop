@@ -398,6 +398,8 @@ fn buffered_execution(
         attempt_number: 0,
         started_at_ms: 1_000,
         finished_at_ms: 1_120,
+        ttfb_ms: Some(40),
+        first_content_ms: Some(55),
         outcome,
         failure_kind,
         retryable: false,

@@ -59,7 +59,6 @@ fn exact_pricing(context: &str, currency: &str) -> FrozenPricingAssessment {
         currency: Some(currency.to_string()),
         input_unit_price_micro: Some(10),
         output_unit_price_micro: Some(20),
-        fixed_price_micro: Some(1),
         status_label: "exact".to_string(),
     }
 }
@@ -71,7 +70,6 @@ fn unpriced_pricing(context: &str) -> FrozenPricingAssessment {
         currency: None,
         input_unit_price_micro: None,
         output_unit_price_micro: None,
-        fixed_price_micro: None,
         status_label: "unpriced".to_string(),
     }
 }

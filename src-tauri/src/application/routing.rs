@@ -503,7 +503,6 @@ impl RoutingService {
                         unit: request_pricing.unit,
                         estimated_input_price: request_pricing.estimated_input_price,
                         estimated_output_price: request_pricing.estimated_output_price,
-                        estimated_fixed_price: request_pricing.estimated_fixed_price,
                         estimated_cache_creation_price: request_pricing
                             .estimated_cache_creation_price,
                         estimated_cache_read_price: request_pricing.estimated_cache_read_price,
@@ -1652,7 +1651,6 @@ fn route_explanation_from_canonical_candidate(
         reasons,
         rejection_reasons,
         mapped_model,
-        pricing_rule_id: None,
         group_binding_id: None,
         rate_multiplier: None,
         normalization_status: Some("planning_snapshot".to_string()),
@@ -1693,7 +1691,6 @@ fn route_explanation_from_projection(
         reasons,
         rejection_reasons,
         mapped_model,
-        pricing_rule_id: None,
         group_binding_id: projection
             .group
             .as_ref()
@@ -1795,7 +1792,6 @@ fn simulation_explanation(
         reasons,
         rejection_reasons,
         mapped_model,
-        pricing_rule_id: None,
         group_binding_id: projection
             .group
             .as_ref()
@@ -2018,7 +2014,7 @@ mod tests {
     }
 
     #[test]
-    fn local_workspace_candidate_uses_request_scoped_pricing_projection() {
+    fn local_workspace_candidate_uses_token_pricing_projection() {
         let settings = RuntimeRoutingSettings {
             policy: RoutingPolicy::CostStableFirst,
             max_rate_multiplier: Some(2.0),
@@ -2047,25 +2043,23 @@ mod tests {
             resolved_model: "gpt-5-mini".to_string(),
             request_kind: RequestKind::Text,
             group_binding_id: None,
-            base_input_price: None,
+            base_input_price: Some(0.42),
             base_output_price: None,
-            base_fixed_price: Some(0.42),
             base_cache_creation_price: None,
             base_cache_read_price: None,
             currency: "USD".to_string(),
-            unit: "request".to_string(),
+            unit: "per_1m_tokens".to_string(),
             base_price_source: Some("fixture".to_string()),
             effective_rate_multiplier: Some(1.0),
             rate_source: Some("fixture".to_string()),
             rate_collected_at: Some("2026-07-31T00:00:00Z".to_string()),
-            estimated_input_price: None,
+            estimated_input_price: Some(0.42),
             estimated_output_price: None,
-            estimated_fixed_price: Some(0.42),
             estimated_cache_creation_price: None,
             estimated_cache_read_price: None,
             pricing_status: PricingStatus::Priced,
             confidence: 0.99,
-            source_chain: vec!["pricing_rule:rule-local".to_string()],
+            source_chain: vec!["model_base_price".to_string()],
             reason: None,
             resolved_at: "2026-07-31T00:00:00Z".to_string(),
         };
@@ -2078,11 +2072,10 @@ mod tests {
         .expect("projection");
         assert_eq!(projection.pricing.basis, RoutingCostBasis::ExactPrice);
         assert_eq!(projection.pricing.comparison_value, Some(0.42));
-        assert_eq!(projection.pricing.estimated_fixed_price, Some(0.42));
         assert_eq!(projection.pricing.currency.as_deref(), Some("USD"));
         assert_eq!(
             projection.pricing.source_chain,
-            vec!["pricing_rule:rule-local".to_string()]
+            vec!["model_base_price".to_string()]
         );
     }
 

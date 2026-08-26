@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::models::pricing::{UpsertModelBasePriceInput, UpsertPricingRuleInput};
+use crate::models::pricing::UpsertModelBasePriceInput;
 
 use super::{invalid_input, TypeDescriptor};
 
@@ -14,12 +14,6 @@ const MAX_TIMESTAMP_BYTES: usize = 64;
 const MAX_PRICE: f64 = 1.0e12;
 const MAX_MULTIPLIER: f64 = 1.0e6;
 const MAX_MODEL_SELECTION_KEYS: usize = 20_000;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct PricingRuleIdInputDto {
-    pub id: String,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -94,14 +88,6 @@ impl SyncModelPricesInputDto {
     }
 }
 
-impl PricingRuleIdInputDto {
-    pub fn parse(value: Value) -> Result<Self, crate::commands::error::CommandError> {
-        let input: Self = parse_value(value)?;
-        validate_id("id", &input.id)?;
-        Ok(input)
-    }
-}
-
 impl ModelBasePriceIdInputDto {
     pub fn parse(value: Value) -> Result<Self, crate::commands::error::CommandError> {
         let input: Self = parse_value(value)?;
@@ -128,7 +114,9 @@ pub struct UpsertModelBasePriceInputDto {
     pub long_context_input_token_threshold: Option<i64>,
     pub long_context_input_cost_multiplier: Option<f64>,
     pub long_context_output_cost_multiplier: Option<f64>,
+    #[serde(default)]
     pub supports_service_tier: bool,
+    #[serde(default)]
     pub supports_prompt_caching: bool,
     pub currency: String,
     pub unit: String,
@@ -215,101 +203,6 @@ impl UpsertModelBasePriceInputDto {
             enabled: self.enabled,
             built_in: self.built_in,
             note: self.note,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct UpsertPricingRuleInputDto {
-    pub id: Option<String>,
-    pub station_id: String,
-    pub station_key_id: Option<String>,
-    pub group_binding_id: Option<String>,
-    pub group_name: Option<String>,
-    pub tier_label: Option<String>,
-    pub model: String,
-    pub input_price: Option<f64>,
-    pub output_price: Option<f64>,
-    pub fixed_price: Option<f64>,
-    pub rate_multiplier: Option<f64>,
-    pub currency: String,
-    pub unit: String,
-    pub price_type: String,
-    pub base_price_source: Option<String>,
-    pub normalization_status: Option<String>,
-    pub source: String,
-    pub confidence: f64,
-    pub enabled: bool,
-    pub note: Option<String>,
-    pub collected_at: Option<String>,
-    pub valid_from: Option<String>,
-    pub valid_until: Option<String>,
-}
-
-impl UpsertPricingRuleInputDto {
-    pub fn parse(value: Value) -> Result<Self, crate::commands::error::CommandError> {
-        let input: Self = parse_value(value)?;
-        validate_optional_id("id", input.id.as_deref())?;
-        validate_id("stationId", &input.station_id)?;
-        validate_optional_id("stationKeyId", input.station_key_id.as_deref())?;
-        validate_optional_id("groupBindingId", input.group_binding_id.as_deref())?;
-        validate_optional_text("groupName", input.group_name.as_deref(), MAX_TEXT_BYTES)?;
-        validate_optional_text("tierLabel", input.tier_label.as_deref(), MAX_TEXT_BYTES)?;
-        validate_text("model", &input.model, MAX_MODEL_BYTES, false)?;
-        validate_price("inputPrice", input.input_price)?;
-        validate_price("outputPrice", input.output_price)?;
-        validate_price("fixedPrice", input.fixed_price)?;
-        validate_bounded_number("rateMultiplier", input.rate_multiplier, MAX_MULTIPLIER)?;
-        validate_text("currency", &input.currency, 16, false)?;
-        validate_text("unit", &input.unit, 32, false)?;
-        validate_text("priceType", &input.price_type, 64, false)?;
-        validate_optional_text("basePriceSource", input.base_price_source.as_deref(), 128)?;
-        validate_optional_text(
-            "normalizationStatus",
-            input.normalization_status.as_deref(),
-            128,
-        )?;
-        validate_text("source", &input.source, 128, false)?;
-        if !input.confidence.is_finite() || !(0.0..=1.0).contains(&input.confidence) {
-            return Err(invalid_input(
-                "confidence",
-                "invalid_range",
-                "The confidence must be between zero and one.",
-            ));
-        }
-        validate_optional_text("note", input.note.as_deref(), MAX_NOTE_BYTES)?;
-        validate_optional_timestamp("collectedAt", input.collected_at.as_deref())?;
-        validate_optional_timestamp("validFrom", input.valid_from.as_deref())?;
-        validate_optional_timestamp("validUntil", input.valid_until.as_deref())?;
-        Ok(input)
-    }
-
-    pub fn into_domain(self) -> UpsertPricingRuleInput {
-        UpsertPricingRuleInput {
-            id: self.id,
-            station_id: self.station_id,
-            station_key_id: self.station_key_id,
-            group_binding_id: self.group_binding_id,
-            group_name: self.group_name,
-            tier_label: self.tier_label,
-            model: self.model,
-            input_price: self.input_price,
-            output_price: self.output_price,
-            fixed_price: self.fixed_price,
-            rate_multiplier: self.rate_multiplier,
-            currency: self.currency,
-            unit: self.unit,
-            price_type: self.price_type,
-            base_price_source: self.base_price_source,
-            normalization_status: self.normalization_status,
-            source: self.source,
-            confidence: self.confidence,
-            enabled: self.enabled,
-            note: self.note,
-            collected_at: self.collected_at,
-            valid_from: self.valid_from,
-            valid_until: self.valid_until,
         }
     }
 }
@@ -471,8 +364,6 @@ pub(crate) fn serialization_fixtures() -> Vec<Value> {
         serde_json::json!({"command":"upsert_model_base_price","input":fixture_base_price_input(),"output":fixture_base_price_output()}),
         serde_json::json!({"command":"delete_model_base_price","input":{"id":"price-1"},"output":null}),
         serde_json::json!({"command":"reset_model_base_prices_to_builtins","input":{},"output":[fixture_base_price_output()]}),
-        serde_json::json!({"command":"upsert_pricing_rule","input":fixture_rule_input(),"output":fixture_rule_output()}),
-        serde_json::json!({"command":"delete_pricing_rule","input":{"id":"rule-1"},"output":null}),
     ]
 }
 
@@ -487,24 +378,18 @@ fn fixture_base_price_output() -> Value {
 }
 
 #[cfg(test)]
-fn fixture_rule_input() -> Value {
-    serde_json::json!({"id":null,"stationId":"station-1","stationKeyId":null,"groupBindingId":null,"groupName":null,"tierLabel":null,"model":"fixture-model","inputPrice":1.0,"outputPrice":2.0,"fixedPrice":null,"rateMultiplier":1.0,"currency":"USD","unit":"M","priceType":"token","basePriceSource":null,"normalizationStatus":null,"source":"manual","confidence":1.0,"enabled":true,"note":null,"collectedAt":null,"validFrom":null,"validUntil":null})
-}
-
-#[cfg(test)]
-fn fixture_rule_output() -> Value {
-    let mut value = fixture_rule_input();
-    value["id"] = serde_json::json!("rule-1");
-    value["normalizationStatus"] = serde_json::json!("manual");
-    value["createdAt"] = serde_json::json!("1700000000000");
-    value["updatedAt"] = serde_json::json!("1700000000000");
-    value
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
     use crate::commands::error::CommandErrorCode;
+
+    #[test]
+    fn accepts_legacy_base_price_payload_without_capability_flags() {
+        let input = UpsertModelBasePriceInputDto::parse(fixture_base_price_input())
+            .expect("legacy model base price payload");
+
+        assert!(!input.supports_service_tier);
+        assert!(!input.supports_prompt_caching);
+    }
 
     #[test]
     fn rejects_unknown_fields_invalid_urls_and_invalid_numbers() {
@@ -513,24 +398,6 @@ mod tests {
         assert_eq!(
             UpsertModelBasePriceInputDto::parse(base)
                 .expect_err("invalid URL")
-                .code,
-            CommandErrorCode::InvalidInput
-        );
-
-        let mut rule = fixture_rule_input();
-        rule["confidence"] = serde_json::json!(2.0);
-        assert_eq!(
-            UpsertPricingRuleInputDto::parse(rule)
-                .expect_err("invalid confidence")
-                .code,
-            CommandErrorCode::InvalidInput
-        );
-
-        let mut unknown = fixture_rule_input();
-        unknown["unexpected"] = serde_json::json!(true);
-        assert_eq!(
-            UpsertPricingRuleInputDto::parse(unknown)
-                .expect_err("unknown field")
                 .code,
             CommandErrorCode::InvalidInput
         );

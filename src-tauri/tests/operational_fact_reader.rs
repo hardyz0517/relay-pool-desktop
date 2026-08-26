@@ -12,111 +12,6 @@ mod models {
     pub(crate) mod operational {
         pub(crate) use crate::operational_model::*;
     }
-
-    pub(crate) mod pricing {
-        #[derive(Debug, Clone, PartialEq)]
-        pub enum RequestKind {
-            Text,
-        }
-
-        #[derive(Debug, Clone, PartialEq)]
-        pub enum PricingStatus {
-            Priced,
-            BasePriceOnly,
-            MissingRate,
-            MissingModelPrice,
-            Unpriced,
-            UnsupportedBillingMode,
-            LegacyEstimate,
-        }
-
-        #[derive(Debug, Clone, PartialEq)]
-        pub struct ResolvedPricingContext {
-            pub station_key_id: String,
-            pub station_id: String,
-            pub requested_model: String,
-            pub resolved_model: String,
-            pub request_kind: RequestKind,
-            pub group_binding_id: Option<String>,
-            pub base_input_price: Option<f64>,
-            pub base_output_price: Option<f64>,
-            pub base_fixed_price: Option<f64>,
-            pub currency: String,
-            pub unit: String,
-            pub base_price_source: Option<String>,
-            pub effective_rate_multiplier: Option<f64>,
-            pub rate_source: Option<String>,
-            pub rate_collected_at: Option<String>,
-            pub estimated_input_price: Option<f64>,
-            pub estimated_output_price: Option<f64>,
-            pub estimated_fixed_price: Option<f64>,
-            pub pricing_status: PricingStatus,
-            pub confidence: f64,
-            pub source_chain: Vec<String>,
-            pub reason: Option<String>,
-            pub resolved_at: String,
-        }
-    }
-}
-
-mod services {
-    pub(crate) mod pricing {
-        use crate::models::pricing::{PricingStatus, RequestKind, ResolvedPricingContext};
-
-        pub struct RequestPricingParts<'a> {
-            pub station_key_id: &'a str,
-            pub station_id: Option<&'a str>,
-            pub model: Option<&'a str>,
-            pub pricing_rule_id: Option<&'a str>,
-            pub pricing_model: Option<&'a str>,
-            pub group_binding_id: Option<&'a str>,
-            pub rate_multiplier: Option<f64>,
-            pub normalization_status: Option<&'a str>,
-            pub price_confidence: Option<f64>,
-            pub base_input_price: Option<f64>,
-            pub base_output_price: Option<f64>,
-            pub base_fixed_price: Option<f64>,
-            pub estimated_input_price: Option<f64>,
-            pub estimated_output_price: Option<f64>,
-            pub fixed_price: Option<f64>,
-            pub price_currency: Option<&'a str>,
-            pub pricing_source: Option<&'a str>,
-            pub collected_at: Option<&'a str>,
-        }
-
-        pub fn pricing_context_from_pricing_parts(
-            parts: &RequestPricingParts<'_>,
-        ) -> ResolvedPricingContext {
-            ResolvedPricingContext {
-                station_key_id: parts.station_key_id.to_string(),
-                station_id: parts.station_id.unwrap_or("unknown").to_string(),
-                requested_model: parts.model.unwrap_or("unknown").to_string(),
-                resolved_model: parts.pricing_model.unwrap_or("unknown").to_string(),
-                request_kind: RequestKind::Text,
-                group_binding_id: parts.group_binding_id.map(ToString::to_string),
-                base_input_price: parts.base_input_price,
-                base_output_price: parts.base_output_price,
-                base_fixed_price: parts.base_fixed_price,
-                currency: parts.price_currency.unwrap_or("unknown").to_string(),
-                unit: "per_1m_tokens".to_string(),
-                base_price_source: parts.pricing_source.map(ToString::to_string),
-                effective_rate_multiplier: parts.rate_multiplier,
-                rate_source: parts.pricing_source.map(ToString::to_string),
-                rate_collected_at: parts.collected_at.map(ToString::to_string),
-                estimated_input_price: parts.estimated_input_price,
-                estimated_output_price: parts.estimated_output_price,
-                estimated_fixed_price: parts.fixed_price,
-                pricing_status: PricingStatus::Unpriced,
-                confidence: parts.price_confidence.unwrap_or(0.0),
-                source_chain: parts
-                    .pricing_rule_id
-                    .map(|id| vec![format!("pricing_rule:{id}")])
-                    .unwrap_or_default(),
-                reason: parts.normalization_status.map(ToString::to_string),
-                resolved_at: "unknown".to_string(),
-            }
-        }
-    }
 }
 
 #[path = "../src/application/operational_facts/assembler.rs"]
@@ -158,50 +53,6 @@ mod persistence {
     }
 
     pub(crate) use crate::TestReadSession as ReadSession;
-
-    pub(crate) mod stores {
-        pub(crate) mod pricing_store {
-            #[derive(Debug, Clone)]
-            pub(crate) struct SelectedPricingRuleRow {
-                pub(crate) id: String,
-                pub(crate) model: String,
-                pub(crate) input_price: Option<f64>,
-                pub(crate) output_price: Option<f64>,
-                pub(crate) fixed_price: Option<f64>,
-                pub(crate) currency: String,
-                pub(crate) source: String,
-                pub(crate) group_binding_id: Option<String>,
-                pub(crate) rate_multiplier: Option<f64>,
-                pub(crate) normalization_status: String,
-                pub(crate) confidence: f64,
-                pub(crate) collected_at: Option<String>,
-            }
-
-            #[derive(Debug, Clone)]
-            pub(crate) struct SelectedModelBasePriceRow {
-                pub(crate) model: String,
-                pub(crate) input_price: Option<f64>,
-                pub(crate) output_price: Option<f64>,
-                pub(crate) cache_creation_price: Option<f64>,
-                pub(crate) cache_read_price: Option<f64>,
-                pub(crate) currency: String,
-                pub(crate) source_checked_at: Option<String>,
-                pub(crate) built_in: bool,
-            }
-
-            #[derive(Debug, Clone)]
-            pub(crate) struct StationKeyPricingResolutionRow {
-                pub(crate) station_id: String,
-                pub(crate) credit_per_cny: f64,
-                pub(crate) group_binding_id: Option<String>,
-                pub(crate) group_rate_multiplier: Option<f64>,
-                pub(crate) group_confidence: Option<f64>,
-                pub(crate) group_collected_at: Option<String>,
-                pub(crate) pricing_rule: Option<SelectedPricingRuleRow>,
-                pub(crate) model_base_price: Option<SelectedModelBasePriceRow>,
-            }
-        }
-    }
 }
 
 #[path = "../src/persistence/stores/operational_facts/queries.rs"]
@@ -367,21 +218,6 @@ async fn create_schema(pool: &SqlitePool) {
             low_balance_threshold REAL,
             status TEXT NOT NULL,
             created_at TEXT NOT NULL DEFAULT '',
-            updated_at TEXT NOT NULL
-        );
-        CREATE TABLE pricing_rules (
-            id TEXT PRIMARY KEY,
-            station_id TEXT NOT NULL,
-            station_key_id TEXT,
-            model TEXT NOT NULL,
-            input_price REAL,
-            output_price REAL,
-            fixed_price REAL,
-            rate_multiplier REAL,
-            currency TEXT NOT NULL,
-            unit TEXT NOT NULL,
-            confidence REAL NOT NULL,
-            enabled INTEGER NOT NULL,
             updated_at TEXT NOT NULL
         );
         CREATE TABLE domain_revisions (

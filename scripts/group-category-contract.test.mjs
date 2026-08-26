@@ -88,7 +88,6 @@ const view = buildPricingComparisonViewModel({
     }),
   ],
   groupRates: [],
-  pricingRules: [],
   filters: {
     groupType: "all",
     query: "",
@@ -115,7 +114,6 @@ const developerView = buildPricingComparisonViewModel({
     }),
   ],
   groupRates: [],
-  pricingRules: [],
   developerModeEnabled: true,
   filters: {
     groupType: "all",
@@ -153,7 +151,6 @@ const legacyStructuredMappingView = buildPricingComparisonViewModel({
     }),
   ],
   groupRates: [],
-  pricingRules: [],
   filters: {
     groupType: "all",
     query: "",
@@ -182,7 +179,6 @@ const categorizedBindingWithStaleRateView = buildPricingComparisonViewModel({
       effectiveRateMultiplier: null,
     }),
   ],
-  pricingRules: [],
   filters: {
     groupType: "all",
     query: "",

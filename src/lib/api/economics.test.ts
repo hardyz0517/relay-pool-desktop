@@ -5,19 +5,14 @@ import type { BackendClient } from "@/lib/bridge/BackendClient";
 
 import {
   deleteModelBasePrice,
-  deletePricingRule,
   listModelPriceSyncCatalog,
   openModelPriceCatalogDirectory,
   resetModelBasePricesToBuiltins,
   upsertModelBasePrice,
-  upsertPricingRule,
 } from "./economics";
 
 describe("pricing mutation backend cutover", () => {
   const economics = {
-    listPricingRules: vi.fn(async () => []),
-    upsertPricingRule: vi.fn(async (input) => ({ id: "rule-1", createdAt: "now", updatedAt: "now", ...input })),
-    deletePricingRule: vi.fn(async () => undefined),
     resolveStationKeyPricingContext: vi.fn(async () => ({}) as never),
     listModelBasePrices: vi.fn(async () => []),
     listModelPriceSyncCatalog: vi.fn(async () => []),
@@ -74,47 +69,17 @@ describe("pricing mutation backend cutover", () => {
       builtIn: false,
       note: null,
     };
-    const rule = {
-      id: null,
-      stationId: "station-1",
-      stationKeyId: null,
-      groupBindingId: null,
-      groupName: null,
-      tierLabel: null,
-      model: "fixture-model",
-      inputPrice: 1,
-      outputPrice: 2,
-      fixedPrice: null,
-      rateMultiplier: 1,
-      currency: "USD",
-      unit: "M",
-      priceType: "token",
-      basePriceSource: null,
-      normalizationStatus: null,
-      source: "manual",
-      confidence: 1,
-      enabled: true,
-      note: null,
-      collectedAt: null,
-      validFrom: null,
-      validUntil: null,
-    };
-
     await upsertModelBasePrice(basePrice);
     await deleteModelBasePrice("base-1");
     await resetModelBasePricesToBuiltins();
     await listModelPriceSyncCatalog();
     await openModelPriceCatalogDirectory();
-    await upsertPricingRule(rule);
-    await deletePricingRule("rule-1");
 
     expect(economics.upsertModelBasePrice).toHaveBeenCalledWith(basePrice);
     expect(economics.deleteModelBasePrice).toHaveBeenCalledWith("base-1");
     expect(economics.resetModelBasePricesToBuiltins).toHaveBeenCalledTimes(1);
     expect(economics.listModelPriceSyncCatalog).toHaveBeenCalledTimes(1);
     expect(economics.openModelPriceCatalogDirectory).toHaveBeenCalledTimes(1);
-    expect(economics.upsertPricingRule).toHaveBeenCalledWith(rule);
-    expect(economics.deletePricingRule).toHaveBeenCalledWith("rule-1");
   });
 });
 

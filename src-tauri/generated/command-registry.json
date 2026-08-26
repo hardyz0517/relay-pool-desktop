@@ -2,7 +2,7 @@
   "schema_version": 1,
   "generator_version": 1,
   "ipc_contract_version": 1,
-  "contract_hash": "58680545187810f4cc691ce4d87ef581063e69effa0ea6d59c6ed4f02079b0fa",
+  "contract_hash": "eb586692e080dee356c9ed5a1388d279bb35df884049ac8a1f57bf5682f6bc89",
   "commands": [
     {
       "name": "activate_data_store_candidate",
@@ -404,17 +404,6 @@
       "name": "delete_model_base_price",
       "transport": "ordinary",
       "input_schema_hash": "c7bb4af4e52a900a70f402dc1da53b9c790f8987fbf29b207a4ce8a175a2e442",
-      "output_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
-      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "idempotent",
-      "transport_retry": false,
-      "result_unknown": false,
-      "runtime_validation": "rust_dto_pre_application"
-    },
-    {
-      "name": "delete_pricing_rule",
-      "transport": "ordinary",
-      "input_schema_hash": "31398ba915ffff947bb3f7b2928ee5702a0f8237801c553682162038383c2cb2",
       "output_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
@@ -1219,17 +1208,6 @@
       "transport": "ordinary",
       "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
       "output_schema_hash": "2e127a00614e2813f2c036670f516b17d4807fb71e70c46d17efcd0674f1542e",
-      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "read",
-      "transport_retry": false,
-      "result_unknown": false,
-      "runtime_validation": "rust_dto_pre_application"
-    },
-    {
-      "name": "list_pricing_rules",
-      "transport": "ordinary",
-      "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
-      "output_schema_hash": "47a1c41c37386b44ea02f5d86263a2b2b11528204b1211574569348902d1ab23",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
       "transport_retry": false,
@@ -2194,17 +2172,6 @@
       "runtime_validation": "rust_dto_pre_application"
     },
     {
-      "name": "upsert_pricing_rule",
-      "transport": "ordinary",
-      "input_schema_hash": "150cf97bcc3bfff5aa2dd51e66352b23d6a712888fbc9a7ac437206a7e3d8a35",
-      "output_schema_hash": "792d18c99dfc59ea1306fc8db43fb73807dba6e35f79149c65a004aba51f4d5d",
-      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "idempotent",
-      "transport_retry": false,
-      "result_unknown": false,
-      "runtime_validation": "rust_dto_pre_application"
-    },
-    {
       "name": "upsert_station_capacity_domain",
       "transport": "ordinary",
       "input_schema_hash": "58a9228cfe6a45de3fd01d5581acb889423c71ae80ef7256d9ceb159bac23ef7",
@@ -2241,6 +2208,6 @@
   "streaming_surfaces": [],
   "evidence": {
     "kind": "compiled-rust-registry",
-    "serialization_fixture_hash": "579f8b885a6fb60e416b14948028c856a32a8379c025dedb09b8f3c1a9dfd9c2"
+    "serialization_fixture_hash": "0912b9f018d80aeb29df27acef1e0f6bc3e9b3f2f342ea6722cfd3e2d0777aa3"
   }
 }

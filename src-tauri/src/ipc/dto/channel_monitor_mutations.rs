@@ -111,6 +111,27 @@ pub enum MonitorHealthWritebackModeInputDto {
     Authoritative,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MonitorProxyModeInputDto {
+    #[default]
+    Inherit,
+    Direct,
+    System,
+    Manual,
+}
+
+impl MonitorProxyModeInputDto {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Inherit => "inherit",
+            Self::Direct => "direct",
+            Self::System => "system",
+            Self::Manual => "manual",
+        }
+    }
+}
+
 impl MonitorHealthWritebackModeInputDto {
     fn as_str(self) -> &'static str {
         match self {
@@ -145,6 +166,9 @@ pub struct CreateChannelMonitorInputDto {
     pub template_id: String,
     pub enabled: bool,
     pub pause_on_zero_balance: bool,
+    #[serde(default)]
+    pub proxy_mode: MonitorProxyModeInputDto,
+    pub proxy_url: Option<String>,
     pub protocol_kind: MonitorProtocolKindInputDto,
     pub client_profile_id: MonitorClientProfileIdInputDto,
     pub client_profile_version: i64,
@@ -183,6 +207,8 @@ impl CreateChannelMonitorInputDto {
             template_id: self.template_id,
             enabled: self.enabled,
             pause_on_zero_balance: self.pause_on_zero_balance,
+            proxy_mode: self.proxy_mode.as_str().to_owned(),
+            proxy_url: normalize_optional(self.proxy_url),
             protocol_kind: self.protocol_kind.as_str().to_owned(),
             client_profile_id: self.client_profile_id.as_str().to_owned(),
             client_profile_version: self.client_profile_version,
@@ -233,7 +259,8 @@ impl CreateChannelMonitorInputDto {
             self.consecutive_failure_threshold,
             &self.fallback_models,
             self.note.as_deref(),
-        )
+        )?;
+        validate_monitor_proxy(self.proxy_mode, self.proxy_url.as_deref())
     }
 }
 
@@ -248,6 +275,9 @@ pub struct UpdateChannelMonitorInputDto {
     pub template_id: String,
     pub enabled: bool,
     pub pause_on_zero_balance: bool,
+    #[serde(default)]
+    pub proxy_mode: MonitorProxyModeInputDto,
+    pub proxy_url: Option<String>,
     pub protocol_kind: MonitorProtocolKindInputDto,
     pub client_profile_id: MonitorClientProfileIdInputDto,
     pub client_profile_version: i64,
@@ -288,6 +318,8 @@ impl UpdateChannelMonitorInputDto {
             template_id: self.template_id,
             enabled: self.enabled,
             pause_on_zero_balance: self.pause_on_zero_balance,
+            proxy_mode: self.proxy_mode.as_str().to_owned(),
+            proxy_url: normalize_optional(self.proxy_url),
             protocol_kind: self.protocol_kind.as_str().to_owned(),
             client_profile_id: self.client_profile_id.as_str().to_owned(),
             client_profile_version: self.client_profile_version,
@@ -338,7 +370,8 @@ impl UpdateChannelMonitorInputDto {
             self.consecutive_failure_threshold,
             &self.fallback_models,
             self.note.as_deref(),
-        )
+        )?;
+        validate_monitor_proxy(self.proxy_mode, self.proxy_url.as_deref())
     }
 }
 
@@ -553,6 +586,40 @@ fn validate_monitor_fields(
         ));
     }
     validate_optional_note(note)?;
+    Ok(())
+}
+
+fn validate_monitor_proxy(
+    mode: MonitorProxyModeInputDto,
+    url: Option<&str>,
+) -> Result<(), crate::commands::error::CommandError> {
+    let url = normalize_optional(url.map(str::to_owned));
+    match mode {
+        MonitorProxyModeInputDto::Manual => {
+            let Some(url) = url else {
+                return Err(invalid_input(
+                    "proxyUrl",
+                    "manual_proxy_required",
+                    "A manual proxy address is required.",
+                ));
+            };
+            crate::outbound::ManualProxy::parse(url).map_err(|_| {
+                invalid_input(
+                    "proxyUrl",
+                    "invalid_proxy_url",
+                    "The manual proxy address is invalid.",
+                )
+            })?;
+        }
+        _ if url.is_some() => {
+            return Err(invalid_input(
+                "proxyUrl",
+                "proxy_url_not_allowed",
+                "A proxy address is only valid for manual proxy mode.",
+            ));
+        }
+        _ => {}
+    }
     Ok(())
 }
 
@@ -782,6 +849,8 @@ fn fixture_monitor() -> ChannelMonitor {
         enabled: true,
         pause_on_zero_balance: true,
         balance_paused: false,
+        proxy_mode: "inherit".into(),
+        proxy_url: None,
         protocol_kind: "open_ai_chat".into(),
         client_profile_id: "standard_api".into(),
         client_profile_version: 1,

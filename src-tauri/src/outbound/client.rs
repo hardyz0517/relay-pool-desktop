@@ -4,7 +4,7 @@ use std::{
         atomic::{AtomicUsize, Ordering},
         Arc, Mutex,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use bytes::Bytes;
@@ -226,6 +226,7 @@ impl AsyncOutboundClient {
             return Err(OutboundFailure::new(OutboundFailureKind::BudgetExhausted)
                 .with_url(redacted_start_url.clone()));
         };
+        let started = Instant::now();
         let cancellation_wait = cancellation_token.clone();
         tokio::select! {
             _ = cancellation_wait.cancelled() => {
@@ -234,7 +235,7 @@ impl AsyncOutboundClient {
             }
             result = tokio::time::timeout(
                 total_timeout,
-                self.execute_once_stream(&request, &url, &redacted_start_url, cancellation_token, &mut on_chunk),
+                self.execute_once_stream(&request, &url, &redacted_start_url, cancellation_token, started, &mut on_chunk),
             ) => {
                 match result {
                     Ok(result) => result,
@@ -402,6 +403,7 @@ impl AsyncOutboundClient {
         start_url: &Url,
         redacted_start_url: &str,
         cancellation_token: CancellationToken,
+        started: Instant,
         on_chunk: &mut H,
     ) -> Result<OutboundStreamResponse, OutboundFailure>
     where
@@ -459,6 +461,8 @@ impl AsyncOutboundClient {
                 }
             };
 
+            let headers_latency_ms = elapsed_ms(started.elapsed());
+
             let status = response.status();
             if is_redirect(status) {
                 let Some(next_url) = redirect_url(&current_url, response.headers())? else {
@@ -496,6 +500,7 @@ impl AsyncOutboundClient {
                 status,
                 headers,
                 body_bytes,
+                headers_latency_ms,
                 evidence: OutboundEvidence {
                     start_url: redacted_start_url.to_string(),
                     final_url: redact_url(&current_url),
@@ -686,6 +691,7 @@ pub struct OutboundStreamResponse {
     pub status: StatusCode,
     pub headers: HeaderMap,
     pub body_bytes: usize,
+    pub headers_latency_ms: u64,
     pub evidence: OutboundEvidence,
 }
 
@@ -857,6 +863,10 @@ fn body_read_remaining(timeout: Duration) -> Option<Duration> {
     } else {
         Some(timeout)
     }
+}
+
+fn elapsed_ms(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
 fn redact_url(url: &Url) -> String {

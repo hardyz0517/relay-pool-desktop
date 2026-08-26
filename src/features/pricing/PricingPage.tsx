@@ -85,7 +85,6 @@ export function PricingPage({ onOpenModelBasePrices, onOpenRoutingDeepLink }: Pr
     pricingComparisonQueryOptions(),
   );
   const workspace = pricingQuery.data;
-  const pricingRules = workspace?.pricingRules ?? [];
   const stations = workspace?.stations ?? [];
   const stationKeys = workspace?.stationKeys ?? [];
   const groupBindings = workspace?.groupBindings ?? [];
@@ -108,10 +107,9 @@ export function PricingPage({ onOpenModelBasePrices, onOpenRoutingDeepLink }: Pr
         stationKeys,
         groupBindings,
         groupRates,
-        pricingRules,
         developerModeEnabled,
       }),
-    [developerModeEnabled, groupBindings, groupRates, pricingRules, stationKeys, stations],
+    [developerModeEnabled, groupBindings, groupRates, stationKeys, stations],
   );
 
   useEffect(() => {
@@ -160,7 +158,6 @@ export function PricingPage({ onOpenModelBasePrices, onOpenRoutingDeepLink }: Pr
         stationKeys,
         groupBindings,
         groupRates,
-        pricingRules,
         developerModeEnabled,
         filters: {
           groupType: groupTypeFilter,
@@ -179,7 +176,6 @@ export function PricingPage({ onOpenModelBasePrices, onOpenRoutingDeepLink }: Pr
       groupRates,
       groupTypeFilter,
       developerModeEnabled,
-      pricingRules,
       query,
       selectedStationId,
       keyPresenceFilter,

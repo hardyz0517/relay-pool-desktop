@@ -373,7 +373,7 @@ function checkFrontendDoesNotOwnRoutingTruth() {
   for (const file of frontendTruthFiles) {
     const source = read(file);
     if (
-      /\bfirstMatchingPricingRule\b|\bderivePricingGroupDisplayCandidates\b|\bderiveStationGroupDisplayFacts\b/u.test(
+      /\bderivePricingGroupDisplayCandidates\b|\bderiveStationGroupDisplayFacts\b/u.test(
         source,
       ) &&
       !/RPD_ROUTING_BOUNDARY:display-only-routing-truth-compat/u.test(source)

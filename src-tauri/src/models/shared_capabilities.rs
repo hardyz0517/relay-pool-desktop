@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::models::{
     group_facts::{GroupRateRecord, StationGroupBinding},
-    pricing::PricingRule,
     routing::{StationKeyCapabilities, UpdateStationKeyCapabilitiesInput},
     station_keys::StationKey,
     stations::Station,
@@ -91,6 +90,5 @@ pub struct PricingComparisonWorkspace {
     pub station_keys: Vec<StationKey>,
     pub group_bindings: Vec<StationGroupBinding>,
     pub group_rates: Vec<GroupRateRecord>,
-    pub pricing_rules: Vec<PricingRule>,
     pub developer_mode_enabled: bool,
 }

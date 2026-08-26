@@ -2,6 +2,7 @@ export type ChannelMonitorTargetType = "station_key" | "station";
 export type ChannelMonitorProtocolKind = "open_ai_chat" | "open_ai_responses" | "anthropic_messages" | "gemini_native" | "xai_grok" | "generic_open_ai";
 export type ChannelMonitorClientProfileId = "standard_api" | "codex_cli_compat" | "claude_code_compat" | "gemini_cli_compat" | "grok_cli_compat";
 export type ChannelMonitorHealthWritebackMode = "disabled" | "observe_only" | "authoritative";
+export type ChannelMonitorProxyMode = "inherit" | "direct" | "system" | "manual";
 
 export type ChannelMonitorRequestTemplate = {
   id: string;
@@ -41,6 +42,8 @@ export type ChannelMonitor = {
   enabled: boolean;
   pauseOnZeroBalance: boolean;
   balancePaused: boolean;
+  proxyMode: ChannelMonitorProxyMode;
+  proxyUrl: string | null;
   protocolKind: ChannelMonitorProtocolKind;
   clientProfileId: ChannelMonitorClientProfileId;
   clientProfileVersion: number;
@@ -74,6 +77,8 @@ export type CreateChannelMonitorInput = {
   templateId: string;
   enabled: boolean;
   pauseOnZeroBalance: boolean;
+  proxyMode: ChannelMonitorProxyMode;
+  proxyUrl: string | null;
   protocolKind: ChannelMonitorProtocolKind;
   clientProfileId: ChannelMonitorClientProfileId;
   clientProfileVersion: number;
@@ -219,6 +224,8 @@ export type ChannelStatusLatestResult = {
   terminalReason: string | null;
   httpStatus: number | null;
   latencyMs: number | null;
+  ttfbMs: number | null;
+  firstContentMs: number | null;
   finishedAtMs: number | null;
   semanticConfidence: string;
   usedFallback: boolean;
@@ -243,6 +250,8 @@ export type ChannelStatusRecentPoint = {
   terminalReason: string | null;
   httpStatus: number | null;
   latencyMs: number | null;
+  ttfbMs: number | null;
+  firstContentMs: number | null;
   checkedAtMs: number | null;
   usedFallback: boolean;
   semanticConfidence: string;
@@ -397,6 +406,8 @@ export type ChannelMonitorTargetResultRecord = {
   healthWritebackDecision: string;
   healthWritebackReason: string | null;
   latencyMs: number | null;
+  ttfbMs: number | null;
+  firstContentMs: number | null;
   semanticConfidence: string;
   startedAtMs: number;
   finishedAtMs: number | null;
@@ -437,6 +448,8 @@ export type ChannelMonitorAttemptRecord = {
   startedAtMs: number;
   finishedAtMs: number | null;
   latencyMs: number | null;
+  ttfbMs: number | null;
+  firstContentMs: number | null;
   httpStatus: number | null;
   outcome: string;
   failureKind: string | null;

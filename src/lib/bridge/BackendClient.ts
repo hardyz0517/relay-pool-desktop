@@ -42,12 +42,10 @@ import type {
   ModelPriceSyncConfig,
   ModelPriceSyncResult,
   ModelPriceSyncState,
-  PricingRule,
   RequestKind,
   ResolvedPricingContext,
   UpsertBalanceSnapshotInput,
   UpsertModelBasePriceInput,
-  UpsertPricingRuleInput,
 } from "@/lib/types/economics";
 import type {
   GroupRateRecord,
@@ -270,9 +268,6 @@ export type DataMigrationDomainClient = {
 };
 
 export type EconomicsDomainClient = {
-  listPricingRules(): Promise<PricingRule[]>;
-  upsertPricingRule(input: UpsertPricingRuleInput): Promise<PricingRule>;
-  deletePricingRule(id: string): Promise<void>;
   resolveStationKeyPricingContext(
     stationKeyId: string,
     requestedModel: string,
@@ -306,7 +301,6 @@ export type PricingComparisonWorkspace = {
   stationKeys: StationKey[];
   groupBindings: StationGroupBinding[];
   groupRates: GroupRateRecord[];
-  pricingRules: PricingRule[];
   developerModeEnabled: boolean;
 };
 

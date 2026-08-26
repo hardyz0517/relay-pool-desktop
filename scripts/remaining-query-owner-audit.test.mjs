@@ -22,7 +22,6 @@ assert.ok(
     pricingPageSource.includes("pricingComparisonQueryOptions()") &&
     !pricingPageSource.includes("Promise.all(") &&
     !pricingPageSource.includes("usePageActivation") &&
-    !pricingPageSource.includes("listPricingRules") &&
     !pricingPageSource.includes("listStationGroupBindings") &&
     !pricingPageSource.includes("listGroupRateRecords"),
   "PricingPage should use one activity-bound pricing workspace query and no page-local server-state fan-out",

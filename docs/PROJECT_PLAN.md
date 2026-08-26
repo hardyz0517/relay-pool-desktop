@@ -107,18 +107,19 @@ Relay Pool Desktop 是一个本地桌面端 AI 中转站与 Key 池管理工具�
 - 查看健康状态
 - 后续被本地 proxy / router 使用
 
-### 3.4 Pricing Rule
+### 3.4 Model Base Price
 
-`Pricing Rule` 是归一化的价格记录。
+`Model Base Price` 是模型基础价格目录；站点最终价格由基础价格与分组实际倍率共同决定。
 
 它负责：
 
-- station / group / model 价格
-- input / output / fixed price
+- provider / model 价格
+- input / output / cache 价格
+- service tier / prompt caching 能力标记
 - currency / unit
-- source / confidence
+- source / checked time
 - enabled 状态
-- collected 时间
+- built-in 状态
 
 ### 3.5 Balance Snapshot
 
@@ -143,7 +144,7 @@ Relay Pool Desktop 是一个本地桌面端 AI 中转站与 Key 池管理工具�
 - token 数
 - estimated cost
 - currency
-- pricing rule 来源
+- 模型基础价格与分组倍率来源
 - cost 状态
 
 ### 3.7 Group Binding
@@ -205,7 +206,7 @@ Files、Batches、Audio、Images、Realtime、Assistants 等端点不在本地�
 
 P7 完成时应满足：
 
-- 价格表能显示真实 `pricing_rules`
+- 价格表能显示模型基础价格与分组倍率
 - 总览页能显示余额、请求数和成本摘要
 - 请求日志能显示 token / cost 元数据
 - 路由页能解释 `cheap_first` 和候选排序

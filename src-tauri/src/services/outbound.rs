@@ -1,4 +1,5 @@
 pub use crate::models::proxy::{normalize_proxy_mode, normalize_proxy_url};
+use crate::outbound::{ManualProxy, ProxyPolicy};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProxyConfig {
@@ -32,6 +33,24 @@ pub fn resolve_proxy_config(
     ProxyConfig {
         mode: normalize_proxy_mode(global_mode, false),
         url: normalize_proxy_url(global_url),
+    }
+}
+
+/// Converts a concrete network proxy setting into the outbound transport policy.
+/// The global setting is always concrete; monitor/station overrides should
+/// resolve inheritance before calling this helper.
+pub(crate) fn proxy_policy_from_mode(mode: &str, url: Option<&str>) -> Result<ProxyPolicy, String> {
+    match normalize_proxy_mode(mode, false).as_str() {
+        "direct" => Ok(ProxyPolicy::Direct),
+        "system" => Ok(ProxyPolicy::System),
+        "manual" => {
+            let endpoint = normalize_proxy_url(url.map(str::to_owned))
+                .ok_or_else(|| "manual proxy address is required".to_string())?;
+            ManualProxy::parse(endpoint)
+                .map(ProxyPolicy::Manual)
+                .map_err(|_| "invalid manual proxy address".to_string())
+        }
+        _ => Ok(ProxyPolicy::Direct),
     }
 }
 
@@ -176,6 +195,31 @@ mod tests {
         );
 
         assert_eq!(proxy, ProxyConfig::direct());
+    }
+
+    #[test]
+    fn concrete_proxy_modes_convert_to_outbound_policies() {
+        assert_eq!(
+            proxy_policy_from_mode("direct", None).expect("direct proxy policy"),
+            ProxyPolicy::Direct
+        );
+        assert_eq!(
+            proxy_policy_from_mode("system", None).expect("system proxy policy"),
+            ProxyPolicy::System
+        );
+        assert_eq!(
+            proxy_policy_from_mode("manual", Some("http://127.0.0.1:7890"))
+                .expect("manual proxy policy")
+                .pool_key(),
+            ProxyPolicy::Manual(ManualProxy::parse("http://127.0.0.1:7890").expect("manual proxy"))
+                .pool_key()
+        );
+    }
+
+    #[test]
+    fn manual_proxy_policy_requires_a_valid_endpoint() {
+        assert!(proxy_policy_from_mode("manual", None).is_err());
+        assert!(proxy_policy_from_mode("manual", Some("http://user:pass@127.0.0.1:7890")).is_err());
     }
 
     #[test]

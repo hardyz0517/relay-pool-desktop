@@ -35,6 +35,8 @@ pub(crate) struct MonitorDefinitionConfigRow {
     pub(crate) jitter_seconds: i64,
     pub(crate) attempt_timeout_ms: i64,
     pub(crate) execution_timeout_ms: i64,
+    pub(crate) proxy_mode: String,
+    pub(crate) proxy_url: Option<String>,
     pub(crate) schedule_revision: i64,
     pub(crate) next_due_at_ms: Option<i64>,
 }
@@ -199,7 +201,8 @@ impl MonitoringDefinitionRepository {
                    risk_daily_probe_budget, health_policy_mode,
                    health_failure_threshold, health_recovery_threshold,
                    interval_seconds, jitter_seconds, attempt_timeout_ms,
-                   execution_timeout_ms, schedule_revision, next_due_at_ms
+                   execution_timeout_ms, schedule_revision, next_due_at_ms,
+                   proxy_mode, proxy_url
             FROM channel_monitors
             WHERE id = ?1
             "#,
@@ -231,6 +234,8 @@ impl MonitoringDefinitionRepository {
             execution_timeout_ms: row.get("execution_timeout_ms"),
             schedule_revision: row.get("schedule_revision"),
             next_due_at_ms: row.get("next_due_at_ms"),
+            proxy_mode: row.get("proxy_mode"),
+            proxy_url: row.get("proxy_url"),
         })
     }
 }

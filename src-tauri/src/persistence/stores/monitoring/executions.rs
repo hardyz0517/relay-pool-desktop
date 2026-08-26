@@ -37,6 +37,8 @@ pub(crate) struct NewAttemptRow {
     pub(crate) started_at_ms: i64,
     pub(crate) finished_at_ms: Option<i64>,
     pub(crate) latency_ms: Option<i64>,
+    pub(crate) ttfb_ms: Option<i64>,
+    pub(crate) first_content_ms: Option<i64>,
     pub(crate) http_status: Option<i64>,
     pub(crate) outcome: String,
     pub(crate) failure_kind: Option<String>,
@@ -77,6 +79,8 @@ pub(crate) struct FinalizeTargetRow {
     pub(crate) request_profile_hash: Option<String>,
     pub(crate) traffic_equivalence: String,
     pub(crate) latency_ms: Option<i64>,
+    pub(crate) ttfb_ms: Option<i64>,
+    pub(crate) first_content_ms: Option<i64>,
     pub(crate) semantic_confidence: String,
     pub(crate) availability_eligible: bool,
     pub(crate) latency_eligible: bool,
@@ -266,15 +270,15 @@ impl MonitoringExecutionRepository {
                 id, execution_id, monitor_id, station_id, station_key_id, model,
                 model_role, model_index, attempt_number, protocol_kind,
                 client_profile_id, client_profile_version, request_profile_hash,
-                transport_mode, started_at_ms, finished_at_ms, latency_ms, http_status,
+                transport_mode, started_at_ms, finished_at_ms, latency_ms, ttfb_ms, first_content_ms, http_status,
                 outcome, failure_kind, retryable, response_model, content_extracted,
                 validation_passed, output_bytes, error_summary, canonical_failure_class,
                 failure_origin, failure_scope_kind, failure_dimension, evidence_code,
                 evidence_confidence, classifier_profile_version, created_at_ms
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-                ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24,
-                ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34
+                ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25,
+                ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36
             )
             "#,
         )
@@ -295,6 +299,8 @@ impl MonitoringExecutionRepository {
         .bind(row.started_at_ms)
         .bind(row.finished_at_ms)
         .bind(row.latency_ms)
+        .bind(row.ttfb_ms)
+        .bind(row.first_content_ms)
         .bind(row.http_status)
         .bind(&row.outcome)
         .bind(&row.failure_kind)
@@ -380,12 +386,12 @@ impl MonitoringExecutionRepository {
                 effective_model, used_fallback, attempt_count, decisive_attempt_id,
                 protocol_kind, resolved_adapter_kind, client_profile_id,
                 client_profile_version, request_profile_hash, traffic_equivalence,
-                latency_ms, availability_eligible, latency_eligible, exclusion_reason,
+                latency_ms, ttfb_ms, first_content_ms, availability_eligible, latency_eligible, exclusion_reason,
                 technical_health_effect, disposition_profile_version,
                 semantic_confidence, started_at_ms, finished_at_ms, created_at_ms
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-            ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28
+            ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30
             )
             "#,
         )
@@ -408,6 +414,8 @@ impl MonitoringExecutionRepository {
         .bind(&row.request_profile_hash)
         .bind(&row.traffic_equivalence)
         .bind(row.latency_ms)
+        .bind(row.ttfb_ms)
+        .bind(row.first_content_ms)
         .bind(i64::from(row.availability_eligible))
         .bind(i64::from(row.latency_eligible))
         .bind(&row.exclusion_reason)

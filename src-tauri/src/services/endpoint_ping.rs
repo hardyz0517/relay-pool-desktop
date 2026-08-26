@@ -22,6 +22,23 @@ pub async fn ping_station_endpoint(
     timeout: Duration,
     cancellation_token: CancellationToken,
 ) -> EndpointPingProbeResult {
+    ping_station_endpoint_with_proxy(
+        outbound,
+        base_url,
+        timeout,
+        ProxyPolicy::Direct,
+        cancellation_token,
+    )
+    .await
+}
+
+pub async fn ping_station_endpoint_with_proxy(
+    outbound: &AsyncOutboundClient,
+    base_url: &str,
+    timeout: Duration,
+    proxy: ProxyPolicy,
+    cancellation_token: CancellationToken,
+) -> EndpointPingProbeResult {
     let url = endpoint_ping_url(base_url);
     let started_at = Instant::now();
 
@@ -30,14 +47,22 @@ pub async fn ping_station_endpoint(
         Method::HEAD,
         &url,
         timeout,
+        proxy.clone(),
         cancellation_token.clone(),
     )
     .await
     {
         Ok(response) => Ok(response),
         Err(_) => {
-            match execute_ping_request(outbound, Method::GET, &url, timeout, cancellation_token)
-                .await
+            match execute_ping_request(
+                outbound,
+                Method::GET,
+                &url,
+                timeout,
+                proxy,
+                cancellation_token,
+            )
+            .await
             {
                 Ok(response) => Ok(response),
                 Err(error) => Err(error),
@@ -61,6 +86,7 @@ async fn execute_ping_request(
     method: Method,
     url: &str,
     timeout: Duration,
+    proxy: ProxyPolicy,
     cancellation_token: CancellationToken,
 ) -> Result<crate::outbound::OutboundResponse, crate::outbound::OutboundFailure> {
     let policy = OutboundHeaderPolicy::provider_default();
@@ -74,7 +100,7 @@ async fn execute_ping_request(
                 correlation_id: None,
                 headers,
                 body: Vec::new(),
-                proxy: ProxyPolicy::Direct,
+                proxy,
                 budget: RequestBudget::from_now(timeout),
                 retry_policy: OutboundRetryPolicy::Never,
             },

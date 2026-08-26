@@ -82,7 +82,6 @@ pub(crate) struct FrozenPricingAssessment {
     pub(crate) currency: Option<String>,
     pub(crate) input_unit_price_micro: Option<i64>,
     pub(crate) output_unit_price_micro: Option<i64>,
-    pub(crate) fixed_price_micro: Option<i64>,
     pub(crate) status_label: String,
 }
 

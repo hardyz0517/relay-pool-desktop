@@ -122,6 +122,8 @@ describe("channel monitor backend cutover", () => {
       consecutiveFailureThreshold: 3,
       enabled: true,
       pauseOnZeroBalance: true,
+      proxyMode: "inherit",
+      proxyUrl: null,
       note: null,
     } as const;
     const templateInput = {

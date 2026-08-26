@@ -62,6 +62,7 @@ struct TestServer {
 
 enum ServerAction {
     Respond(String),
+    RespondChunks(Vec<(Duration, String)>),
     Hang,
 }
 
@@ -91,6 +92,16 @@ async fn spawn_server(
                 match handler(request).await {
                     ServerAction::Respond(response) => {
                         let _ = stream.write_all(response.as_bytes()).await;
+                    }
+                    ServerAction::RespondChunks(chunks) => {
+                        for (delay, chunk) in chunks {
+                            if !delay.is_zero() {
+                                tokio::time::sleep(delay).await;
+                            }
+                            if stream.write_all(chunk.as_bytes()).await.is_err() {
+                                break;
+                            }
+                        }
                     }
                     ServerAction::Hang => std::future::pending::<()>().await,
                 }
@@ -249,6 +260,57 @@ async fn monitoring_transport_streams_chunks_without_retaining_success_body() {
         "streamed body must not be reconstructed"
     );
     assert_eq!(result.http_status, 200);
+}
+
+#[tokio::test]
+async fn monitoring_transport_records_first_content_before_stream_completion() {
+    let first = "data: first\n\n";
+    let second = "data: second\n\n";
+    let body_len = first.len() + second.len();
+    let head = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {body_len}\r\nConnection: close\r\n\r\n"
+    );
+    let server = spawn_server(move |_| {
+        let head = head.clone();
+        Box::pin(async move {
+            ServerAction::RespondChunks(vec![
+                (Duration::from_millis(10), format!("{head}{first}")),
+                (Duration::from_millis(180), second.to_string()),
+            ])
+        })
+    })
+    .await;
+    let transport = MonitoringTransport::new(MonitoringTransportConfig::loopback_test(&server.url));
+
+    let result = transport
+        .execute_streaming(
+            request(
+                "/v1/responses",
+                None,
+                Instant::now() + Duration::from_secs(2),
+            ),
+            CancellationToken::new(),
+            |_| {},
+        )
+        .await
+        .expect("stream response");
+
+    let first_content_ms = result
+        .first_content_latency_ms
+        .expect("first content timestamp");
+    assert!(
+        result.first_headers_latency_ms <= first_content_ms,
+        "headers must arrive no later than content: headers={} content={}",
+        result.first_headers_latency_ms,
+        first_content_ms
+    );
+    assert!(
+        first_content_ms < result.total_latency_ms,
+        "first content must be measured before the stream completes: first_content={} total={}",
+        first_content_ms,
+        result.total_latency_ms
+    );
+    assert!(result.total_latency_ms >= 150);
 }
 
 fn request(

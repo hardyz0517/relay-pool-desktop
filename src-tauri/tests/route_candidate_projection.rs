@@ -45,7 +45,6 @@ mod pricing_projector {
         pub(crate) unit: Option<String>,
         pub(crate) estimated_input_price: Option<f64>,
         pub(crate) estimated_output_price: Option<f64>,
-        pub(crate) estimated_fixed_price: Option<f64>,
         pub(crate) estimated_cache_creation_price: Option<f64>,
         pub(crate) estimated_cache_read_price: Option<f64>,
         pub(crate) status_label: String,
@@ -260,11 +259,10 @@ fn operational_projections(pricing_basis: RoutingCostBasis) -> CandidateOperatio
             unit: Some("per_1m_tokens".to_string()),
             estimated_input_price: Some(1.25),
             estimated_output_price: None,
-            estimated_fixed_price: None,
             estimated_cache_creation_price: None,
             estimated_cache_read_price: None,
             status_label: "priced".to_string(),
-            source_chain: vec!["pricing_rule:rule-1".to_string()],
+            source_chain: vec!["model:gpt-5-mini".to_string()],
             observed_at: Some("1000".to_string()),
             confidence: Some(0.9),
         },
@@ -360,7 +358,7 @@ fn candidate_projection_contains_complete_cross_module_facts_without_secrets() {
     assert_eq!(projection.multiplier.multiplier, Some(1.25));
     assert_eq!(projection.pricing.basis, RoutingCostBasis::ExactPrice);
     assert_eq!(projection.pricing.comparison_value, Some(1.25));
-    assert_eq!(projection.pricing.source_chain, vec!["pricing_rule:rule-1"]);
+    assert_eq!(projection.pricing.source_chain, vec!["model:gpt-5-mini"]);
     assert_eq!(projection.balance.status, BalanceProjectionStatus::Healthy);
     assert_eq!(projection.capability.tools, CapabilityDecision::Reject);
     assert!(projection.hard_rejection_codes.is_empty());

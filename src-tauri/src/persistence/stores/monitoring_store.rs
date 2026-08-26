@@ -203,10 +203,12 @@ impl MonitoringStore {
                 attempt_timeout_ms, execution_timeout_ms, schedule_revision, next_due_at_ms,
                 last_run_at, next_run_at, last_status, last_error_message,
                 note, created_at, updated_at, pause_on_zero_balance
+                , proxy_mode, proxy_url
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
                 ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25,
-                ?26, ?27, 1, ?28, NULL, ?29, NULL, NULL, ?30, ?31, ?32, ?33
+                ?26, ?27, 1, ?28, NULL, ?29, NULL, NULL, ?30, ?31, ?32, ?33,
+                ?34, ?35
             )
             "#,
         )
@@ -243,6 +245,8 @@ impl MonitoringStore {
         .bind(&row.now)
         .bind(&row.now)
         .bind(bool_to_i64(row.input.pause_on_zero_balance))
+        .bind(row.input.proxy_mode.trim())
+        .bind(normalize_optional(&row.input.proxy_url))
         .execute(write.connection())
         .await?;
         monitor_by_id(write.connection(), &row.id).await
@@ -296,6 +300,8 @@ impl MonitoringStore {
                 next_run_at = ?28,
                 note = ?29,
                 updated_at = ?30
+                , proxy_mode = ?33
+                , proxy_url = ?34
             WHERE id = ?31
             "#,
         )
@@ -331,6 +337,8 @@ impl MonitoringStore {
         .bind(&patch.now)
         .bind(&patch.input.id)
         .bind(bool_to_i64(patch.input.pause_on_zero_balance))
+        .bind(patch.input.proxy_mode.trim())
+        .bind(normalize_optional(&patch.input.proxy_url))
         .execute(write.connection())
         .await?
         .rows_affected();
@@ -411,7 +419,7 @@ async fn list_monitors(
                retry_initial_backoff_ms, retry_max_backoff_ms, risk_daily_probe_budget,
                health_policy_mode, health_failure_threshold, health_recovery_threshold,
                attempt_timeout_ms, execution_timeout_ms, schedule_revision,
-               note, created_at, updated_at
+               note, created_at, updated_at, proxy_mode, proxy_url
         FROM channel_monitors m INDEXED BY idx_channel_monitors_list
         ORDER BY m.enabled DESC, m.created_at ASC, m.id ASC
         LIMIT ?1
@@ -494,7 +502,7 @@ async fn monitor_by_id(
                retry_initial_backoff_ms, retry_max_backoff_ms, risk_daily_probe_budget,
                health_policy_mode, health_failure_threshold, health_recovery_threshold,
                attempt_timeout_ms, execution_timeout_ms, schedule_revision,
-               note, created_at, updated_at
+               note, created_at, updated_at, proxy_mode, proxy_url
         FROM channel_monitors m WHERE m.id = ?1
         "#,
     )
@@ -519,6 +527,7 @@ async fn validate_monitor_input(
         input.max_concurrency,
         input.consecutive_failure_threshold,
     )?;
+    validate_monitor_proxy(&input.proxy_mode, input.proxy_url.as_deref())?;
     validate_monitor_owners(
         connection,
         &input.station_id,
@@ -542,6 +551,7 @@ async fn validate_monitor_update(
         input.max_concurrency,
         input.consecutive_failure_threshold,
     )?;
+    validate_monitor_proxy(&input.proxy_mode, input.proxy_url.as_deref())?;
     validate_monitor_owners(
         connection,
         &input.station_id,
@@ -639,6 +649,22 @@ fn validate_monitor_values(
     Ok(())
 }
 
+fn validate_monitor_proxy(mode: &str, url: Option<&str>) -> Result<(), PersistenceError> {
+    let normalized = crate::models::proxy::normalize_proxy_mode(mode, true);
+    let url = crate::models::proxy::normalize_proxy_url(url.map(str::to_owned));
+    if normalized == "manual" {
+        let Some(ref url) = url else {
+            return Err(PersistenceError::ConstraintViolation);
+        };
+        crate::outbound::ManualProxy::parse(url)
+            .map_err(|_| PersistenceError::ConstraintViolation)?;
+    }
+    if normalized != "manual" && url.is_some() {
+        return Err(PersistenceError::ConstraintViolation);
+    }
+    Ok(())
+}
+
 fn row_to_template(row: sqlx::sqlite::SqliteRow) -> ChannelMonitorRequestTemplate {
     ChannelMonitorRequestTemplate {
         id: row.get("id"),
@@ -670,6 +696,8 @@ fn row_to_monitor(row: sqlx::sqlite::SqliteRow) -> Result<ChannelMonitor, Persis
         enabled: i64_to_bool(row.get("enabled")),
         pause_on_zero_balance: i64_to_bool(row.get("pause_on_zero_balance")),
         balance_paused: i64_to_bool(row.get("balance_paused")),
+        proxy_mode: row.get("proxy_mode"),
+        proxy_url: row.get("proxy_url"),
         protocol_kind: row.get("protocol_kind"),
         client_profile_id: row.get("client_profile_id"),
         client_profile_version: row.get("client_profile_version"),
@@ -831,6 +859,8 @@ mod tests {
                                     template_id: update.template_id,
                                     enabled: update.enabled,
                                     pause_on_zero_balance: update.pause_on_zero_balance,
+                                    proxy_mode: update.proxy_mode,
+                                    proxy_url: update.proxy_url,
                                     protocol_kind: update.protocol_kind,
                                     client_profile_id: update.client_profile_id,
                                     client_profile_version: update.client_profile_version,
@@ -889,6 +919,8 @@ mod tests {
             template_id: "template-1".into(),
             enabled: true,
             pause_on_zero_balance: true,
+            proxy_mode: "inherit".into(),
+            proxy_url: None,
             protocol_kind: "anthropic_messages".into(),
             client_profile_id: "claude_code_compat".into(),
             client_profile_version: 1,

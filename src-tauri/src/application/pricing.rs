@@ -7,14 +7,12 @@ use crate::{
         pagination::PageLimit,
     },
     models::pricing::{
-        BalanceSnapshot, ModelBasePrice, PricingRule, RequestKind, ResolvedPricingContext,
-        UpsertBalanceSnapshotInput, UpsertModelBasePriceInput, UpsertPricingRuleInput,
+        BalanceSnapshot, ModelBasePrice, RequestKind, ResolvedPricingContext,
+        UpsertBalanceSnapshotInput, UpsertModelBasePriceInput,
     },
     persistence::{
         runtime::PersistenceHandle,
-        stores::pricing_store::{
-            NewBalanceSnapshotRow, NewModelBasePriceRow, NewPricingRuleRow, PricingStore,
-        },
+        stores::pricing_store::{NewBalanceSnapshotRow, NewModelBasePriceRow, PricingStore},
     },
 };
 
@@ -62,17 +60,6 @@ impl PricingService {
             .map_err(Into::into)
     }
 
-    pub(crate) async fn list_pricing_rules(
-        &self,
-        limit: PageLimit,
-    ) -> Result<Vec<PricingRule>, ApplicationError> {
-        let mut read = self.runtime.begin_read().await?;
-        self.store
-            .list_pricing_rules(&mut read, limit.get())
-            .await
-            .map_err(Into::into)
-    }
-
     pub(crate) async fn latest_station_balances(
         &self,
         limit: PageLimit,
@@ -80,33 +67,6 @@ impl PricingService {
         let mut read = self.runtime.begin_read().await?;
         self.store
             .latest_station_balances(&mut read, limit.get())
-            .await
-            .map_err(Into::into)
-    }
-
-    pub(crate) async fn upsert_pricing_rule(
-        &self,
-        input: UpsertPricingRuleInput,
-    ) -> Result<PricingRule, ApplicationError> {
-        let store = self.store;
-        let row = NewPricingRuleRow {
-            id: input.id.clone().unwrap_or_else(|| self.ids.next_id()),
-            now: self.now_ms_string(),
-            input,
-        };
-        self.runtime
-            .write(|write| Box::pin(async move { store.upsert_pricing_rule(write, row).await }))
-            .await
-            .map_err(Into::into)
-    }
-
-    pub(crate) async fn delete_pricing_rule(&self, id: String) -> Result<(), ApplicationError> {
-        if id.trim().is_empty() {
-            return Err(ApplicationError::ConstraintViolation);
-        }
-        let store = self.store;
-        self.runtime
-            .write(|write| Box::pin(async move { store.delete_pricing_rule(write, &id).await }))
             .await
             .map_err(Into::into)
     }
@@ -330,7 +290,7 @@ mod tests {
     use crate::{
         models::pricing::PricingStatus,
         persistence::stores::pricing_store::{
-            SelectedModelBasePriceRow, SelectedPricingRuleRow, StationKeyPricingResolutionRow,
+            SelectedModelBasePriceRow, StationKeyPricingResolutionRow,
         },
     };
 
@@ -355,7 +315,6 @@ mod tests {
             group_rate_multiplier: None,
             group_confidence: None,
             group_collected_at: None,
-            pricing_rule: None,
             model_base_price: Some(base_price()),
         }
     }
@@ -418,68 +377,6 @@ mod tests {
         assert_eq!(
             context.estimated_output_price,
             Some(2.0 * expected_multiplier)
-        );
-    }
-
-    #[test]
-    fn group_rate_only_rule_falls_back_to_key_multiplier_before_credit_conversion() {
-        let mut resolution = resolution();
-        resolution.credit_per_cny = 27.0;
-        resolution.group_binding_id = Some("binding-1".to_string());
-        resolution.group_rate_multiplier = Some(2.0);
-        resolution.pricing_rule = Some(SelectedPricingRuleRow {
-            id: "rate-only".to_string(),
-            model: "*".to_string(),
-            input_price: None,
-            output_price: None,
-            fixed_price: None,
-            currency: "USD".to_string(),
-            source: "collector".to_string(),
-            group_binding_id: Some("binding-1".to_string()),
-            rate_multiplier: None,
-            normalization_status: "group_rate_only".to_string(),
-            confidence: 0.8,
-            collected_at: Some("300".to_string()),
-        });
-
-        let context = pricing_context_from_resolution("key-1", "gpt-5-mini", Some(&resolution));
-
-        let expected_multiplier = 2.0 / 27.0;
-        assert_eq!(context.pricing_status, PricingStatus::Priced);
-        assert_eq!(context.effective_rate_multiplier, Some(expected_multiplier));
-        assert_eq!(
-            context.estimated_output_price,
-            Some(2.0 * expected_multiplier)
-        );
-    }
-
-    #[test]
-    fn explicit_pricing_rule_takes_precedence_over_builtin_price() {
-        let mut resolution = resolution();
-        resolution.pricing_rule = Some(SelectedPricingRuleRow {
-            id: "rule-1".to_string(),
-            model: "gpt-5-mini".to_string(),
-            input_price: Some(0.4),
-            output_price: Some(3.2),
-            fixed_price: None,
-            currency: "CNY".to_string(),
-            source: "collector".to_string(),
-            group_binding_id: None,
-            rate_multiplier: None,
-            normalization_status: "complete".to_string(),
-            confidence: 0.8,
-            collected_at: Some("300".to_string()),
-        });
-
-        let context = pricing_context_from_resolution("key-1", "gpt-5-mini", Some(&resolution));
-
-        assert_eq!(context.pricing_status, PricingStatus::Priced);
-        assert_eq!(context.base_input_price, Some(0.4));
-        assert_eq!(context.estimated_output_price, Some(3.2));
-        assert_eq!(context.currency, "CNY");
-        assert_eq!(
-            context.source_chain.first().map(String::as_str),
-            Some("pricing_rule:rule-1")
         );
     }
 

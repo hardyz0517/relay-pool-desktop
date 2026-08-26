@@ -205,6 +205,8 @@ fn available_transport_result(latency_ms: u64) -> ProbeTransportResult {
         retryable: false,
         retry_after_ms: None,
         latency_ms,
+        ttfb_ms: None,
+        first_content_ms: None,
         http_status: Some(200),
         response_model: Some("upstream-model".to_string()),
         output_bytes: 12,

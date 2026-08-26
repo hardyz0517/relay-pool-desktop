@@ -11,7 +11,9 @@ use crate::{
     persistence::stores::monitoring::definitions::MonitorDefinitionConfigRow,
 };
 
-use super::planner::{MonitorPlanningSnapshot, ProtocolSelection, TargetCapabilitySnapshot};
+use super::planner::{
+    MonitorPlanningSnapshot, MonitorProxyConfig, ProtocolSelection, TargetCapabilitySnapshot,
+};
 use crate::application::queries::routing_runtime::RoutingMonitoringTargetSnapshot;
 
 pub(crate) fn planning_snapshot_from_config(
@@ -85,6 +87,10 @@ pub(crate) fn planning_snapshot_from_config(
                 .map_err(|_| ApplicationError::ConstraintViolation)?,
         )
         .map_err(|_| ApplicationError::ConstraintViolation)?,
+        proxy: MonitorProxyConfig {
+            mode: crate::models::proxy::normalize_proxy_mode(&row.proxy_mode, true),
+            url: crate::models::proxy::normalize_proxy_url(row.proxy_url),
+        },
     })
 }
 

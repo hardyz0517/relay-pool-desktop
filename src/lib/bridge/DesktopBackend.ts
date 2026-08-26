@@ -5,7 +5,6 @@ import { normalizeGroupCategory } from "@/lib/groupCategories";
 import {
   bindRemoteStationKey as bindRemoteStationKeyBinding,
   deleteModelAlias as deleteModelAliasBinding,
-  deletePricingRule as deletePricingRuleBinding,
   clearRequestLogs as clearRequestLogsBinding,
   clearCaptureSession as clearCaptureSessionBinding,
   cancelChannelMonitorExecution as cancelChannelMonitorExecutionBinding,
@@ -120,7 +119,6 @@ import {
   syncModelPrices as syncModelPricesBinding,
   reloadModelPriceCatalog as reloadModelPriceCatalogBinding,
   openModelPriceCatalogDirectory as openModelPriceCatalogDirectoryBinding,
-  listPricingRules as listPricingRulesBinding,
   listRecentRouteDecisions as listRecentRouteDecisionsBinding,
   listRemoteStationKeys as listRemoteStationKeysBinding,
   listStationEndpointHealth as listStationEndpointHealthBinding,
@@ -161,7 +159,6 @@ import {
   upsertModelAlias as upsertModelAliasBinding,
   upsertModelBasePrice as upsertModelBasePriceBinding,
   deleteModelBasePrice as deleteModelBasePriceBinding,
-  upsertPricingRule as upsertPricingRuleBinding,
   upsertStationGroupBinding as upsertStationGroupBindingBinding,
   updateSettings as updateSettingsBinding,
   updateStation as updateStationBinding,
@@ -472,10 +469,6 @@ export class DesktopBackend implements BackendClient {
     },
   };
   readonly economics = {
-    listPricingRules: () => listPricingRulesBinding(),
-    upsertPricingRule: (input: Parameters<BackendClient["economics"]["upsertPricingRule"]>[0]) =>
-      upsertPricingRuleBinding(input),
-    deletePricingRule: (id: string) => deletePricingRuleBinding({ id }),
     resolveStationKeyPricingContext: (
       stationKeyId: string,
       requestedModel: string,

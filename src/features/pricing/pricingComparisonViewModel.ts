@@ -4,7 +4,6 @@ import {
 } from "../../lib/projections/pricingFacts";
 import { groupCategoryDefinitions, type StationGroupCategory } from "../../lib/groupCategories";
 import type { GroupRateRecord, StationGroupBinding } from "../../lib/types/groupFacts";
-import type { PricingRule } from "../../lib/types/economics";
 import type { StationKey } from "../../lib/types/stationKeys";
 import type { Station } from "../../lib/types/stations";
 import type {
@@ -41,7 +40,6 @@ export type PricingComparisonInput = {
   stationKeys?: StationKey[];
   groupBindings: StationGroupBinding[];
   groupRates: GroupRateRecord[];
-  pricingRules: PricingRule[];
   developerModeEnabled?: boolean;
   filters?: PricingComparisonFilters;
   monitorWorkspace?: PricingGroupMonitorStatusWorkspace | null;
@@ -139,7 +137,6 @@ export function buildPricingComparisonViewModel(
     stationKeys: input.stationKeys,
     groupBindings: input.groupBindings,
     groupRates: input.groupRates,
-    pricingRules: input.pricingRules,
   });
   const rows = pricingCandidates
     .map((candidate) =>
@@ -213,7 +210,6 @@ export function buildPricingMonitorRefs(input: Omit<PricingComparisonInput, "fil
     stationKeys: input.stationKeys,
     groupBindings: input.groupBindings,
     groupRates: input.groupRates,
-    pricingRules: input.pricingRules,
   });
   const refs = candidates.map((candidate) => ({
     stationId: candidate.station.id,

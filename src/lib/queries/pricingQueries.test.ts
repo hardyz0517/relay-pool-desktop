@@ -13,7 +13,6 @@ describe("pricing workspace backend cutover", () => {
       stationKeys: [],
       groupBindings: [],
       groupRates: [],
-      pricingRules: [],
       developerModeEnabled: false,
     })),
     loadPricingGroupMonitorStatus: vi.fn(async () => ({
@@ -43,7 +42,6 @@ describe("pricing workspace backend cutover", () => {
       stationKeys: [],
       groupBindings: [],
       groupRates: [],
-      pricingRules: [],
       developerModeEnabled: false,
     });
 

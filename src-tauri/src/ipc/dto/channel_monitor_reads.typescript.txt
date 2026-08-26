@@ -45,7 +45,8 @@ export type ChannelMonitorTargetResultRecordDto = {
   trafficEquivalence: string; availabilityEligible: boolean; latencyEligible: boolean;
   exclusionReason: string | null; technicalHealthEffect: string;
   healthPolicyMode: string; healthWritebackDecision: string;
-  healthWritebackReason: string | null; latencyMs: number | null; semanticConfidence: string;
+  healthWritebackReason: string | null; latencyMs: number | null; ttfbMs: number | null;
+  firstContentMs: number | null; semanticConfidence: string;
   startedAtMs: number; finishedAtMs: number | null;
 };
 export type ChannelMonitorExecutionDetailDto = {
@@ -61,7 +62,8 @@ export type ChannelMonitorAttemptRecordDto = {
   stationKeyId: string | null; model: string; modelRole: string; modelIndex: number;
   attemptNumber: number; protocolKind: string; clientProfileId: string; clientProfileVersion: number;
   requestProfileHash: string; transportMode: string; startedAtMs: number; finishedAtMs: number | null;
-  latencyMs: number | null; httpStatus: number | null; outcome: string; failureKind: string | null;
+  latencyMs: number | null; ttfbMs: number | null; firstContentMs: number | null;
+  httpStatus: number | null; outcome: string; failureKind: string | null;
   retryable: boolean; responseModel: string | null; contentExtracted: boolean; validationPassed: boolean;
   outputBytes: number; errorSummary: string | null;
 };
@@ -81,6 +83,7 @@ export type ChannelMonitorDto = {
   id: string; name: string; targetType: ChannelMonitorTargetTypeDto; stationId: string;
   stationKeyId: string | null; templateId: string; enabled: boolean;
   pauseOnZeroBalance: boolean; balancePaused: boolean; intervalSeconds: number;
+  proxyMode: MonitorProxyModeInputDto; proxyUrl: string | null;
   protocolKind: MonitorProtocolKindInputDto; clientProfileId: MonitorClientProfileIdInputDto; clientProfileVersion: number; primaryModel: string;
   retryMaxAttemptsPerModel: number; retryInitialBackoffMs: number; retryMaxBackoffMs: number;
   riskDailyProbeBudget: number; healthPolicyMode: MonitorHealthWritebackModeInputDto; healthFailureThreshold: number;

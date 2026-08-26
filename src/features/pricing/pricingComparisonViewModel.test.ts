@@ -145,7 +145,6 @@ function input(overrides: Partial<PricingComparisonInput> = {}): PricingComparis
     stationKeys: [key("key-1")],
     groupBindings: [binding("binding-1", 0.8), binding("binding-2", 1.2)],
     groupRates: [],
-    pricingRules: [],
     developerModeEnabled: false,
     ...overrides,
   };

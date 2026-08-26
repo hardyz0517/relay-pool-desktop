@@ -75,6 +75,10 @@ export type ChannelStatusRowView = {
   availabilityLabel: string;
   latencyMs: number | null;
   latencyLabel: string;
+  ttfbMs: number | null;
+  ttfbLabel: string;
+  firstContentMs: number | null;
+  firstContentLabel: string;
   endpointPingMs: number | null;
   endpointPingLabel: string;
   lastCheckedAtMs: number | null;
@@ -191,6 +195,10 @@ export function buildRowView(row: ChannelStatusRow, window: ChannelWindow): Chan
     availabilityLabel: formatAvailability(availabilityPercent),
     latencyMs: latest?.latencyMs ?? null,
     latencyLabel: formatLatency(latest?.latencyMs ?? null),
+    ttfbMs: latest?.ttfbMs ?? null,
+    ttfbLabel: formatLatency(latest?.ttfbMs ?? null),
+    firstContentMs: latest?.firstContentMs ?? null,
+    firstContentLabel: formatLatency(latest?.firstContentMs ?? null),
     endpointPingMs: row.target.endpointPing?.latencyMs ?? null,
     endpointPingLabel: formatLatency(row.target.endpointPing?.latencyMs ?? null),
     lastCheckedAtMs: selected.latestCheckedAtMs,
@@ -305,7 +313,9 @@ function recentPointToCell(point: ChannelStatusRecentPoint, index: number, prima
       `模型：${modelLabel}`,
       `时间：${timeLabel}`,
       `状态：${availabilityLabel}`,
-      `延迟：${latencyLabel}`,
+      `总耗时：${latencyLabel}`,
+      `首包：${formatLatency(point.ttfbMs)}`,
+      `首字：${formatLatency(point.firstContentMs)}`,
       `尝试：${point.attemptCount}`,
       point.failureKind ? `失败分类：${point.failureKind}` : null,
       point.terminalReason ? `原因：${point.terminalReason}` : null,
@@ -338,7 +348,7 @@ function bucketToCell(bucket: ChannelStatusBucket, modelLabel: string): TrendCel
       `模型：${modelLabel}`,
       `时间：${timeLabel}`,
       `状态：${availabilityLabel}`,
-      `延迟：${latencyLabel}`,
+      `总耗时：${latencyLabel}`,
       `样本：${bucket.counts.total} · 正常 ${bucket.counts.available} · 降级 ${bucket.counts.degraded} · 错误 ${bucket.counts.unavailable} · 跳过 ${bucket.counts.skipped} · 排除 ${bucket.counts.excluded}`,
       bucket.counts.excluded > 0
         ? `排除原因：${Object.entries(bucket.exclusionCounts).map(([reason, count]) => `${reason}:${count}`).join(", ")}`

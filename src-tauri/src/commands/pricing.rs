@@ -12,45 +12,18 @@ use crate::{
             BalanceSnapshotDto, CollectorStationIdInputDto, UpsertBalanceSnapshotInputDto,
         },
         pricing_mutations::{
-            ModelBasePriceIdInputDto, PricingRuleIdInputDto, SaveModelPriceSyncConfigInputDto,
-            SyncModelPricesInputDto, UpsertModelBasePriceInputDto, UpsertPricingRuleInputDto,
+            ModelBasePriceIdInputDto, SaveModelPriceSyncConfigInputDto, SyncModelPricesInputDto,
+            UpsertModelBasePriceInputDto,
         },
         pricing_reads::{
             ModelBasePriceDto, ModelPriceCatalogEntryDto, ModelPriceSyncResultDto,
-            ModelPriceSyncStateDto, PricingContextInputDto, PricingRuleDto,
-            ResolvedPricingContextDto,
+            ModelPriceSyncStateDto, PricingContextInputDto, ResolvedPricingContextDto,
         },
         EmptyInputDto,
     },
     observability::correlation,
     services::model_price_sync::ModelPriceSyncError,
 };
-
-#[tauri::command]
-pub async fn list_pricing_rules(
-    facade: State<'_, PricingCommandFacade>,
-    input: Value,
-
-    runtime_context_registry: tauri::State<
-        '_,
-        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
-    >,
-    runtime_context: Option<serde_json::Value>,
-) -> Result<Vec<PricingRuleDto>, error::CommandError> {
-    correlation::in_command_scope_with_runtime_context(
-        "list_pricing_rules",
-        runtime_context_registry.inner(),
-        runtime_context,
-        async {
-            EmptyInputDto::parse(input)?;
-            facade
-                .list_pricing_rules(PageLimit::new(200).expect("bounded limit"))
-                .await
-                .map_err(super::public_command_application_error)
-        },
-    )
-    .await
-}
 
 #[tauri::command]
 pub async fn list_model_base_prices(
@@ -389,58 +362,6 @@ mod model_price_sync_error_tests {
             }) if provider == "models.dev"
         ));
     }
-}
-
-#[tauri::command]
-pub async fn upsert_pricing_rule(
-    facade: State<'_, PricingCommandFacade>,
-    input: Value,
-
-    runtime_context_registry: tauri::State<
-        '_,
-        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
-    >,
-    runtime_context: Option<serde_json::Value>,
-) -> Result<PricingRuleDto, error::CommandError> {
-    correlation::in_command_scope_with_runtime_context(
-        "upsert_pricing_rule",
-        runtime_context_registry.inner(),
-        runtime_context,
-        async {
-            let input = UpsertPricingRuleInputDto::parse(input)?.into_domain();
-            facade
-                .upsert_pricing_rule(input)
-                .await
-                .map_err(super::public_command_application_error)
-        },
-    )
-    .await
-}
-
-#[tauri::command]
-pub async fn delete_pricing_rule(
-    facade: State<'_, PricingCommandFacade>,
-    input: Value,
-
-    runtime_context_registry: tauri::State<
-        '_,
-        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
-    >,
-    runtime_context: Option<serde_json::Value>,
-) -> Result<(), error::CommandError> {
-    correlation::in_command_scope_with_runtime_context(
-        "delete_pricing_rule",
-        runtime_context_registry.inner(),
-        runtime_context,
-        async {
-            let input = PricingRuleIdInputDto::parse(input)?;
-            facade
-                .delete_pricing_rule(input.id)
-                .await
-                .map_err(super::public_command_application_error)
-        },
-    )
-    .await
 }
 
 #[tauri::command]

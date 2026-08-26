@@ -30,7 +30,6 @@ const event = {
   objectId: "station-1783311325734-4639",
   stationId: "station-1783311325734-4639",
   stationKeyId: null,
-  pricingRuleId: null,
   requestLogId: null,
   oldValueJson: null,
   newValueJson: JSON.stringify({ taskType: "groups" }),

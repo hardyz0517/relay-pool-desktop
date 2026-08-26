@@ -6,8 +6,7 @@ use crate::{
     models::{
         group_facts::{GroupRateRecord, StationGroupBinding},
         pricing::{
-            BalanceSnapshot, ModelBasePrice, PricingRule, UpsertBalanceSnapshotInput,
-            UpsertModelBasePriceInput, UpsertPricingRuleInput,
+            BalanceSnapshot, ModelBasePrice, UpsertBalanceSnapshotInput, UpsertModelBasePriceInput,
         },
         secrets::mask_secret,
         station_keys::StationKey,
@@ -20,13 +19,6 @@ use crate::{
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct PricingStore;
-
-#[derive(Debug, Clone)]
-pub(crate) struct NewPricingRuleRow {
-    pub(crate) id: String,
-    pub(crate) now: String,
-    pub(crate) input: UpsertPricingRuleInput,
-}
 
 #[derive(Debug, Clone)]
 pub(crate) struct NewModelBasePriceRow {
@@ -48,24 +40,7 @@ pub(crate) struct PricingComparisonRows {
     pub(crate) station_keys: Vec<StationKey>,
     pub(crate) group_bindings: Vec<StationGroupBinding>,
     pub(crate) group_rates: Vec<GroupRateRecord>,
-    pub(crate) pricing_rules: Vec<PricingRule>,
     pub(crate) developer_mode_enabled: bool,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct SelectedPricingRuleRow {
-    pub(crate) id: String,
-    pub(crate) model: String,
-    pub(crate) input_price: Option<f64>,
-    pub(crate) output_price: Option<f64>,
-    pub(crate) fixed_price: Option<f64>,
-    pub(crate) currency: String,
-    pub(crate) source: String,
-    pub(crate) group_binding_id: Option<String>,
-    pub(crate) rate_multiplier: Option<f64>,
-    pub(crate) normalization_status: String,
-    pub(crate) confidence: f64,
-    pub(crate) collected_at: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -88,7 +63,6 @@ pub(crate) struct StationKeyPricingResolutionRow {
     pub(crate) group_rate_multiplier: Option<f64>,
     pub(crate) group_confidence: Option<f64>,
     pub(crate) group_collected_at: Option<String>,
-    pub(crate) pricing_rule: Option<SelectedPricingRuleRow>,
     pub(crate) model_base_price: Option<SelectedModelBasePriceRow>,
 }
 
@@ -109,7 +83,6 @@ impl PricingStore {
         let station_keys = list_station_keys(read.connection(), limit).await?;
         let group_bindings = list_group_bindings(read.connection(), limit).await?;
         let group_rates = list_latest_group_rates(read.connection(), limit).await?;
-        let pricing_rules = list_pricing_rules(read.connection(), limit).await?;
         let developer_mode_enabled = sqlx::query_scalar::<_, String>(
             "SELECT value FROM settings WHERE key = 'developer_mode_enabled'",
         )
@@ -123,7 +96,6 @@ impl PricingStore {
             station_keys,
             group_bindings,
             group_rates,
-            pricing_rules,
             developer_mode_enabled,
         })
     }
@@ -134,14 +106,6 @@ impl PricingStore {
         limit: u32,
     ) -> Result<Vec<ModelBasePrice>, PersistenceError> {
         list_model_base_prices_from_connection(read.connection(), limit).await
-    }
-
-    pub(crate) async fn list_pricing_rules(
-        &self,
-        read: &mut ReadSession,
-        limit: u32,
-    ) -> Result<Vec<PricingRule>, PersistenceError> {
-        list_pricing_rules(read.connection(), i64::from(limit)).await
     }
 
     pub(crate) async fn latest_station_balances(
@@ -185,51 +149,21 @@ impl PricingStore {
         read: &mut ReadSession,
         station_key_id: &str,
         requested_model: &str,
-        at: &str,
+        _at: &str,
     ) -> Result<Option<StationKeyPricingResolutionRow>, PersistenceError> {
         let row = sqlx::query(
             r#"
             WITH key_context AS (
                 SELECT k.station_id,
                        s.credit_per_cny,
-                       COALESCE(k.group_binding_id, b.id) AS group_binding_id,
-                       COALESCE(k.rate_multiplier, b.effective_rate_multiplier) AS group_rate_multiplier,
+                       k.group_binding_id,
+                       b.effective_rate_multiplier AS group_rate_multiplier,
                        COALESCE(b.confidence, 0.8) AS group_confidence,
-                       COALESCE(k.rate_collected_at, b.last_checked_at) AS group_collected_at
+                       b.last_checked_at AS group_collected_at
                 FROM station_keys k
                 JOIN stations s ON s.id = k.station_id
                 LEFT JOIN station_group_bindings b ON b.id = k.group_binding_id
                 WHERE k.id = ?1
-                LIMIT 1
-            ), selected_rule AS (
-                SELECT r.id, r.model, r.input_price, r.output_price, r.fixed_price,
-                       r.currency, r.source, r.group_binding_id, r.rate_multiplier,
-                       r.normalization_status, r.confidence, r.collected_at
-                FROM pricing_rules r
-                JOIN key_context k ON k.station_id = r.station_id
-                WHERE r.enabled = 1
-                  AND (r.valid_from IS NULL OR CAST(r.valid_from AS INTEGER) <= CAST(?3 AS INTEGER))
-                  AND (r.valid_until IS NULL OR CAST(r.valid_until AS INTEGER) > CAST(?3 AS INTEGER))
-                  AND (r.station_key_id IS NULL OR r.station_key_id = ?1)
-                  AND (
-                      lower(r.model) = lower(?2)
-                      OR (
-                          r.normalization_status = 'group_rate_only'
-                          AND r.input_price IS NULL
-                          AND r.output_price IS NULL
-                          AND r.fixed_price IS NULL
-                      )
-                  )
-                  AND (r.group_binding_id IS NULL OR r.group_binding_id = k.group_binding_id)
-                ORDER BY
-                    CASE WHEN lower(r.model) = lower(?2) THEN 0 ELSE 1 END,
-                    CASE WHEN r.station_key_id = ?1 THEN 0 ELSE 1 END,
-                    CASE WHEN r.group_binding_id = k.group_binding_id THEN 0 ELSE 1 END,
-                    CASE WHEN r.normalization_status = 'complete' THEN 0 ELSE 1 END,
-                    CASE WHEN r.input_price IS NOT NULL OR r.output_price IS NOT NULL OR r.fixed_price IS NOT NULL THEN 0 ELSE 1 END,
-                    r.updated_at DESC,
-                    r.created_at DESC,
-                    r.id DESC
                 LIMIT 1
             ), selected_base_price AS (
                 SELECT p.model, p.input_price, p.output_price,
@@ -254,18 +188,6 @@ impl PricingStore {
                    k.group_rate_multiplier,
                    k.group_confidence,
                    k.group_collected_at,
-                   r.id AS rule_id,
-                   r.model AS rule_model,
-                   r.input_price AS rule_input_price,
-                   r.output_price AS rule_output_price,
-                   r.fixed_price AS rule_fixed_price,
-                   r.currency AS rule_currency,
-                   r.source AS rule_source,
-                   r.group_binding_id AS rule_group_binding_id,
-                   r.rate_multiplier AS rule_rate_multiplier,
-                   r.normalization_status AS rule_normalization_status,
-                   r.confidence AS rule_confidence,
-                   r.collected_at AS rule_collected_at,
                    p.model AS base_model,
                    p.input_price AS base_input_price,
                    p.output_price AS base_output_price,
@@ -275,14 +197,12 @@ impl PricingStore {
                    p.source_checked_at AS base_source_checked_at,
                    p.built_in AS base_built_in
             FROM key_context k
-            LEFT JOIN selected_rule r ON 1 = 1
             LEFT JOIN selected_base_price p ON 1 = 1
             LIMIT 1
             "#,
         )
         .bind(station_key_id)
         .bind(requested_model)
-        .bind(at)
         .fetch_optional(read.connection())
         .await?;
         row.map(row_to_station_key_pricing_resolution).transpose()
@@ -293,7 +213,7 @@ impl PricingStore {
         read: &mut ReadSession,
         station_key_ids: &[String],
         requested_model: &str,
-        at: &str,
+        _at: &str,
     ) -> Result<BTreeMap<String, StationKeyPricingResolutionRow>, PersistenceError> {
         if station_key_ids.is_empty() {
             return Ok(BTreeMap::new());
@@ -316,73 +236,14 @@ impl PricingStore {
                 SELECT k.id AS station_key_id,
                        k.station_id,
                        s.credit_per_cny,
-                       COALESCE(k.group_binding_id, b.id) AS group_binding_id,
-                       COALESCE(k.rate_multiplier, b.effective_rate_multiplier) AS group_rate_multiplier,
+                       k.group_binding_id,
+                       b.effective_rate_multiplier AS group_rate_multiplier,
                        COALESCE(b.confidence, 0.8) AS group_confidence,
-                       COALESCE(k.rate_collected_at, b.last_checked_at) AS group_collected_at
+                       b.last_checked_at AS group_collected_at
                 FROM station_keys k
                 JOIN requested_keys requested ON requested.station_key_id = k.id
                 JOIN stations s ON s.id = k.station_id
                 LEFT JOIN station_group_bindings b ON b.id = k.group_binding_id
-            ), selected_rule_candidates AS (
-                SELECT k.station_key_id,
-                       r.id, r.model, r.input_price, r.output_price, r.fixed_price,
-                       r.currency, r.source, r.group_binding_id, r.rate_multiplier,
-                       r.normalization_status, r.confidence, r.collected_at,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY k.station_key_id
-                           ORDER BY
-                               CASE WHEN lower(r.model) = lower(
-            "#,
-        );
-        builder.push_bind(requested_model);
-        builder.push(
-            r#"
-                               ) THEN 0 ELSE 1 END,
-                               CASE WHEN r.station_key_id = k.station_key_id THEN 0 ELSE 1 END,
-                               CASE WHEN r.group_binding_id = k.group_binding_id THEN 0 ELSE 1 END,
-                               CASE WHEN r.normalization_status = 'complete' THEN 0 ELSE 1 END,
-                               CASE WHEN r.input_price IS NOT NULL OR r.output_price IS NOT NULL OR r.fixed_price IS NOT NULL THEN 0 ELSE 1 END,
-                               r.updated_at DESC,
-                               r.created_at DESC,
-                               r.id DESC
-                       ) AS row_number
-                FROM key_context k
-                JOIN pricing_rules r ON r.station_id = k.station_id
-                WHERE r.enabled = 1
-                  AND (r.valid_from IS NULL OR CAST(r.valid_from AS INTEGER) <= CAST(
-            "#,
-        );
-        builder.push_bind(at);
-        builder.push(
-            r#"
-                   AS INTEGER))
-                  AND (r.valid_until IS NULL OR CAST(r.valid_until AS INTEGER) > CAST(
-            "#,
-        );
-        builder.push_bind(at);
-        builder.push(
-            r#"
-                   AS INTEGER))
-                  AND (r.station_key_id IS NULL OR r.station_key_id = k.station_key_id)
-                  AND (
-                      lower(r.model) = lower(
-            "#,
-        );
-        builder.push_bind(requested_model);
-        builder.push(
-            r#"
-                      )
-                      OR (
-                          r.normalization_status = 'group_rate_only'
-                          AND r.input_price IS NULL
-                          AND r.output_price IS NULL
-                          AND r.fixed_price IS NULL
-                      )
-                  )
-                  AND (r.group_binding_id IS NULL OR r.group_binding_id = k.group_binding_id)
-            ), selected_rule AS (
-                SELECT * FROM selected_rule_candidates WHERE row_number = 1
             ), selected_base_price AS (
                 SELECT p.model, p.input_price, p.output_price,
                        p.cache_creation_price, p.cache_read_price, p.currency,
@@ -413,18 +274,6 @@ impl PricingStore {
                    k.group_rate_multiplier,
                    k.group_confidence,
                    k.group_collected_at,
-                   r.id AS rule_id,
-                   r.model AS rule_model,
-                   r.input_price AS rule_input_price,
-                   r.output_price AS rule_output_price,
-                   r.fixed_price AS rule_fixed_price,
-                   r.currency AS rule_currency,
-                   r.source AS rule_source,
-                   r.group_binding_id AS rule_group_binding_id,
-                   r.rate_multiplier AS rule_rate_multiplier,
-                   r.normalization_status AS rule_normalization_status,
-                   r.confidence AS rule_confidence,
-                   r.collected_at AS rule_collected_at,
                    p.model AS base_model,
                    p.input_price AS base_input_price,
                    p.output_price AS base_output_price,
@@ -434,7 +283,6 @@ impl PricingStore {
                    p.source_checked_at AS base_source_checked_at,
                    p.built_in AS base_built_in
             FROM key_context k
-            LEFT JOIN selected_rule r ON r.station_key_id = k.station_key_id
             LEFT JOIN selected_base_price p ON 1 = 1
             "#,
         );
@@ -445,106 +293,6 @@ impl PricingStore {
                 Ok((station_key_id, row_to_station_key_pricing_resolution(row)?))
             })
             .collect::<Result<BTreeMap<_, _>, PersistenceError>>()
-    }
-
-    pub(crate) async fn upsert_pricing_rule(
-        &self,
-        write: &mut WriteSession,
-        row: NewPricingRuleRow,
-    ) -> Result<PricingRule, PersistenceError> {
-        validate_pricing_rule(&row.input)?;
-        validate_optional_station_owners(
-            write.connection(),
-            &row.input.station_id,
-            row.input.station_key_id.as_deref(),
-            row.input.group_binding_id.as_deref(),
-        )
-        .await?;
-        sqlx::query(
-            r#"
-            INSERT INTO pricing_rules (
-                id, station_id, station_key_id, group_binding_id, group_name,
-                tier_label, model, input_price, output_price, fixed_price,
-                rate_multiplier, currency, unit, price_type, base_price_source,
-                normalization_status, source, confidence, enabled, note,
-                collected_at, valid_from, valid_until, created_at, updated_at
-            ) VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-                ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25
-            )
-            ON CONFLICT(id) DO UPDATE SET
-                station_id = excluded.station_id,
-                station_key_id = excluded.station_key_id,
-                group_binding_id = excluded.group_binding_id,
-                group_name = excluded.group_name,
-                tier_label = excluded.tier_label,
-                model = excluded.model,
-                input_price = excluded.input_price,
-                output_price = excluded.output_price,
-                fixed_price = excluded.fixed_price,
-                rate_multiplier = excluded.rate_multiplier,
-                currency = excluded.currency,
-                unit = excluded.unit,
-                price_type = excluded.price_type,
-                base_price_source = excluded.base_price_source,
-                normalization_status = excluded.normalization_status,
-                source = excluded.source,
-                confidence = excluded.confidence,
-                enabled = excluded.enabled,
-                note = excluded.note,
-                collected_at = excluded.collected_at,
-                valid_from = excluded.valid_from,
-                valid_until = excluded.valid_until,
-                updated_at = excluded.updated_at
-            "#,
-        )
-        .bind(&row.id)
-        .bind(&row.input.station_id)
-        .bind(normalize_optional(&row.input.station_key_id))
-        .bind(normalize_optional(&row.input.group_binding_id))
-        .bind(normalize_optional(&row.input.group_name))
-        .bind(normalize_optional(&row.input.tier_label))
-        .bind(row.input.model.trim())
-        .bind(row.input.input_price)
-        .bind(row.input.output_price)
-        .bind(row.input.fixed_price)
-        .bind(row.input.rate_multiplier)
-        .bind(row.input.currency.trim().to_uppercase())
-        .bind(row.input.unit.trim())
-        .bind(row.input.price_type.trim())
-        .bind(normalize_optional(&row.input.base_price_source))
-        .bind(
-            normalize_optional(&row.input.normalization_status)
-                .unwrap_or_else(|| "manual".to_string()),
-        )
-        .bind(row.input.source.trim())
-        .bind(row.input.confidence)
-        .bind(bool_to_i64(row.input.enabled))
-        .bind(normalize_optional(&row.input.note))
-        .bind(normalize_optional(&row.input.collected_at))
-        .bind(normalize_optional(&row.input.valid_from))
-        .bind(normalize_optional(&row.input.valid_until))
-        .bind(&row.now)
-        .bind(&row.now)
-        .execute(write.connection())
-        .await?;
-        pricing_rule_by_id(write.connection(), &row.id).await
-    }
-
-    pub(crate) async fn delete_pricing_rule(
-        &self,
-        write: &mut WriteSession,
-        id: &str,
-    ) -> Result<(), PersistenceError> {
-        let deleted = sqlx::query("DELETE FROM pricing_rules WHERE id = ?1")
-            .bind(id)
-            .execute(write.connection())
-            .await?
-            .rows_affected();
-        if deleted == 0 {
-            return Err(PersistenceError::NotFound);
-        }
-        Ok(())
     }
 
     pub(crate) async fn upsert_model_base_price(
@@ -999,25 +747,6 @@ async fn list_model_base_prices_from_connection(
 fn row_to_station_key_pricing_resolution(
     row: sqlx::sqlite::SqliteRow,
 ) -> Result<StationKeyPricingResolutionRow, PersistenceError> {
-    let pricing_rule = row
-        .try_get::<Option<String>, _>("rule_id")?
-        .map(|id| {
-            Ok::<_, sqlx::Error>(SelectedPricingRuleRow {
-                id,
-                model: row.try_get("rule_model")?,
-                input_price: row.try_get("rule_input_price")?,
-                output_price: row.try_get("rule_output_price")?,
-                fixed_price: row.try_get("rule_fixed_price")?,
-                currency: row.try_get("rule_currency")?,
-                source: row.try_get("rule_source")?,
-                group_binding_id: row.try_get("rule_group_binding_id")?,
-                rate_multiplier: row.try_get("rule_rate_multiplier")?,
-                normalization_status: row.try_get("rule_normalization_status")?,
-                confidence: row.try_get("rule_confidence")?,
-                collected_at: row.try_get("rule_collected_at")?,
-            })
-        })
-        .transpose()?;
     let model_base_price = row
         .try_get::<Option<String>, _>("base_model")?
         .map(|model| {
@@ -1041,7 +770,6 @@ fn row_to_station_key_pricing_resolution(
         group_rate_multiplier: row.try_get("group_rate_multiplier")?,
         group_confidence: row.try_get("group_confidence")?,
         group_collected_at: row.try_get("group_collected_at")?,
-        pricing_rule,
         model_base_price,
     })
 }
@@ -1152,49 +880,6 @@ async fn list_latest_group_rates(
     rows.into_iter().map(row_to_group_rate).collect()
 }
 
-async fn list_pricing_rules(
-    connection: &mut SqliteConnection,
-    limit: i64,
-) -> Result<Vec<PricingRule>, PersistenceError> {
-    let rows = sqlx::query(
-        r#"
-        SELECT id, station_id, station_key_id, group_binding_id, group_name,
-               tier_label, model, input_price, output_price, fixed_price,
-               rate_multiplier, currency, unit, price_type, base_price_source,
-               normalization_status, source, confidence, enabled, note,
-               collected_at, valid_from, valid_until, created_at, updated_at
-        FROM pricing_rules INDEXED BY idx_pricing_rules_comparison
-        ORDER BY enabled DESC, station_id ASC, model ASC, updated_at DESC, created_at DESC, id DESC
-        LIMIT ?1
-        "#,
-    )
-    .bind(limit)
-    .fetch_all(connection)
-    .await?;
-    Ok(rows.into_iter().map(row_to_pricing_rule).collect())
-}
-
-async fn pricing_rule_by_id(
-    connection: &mut SqliteConnection,
-    id: &str,
-) -> Result<PricingRule, PersistenceError> {
-    let row = sqlx::query(
-        r#"
-        SELECT id, station_id, station_key_id, group_binding_id, group_name,
-               tier_label, model, input_price, output_price, fixed_price,
-               rate_multiplier, currency, unit, price_type, base_price_source,
-               normalization_status, source, confidence, enabled, note,
-               collected_at, valid_from, valid_until, created_at, updated_at
-        FROM pricing_rules WHERE id = ?1
-        "#,
-    )
-    .bind(id)
-    .fetch_optional(connection)
-    .await?;
-    row.map(row_to_pricing_rule)
-        .ok_or(PersistenceError::NotFound)
-}
-
 async fn model_base_price_by_id(
     connection: &mut SqliteConnection,
     id: &str,
@@ -1284,26 +969,6 @@ async fn validate_optional_station_owners(
         if !owned {
             return Err(PersistenceError::ConstraintViolation);
         }
-    }
-    Ok(())
-}
-
-fn validate_pricing_rule(input: &UpsertPricingRuleInput) -> Result<(), PersistenceError> {
-    if input.station_id.trim().is_empty()
-        || input.model.trim().is_empty()
-        || input.currency.trim().is_empty()
-        || input.unit.trim().is_empty()
-        || input.price_type.trim().is_empty()
-        || input.source.trim().is_empty()
-        || !valid_confidence(input.confidence)
-        || !non_negative_optional(input.input_price)
-        || !non_negative_optional(input.output_price)
-        || !non_negative_optional(input.fixed_price)
-        || input
-            .rate_multiplier
-            .is_some_and(|value| !value.is_finite() || value <= 0.0)
-    {
-        return Err(PersistenceError::ConstraintViolation);
     }
     Ok(())
 }
@@ -1478,36 +1143,6 @@ fn row_to_group_rate(row: sqlx::sqlite::SqliteRow) -> Result<GroupRateRecord, Pe
         checked_at: row.get("checked_at"),
         created_at: row.get("created_at"),
     })
-}
-
-fn row_to_pricing_rule(row: sqlx::sqlite::SqliteRow) -> PricingRule {
-    PricingRule {
-        id: row.get("id"),
-        station_id: row.get("station_id"),
-        station_key_id: row.get("station_key_id"),
-        group_binding_id: row.get("group_binding_id"),
-        group_name: row.get("group_name"),
-        tier_label: row.get("tier_label"),
-        model: row.get("model"),
-        input_price: row.get("input_price"),
-        output_price: row.get("output_price"),
-        fixed_price: row.get("fixed_price"),
-        rate_multiplier: row.get("rate_multiplier"),
-        currency: row.get("currency"),
-        unit: row.get("unit"),
-        price_type: row.get("price_type"),
-        base_price_source: row.get("base_price_source"),
-        normalization_status: row.get("normalization_status"),
-        source: row.get("source"),
-        confidence: row.get("confidence"),
-        enabled: i64_to_bool(row.get("enabled")),
-        note: row.get("note"),
-        collected_at: row.get("collected_at"),
-        valid_from: row.get("valid_from"),
-        valid_until: row.get("valid_until"),
-        created_at: row.get("created_at"),
-        updated_at: row.get("updated_at"),
-    }
 }
 
 fn row_to_model_base_price(row: sqlx::sqlite::SqliteRow) -> ModelBasePrice {

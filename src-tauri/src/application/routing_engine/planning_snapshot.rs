@@ -113,7 +113,6 @@ impl PlanningSnapshot {
                 || [
                     candidate.pricing.estimated_input_price,
                     candidate.pricing.estimated_output_price,
-                    candidate.pricing.estimated_fixed_price,
                 ]
                 .into_iter()
                 .flatten()

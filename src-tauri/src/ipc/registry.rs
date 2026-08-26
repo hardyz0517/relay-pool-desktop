@@ -18,7 +18,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "58680545187810f4cc691ce4d87ef581063e69effa0ea6d59c6ed4f02079b0fa";
+    "eb586692e080dee356c9ed5a1388d279bb35df884049ac8a1f57bf5682f6bc89";
 
 #[cfg_attr(
     not(test),
@@ -204,7 +204,6 @@ macro_rules! ipc_command_registry {
             get_station_key_model_discovery_operation_result => $crate::commands::station_key_connectivity::get_station_key_model_discovery_operation_result,
             ping_station_endpoint => $crate::commands::endpoint_ping::ping_station_endpoint,
             simulate_route => $crate::commands::routing_health::simulate_route,
-            list_pricing_rules => $crate::commands::pricing::list_pricing_rules,
             list_model_base_prices => $crate::commands::pricing::list_model_base_prices,
             list_model_price_sync_catalog => $crate::commands::pricing::list_model_price_sync_catalog,
             upsert_model_base_price => $crate::commands::pricing::upsert_model_base_price,
@@ -215,8 +214,6 @@ macro_rules! ipc_command_registry {
             sync_model_prices => $crate::commands::pricing::sync_model_prices,
             reload_model_price_catalog => $crate::commands::pricing::reload_model_price_catalog,
             open_model_price_catalog_directory => $crate::commands::pricing::open_model_price_catalog_directory,
-            upsert_pricing_rule => $crate::commands::pricing::upsert_pricing_rule,
-            delete_pricing_rule => $crate::commands::pricing::delete_pricing_rule,
             resolve_station_key_pricing_context => $crate::commands::pricing::resolve_station_key_pricing_context,
             list_balance_snapshots => $crate::commands::pricing::list_balance_snapshots,
             list_current_station_balance_snapshots => $crate::commands::pricing::list_current_station_balance_snapshots,
@@ -927,7 +924,6 @@ fn command_contract(name: &str) -> CommandContract {
             true,
         ),
         "simulate_route" => migrated_read("RouteSimulationInputDto", "RouteSimulationResultDto"),
-        "list_pricing_rules" => migrated_read("EmptyInputDto", "Vec<PricingRuleDto>"),
         "list_model_base_prices" => migrated_read("EmptyInputDto", "Vec<ModelBasePriceDto>"),
         "list_model_price_sync_catalog" => {
             migrated_read("EmptyInputDto", "Vec<ModelPriceCatalogEntryDto>")
@@ -979,15 +975,6 @@ fn command_contract(name: &str) -> CommandContract {
             "idempotent",
             false,
         ),
-        "upsert_pricing_rule" => migrated_mutation(
-            "UpsertPricingRuleInputDto",
-            "PricingRuleDto",
-            "idempotent",
-            false,
-        ),
-        "delete_pricing_rule" => {
-            migrated_mutation("PricingRuleIdInputDto", "unit", "idempotent", false)
-        }
         "get_proxy_status" => migrated_read("EmptyInputDto", "ProxyStatusDto"),
         "start_local_proxy" => {
             migrated_mutation("EmptyInputDto", "ProxyStatusDto", "idempotent", false)
@@ -1744,10 +1731,6 @@ export function simulateRoute(input: RouteSimulationInputDto): Promise<RouteSimu
   return invokeCommand<RouteSimulationResultDto>("simulate_route", { input });
 }
 
-export function listPricingRules(input: EmptyInputDto = {}): Promise<PricingRuleDto[]> {
-  return invokeCommand<PricingRuleDto[]>("list_pricing_rules", { input });
-}
-
 export function listModelBasePrices(input: EmptyInputDto = {}): Promise<ModelBasePriceDto[]> {
   return invokeCommand<ModelBasePriceDto[]>("list_model_base_prices", { input });
 }
@@ -1798,14 +1781,6 @@ export function deleteModelBasePrice(input: ModelBasePriceIdInputDto): Promise<v
 
 export function resetModelBasePricesToBuiltins(input: EmptyInputDto = {}): Promise<ModelBasePriceDto[]> {
   return invokeCommand<ModelBasePriceDto[]>("reset_model_base_prices_to_builtins", { input });
-}
-
-export function upsertPricingRule(input: UpsertPricingRuleInputDto): Promise<PricingRuleDto> {
-  return invokeCommand<PricingRuleDto>("upsert_pricing_rule", { input });
-}
-
-export function deletePricingRule(input: PricingRuleIdInputDto): Promise<void> {
-  return invokeCommand<void>("delete_pricing_rule", { input });
 }
 
 export function getProxyStatus(input: EmptyInputDto = {}): Promise<ProxyStatusDto> {
@@ -2500,7 +2475,6 @@ mod tests {
     #[test]
     fn pricing_reads_have_closed_schemas_and_read_semantics() {
         for (name, input, output) in [
-            ("list_pricing_rules", "EmptyInputDto", "Vec<PricingRuleDto>"),
             (
                 "list_model_base_prices",
                 "EmptyInputDto",
@@ -2548,12 +2522,6 @@ mod tests {
                 "EmptyInputDto",
                 "Vec<ModelBasePriceDto>",
             ),
-            (
-                "upsert_pricing_rule",
-                "UpsertPricingRuleInputDto",
-                "PricingRuleDto",
-            ),
-            ("delete_pricing_rule", "PricingRuleIdInputDto", "unit"),
         ] {
             let contract = command_contract(name);
             assert_eq!(contract.input, input, "{name}");
@@ -2901,12 +2869,7 @@ mod tests {
                 "{function}"
             );
         }
-        for function in [
-            "upsertModelBasePrice",
-            "resetModelBasePricesToBuiltins",
-            "upsertPricingRule",
-            "deletePricingRule",
-        ] {
+        for function in ["upsertModelBasePrice", "resetModelBasePricesToBuiltins"] {
             assert!(
                 source.contains(&format!("function {function}(")),
                 "{function}"

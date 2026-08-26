@@ -121,7 +121,6 @@ function candidate(overrides: Partial<RoutingWorkspaceCandidate> = {}): RoutingW
       unit: "rate_multiplier",
       estimatedInputPrice: null,
       estimatedOutputPrice: null,
-      estimatedFixedPrice: null,
       statusLabel: "multiplier_proxy",
       sourceChain: [],
       observedAt: null,

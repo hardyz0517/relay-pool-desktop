@@ -4,7 +4,7 @@ use serde_json::Value;
 #[cfg(test)]
 use crate::models::pricing::PricingStatus;
 use crate::models::{
-    pricing::{ModelBasePrice, PricingRule, RequestKind, ResolvedPricingContext},
+    pricing::{ModelBasePrice, RequestKind, ResolvedPricingContext},
     pricing_group_monitoring::{
         canonicalize_group_refs, group_refs_hash, CanonicalGroupRef,
         PricingGroupMonitorStatusInput, PricingGroupMonitorStatusWorkspace,
@@ -24,7 +24,6 @@ use super::{
 const MAX_STATION_KEY_ID_BYTES: usize = 128;
 const MAX_MODEL_BYTES: usize = 512;
 
-pub type PricingRuleDto = PricingRule;
 pub type ModelBasePriceDto = ModelBasePrice;
 pub type ResolvedPricingContextDto = ResolvedPricingContext;
 pub type PricingGroupMonitorStatusWorkspaceDto = PricingGroupMonitorStatusWorkspace;
@@ -217,7 +216,6 @@ pub struct PricingComparisonWorkspaceDto {
     pub station_keys: Vec<StationKeyDto>,
     pub group_bindings: Vec<StationGroupBindingDto>,
     pub group_rates: Vec<GroupRateRecordDto>,
-    pub pricing_rules: Vec<PricingRuleDto>,
     pub developer_mode_enabled: bool,
 }
 
@@ -228,7 +226,6 @@ impl From<PricingComparisonWorkspace> for PricingComparisonWorkspaceDto {
             station_keys: value.station_keys,
             group_bindings: value.group_bindings,
             group_rates: value.group_rates,
-            pricing_rules: value.pricing_rules,
             developer_mode_enabled: value.developer_mode_enabled,
         }
     }
@@ -248,7 +245,6 @@ pub const PRICING_READS_TYPE: TypeDescriptor = TypeDescriptor {
 
 #[cfg(test)]
 pub(crate) fn serialization_fixtures() -> Vec<Value> {
-    let rule = fixture_rule();
     let base_price = fixture_base_price();
     let catalog_entry = ModelPriceCatalogEntryDto {
         key: "openai/gpt-fixture".into(),
@@ -268,11 +264,9 @@ pub(crate) fn serialization_fixtures() -> Vec<Value> {
         station_keys: Vec::new(),
         group_bindings: Vec::new(),
         group_rates: Vec::new(),
-        pricing_rules: vec![rule.clone()],
         developer_mode_enabled: false,
     };
     vec![
-        serde_json::json!({"command":"list_pricing_rules","input":{},"output":[rule]}),
         serde_json::json!({"command":"list_model_base_prices","input":{},"output":[base_price]}),
         serde_json::json!({"command":"list_model_price_sync_catalog","input":{},"output":[catalog_entry]}),
         serde_json::json!({
@@ -295,37 +289,6 @@ pub(crate) fn serialization_fixtures() -> Vec<Value> {
             }
         }),
     ]
-}
-
-#[cfg(test)]
-fn fixture_rule() -> PricingRuleDto {
-    PricingRule {
-        id: "pricing-rule-1".into(),
-        station_id: "station-1".into(),
-        station_key_id: Some("key-1".into()),
-        group_binding_id: None,
-        group_name: None,
-        tier_label: None,
-        model: "fixture-model".into(),
-        input_price: Some(1.0),
-        output_price: Some(2.0),
-        fixed_price: None,
-        rate_multiplier: Some(0.8),
-        currency: "USD".into(),
-        unit: "M".into(),
-        price_type: "token".into(),
-        base_price_source: Some("fixture".into()),
-        normalization_status: "complete".into(),
-        source: "fixture".into(),
-        confidence: 1.0,
-        enabled: true,
-        note: None,
-        collected_at: Some("1700000000000".into()),
-        valid_from: None,
-        valid_until: None,
-        created_at: "1700000000000".into(),
-        updated_at: "1700000000000".into(),
-    }
 }
 
 #[cfg(test)]
@@ -372,7 +335,6 @@ fn fixture_context() -> ResolvedPricingContextDto {
         group_binding_id: None,
         base_input_price: Some(1.0),
         base_output_price: Some(2.0),
-        base_fixed_price: None,
         base_cache_creation_price: Some(1.25),
         base_cache_read_price: Some(0.1),
         currency: "USD".into(),
@@ -383,7 +345,6 @@ fn fixture_context() -> ResolvedPricingContextDto {
         rate_collected_at: Some("1700000000000".into()),
         estimated_input_price: Some(0.8),
         estimated_output_price: Some(1.6),
-        estimated_fixed_price: None,
         estimated_cache_creation_price: Some(1.0),
         estimated_cache_read_price: Some(0.08),
         pricing_status: PricingStatus::Priced,

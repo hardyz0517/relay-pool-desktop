@@ -101,7 +101,6 @@ export type RouteCandidateExplanationDto = {
   reasons: string[];
   rejectionReasons: string[];
   mappedModel: string | null;
-  pricingRuleId: string | null;
   groupBindingId: string | null;
   rateMultiplier: number | null;
   normalizationStatus: string | null;
@@ -302,7 +301,6 @@ export type RoutingCandidatePricingSnapshotDto = {
   unit: string | null;
   estimatedInputPrice: number | null;
   estimatedOutputPrice: number | null;
-  estimatedFixedPrice: number | null;
   statusLabel: string;
   sourceChain: string[];
   observedAt: string | null;

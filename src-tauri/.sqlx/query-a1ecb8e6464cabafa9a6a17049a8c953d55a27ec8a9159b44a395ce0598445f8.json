@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "\n            SELECT id AS \"id!\", request_id AS \"request_id?\", started_at,\n                   finished_at AS \"finished_at?\", duration_ms AS \"duration_ms?\",\n                   method, path, model AS \"model?\", stream AS \"stream!: bool\", status,\n                   http_status AS \"http_status?\",\n                   lifecycle_status AS \"lifecycle_status?\",\n                   station_key_id AS \"station_key_id?\", station_id AS \"station_id?\",\n                   upstream_base_url AS \"upstream_base_url?\", fallback_count,\n                   error_message AS \"error_message?\", route_policy AS \"route_policy?\",\n                   route_reason AS \"route_reason?\",\n                   rejected_candidates_json AS \"rejected_candidates_json?\",\n                   body_bytes AS \"body_bytes?\", attempt_count AS \"attempt_count?\",\n                   route_wait_ms AS \"route_wait_ms?\",\n                   upstream_headers_ms AS \"upstream_headers_ms?\",\n                   failure_source AS \"failure_source?\", attempts_json AS \"attempts_json?\",\n                   completion_source AS \"completion_source?\",\n                   prompt_tokens AS \"prompt_tokens?\",\n                   completion_tokens AS \"completion_tokens?\", total_tokens AS \"total_tokens?\",\n                   cache_creation_tokens AS \"cache_creation_tokens?\",\n                   cache_read_tokens AS \"cache_read_tokens?\",\n                   reasoning_effort AS \"reasoning_effort?\",\n                   first_token_ms AS \"first_token_ms?\", billing_mode AS \"billing_mode?\",\n                   estimated_input_cost AS \"estimated_input_cost?\",\n                   estimated_output_cost AS \"estimated_output_cost?\",\n                   estimated_total_cost AS \"estimated_total_cost?\",\n                   base_input_cost AS \"base_input_cost?\",\n                   base_output_cost AS \"base_output_cost?\",\n                   base_fixed_cost AS \"base_fixed_cost?\",\n                   base_total_cost AS \"base_total_cost?\", cost_currency AS \"cost_currency?\",\n                   pricing_rule_id AS \"pricing_rule_id?\", pricing_source AS \"pricing_source?\",\n                   cost_status AS \"cost_status?\", group_binding_id AS \"group_binding_id?\",\n                   normalization_status AS \"normalization_status?\",\n                   balance_scope AS \"balance_scope?\",\n                   economic_context_json AS \"economic_context_json?\", created_at\n            FROM request_logs\n            ORDER BY created_at DESC, id DESC\n            LIMIT ?1\n            ",
+  "query": "\n            SELECT id AS \"id!\", request_id AS \"request_id?\", started_at,\n                   finished_at AS \"finished_at?\", duration_ms AS \"duration_ms?\",\n                   method, path, model AS \"model?\", stream AS \"stream!: bool\", status,\n                   http_status AS \"http_status?\",\n                   lifecycle_status AS \"lifecycle_status?\",\n                   station_key_id AS \"station_key_id?\", station_id AS \"station_id?\",\n                   upstream_base_url AS \"upstream_base_url?\", fallback_count,\n                   error_message AS \"error_message?\", route_policy AS \"route_policy?\",\n                   route_reason AS \"route_reason?\",\n                   rejected_candidates_json AS \"rejected_candidates_json?\",\n                   body_bytes AS \"body_bytes?\", attempt_count AS \"attempt_count?\",\n                   route_wait_ms AS \"route_wait_ms?\",\n                   upstream_headers_ms AS \"upstream_headers_ms?\",\n                   failure_source AS \"failure_source?\", attempts_json AS \"attempts_json?\",\n                   completion_source AS \"completion_source?\",\n                   prompt_tokens AS \"prompt_tokens?\",\n                   completion_tokens AS \"completion_tokens?\", total_tokens AS \"total_tokens?\",\n                   cache_creation_tokens AS \"cache_creation_tokens?\",\n                   cache_read_tokens AS \"cache_read_tokens?\",\n                   reasoning_effort AS \"reasoning_effort?\",\n                   first_token_ms AS \"first_token_ms?\", billing_mode AS \"billing_mode?\",\n                   estimated_input_cost AS \"estimated_input_cost?\",\n                   estimated_output_cost AS \"estimated_output_cost?\",\n                   estimated_total_cost AS \"estimated_total_cost?\",\n                   cost_currency AS \"cost_currency?\",\n                   pricing_source AS \"pricing_source?\",\n                   cost_status AS \"cost_status?\", group_binding_id AS \"group_binding_id?\",\n                   normalization_status AS \"normalization_status?\",\n                   balance_scope AS \"balance_scope?\",\n                   economic_context_json AS \"economic_context_json?\", created_at\n            FROM request_logs\n            ORDER BY created_at DESC, id DESC\n            LIMIT ?1\n            ",
   "describe": {
     "columns": [
       {
@@ -194,68 +194,43 @@
         "type_info": "Float"
       },
       {
-        "name": "base_input_cost?",
-        "ordinal": 38,
-        "type_info": "Float"
-      },
-      {
-        "name": "base_output_cost?",
-        "ordinal": 39,
-        "type_info": "Float"
-      },
-      {
-        "name": "base_fixed_cost?",
-        "ordinal": 40,
-        "type_info": "Float"
-      },
-      {
-        "name": "base_total_cost?",
-        "ordinal": 41,
-        "type_info": "Float"
-      },
-      {
         "name": "cost_currency?",
-        "ordinal": 42,
-        "type_info": "Text"
-      },
-      {
-        "name": "pricing_rule_id?",
-        "ordinal": 43,
+        "ordinal": 38,
         "type_info": "Text"
       },
       {
         "name": "pricing_source?",
-        "ordinal": 44,
+        "ordinal": 39,
         "type_info": "Text"
       },
       {
         "name": "cost_status?",
-        "ordinal": 45,
+        "ordinal": 40,
         "type_info": "Text"
       },
       {
         "name": "group_binding_id?",
-        "ordinal": 46,
+        "ordinal": 41,
         "type_info": "Text"
       },
       {
         "name": "normalization_status?",
-        "ordinal": 47,
+        "ordinal": 42,
         "type_info": "Text"
       },
       {
         "name": "balance_scope?",
-        "ordinal": 48,
+        "ordinal": 43,
         "type_info": "Text"
       },
       {
         "name": "economic_context_json?",
-        "ordinal": 49,
+        "ordinal": 44,
         "type_info": "Text"
       },
       {
         "name": "created_at",
-        "ordinal": 50,
+        "ordinal": 45,
         "type_info": "Text"
       }
     ],
@@ -308,13 +283,8 @@
       true,
       true,
       true,
-      true,
-      true,
-      true,
-      true,
-      true,
       false
     ]
   },
-  "hash": "924b91ae6da8f4eb6f0d8f97e789d0b30950b3731b6f7ae6d696095aba289717"
+  "hash": "a1ecb8e6464cabafa9a6a17049a8c953d55a27ec8a9159b44a395ce0598445f8"
 }

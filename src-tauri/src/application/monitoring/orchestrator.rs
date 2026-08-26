@@ -40,6 +40,8 @@ pub(crate) struct ProbeTransportResult {
     pub(crate) retryable: bool,
     pub(crate) retry_after_ms: Option<u64>,
     pub(crate) latency_ms: u64,
+    pub(crate) ttfb_ms: Option<u64>,
+    pub(crate) first_content_ms: Option<u64>,
     pub(crate) http_status: Option<u16>,
     pub(crate) response_model: Option<String>,
     pub(crate) output_bytes: usize,
@@ -62,6 +64,8 @@ impl ProbeTransportResult {
             retryable,
             retry_after_ms,
             latency_ms,
+            ttfb_ms: None,
+            first_content_ms: None,
             http_status: None,
             response_model: None,
             output_bytes: 0,
@@ -208,6 +212,8 @@ where
                     attempt_number,
                     started_at_ms,
                     finished_at_ms,
+                    ttfb_ms: transport_result.ttfb_ms,
+                    first_content_ms: transport_result.first_content_ms,
                     outcome: if slow_success {
                         ProbeOutcome::Degraded
                     } else {

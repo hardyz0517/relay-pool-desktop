@@ -6,6 +6,7 @@ import type {
   ChannelMonitor,
   ChannelMonitorHealthWritebackMode,
   ChannelMonitorProtocolKind,
+  ChannelMonitorProxyMode,
   ChannelMonitorRequestTemplate,
   CreateChannelMonitorInput,
   MonitoringCapabilityCatalog,
@@ -48,6 +49,13 @@ const healthWritebackOptions: Array<{
   { value: "disabled", label: "不写回", description: "只保留监控结果，不影响密钥健康状态" },
   { value: "observe_only", label: "仅观察", description: "记录健康观察，但不改变路由资格" },
   { value: "authoritative", label: "权威写回", description: "达到阈值后更新密钥健康状态，仅限标准 API Profile" },
+];
+
+const monitorProxyOptions: Array<{ value: ChannelMonitorProxyMode; label: string }> = [
+  { value: "inherit", label: "跟随总设置" },
+  { value: "direct", label: "直连" },
+  { value: "system", label: "使用系统代理" },
+  { value: "manual", label: "手动代理地址" },
 ];
 
 export function ChannelMonitorForm({
@@ -271,6 +279,34 @@ export function ChannelMonitorForm({
               </Field>
               <Field label="连续失败阈值"><NumberInput value={draft.healthFailureThreshold} onChange={(healthFailureThreshold) => updateDraft({ healthFailureThreshold })} /></Field>
               <Field label="连续恢复阈值"><NumberInput value={draft.healthRecoveryThreshold} onChange={(healthRecoveryThreshold) => updateDraft({ healthRecoveryThreshold })} /></Field>
+            </div>
+          </SectionCard>
+
+          <SectionCard title="网络与代理">
+            <div className="grid gap-3 md:grid-cols-2">
+              <Field label="监控网络出口">
+                <SelectControl
+                  ariaLabel="监控网络出口"
+                  className={inputClassName}
+                  value={draft.proxyMode}
+                  options={monitorProxyOptions}
+                  onChange={(proxyMode) => updateDraft({ proxyMode })}
+                />
+              </Field>
+              {draft.proxyMode === "manual" ? (
+                <Field label="代理地址">
+                  <input
+                    className={inputClassName}
+                    placeholder="例如 http://127.0.0.1:7890"
+                    value={draft.proxyUrl}
+                    onChange={(event) => updateDraft({ proxyUrl: event.target.value })}
+                  />
+                </Field>
+              ) : (
+                <div className="flex items-end pb-1 text-xs text-muted-foreground">
+                  {draft.proxyMode === "inherit" ? "当前监控请求会使用总设置中的网络出口。" : "当前监控请求会覆盖总设置。"}
+                </div>
+              )}
             </div>
           </SectionCard>
 
