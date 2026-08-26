@@ -5,7 +5,6 @@ import type { StationGroupOption } from "@/lib/types/groupFacts";
 import { cn } from "@/lib/utils";
 import {
   findMatchingGroupOption,
-  formatMultiplier,
   noGroupOptionValue,
   normalizeStationGroupOptions,
   stationGroupSelectValue,
@@ -110,10 +109,10 @@ export function StationKeyRowsEditor({
       groupIdHash: selectedGroup.groupIdHash,
       groupName: selectedGroup.groupName,
       rateSource: selectedGroup.rateSource,
-      rateMultiplier:
-        selectedGroup.rateMultiplier === null
-          ? row.rateMultiplier
-          : formatMultiplier(selectedGroup.rateMultiplier),
+      // The option value is normalized for display. A bound key inherits its
+      // raw rate from the binding, so selecting a group must not persist the
+      // normalized display value as the key's raw multiplier.
+      rateMultiplier: row.rateMultiplier,
     });
   }
 

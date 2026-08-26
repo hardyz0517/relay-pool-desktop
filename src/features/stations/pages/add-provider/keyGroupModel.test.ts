@@ -10,6 +10,7 @@ import {
   deriveRemoteKeyEditorState,
   groupBindingsToDrafts,
   keyToDraft,
+  mergeKeyRowsWithSavedGroupOptions,
   legacyRemoteLocalKeyNote,
   remoteLocalKeyNote,
   resolveRemoteCreatedLocalKeyIds,
@@ -336,5 +337,33 @@ describe("add provider key/group model", () => {
         rateSource: "sub2api_groups_rates",
       }),
     ]);
+  });
+
+  it("does not write a normalized display multiplier back into a raw key draft", () => {
+    const row = keyToDraft(stationKey({
+      groupBindingId: "binding-1",
+      groupIdHash: "old-hash",
+      groupName: "default",
+      rateMultiplier: 1.5,
+      rateSource: "remote_scan",
+    }));
+    const savedOption: StationKeyGroupOption = {
+      value: "binding:binding-1",
+      groupBindingId: "binding-1",
+      groupIdHash: "new-hash",
+      groupName: "default",
+      // Display value after a 27 points/USD normalization.
+      rateMultiplier: 1.5 / 27,
+      inferredGroupCategory: "unknown",
+      groupCategoryOverride: null,
+      effectiveGroupCategory: "unknown",
+      rateSource: "remote_scan",
+      selectableForRemoteKey: true,
+    };
+
+    expect(mergeKeyRowsWithSavedGroupOptions([row], [savedOption])[0]).toMatchObject({
+      groupIdHash: "new-hash",
+      rateMultiplier: "1.5",
+    });
   });
 });

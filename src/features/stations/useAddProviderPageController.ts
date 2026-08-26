@@ -33,7 +33,6 @@ import {
   startProviderDraftAuthorization,
 } from "@/lib/api/providerDrafts";
 import { readError } from "@/lib/errors";
-import { effectiveRateMultiplierForCredit } from "@/lib/formatters";
 import { normalizeStationGroupOptions } from "@/lib/groupOptionViewModels";
 import { queryKeys } from "@/lib/query/queryKeys";
 import { discoverCreatedStationKeyModels } from "@/lib/stationKeyModelDiscovery";
@@ -911,7 +910,9 @@ export function useAddProviderPageController({
     const result = await createLocalStationKeyFromRemote(remoteKey.id, targetStationId);
     const createdLocalKey = !localStationKeys.some((key) => key.id === result.stationKey.id);
     await updateStationKey(stationKeyToUpdateInput(result.stationKey, {
-      rateMultiplier: effectiveRateMultiplierForCredit(remoteKey.rateMultiplier, currentCreditPerCny),
+      // Persist the station-native value. The exchange-rate-normalized value
+      // is for display and routing projections, not the key compatibility cache.
+      rateMultiplier: remoteKey.rateMultiplier,
     }));
     if (createdLocalKey) {
       await autoDiscoverCreatedKeyModels([result.stationKey.id]);

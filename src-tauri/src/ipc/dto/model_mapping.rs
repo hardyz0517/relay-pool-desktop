@@ -93,11 +93,13 @@ pub enum ModelMappingActionDto {
     },
     Preserve,
     Reject {
+        #[serde(rename = "rejectionKind")]
         rejection_kind: ModelMappingRejectionKindDto,
         message: Option<String>,
     },
     MapFallbackChain {
         targets: Vec<ModelMappingTargetRefDto>,
+        #[serde(rename = "fallbackTrigger")]
         fallback_trigger: ModelMappingFallbackTriggerDto,
     },
 }
@@ -105,8 +107,14 @@ pub enum ModelMappingActionDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ModelMappingTargetRefDto {
-    Literal { upstream_model: String },
-    ModelProfile { model_profile_id: String },
+    Literal {
+        #[serde(rename = "upstreamModel")]
+        upstream_model: String,
+    },
+    ModelProfile {
+        #[serde(rename = "modelProfileId")]
+        model_profile_id: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -859,6 +867,22 @@ mod tests {
     #[test]
     fn phase_one_document_accepts_exact_literal_mapping() {
         validate_document(&document()).expect("valid phase-one document");
+    }
+
+    #[test]
+    fn apply_payload_accepts_camel_case_target_fields() {
+        let payload = serde_json::json!({
+            "document": serde_json::to_value(document()).expect("serialize document"),
+            "source": "ui",
+        });
+        let parsed = ApplyModelMappingDocumentInputDto::parse(payload)
+            .expect("camelCase apply payload should match the IPC contract");
+        match &parsed.document.rules[0].action {
+            ModelMappingActionDto::MapFixed {
+                target: ModelMappingTargetRefDto::Literal { upstream_model },
+            } => assert_eq!(upstream_model, "deepseek-v4-flash"),
+            _ => panic!("expected a fixed literal mapping"),
+        }
     }
 
     #[test]

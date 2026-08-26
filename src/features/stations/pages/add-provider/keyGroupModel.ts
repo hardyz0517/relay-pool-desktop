@@ -18,7 +18,6 @@ import {
   buildStationGroupOptionFromRawMultiplierForSelect,
   buildStationGroupOptionsFromCurrentFactsForSelect,
   findMatchingGroupOption,
-  formatMultiplier,
 } from "@/lib/groupOptionViewModels";
 import { remoteLocalKeyNotePrefix } from "./formModel";
 
@@ -195,8 +194,10 @@ export function mergeKeyRowsWithSavedGroupOptions(
       groupIdHash: group.groupIdHash,
       groupName: group.groupName,
       rateSource: group.rateSource,
-      rateMultiplier:
-        group.rateMultiplier === null ? row.rateMultiplier : formatMultiplier(group.rateMultiplier),
+      // Group options expose an exchange-rate-normalized display value. Keep
+      // the draft's raw key multiplier untouched; the binding is the source
+      // of truth and the backend performs normalization exactly once.
+      rateMultiplier: row.rateMultiplier,
       inferredGroupCategory: group.inferredGroupCategory,
       groupCategoryOverride: group.groupCategoryOverride,
     };
@@ -579,13 +580,11 @@ export function syncRowsWithGroupRateOptions(
     if (!group || group.rateMultiplier === null) {
       return row;
     }
-    const nextRateMultiplier = formatMultiplier(group.rateMultiplier);
     if (
       row.groupBindingId === group.groupBindingId &&
       row.groupIdHash === group.groupIdHash &&
       row.groupName === group.groupName &&
-      row.rateSource === group.rateSource &&
-      row.rateMultiplier === nextRateMultiplier
+      row.rateSource === group.rateSource
     ) {
       return row;
     }
@@ -596,7 +595,7 @@ export function syncRowsWithGroupRateOptions(
       groupIdHash: group.groupIdHash,
       groupName: group.groupName,
       rateSource: group.rateSource,
-      rateMultiplier: nextRateMultiplier,
+      rateMultiplier: row.rateMultiplier,
     };
   });
   return changed ? nextRows : rows;

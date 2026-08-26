@@ -14,6 +14,7 @@ import type {
   ModelMappingRuleDto,
   ModelMappingWorkspaceDto,
 } from "@/lib/types/modelMapping";
+import { toModelMappingApplyDocument } from "@/lib/types/modelMapping";
 
 const emptyConditions = {
   endpointKinds: [],
@@ -119,7 +120,10 @@ export function ModelMappingPanel() {
 
   async function persist(document: ModelMappingDocumentDto): Promise<ApplyOutcome> {
     try {
-      const next = await applyModelMappingDocument({ document, source: "ui" });
+      const next = await applyModelMappingDocument({
+        document: toModelMappingApplyDocument(document),
+        source: "ui",
+      });
       if (next.diagnostics.length > 0) return { kind: "diagnostics", diagnostics: next.diagnostics };
       setDraft(next.document);
       queryClient.setQueryData(modelMappingQueryKeys.workspace(), next);
