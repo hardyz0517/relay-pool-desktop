@@ -363,36 +363,45 @@ async fn list_monitors(
 ) -> Result<Vec<ChannelMonitor>, PersistenceError> {
     let rows = sqlx::query(
         r#"
+        WITH latest_balance_spendability AS (
+            SELECT * FROM (
+                SELECT b.*, ROW_NUMBER() OVER (
+                    PARTITION BY b.station_id, b.station_key_id, b.scope
+                    ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC
+                ) AS row_number
+                FROM balance_snapshots b
+            ) WHERE row_number = 1
+        )
         SELECT m.id, m.name, m.target_type, m.station_id, m.station_key_id, m.template_id,
                m.enabled, m.pause_on_zero_balance,
                CASE
                    WHEN m.pause_on_zero_balance = 1 AND (
-                       (m.target_type = 'station' AND LOWER(TRIM(COALESCE((
-                           SELECT b.status FROM balance_snapshots b
+                       (m.target_type = 'station' AND EXISTS (
+                           SELECT 1 FROM latest_balance_spendability b
                            WHERE b.station_id = m.station_id AND b.station_key_id IS NULL
                              AND b.scope IN ('station', 'station_account')
-                           ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC LIMIT 1
-                       ), ''))) IN ('depleted', 'exhausted', 'empty'))
-                       OR (m.target_type = 'station_key'
-                           AND LOWER(TRIM(COALESCE((
-                               SELECT b.status FROM balance_snapshots b
-                               WHERE b.station_id = m.station_id AND b.station_key_id IS NULL
-                                 AND b.scope IN ('station', 'station_account')
-                               ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC LIMIT 1
-                           ), ''))) NOT IN ('normal', 'available', 'usable', 'low', 'warning')
-                           AND (
-                               LOWER(TRIM(COALESCE((
-                                   SELECT b.status FROM balance_snapshots b
-                                   WHERE b.station_id = m.station_id AND b.station_key_id IS NULL
-                                     AND b.scope IN ('station', 'station_account')
-                                   ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC LIMIT 1
-                               ), ''))) IN ('depleted', 'exhausted', 'empty')
-                               OR LOWER(TRIM(COALESCE((
-                                   SELECT b.status FROM balance_snapshots b
-                                   WHERE b.station_key_id = m.station_key_id AND b.scope = 'station_key'
-                                   ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC LIMIT 1
-                               ), ''))) IN ('depleted', 'exhausted', 'empty')
-                           ))
+                             AND b.status IN ('depleted', 'exhausted', 'empty')
+                             AND b.evidence_confidence = 'confirmed'
+                             AND b.spendability_authority = 'authoritative'
+                             AND (b.valid_until_ms IS NULL OR b.valid_until_ms >= CAST(strftime('%s','now') AS INTEGER) * 1000)
+                       ))
+                       OR (m.target_type = 'station_key' AND NOT EXISTS (
+                           SELECT 1 FROM latest_balance_spendability b
+                           WHERE b.station_id = m.station_id AND b.station_key_id IS NULL
+                             AND b.scope IN ('station', 'station_account')
+                             AND b.status IN ('normal', 'available', 'usable', 'low', 'warning')
+                             AND b.evidence_confidence = 'confirmed'
+                             AND b.spendability_authority = 'authoritative'
+                             AND (b.valid_until_ms IS NULL OR b.valid_until_ms >= CAST(strftime('%s','now') AS INTEGER) * 1000)
+                       ) AND EXISTS (
+                           SELECT 1 FROM latest_balance_spendability b
+                           WHERE ((b.station_id = m.station_id AND b.station_key_id IS NULL AND b.scope IN ('station', 'station_account'))
+                              OR (b.station_key_id = m.station_key_id AND b.scope = 'station_key'))
+                             AND b.status IN ('depleted', 'exhausted', 'empty')
+                             AND b.evidence_confidence = 'confirmed'
+                             AND b.spendability_authority = 'authoritative'
+                             AND (b.valid_until_ms IS NULL OR b.valid_until_ms >= CAST(strftime('%s','now') AS INTEGER) * 1000)
+                       ))
                    ) THEN 1 ELSE 0
                END AS balance_paused,
                m.interval_seconds, m.jitter_seconds, m.timeout_seconds,
@@ -437,36 +446,45 @@ async fn monitor_by_id(
 ) -> Result<ChannelMonitor, PersistenceError> {
     let row = sqlx::query(
         r#"
+        WITH latest_balance_spendability AS (
+            SELECT * FROM (
+                SELECT b.*, ROW_NUMBER() OVER (
+                    PARTITION BY b.station_id, b.station_key_id, b.scope
+                    ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC
+                ) AS row_number
+                FROM balance_snapshots b
+            ) WHERE row_number = 1
+        )
         SELECT m.id, m.name, m.target_type, m.station_id, m.station_key_id, m.template_id,
                m.enabled, m.pause_on_zero_balance,
                CASE
                    WHEN m.pause_on_zero_balance = 1 AND (
-                       (m.target_type = 'station' AND LOWER(TRIM(COALESCE((
-                           SELECT b.status FROM balance_snapshots b
+                       (m.target_type = 'station' AND EXISTS (
+                           SELECT 1 FROM latest_balance_spendability b
                            WHERE b.station_id = m.station_id AND b.station_key_id IS NULL
                              AND b.scope IN ('station', 'station_account')
-                           ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC LIMIT 1
-                       ), ''))) IN ('depleted', 'exhausted', 'empty'))
-                       OR (m.target_type = 'station_key'
-                           AND LOWER(TRIM(COALESCE((
-                               SELECT b.status FROM balance_snapshots b
-                               WHERE b.station_id = m.station_id AND b.station_key_id IS NULL
-                                 AND b.scope IN ('station', 'station_account')
-                               ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC LIMIT 1
-                           ), ''))) NOT IN ('normal', 'available', 'usable', 'low', 'warning')
-                           AND (
-                               LOWER(TRIM(COALESCE((
-                                   SELECT b.status FROM balance_snapshots b
-                                   WHERE b.station_id = m.station_id AND b.station_key_id IS NULL
-                                     AND b.scope IN ('station', 'station_account')
-                                   ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC LIMIT 1
-                               ), ''))) IN ('depleted', 'exhausted', 'empty')
-                               OR LOWER(TRIM(COALESCE((
-                                   SELECT b.status FROM balance_snapshots b
-                                   WHERE b.station_key_id = m.station_key_id AND b.scope = 'station_key'
-                                   ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC LIMIT 1
-                               ), ''))) IN ('depleted', 'exhausted', 'empty')
-                           ))
+                             AND b.status IN ('depleted', 'exhausted', 'empty')
+                             AND b.evidence_confidence = 'confirmed'
+                             AND b.spendability_authority = 'authoritative'
+                             AND (b.valid_until_ms IS NULL OR b.valid_until_ms >= CAST(strftime('%s','now') AS INTEGER) * 1000)
+                       ))
+                       OR (m.target_type = 'station_key' AND NOT EXISTS (
+                           SELECT 1 FROM latest_balance_spendability b
+                           WHERE b.station_id = m.station_id AND b.station_key_id IS NULL
+                             AND b.scope IN ('station', 'station_account')
+                             AND b.status IN ('normal', 'available', 'usable', 'low', 'warning')
+                             AND b.evidence_confidence = 'confirmed'
+                             AND b.spendability_authority = 'authoritative'
+                             AND (b.valid_until_ms IS NULL OR b.valid_until_ms >= CAST(strftime('%s','now') AS INTEGER) * 1000)
+                       ) AND EXISTS (
+                           SELECT 1 FROM latest_balance_spendability b
+                           WHERE ((b.station_id = m.station_id AND b.station_key_id IS NULL AND b.scope IN ('station', 'station_account'))
+                              OR (b.station_key_id = m.station_key_id AND b.scope = 'station_key'))
+                             AND b.status IN ('depleted', 'exhausted', 'empty')
+                             AND b.evidence_confidence = 'confirmed'
+                             AND b.spendability_authority = 'authoritative'
+                             AND (b.valid_until_ms IS NULL OR b.valid_until_ms >= CAST(strftime('%s','now') AS INTEGER) * 1000)
+                       ))
                    ) THEN 1 ELSE 0
                END AS balance_paused,
                m.interval_seconds, m.jitter_seconds, m.timeout_seconds,

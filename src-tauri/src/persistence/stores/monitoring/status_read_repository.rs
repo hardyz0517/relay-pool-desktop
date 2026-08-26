@@ -103,7 +103,9 @@ impl MonitoringStatusQueryRepository {
                    decisive_attempt_id, protocol_kind, resolved_adapter_kind,
                    resolved_dialect, client_profile_id, client_profile_version,
                    request_profile_hash, traffic_equivalence, latency_ms,
-                   semantic_confidence, started_at_ms, finished_at_ms
+                   availability_eligible, latency_eligible, exclusion_reason,
+                   technical_health_effect, semantic_confidence,
+                   started_at_ms, finished_at_ms
             FROM channel_monitor_target_results
             WHERE execution_id = ?1
             ORDER BY station_key_id ASC, id ASC
@@ -168,6 +170,15 @@ impl MonitoringStatusQueryRepository {
     ) -> Result<Vec<BaseStatusRow>, PersistenceError> {
         let mut query = QueryBuilder::<Sqlite>::new(
             r#"
+            WITH latest_balance_spendability AS (
+                SELECT * FROM (
+                    SELECT b.*, ROW_NUMBER() OVER (
+                        PARTITION BY b.station_id, b.station_key_id, b.scope
+                        ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC
+                    ) AS row_number
+                    FROM balance_snapshots b
+                ) WHERE row_number = 1
+            )
             SELECT
                 m.id AS monitor_id,
                 m.name AS monitor_name,
@@ -185,32 +196,32 @@ impl MonitoringStatusQueryRepository {
                 m.pause_on_zero_balance,
                 CASE
                     WHEN m.pause_on_zero_balance = 1 AND (
-                        (m.target_type = 'station' AND LOWER(TRIM(COALESCE((
-                            SELECT b.status FROM balance_snapshots b
+                        (m.target_type = 'station' AND EXISTS (
+                            SELECT 1 FROM latest_balance_spendability b
                             WHERE b.station_id = m.station_id AND b.station_key_id IS NULL
                               AND b.scope IN ('station', 'station_account')
-                            ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC LIMIT 1
-                        ), ''))) IN ('depleted', 'exhausted', 'empty'))
-                        OR (m.target_type = 'station_key'
-                            AND LOWER(TRIM(COALESCE((
-                                SELECT b.status FROM balance_snapshots b
-                                WHERE b.station_id = m.station_id AND b.station_key_id IS NULL
-                                  AND b.scope IN ('station', 'station_account')
-                                ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC LIMIT 1
-                            ), ''))) NOT IN ('normal', 'available', 'usable', 'low', 'warning')
-                            AND (
-                                LOWER(TRIM(COALESCE((
-                                    SELECT b.status FROM balance_snapshots b
-                                    WHERE b.station_id = m.station_id AND b.station_key_id IS NULL
-                                      AND b.scope IN ('station', 'station_account')
-                                    ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC LIMIT 1
-                                ), ''))) IN ('depleted', 'exhausted', 'empty')
-                                OR LOWER(TRIM(COALESCE((
-                                    SELECT b.status FROM balance_snapshots b
-                                    WHERE b.station_key_id = m.station_key_id AND b.scope = 'station_key'
-                                    ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC LIMIT 1
-                                ), ''))) IN ('depleted', 'exhausted', 'empty')
-                            ))
+                              AND b.status IN ('depleted', 'exhausted', 'empty')
+                              AND b.evidence_confidence = 'confirmed'
+                              AND b.spendability_authority = 'authoritative'
+                              AND (b.valid_until_ms IS NULL OR b.valid_until_ms >= CAST(strftime('%s','now') AS INTEGER) * 1000)
+                        ))
+                        OR (m.target_type = 'station_key' AND NOT EXISTS (
+                            SELECT 1 FROM latest_balance_spendability b
+                            WHERE b.station_id = m.station_id AND b.station_key_id IS NULL
+                              AND b.scope IN ('station', 'station_account')
+                              AND b.status IN ('normal', 'available', 'usable', 'low', 'warning')
+                              AND b.evidence_confidence = 'confirmed'
+                              AND b.spendability_authority = 'authoritative'
+                              AND (b.valid_until_ms IS NULL OR b.valid_until_ms >= CAST(strftime('%s','now') AS INTEGER) * 1000)
+                        ) AND EXISTS (
+                            SELECT 1 FROM latest_balance_spendability b
+                            WHERE ((b.station_id = m.station_id AND b.station_key_id IS NULL AND b.scope IN ('station', 'station_account'))
+                               OR (b.station_key_id = m.station_key_id AND b.scope = 'station_key'))
+                              AND b.status IN ('depleted', 'exhausted', 'empty')
+                              AND b.evidence_confidence = 'confirmed'
+                              AND b.spendability_authority = 'authoritative'
+                              AND (b.valid_until_ms IS NULL OR b.valid_until_ms >= CAST(strftime('%s','now') AS INTEGER) * 1000)
+                        ))
                     ) THEN 1 ELSE 0
                 END AS balance_paused,
                 m.protocol_kind,
@@ -312,83 +323,65 @@ impl MonitoringStatusQueryRepository {
             return Ok(BTreeMap::new());
         }
 
-        let mut grouped = BTreeMap::<StatusRowKey, Vec<ChannelStatusRecentPoint>>::new();
-        for (monitor_id, station_key_id) in row_keys {
-            let rows = if let Some(station_key_id) = station_key_id {
-                sqlx::query(
-                    r#"
-                    SELECT
-                        tr.id,
-                        tr.execution_id,
-                        tr.monitor_id,
-                        tr.station_key_id,
-                        tr.terminal_outcome,
-                        tr.terminal_failure_kind,
-                        tr.terminal_reason,
-                        a.http_status,
-                        tr.latency_ms,
-                        tr.finished_at_ms,
-                        tr.used_fallback,
-                        tr.semantic_confidence,
-                        tr.attempt_count,
-                        tr.effective_model
-                    FROM channel_monitor_target_results tr
-                    LEFT JOIN channel_monitor_attempts a ON a.id = tr.decisive_attempt_id
-                    WHERE tr.monitor_id = ?1
-                      AND tr.station_key_id = ?2
-                      AND tr.finished_at_ms IS NOT NULL
-                      AND COALESCE(tr.terminal_failure_kind, '') NOT IN
-                          ('budget_exceeded', 'balance_depleted', 'quota_exhausted', 'subscription_unavailable')
-                    ORDER BY tr.finished_at_ms DESC, tr.id DESC
-                    LIMIT ?3
-                    "#,
-                )
-                .bind(monitor_id)
-                .bind(station_key_id)
-                .bind(limit)
-                .fetch_all(read.connection())
-                .await?
-            } else {
-                sqlx::query(
-                    r#"
-                    SELECT
-                        tr.id,
-                        tr.execution_id,
-                        tr.monitor_id,
-                        tr.station_key_id,
-                        tr.terminal_outcome,
-                        tr.terminal_failure_kind,
-                        tr.terminal_reason,
-                        a.http_status,
-                        tr.latency_ms,
-                        tr.finished_at_ms,
-                        tr.used_fallback,
-                        tr.semantic_confidence,
-                        tr.attempt_count,
-                        tr.effective_model
-                    FROM channel_monitor_target_results tr
-                    LEFT JOIN channel_monitor_attempts a ON a.id = tr.decisive_attempt_id
-                    WHERE tr.monitor_id = ?1
-                      AND tr.station_key_id IS NULL
-                      AND tr.finished_at_ms IS NOT NULL
-                      AND COALESCE(tr.terminal_failure_kind, '') NOT IN
-                          ('budget_exceeded', 'balance_depleted', 'quota_exhausted', 'subscription_unavailable')
-                    ORDER BY tr.finished_at_ms DESC, tr.id DESC
-                    LIMIT ?2
-                    "#,
-                )
-                .bind(monitor_id)
-                .bind(limit)
-                .fetch_all(read.connection())
-                .await?
-            };
+        let mut query = QueryBuilder::<Sqlite>::new(
+            r#"
+            WITH scoped(monitor_id, station_key_id) AS (
+            "#,
+        );
+        push_scoped_values(&mut query, row_keys);
+        query.push(
+            r#"
+            ),
+            ranked AS (
+                SELECT
+                    tr.id,
+                    tr.execution_id,
+                    tr.monitor_id,
+                    tr.station_key_id,
+                    tr.terminal_outcome,
+                    tr.terminal_failure_kind,
+                    tr.terminal_reason,
+                    a.http_status,
+                    tr.latency_ms,
+                    tr.finished_at_ms,
+                    tr.used_fallback,
+                    tr.semantic_confidence,
+                    tr.attempt_count,
+                    tr.effective_model,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY tr.monitor_id, tr.station_key_id
+                        ORDER BY tr.finished_at_ms DESC, tr.id DESC
+                    ) AS rn
+                FROM channel_monitor_target_results tr
+                JOIN scoped s
+                  ON tr.monitor_id = s.monitor_id
+                 AND (tr.station_key_id IS s.station_key_id OR tr.station_key_id = s.station_key_id)
+                LEFT JOIN channel_monitor_attempts a ON a.id = tr.decisive_attempt_id
+                WHERE tr.finished_at_ms IS NOT NULL
+                  AND tr.availability_eligible = 1
+            )
+            SELECT id, execution_id, monitor_id, station_key_id,
+                   terminal_outcome, terminal_failure_kind, terminal_reason,
+                   http_status, latency_ms, finished_at_ms, used_fallback,
+                   semantic_confidence, attempt_count, effective_model
+            FROM ranked
+            WHERE rn <=
+            "#,
+        );
+        query.push_bind(limit.max(0));
+        query.push(" ORDER BY monitor_id ASC, station_key_id ASC, finished_at_ms DESC, id DESC");
 
-            let points = grouped
-                .entry((monitor_id.clone(), station_key_id.clone()))
-                .or_default();
-            points.reserve(rows.len());
-            for row in rows {
-                points.push(ChannelStatusRecentPoint {
+        let rows = query.build().fetch_all(read.connection()).await?;
+        let mut grouped = BTreeMap::<StatusRowKey, Vec<ChannelStatusRecentPoint>>::new();
+        for row in rows {
+            let key = (
+                row.get::<String, _>("monitor_id"),
+                row.get::<Option<String>, _>("station_key_id"),
+            );
+            grouped
+                .entry(key)
+                .or_default()
+                .push(ChannelStatusRecentPoint {
                     target_result_id: row.get("id"),
                     execution_id: row.get("execution_id"),
                     outcome: ChannelStatusOutcome::from_probe_outcome(
@@ -404,7 +397,6 @@ impl MonitoringStatusQueryRepository {
                     attempt_count: row.get("attempt_count"),
                     effective_model: row.get("effective_model"),
                 });
-            }
         }
         Ok(grouped)
     }
@@ -500,6 +492,8 @@ impl MonitoringStatusQueryRepository {
                 br.degraded_count,
                 br.unavailable_count,
                 br.skipped_count,
+                br.excluded_count,
+                br.exclusion_counts_json,
                 br.failure_counts_json,
                 br.p50_latency_ms,
                 br.p95_latency_ms,
@@ -531,7 +525,10 @@ impl MonitoringStatusQueryRepository {
             let failure_counts_json: String = row.get("failure_counts_json");
             let parsed_failure_counts =
                 serde_json::from_str::<BTreeMap<String, u32>>(&failure_counts_json);
-            let corrupt = parsed_failure_counts.is_err();
+            let exclusion_counts_json: String = row.get("exclusion_counts_json");
+            let parsed_exclusion_counts =
+                serde_json::from_str::<BTreeMap<String, u32>>(&exclusion_counts_json);
+            let corrupt = parsed_failure_counts.is_err() || parsed_exclusion_counts.is_err();
             let key = (
                 row.get::<String, _>("monitor_id"),
                 row.get::<Option<String>, _>("station_key_id"),
@@ -545,8 +542,10 @@ impl MonitoringStatusQueryRepository {
                         degraded: clamp_count(row.get("degraded_count")),
                         unavailable: clamp_count(row.get("unavailable_count")),
                         skipped: clamp_count(row.get("skipped_count")),
+                        excluded: clamp_count(row.get("excluded_count")),
                     },
                     failure_counts: parsed_failure_counts.unwrap_or_default(),
+                    exclusion_counts: parsed_exclusion_counts.unwrap_or_default(),
                     p50_latency_ms: row.get("p50_latency_ms"),
                     p95_latency_ms: row.get("p95_latency_ms"),
                     dirty: row.get::<i64, _>("dirty") != 0,
@@ -637,6 +636,7 @@ pub(crate) struct BaseStatusRow {
 pub(crate) struct RollupCell {
     pub(crate) counts: ChannelStatusBucketCounts,
     pub(crate) failure_counts: BTreeMap<String, u32>,
+    pub(crate) exclusion_counts: BTreeMap<String, u32>,
     pub(crate) p50_latency_ms: Option<i64>,
     pub(crate) p95_latency_ms: Option<i64>,
     pub(crate) dirty: bool,
@@ -693,6 +693,10 @@ fn target_result_from_row(row: SqliteRow) -> ChannelMonitorTargetResultRecord {
         request_profile_hash: row.get("request_profile_hash"),
         traffic_equivalence: row.get("traffic_equivalence"),
         latency_ms: row.get("latency_ms"),
+        availability_eligible: row.get::<i64, _>("availability_eligible") != 0,
+        latency_eligible: row.get::<i64, _>("latency_eligible") != 0,
+        exclusion_reason: row.get("exclusion_reason"),
+        technical_health_effect: row.get("technical_health_effect"),
         semantic_confidence: row.get("semantic_confidence"),
         started_at_ms: row.get("started_at_ms"),
         finished_at_ms: row.get("finished_at_ms"),

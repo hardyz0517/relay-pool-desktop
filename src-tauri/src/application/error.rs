@@ -37,7 +37,8 @@ impl From<crate::persistence::error::PersistenceError> for ApplicationError {
             PersistenceError::MissingCompatibilityMetadata
             | PersistenceError::InvalidCompatibilityMetadata
             | PersistenceError::MissingMigrationMetadata => Self::IncompatibleSchema,
-            PersistenceError::MigrationFailed(_) => Self::MigrationFailed,
+            PersistenceError::MigrationFailed(_)
+            | PersistenceError::MigrationChecksumMismatch { .. } => Self::MigrationFailed,
             PersistenceError::IoFailed { .. } => Self::IoFailed,
             PersistenceError::SessionClosed => Self::Internal,
             PersistenceError::InvariantViolation(_) => Self::Internal,

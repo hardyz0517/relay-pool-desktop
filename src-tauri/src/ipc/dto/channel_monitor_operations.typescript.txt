@@ -62,14 +62,15 @@ export type ChannelStatusRecentPointDto = {
 };
 
 export type ChannelStatusBucketCountsDto = {
-  total: number; available: number; degraded: number; unavailable: number; skipped: number;
+  total: number; available: number; degraded: number; unavailable: number; skipped: number; excluded: number;
 };
 
 export type ChannelStatusBucketDto = {
   kind: ChannelStatusBucketKindDto; startMs: number; endMs: number; state: ChannelStatusBucketStateDto;
   counts: ChannelStatusBucketCountsDto; strictAvailabilityBps: number | null;
   effectiveAvailabilityBps: number | null; p50LatencyMs: number | null; p95LatencyMs: number | null;
-  failureCounts: Record<string, number>; dirty: boolean; corrupt: boolean;
+  failureCounts: Record<string, number>; exclusionCounts: Record<string, number>;
+  dirty: boolean; corrupt: boolean;
 };
 
 export type ChannelStatusWindowSummaryV2Dto = {

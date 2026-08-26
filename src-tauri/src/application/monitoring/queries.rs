@@ -342,6 +342,7 @@ fn build_buckets(
                     p50_latency_ms: None,
                     p95_latency_ms: None,
                     failure_counts: BTreeMap::new(),
+                    exclusion_counts: BTreeMap::new(),
                     dirty: dirty_without_rollup,
                     corrupt: false,
                 },
@@ -378,6 +379,7 @@ fn bucket_from_rollup(
         p50_latency_ms: cell.p50_latency_ms,
         p95_latency_ms: cell.p95_latency_ms,
         failure_counts: cell.failure_counts.clone(),
+        exclusion_counts: cell.exclusion_counts.clone(),
         dirty: cell.dirty,
         corrupt: cell.corrupt,
     }
@@ -455,6 +457,7 @@ fn summarize_bucket_window(
             counts.degraded = counts.degraded.saturating_add(bucket.counts.degraded);
             counts.unavailable = counts.unavailable.saturating_add(bucket.counts.unavailable);
             counts.skipped = counts.skipped.saturating_add(bucket.counts.skipped);
+            counts.excluded = counts.excluded.saturating_add(bucket.counts.excluded);
             counts
         },
     );
@@ -706,12 +709,14 @@ mod tests {
                 degraded: 1,
                 unavailable: 0,
                 skipped: 0,
+                excluded: 0,
             },
             strict_availability_bps: Some(5_000),
             effective_availability_bps: Some(7_500),
             p50_latency_ms: Some(100),
             p95_latency_ms: Some(200),
             failure_counts: BTreeMap::new(),
+            exclusion_counts: BTreeMap::new(),
             dirty: false,
             corrupt: false,
         };

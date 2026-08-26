@@ -237,9 +237,10 @@ impl MonitoringRetentionRepository {
                 INSERT INTO channel_monitor_bucket_rollups (
                     id, monitor_id, station_key_id, bucket_kind, bucket_start_ms,
                     bucket_end_ms, total_count, available_count, degraded_count,
-                    unavailable_count, skipped_count, failure_counts_json,
+                    unavailable_count, skipped_count, excluded_count, exclusion_counts_json,
+                    failure_counts_json,
                     p50_latency_ms, p95_latency_ms, updated_at_ms
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
                 ON CONFLICT(monitor_id, station_key_id, bucket_kind, bucket_start_ms)
                 DO UPDATE SET
                     bucket_end_ms = excluded.bucket_end_ms,
@@ -248,6 +249,8 @@ impl MonitoringRetentionRepository {
                     degraded_count = excluded.degraded_count,
                     unavailable_count = excluded.unavailable_count,
                     skipped_count = excluded.skipped_count,
+                    excluded_count = excluded.excluded_count,
+                    exclusion_counts_json = excluded.exclusion_counts_json,
                     failure_counts_json = excluded.failure_counts_json,
                     p50_latency_ms = excluded.p50_latency_ms,
                     p95_latency_ms = excluded.p95_latency_ms,
@@ -268,6 +271,8 @@ impl MonitoringRetentionRepository {
             .bind(aggregate.degraded_count)
             .bind(aggregate.unavailable_count)
             .bind(aggregate.skipped_count)
+            .bind(aggregate.excluded_count)
+            .bind(aggregate.exclusion_counts_json())
             .bind(aggregate.failure_counts_json())
             .bind(aggregate.percentile_latency(50))
             .bind(aggregate.percentile_latency(95))
@@ -402,6 +407,8 @@ struct RollupAggregate {
     degraded_count: i64,
     unavailable_count: i64,
     skipped_count: i64,
+    excluded_count: i64,
+    exclusion_counts: BTreeMap<String, i64>,
     failure_counts: BTreeMap<String, i64>,
     latencies: Vec<i64>,
 }
@@ -415,8 +422,19 @@ impl RollupAggregate {
                     | "balance_depleted"
                     | "quota_exhausted"
                     | "subscription_unavailable"
+                    | "cancelled"
+                    | "interrupted"
+                    | "needs_configuration"
+                    | "local_configuration"
+                    | "local_budget"
+                    | "local_internal_before_send"
             )
         }) {
+            self.excluded_count += 1;
+            *self
+                .exclusion_counts
+                .entry(failure_kind.to_string())
+                .or_default() += 1;
             *self
                 .failure_counts
                 .entry(failure_kind.to_string())
@@ -454,6 +472,10 @@ impl RollupAggregate {
 
     fn failure_counts_json(&self) -> String {
         json!(self.failure_counts).to_string()
+    }
+
+    fn exclusion_counts_json(&self) -> String {
+        json!(self.exclusion_counts).to_string()
     }
 
     fn percentile_latency(&self, percentile: u32) -> Option<i64> {

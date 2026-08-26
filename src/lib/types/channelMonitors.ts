@@ -159,6 +159,7 @@ export type ChannelStatusBucketCounts = {
   degraded: number;
   unavailable: number;
   skipped: number;
+  excluded: number;
 };
 
 export type ChannelStatusBucket = {
@@ -172,6 +173,7 @@ export type ChannelStatusBucket = {
   p50LatencyMs: number | null;
   p95LatencyMs: number | null;
   failureCounts: Record<string, number>;
+  exclusionCounts: Record<string, number>;
   dirty: boolean;
   corrupt: boolean;
 };
@@ -387,6 +389,10 @@ export type ChannelMonitorTargetResultRecord = {
   clientProfileVersion: number;
   requestProfileHash: string | null;
   trafficEquivalence: string;
+  availabilityEligible: boolean;
+  latencyEligible: boolean;
+  exclusionReason: string | null;
+  technicalHealthEffect: string;
   healthPolicyMode: string;
   healthWritebackDecision: string;
   healthWritebackReason: string | null;

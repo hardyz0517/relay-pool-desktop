@@ -9,6 +9,13 @@
 use crate::models::pricing::BalanceSnapshot;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=monitoring.spendability-state; owner=application/spendability; remove_when=all spendability projections are delegated to the shared Rust adapter"
+    )
+)]
 pub(crate) enum SpendabilityState {
     Usable,
     Low,
@@ -18,6 +25,13 @@ pub(crate) enum SpendabilityState {
     NotApplicable,
 }
 
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=monitoring.spendability-state-methods; owner=application/spendability; remove_when=all spendability projections are delegated to the shared Rust adapter"
+    )
+)]
 impl SpendabilityState {
     pub(crate) fn is_pauseable(self) -> bool {
         matches!(self, Self::Depleted)
@@ -29,12 +43,26 @@ impl SpendabilityState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=monitoring.spendability-scope; owner=application/spendability; remove_when=all spendability projections are delegated to the shared Rust adapter"
+    )
+)]
 pub(crate) enum SpendabilityScope {
     Station,
     StationKey,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=monitoring.sample-disposition-reason; owner=application/spendability; remove_when=sample exclusion reasons are represented by a generated taxonomy"
+    )
+)]
 pub(crate) enum SampleExclusionReason {
     BalanceDepleted,
     SubscriptionUnavailable,
@@ -47,6 +75,13 @@ pub(crate) enum SampleExclusionReason {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=monitoring.sample-health-effect; owner=application/spendability; remove_when=sample health effects are represented by a generated taxonomy"
+    )
+)]
 pub(crate) enum TechnicalHealthEffect {
     Positive,
     Negative,
@@ -86,6 +121,13 @@ impl ProbeSampleDisposition {
 /// `station` represents the account/subscription pool.  It intentionally
 /// takes precedence over a key observation when it is explicitly usable or
 /// low, because the key balance is only one funding dimension of the target.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=monitoring.spendability-projection; owner=application/spendability; remove_when=all spendability projections are delegated to the shared Rust adapter"
+    )
+)]
 pub(crate) fn resolve_balance_spendability(
     target_scope: SpendabilityScope,
     key: Option<&BalanceSnapshot>,
@@ -115,6 +157,13 @@ pub(crate) fn resolve_balance_spendability(
     }
 }
 
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=monitoring.spendability-projection; owner=application/spendability; remove_when=all spendability projections are delegated to the shared Rust adapter"
+    )
+)]
 fn balance_status(snapshot: &BalanceSnapshot) -> SpendabilityState {
     match snapshot.status.trim().to_ascii_lowercase().as_str() {
         "normal" | "available" | "usable" => SpendabilityState::Usable,

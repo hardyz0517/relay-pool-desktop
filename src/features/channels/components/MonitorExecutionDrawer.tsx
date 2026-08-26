@@ -155,11 +155,11 @@ function TargetResultsTable({ targets }: { targets: ChannelMonitorTargetResultRe
                   </TableCell>
                   <TableCell>
                     <div className="flex min-w-0 items-center gap-2">
-                      <StatusBadge tone={outcomeTone(target.terminalOutcome)} className="h-5 px-1.5">
-                        {outcomeLabel(target.terminalOutcome)}
+                      <StatusBadge tone={target.availabilityEligible ? outcomeTone(target.terminalOutcome) : "disabled"} className="h-5 px-1.5">
+                        {target.availabilityEligible ? outcomeLabel(target.terminalOutcome) : "已排除"}
                       </StatusBadge>
-                      <span className="min-w-0 truncate text-muted-foreground" title={target.terminalFailureKind ?? undefined}>
-                        {failureKindLabel(target.terminalFailureKind)}
+                      <span className="min-w-0 truncate text-muted-foreground" title={target.exclusionReason ?? target.terminalFailureKind ?? undefined}>
+                        {target.availabilityEligible ? failureKindLabel(target.terminalFailureKind) : exclusionReasonLabel(target.exclusionReason)}
                       </span>
                     </div>
                   </TableCell>
@@ -279,6 +279,20 @@ function modelTrace(target: ChannelMonitorTargetResultRecord) {
 function healthWritebackText(target: ChannelMonitorTargetResultRecord) {
   const reason = target.healthWritebackReason ? ` · ${healthWritebackReasonLabel(target.healthWritebackReason)}` : "";
   return `${healthWritebackDecisionLabel(target.healthWritebackDecision)}${reason}`;
+}
+
+function exclusionReasonLabel(value: string | null) {
+  const labels: Record<string, string> = {
+    balance_depleted: "余额耗尽，不计入技术统计",
+    subscription_unavailable: "订阅不可用，不计入技术统计",
+    quota_exhausted: "配额耗尽，不计入技术统计",
+    cancelled: "已取消，不计入技术统计",
+    interrupted: "已中断，不计入技术统计",
+    local_configuration: "本地配置，不计入技术统计",
+    local_budget: "本地预算，不计入技术统计",
+    local_internal_before_send: "发送前本地中断，不计入技术统计",
+  };
+  return value ? labels[value] ?? `${value}，不计入技术统计` : "业务原因，不计入技术统计";
 }
 
 function shortId(value: string) {

@@ -42,7 +42,9 @@ export type ChannelMonitorTargetResultRecordDto = {
   usedFallback: boolean; attemptCount: number; decisiveAttemptId: string | null;
   protocolKind: string | null; resolvedAdapterKind: string; resolvedDialect: string | null;
   clientProfileId: string; clientProfileVersion: number; requestProfileHash: string | null;
-  trafficEquivalence: string; healthPolicyMode: string; healthWritebackDecision: string;
+  trafficEquivalence: string; availabilityEligible: boolean; latencyEligible: boolean;
+  exclusionReason: string | null; technicalHealthEffect: string;
+  healthPolicyMode: string; healthWritebackDecision: string;
   healthWritebackReason: string | null; latencyMs: number | null; semanticConfidence: string;
   startedAtMs: number; finishedAtMs: number | null;
 };

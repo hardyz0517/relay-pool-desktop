@@ -9,9 +9,6 @@ const deletionLedger = readFileSync("docs/audits/routing-operational-deletion-le
 
 for (const suite of [
   "operational_fact_reader",
-  "persistence_upgrade",
-  "persistence_upgrade_recovery",
-  "persistence_startup_cutover",
   "routing_url_sanitizer_migration",
   "routing_lifecycle_reconciliation",
   "routing_production_startup_shutdown",
@@ -21,6 +18,11 @@ for (const suite of [
 ]) {
   assert.ok(runner.includes(`"--test", "${suite}"`), `local self-check must run ${suite}`);
 }
+
+assert.ok(
+  runner.includes('"--lib", "persistence"'),
+  "local self-check must run the current persistence baseline suite",
+);
 
 for (const text of [
   "schemaVersion = 1",

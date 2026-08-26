@@ -306,6 +306,7 @@ pub struct ChannelStatusBucket {
     pub p50_latency_ms: Option<i64>,
     pub p95_latency_ms: Option<i64>,
     pub failure_counts: BTreeMap<String, u32>,
+    pub exclusion_counts: BTreeMap<String, u32>,
     pub dirty: bool,
     pub corrupt: bool,
 }
@@ -329,6 +330,7 @@ pub struct ChannelStatusBucketCounts {
     pub degraded: u32,
     pub unavailable: u32,
     pub skipped: u32,
+    pub excluded: u32,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -493,6 +495,10 @@ pub struct ChannelMonitorTargetResultRecord {
     pub request_profile_hash: Option<String>,
     pub traffic_equivalence: String,
     pub latency_ms: Option<i64>,
+    pub availability_eligible: bool,
+    pub latency_eligible: bool,
+    pub exclusion_reason: Option<String>,
+    pub technical_health_effect: String,
     pub semantic_confidence: String,
     pub started_at_ms: i64,
     pub finished_at_ms: Option<i64>,

@@ -2,6 +2,7 @@ use crate::{
     application::error_rate_protection::ErrorRateProtectionService,
     application::health_transitions::HealthTransitionService,
     application::observation_ingestion::ObservationIngestion,
+    application::spendability::{sample_disposition, SampleExclusionReason, TechnicalHealthEffect},
     models::{
         health::{
             HealthObservation, HealthObservationOutcome, HealthObservationSource,
@@ -258,6 +259,30 @@ fn attempt_row(
                 .failure_kind
                 .map(|failure_kind| failure_kind.as_str().to_string())
         }),
+        canonical_failure_class: attempt
+            .failure_kind
+            .map(|failure_kind| failure_kind.as_str().to_string()),
+        failure_origin: attempt.failure_kind.map(|failure_kind| {
+            if matches!(failure_kind, FailureKind::BudgetExceeded) {
+                "business_or_local_budget".to_string()
+            } else {
+                "probe".to_string()
+            }
+        }),
+        failure_scope_kind: attempt.failure_kind.and_then(|failure_kind| {
+            matches!(failure_kind, FailureKind::BudgetExceeded).then(|| "station_key".to_string())
+        }),
+        failure_dimension: attempt.failure_kind.and_then(|failure_kind| {
+            matches!(failure_kind, FailureKind::BudgetExceeded)
+                .then(|| "balance_or_quota".to_string())
+        }),
+        evidence_code: attempt.error_summary.clone(),
+        evidence_confidence: attempt.failure_kind.and_then(|failure_kind| {
+            matches!(failure_kind, FailureKind::BudgetExceeded).then_some("confirmed".to_string())
+        }),
+        classifier_profile_version: attempt
+            .failure_kind
+            .map(|_| "monitoring-provider-error-v1".to_string()),
         created_at_ms: attempt.started_at_ms,
     })
 }
@@ -286,6 +311,11 @@ fn target_row(
         .min()
         .unwrap_or(execution.started_at_ms);
     let finished_at_ms = target_finished_at(execution, target).or(Some(started_at_ms));
+    let disposition = sample_disposition(
+        target
+            .terminal_failure_kind
+            .map(|failure_kind| failure_kind.as_str()),
+    );
     Ok(FinalizeTargetRow {
         id: target_id(target),
         execution_id: execution.execution_id.clone(),
@@ -317,10 +347,37 @@ fn target_row(
         traffic_equivalence: target_traffic_equivalence(target_plan.client_profile.id).to_string(),
         latency_ms,
         semantic_confidence: semantic_confidence.as_str().to_string(),
+        availability_eligible: disposition.availability_eligible,
+        latency_eligible: disposition.latency_eligible,
+        exclusion_reason: disposition.exclusion_reason.map(exclusion_reason_str),
+        technical_health_effect: technical_health_effect_str(disposition.health_effect).to_string(),
+        disposition_profile_version: "monitoring-disposition-v1".to_string(),
         started_at_ms,
         finished_at_ms,
         created_at_ms: finished_at_ms.unwrap_or(started_at_ms),
     })
+}
+
+fn exclusion_reason_str(reason: SampleExclusionReason) -> String {
+    match reason {
+        SampleExclusionReason::BalanceDepleted => "balance_depleted",
+        SampleExclusionReason::SubscriptionUnavailable => "subscription_unavailable",
+        SampleExclusionReason::QuotaExhausted => "quota_exhausted",
+        SampleExclusionReason::Cancelled => "cancelled",
+        SampleExclusionReason::Interrupted => "interrupted",
+        SampleExclusionReason::LocalConfiguration => "local_configuration",
+        SampleExclusionReason::LocalBudget => "local_budget",
+        SampleExclusionReason::LocalInternalBeforeSend => "local_internal_before_send",
+    }
+    .to_string()
+}
+
+fn technical_health_effect_str(effect: TechnicalHealthEffect) -> &'static str {
+    match effect {
+        TechnicalHealthEffect::Positive => "positive",
+        TechnicalHealthEffect::Negative => "negative",
+        TechnicalHealthEffect::Neutral => "neutral",
+    }
 }
 
 fn health_observation(
@@ -342,6 +399,11 @@ fn health_observation_from_parts(
     target_result_id: &str,
     writeback_mode: HealthWritebackMode,
 ) -> HealthObservation {
+    let disposition = sample_disposition(
+        target
+            .terminal_failure_kind
+            .map(|failure_kind| failure_kind.as_str()),
+    );
     HealthObservation {
         id: format!("obs:{target_result_id}"),
         station_key_id: target.station_key_id.clone(),
@@ -354,16 +416,21 @@ fn health_observation_from_parts(
         failure_kind: target
             .terminal_failure_kind
             .map(|failure_kind| failure_kind.as_str().to_string()),
-        latency_ms: target
-            .decisive_attempt_id
-            .as_ref()
-            .and_then(|id| {
-                execution
-                    .attempts
-                    .iter()
-                    .find(|attempt| attempt_id(&execution.execution_id, attempt) == *id)
+        latency_ms: disposition
+            .latency_eligible
+            .then(|| {
+                target
+                    .decisive_attempt_id
+                    .as_ref()
+                    .and_then(|id| {
+                        execution
+                            .attempts
+                            .iter()
+                            .find(|attempt| attempt_id(&execution.execution_id, attempt) == *id)
+                    })
+                    .map(|attempt| (attempt.finished_at_ms - attempt.started_at_ms).max(0))
             })
-            .map(|attempt| (attempt.finished_at_ms - attempt.started_at_ms).max(0)),
+            .flatten(),
         retry_after_ms: None,
         error_summary: target
             .terminal_failure_kind

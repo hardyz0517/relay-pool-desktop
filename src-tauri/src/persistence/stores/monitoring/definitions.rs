@@ -52,6 +52,15 @@ impl MonitoringDefinitionRepository {
         let bounded_limit = i64::from(limit.clamp(1, 500));
         let rows = sqlx::query(
             r#"
+            WITH latest_balance_spendability AS (
+                SELECT * FROM (
+                    SELECT b.*, ROW_NUMBER() OVER (
+                        PARTITION BY b.station_id, b.station_key_id, b.scope
+                        ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC
+                    ) AS row_number
+                    FROM balance_snapshots b
+                ) WHERE row_number = 1
+            )
             SELECT id, station_id, station_key_id, protocol_kind, client_profile_id,
                    primary_model, next_due_at_ms
             FROM channel_monitors
@@ -59,49 +68,37 @@ impl MonitoringDefinitionRepository {
               AND NOT (
                   pause_on_zero_balance = 1
                   AND (
-                      (
-                          target_type = 'station'
-                          AND LOWER(TRIM(COALESCE((
-                              SELECT b.status
-                              FROM balance_snapshots b
-                              WHERE b.station_id = channel_monitors.station_id
-                                AND b.station_key_id IS NULL
-                                AND b.scope IN ('station', 'station_account')
-                              ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC
-                              LIMIT 1
-                          ), ''))) IN ('depleted', 'exhausted', 'empty')
-                      )
-                      OR (
-                          target_type = 'station_key'
-                          AND LOWER(TRIM(COALESCE((
-                              SELECT b.status
-                              FROM balance_snapshots b
-                              WHERE b.station_id = channel_monitors.station_id
-                                AND b.station_key_id IS NULL
-                                AND b.scope IN ('station', 'station_account')
-                              ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC
-                              LIMIT 1
-                          ), ''))) NOT IN ('normal', 'available', 'usable', 'low', 'warning')
-                          AND (
-                              LOWER(TRIM(COALESCE((
-                                  SELECT b.status
-                                  FROM balance_snapshots b
-                                  WHERE b.station_id = channel_monitors.station_id
-                                    AND b.station_key_id IS NULL
-                                    AND b.scope IN ('station', 'station_account')
-                                  ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC
-                                  LIMIT 1
-                              ), ''))) IN ('depleted', 'exhausted', 'empty')
-                              OR LOWER(TRIM(COALESCE((
-                                  SELECT b.status
-                                  FROM balance_snapshots b
-                                  WHERE b.station_key_id = channel_monitors.station_key_id
-                                    AND b.scope = 'station_key'
-                                  ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC
-                                  LIMIT 1
-                              ), ''))) IN ('depleted', 'exhausted', 'empty')
-                          )
-                      )
+                      (target_type = 'station' AND EXISTS (
+                          SELECT 1 FROM latest_balance_spendability b
+                          WHERE b.station_id = channel_monitors.station_id
+                            AND b.station_key_id IS NULL
+                            AND b.scope IN ('station', 'station_account')
+                            AND b.status IN ('depleted', 'exhausted', 'empty')
+                            AND b.evidence_confidence = 'confirmed'
+                            AND b.spendability_authority = 'authoritative'
+                            AND (b.valid_until_ms IS NULL OR b.valid_until_ms >= ?1)
+                      ))
+                      OR (target_type = 'station_key' AND NOT EXISTS (
+                          SELECT 1 FROM latest_balance_spendability b
+                          WHERE b.station_id = channel_monitors.station_id
+                            AND b.station_key_id IS NULL
+                            AND b.scope IN ('station', 'station_account')
+                            AND b.status IN ('normal', 'available', 'usable', 'low', 'warning')
+                            AND b.evidence_confidence = 'confirmed'
+                            AND b.spendability_authority = 'authoritative'
+                            AND (b.valid_until_ms IS NULL OR b.valid_until_ms >= ?1)
+                      ) AND EXISTS (
+                          SELECT 1 FROM latest_balance_spendability b
+                          WHERE ((b.station_id = channel_monitors.station_id
+                                  AND b.station_key_id IS NULL
+                                  AND b.scope IN ('station', 'station_account'))
+                             OR (b.station_key_id = channel_monitors.station_key_id
+                                 AND b.scope = 'station_key'))
+                            AND b.status IN ('depleted', 'exhausted', 'empty')
+                            AND b.evidence_confidence = 'confirmed'
+                            AND b.spendability_authority = 'authoritative'
+                            AND (b.valid_until_ms IS NULL OR b.valid_until_ms >= ?1)
+                      ))
                   )
               )
               AND (next_due_at_ms IS NULL OR next_due_at_ms <= ?1)
@@ -134,42 +131,50 @@ impl MonitoringDefinitionRepository {
     ) -> Result<Option<i64>, PersistenceError> {
         sqlx::query_scalar(
             r#"
+            WITH latest_balance_spendability AS (
+                SELECT * FROM (
+                    SELECT b.*, ROW_NUMBER() OVER (
+                        PARTITION BY b.station_id, b.station_key_id, b.scope
+                        ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC
+                    ) AS row_number
+                    FROM balance_snapshots b
+                ) WHERE row_number = 1
+            )
             SELECT MIN(next_due_at_ms)
             FROM channel_monitors
             WHERE enabled = 1
               AND NOT (
                   pause_on_zero_balance = 1
                   AND (
-                      (target_type = 'station' AND LOWER(TRIM(COALESCE((
-                          SELECT b.status FROM balance_snapshots b
+                      (target_type = 'station' AND EXISTS (
+                          SELECT 1 FROM latest_balance_spendability b
                           WHERE b.station_id = channel_monitors.station_id
                             AND b.station_key_id IS NULL
                             AND b.scope IN ('station', 'station_account')
-                          ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC LIMIT 1
-                      ), ''))) IN ('depleted', 'exhausted', 'empty'))
-                      OR (target_type = 'station_key'
-                          AND LOWER(TRIM(COALESCE((
-                              SELECT b.status FROM balance_snapshots b
-                              WHERE b.station_id = channel_monitors.station_id
-                                AND b.station_key_id IS NULL
-                                AND b.scope IN ('station', 'station_account')
-                              ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC LIMIT 1
-                          ), ''))) NOT IN ('normal', 'available', 'usable', 'low', 'warning')
-                          AND (
-                              LOWER(TRIM(COALESCE((
-                                  SELECT b.status FROM balance_snapshots b
-                                  WHERE b.station_id = channel_monitors.station_id
-                                    AND b.station_key_id IS NULL
-                                    AND b.scope IN ('station', 'station_account')
-                                  ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC LIMIT 1
-                              ), ''))) IN ('depleted', 'exhausted', 'empty')
-                              OR LOWER(TRIM(COALESCE((
-                                  SELECT b.status FROM balance_snapshots b
-                                  WHERE b.station_key_id = channel_monitors.station_key_id
-                                    AND b.scope = 'station_key'
-                                  ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC LIMIT 1
-                              ), ''))) IN ('depleted', 'exhausted', 'empty')
-                          ))
+                            AND b.status IN ('depleted', 'exhausted', 'empty')
+                            AND b.evidence_confidence = 'confirmed'
+                            AND b.spendability_authority = 'authoritative'
+                            AND (b.valid_until_ms IS NULL OR b.valid_until_ms >= CAST(strftime('%s','now') AS INTEGER) * 1000)
+                      ))
+                      OR (target_type = 'station_key' AND NOT EXISTS (
+                          SELECT 1 FROM latest_balance_spendability b
+                          WHERE b.station_id = channel_monitors.station_id
+                            AND b.station_key_id IS NULL
+                            AND b.scope IN ('station', 'station_account')
+                            AND b.status IN ('normal', 'available', 'usable', 'low', 'warning')
+                            AND b.evidence_confidence = 'confirmed'
+                            AND b.spendability_authority = 'authoritative'
+                            AND (b.valid_until_ms IS NULL OR b.valid_until_ms >= CAST(strftime('%s','now') AS INTEGER) * 1000)
+                      ) AND EXISTS (
+                          SELECT 1 FROM latest_balance_spendability b
+                          WHERE ((b.station_id = channel_monitors.station_id AND b.station_key_id IS NULL
+                                  AND b.scope IN ('station', 'station_account'))
+                             OR (b.station_key_id = channel_monitors.station_key_id AND b.scope = 'station_key'))
+                            AND b.status IN ('depleted', 'exhausted', 'empty')
+                            AND b.evidence_confidence = 'confirmed'
+                            AND b.spendability_authority = 'authoritative'
+                            AND (b.valid_until_ms IS NULL OR b.valid_until_ms >= CAST(strftime('%s','now') AS INTEGER) * 1000)
+                      ))
                   )
               )
               AND next_due_at_ms IS NOT NULL

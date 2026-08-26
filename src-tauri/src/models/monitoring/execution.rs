@@ -119,7 +119,12 @@ impl MonitorTargetResult {
     pub fn availability_eligible(&self) -> bool {
         !matches!(
             self.terminal_failure_kind,
-            Some(FailureKind::BudgetExceeded)
+            Some(
+                FailureKind::BudgetExceeded
+                    | FailureKind::Cancelled
+                    | FailureKind::Interrupted
+                    | FailureKind::NeedsConfiguration
+            )
         )
     }
 

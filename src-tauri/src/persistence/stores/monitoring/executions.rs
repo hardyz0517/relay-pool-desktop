@@ -46,6 +46,13 @@ pub(crate) struct NewAttemptRow {
     pub(crate) validation_passed: bool,
     pub(crate) output_bytes: i64,
     pub(crate) error_summary: Option<String>,
+    pub(crate) canonical_failure_class: Option<String>,
+    pub(crate) failure_origin: Option<String>,
+    pub(crate) failure_scope_kind: Option<String>,
+    pub(crate) failure_dimension: Option<String>,
+    pub(crate) evidence_code: Option<String>,
+    pub(crate) evidence_confidence: Option<String>,
+    pub(crate) classifier_profile_version: Option<String>,
     pub(crate) created_at_ms: i64,
 }
 
@@ -71,6 +78,11 @@ pub(crate) struct FinalizeTargetRow {
     pub(crate) traffic_equivalence: String,
     pub(crate) latency_ms: Option<i64>,
     pub(crate) semantic_confidence: String,
+    pub(crate) availability_eligible: bool,
+    pub(crate) latency_eligible: bool,
+    pub(crate) exclusion_reason: Option<String>,
+    pub(crate) technical_health_effect: String,
+    pub(crate) disposition_profile_version: String,
     pub(crate) started_at_ms: i64,
     pub(crate) finished_at_ms: Option<i64>,
     pub(crate) created_at_ms: i64,
@@ -256,11 +268,13 @@ impl MonitoringExecutionRepository {
                 client_profile_id, client_profile_version, request_profile_hash,
                 transport_mode, started_at_ms, finished_at_ms, latency_ms, http_status,
                 outcome, failure_kind, retryable, response_model, content_extracted,
-                validation_passed, output_bytes, error_summary, created_at_ms
+                validation_passed, output_bytes, error_summary, canonical_failure_class,
+                failure_origin, failure_scope_kind, failure_dimension, evidence_code,
+                evidence_confidence, classifier_profile_version, created_at_ms
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
                 ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24,
-                ?25, ?26, ?27
+                ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34
             )
             "#,
         )
@@ -290,6 +304,13 @@ impl MonitoringExecutionRepository {
         .bind(i64::from(row.validation_passed))
         .bind(row.output_bytes)
         .bind(&row.error_summary)
+        .bind(&row.canonical_failure_class)
+        .bind(&row.failure_origin)
+        .bind(&row.failure_scope_kind)
+        .bind(&row.failure_dimension)
+        .bind(&row.evidence_code)
+        .bind(&row.evidence_confidence)
+        .bind(&row.classifier_profile_version)
         .bind(row.created_at_ms)
         .execute(connection)
         .await?;
@@ -359,11 +380,12 @@ impl MonitoringExecutionRepository {
                 effective_model, used_fallback, attempt_count, decisive_attempt_id,
                 protocol_kind, resolved_adapter_kind, client_profile_id,
                 client_profile_version, request_profile_hash, traffic_equivalence,
-                latency_ms,
+                latency_ms, availability_eligible, latency_eligible, exclusion_reason,
+                technical_health_effect, disposition_profile_version,
                 semantic_confidence, started_at_ms, finished_at_ms, created_at_ms
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-            ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23
+            ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28
             )
             "#,
         )
@@ -386,6 +408,11 @@ impl MonitoringExecutionRepository {
         .bind(&row.request_profile_hash)
         .bind(&row.traffic_equivalence)
         .bind(row.latency_ms)
+        .bind(i64::from(row.availability_eligible))
+        .bind(i64::from(row.latency_eligible))
+        .bind(&row.exclusion_reason)
+        .bind(&row.technical_health_effect)
+        .bind(&row.disposition_profile_version)
         .bind(&row.semantic_confidence)
         .bind(row.started_at_ms)
         .bind(row.finished_at_ms)
@@ -425,9 +452,9 @@ impl MonitoringExecutionRepository {
         let summary = sqlx::query(
             r#"
             SELECT
-                SUM(CASE WHEN terminal_outcome = 'available' THEN 1 ELSE 0 END) AS available_count,
-                SUM(CASE WHEN terminal_outcome = 'degraded' THEN 1 ELSE 0 END) AS degraded_count,
-                SUM(CASE WHEN terminal_outcome = 'unavailable' THEN 1 ELSE 0 END) AS unavailable_count,
+                SUM(CASE WHEN terminal_outcome = 'available' AND availability_eligible = 1 THEN 1 ELSE 0 END) AS available_count,
+                SUM(CASE WHEN terminal_outcome = 'degraded' AND availability_eligible = 1 THEN 1 ELSE 0 END) AS degraded_count,
+                SUM(CASE WHEN terminal_outcome = 'unavailable' AND availability_eligible = 1 THEN 1 ELSE 0 END) AS unavailable_count,
                 SUM(CASE WHEN terminal_outcome = 'skipped' THEN 1 ELSE 0 END) AS skipped_count
             FROM channel_monitor_target_results
             WHERE execution_id = ?1

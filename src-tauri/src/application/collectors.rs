@@ -734,7 +734,9 @@ impl CollectorService {
                                     source: balance.source.clone(),
                                     confidence: balance.confidence,
                                     collected_at: balance.collected_at.clone(),
-                                    evidence_confidence: collector_balance_evidence_confidence(&balance.status),
+                                    evidence_confidence: collector_balance_evidence_confidence(
+                                        &balance.status,
+                                    ),
                                     spendability_authority: collector_balance_authority(
                                         &balance.status,
                                         &balance.source,
@@ -747,7 +749,9 @@ impl CollectorService {
                                     )
                                     .map(|value| value.saturating_add(30 * 60 * 1_000)),
                                     evidence_profile_version: "collector-balance-v1".to_string(),
-                                    spendability_reason_code: collector_balance_reason(&balance.status),
+                                    spendability_reason_code: collector_balance_reason(
+                                        &balance.status,
+                                    ),
                                     now: now.clone(),
                                 },
                             )
@@ -1640,6 +1644,46 @@ fn collector_observation(
         observed_at_ms,
         fact_fresh_until_ms: observed_at_ms.saturating_add(900_000),
     }
+}
+
+fn collector_balance_evidence_confidence(status: &str) -> String {
+    match status.trim().to_ascii_lowercase().as_str() {
+        "normal" | "available" | "usable" | "low" | "warning" | "depleted" | "exhausted"
+        | "empty" => "confirmed".to_string(),
+        _ => "unknown".to_string(),
+    }
+}
+
+fn collector_balance_authority(status: &str, source: &str) -> String {
+    if source == "station_key_balance_aggregate" {
+        return "advisory".to_string();
+    }
+    match collector_balance_evidence_confidence(status).as_str() {
+        "confirmed" => "authoritative".to_string(),
+        _ => "unknown".to_string(),
+    }
+}
+
+fn collector_balance_reason(status: &str) -> Option<String> {
+    match status.trim().to_ascii_lowercase().as_str() {
+        "depleted" | "exhausted" | "empty" => Some("balance_depleted".to_string()),
+        "low" | "warning" => Some("balance_low".to_string()),
+        "normal" | "available" | "usable" => Some("balance_usable".to_string()),
+        _ => None,
+    }
+}
+
+fn collector_balance_observed_at_ms(value: &str) -> Option<i64> {
+    value
+        .trim()
+        .parse::<i64>()
+        .ok()
+        .or_else(|| {
+            chrono::DateTime::parse_from_rfc3339(value)
+                .ok()
+                .map(|parsed| parsed.timestamp_millis())
+        })
+        .filter(|value| *value >= 0)
 }
 
 fn parse_now_ms(value: &str) -> i64 {
