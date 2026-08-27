@@ -102,12 +102,11 @@ describe("buildMetricCards", () => {
 });
 
 describe("buildStationDetailViewModel", () => {
-  it("uses the latest top-level collector run instead of a stale station status", () => {
-    const currentStation = { ...station("sub2api"), status: "unchecked" as const };
-    const parentRun = collectorRun({ id: "parent", status: "partial" });
-    const childRun = collectorRun({
-      id: "child",
-      parentRunId: parentRun.id,
+  it("keeps the revision-fenced station status independent from the latest task", () => {
+    const currentStation = station("sub2api");
+    const publishedStatusRun = collectorRun({
+      id: "published-status",
+      taskType: "published_status",
       status: "failed",
       startedAt: "2026-08-01T02:00:00Z",
       finishedAt: "2026-08-01T02:01:00Z",
@@ -118,16 +117,16 @@ describe("buildStationDetailViewModel", () => {
       balances: [],
       groupBindings: [],
       groupRates: [],
-      collectorRuns: [childRun, parentRun],
+      collectorRuns: [publishedStatusRun],
       latestSnapshot: null,
       credentials: null,
       stationKeys: [],
       incidents: [],
     });
 
-    expect(viewModel.statusLabel).toBe("采集需关注");
-    expect(viewModel.statusTone).toBe("warning");
-    expect(viewModel.collectorItems[0]?.value).toBe("全量 · 部分成功");
+    expect(viewModel.statusLabel).toBe("采集正常");
+    expect(viewModel.statusTone).toBe("good");
+    expect(viewModel.collectorItems[0]?.value).toBe("官方状态 · 失败");
   });
 });
 

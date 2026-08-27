@@ -313,7 +313,7 @@ export function buildStationDetailViewModel({
   const stationRuns = collectorRuns.filter((run) => run.stationId === station.id);
   const topLevelRuns = stationRuns.filter((run) => run.parentRunId === null);
   const latestRun = latestByTime(topLevelRuns, (run) => run.finishedAt ?? run.startedAt);
-  const collectionStatus = buildCollectionStatus(station, latestRun, latestSnapshot);
+  const collectionStatus = buildCollectionStatus(station);
   const stationKeyTotalCount = stationKeys.filter((key) => key.stationId === station.id).length;
   const stationKeyEnabledCount = stationKeys.filter((key) => key.stationId === station.id && key.enabled).length;
   const latestActivity = latestTime([
@@ -344,27 +344,7 @@ export function buildStationDetailViewModel({
   };
 }
 
-function buildCollectionStatus(
-  station: Station,
-  latestRun: CollectorRun | null,
-  latestSnapshot: CollectorSnapshot | null,
-): { label: string; tone: DetailTone } {
-  if (!station.enabled) {
-    return { label: "禁用", tone: "muted" };
-  }
-  const status = latestRun?.status ?? latestSnapshot?.status;
-  if (status === "running") {
-    return { label: "采集中", tone: "warning" };
-  }
-  if (status === "success" || status === "normal") {
-    return { label: "采集正常", tone: "good" };
-  }
-  if (status === "partial" || status === "manual_required" || status === "needs_confirmation" || status === "warning") {
-    return { label: "采集需关注", tone: "warning" };
-  }
-  if (status === "failed" || status === "error") {
-    return { label: "采集异常", tone: "error" };
-  }
+function buildCollectionStatus(station: Station): { label: string; tone: DetailTone } {
   return { label: formatStationStatusLabel(station), tone: statusTone(station) };
 }
 
@@ -595,6 +575,7 @@ function formatCollectorTaskType(taskType: string) {
     balance: "余额",
     groups: "分组",
     models: "模型",
+    published_status: "官方状态",
     full: "全量",
   };
   return labels[taskType] ?? taskType;

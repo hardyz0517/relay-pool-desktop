@@ -24,6 +24,7 @@ export type StationIssueTagKind =
   | "no_enabled_key"
   | "key_warning"
   | "login_required"
+  | "collection_warning"
   | "collection_failed"
   | "not_collected"
   | "balance_missing"
@@ -61,6 +62,7 @@ const STATION_ISSUE_TAG_DEFINITIONS: Record<StationIssueTagKind, StationIssueTag
   no_enabled_key: { label: "无可用 密钥", tone: "warning" },
   key_warning: { label: "密钥异常", tone: "warning" },
   login_required: { label: "需重新授权", tone: "warning" },
+  collection_warning: { label: "采集需关注", tone: "warning" },
   collection_failed: { label: "采集失败", tone: "error" },
   not_collected: { label: "未采集", tone: "info" },
   balance_missing: { label: "余额未采集", tone: "info" },
@@ -76,6 +78,7 @@ export const STATION_ISSUE_FILTER_OPTIONS: Array<{ value: StationIssueFilterValu
   { value: "balance_low", label: STATION_ISSUE_TAG_DEFINITIONS.balance_low.label },
   { value: "balance_missing", label: STATION_ISSUE_TAG_DEFINITIONS.balance_missing.label },
   { value: "login_required", label: STATION_ISSUE_TAG_DEFINITIONS.login_required.label },
+  { value: "collection_warning", label: STATION_ISSUE_TAG_DEFINITIONS.collection_warning.label },
   { value: "collection_failed", label: STATION_ISSUE_TAG_DEFINITIONS.collection_failed.label },
   { value: "no_enabled_key", label: STATION_ISSUE_TAG_DEFINITIONS.no_enabled_key.label },
   { value: "key_warning", label: STATION_ISSUE_TAG_DEFINITIONS.key_warning.label },
@@ -250,22 +253,27 @@ export function filterStationAssetRowsByIssue(
 }
 
 function stationCollectionIssueTag(row: StationAssetRow): StationIssueTag | null {
-  const snapshotStatus = row.latestSnapshot?.status;
   const snapshotSummary = row.latestSnapshot?.summaryJson ?? {};
   const loginRequired =
     row.latestSnapshot?.status === "manual_required" ||
     snapshotSummary.loginRequired === true ||
     snapshotSummary.loginStatus === "manual_required";
 
-  if (loginRequired) {
+  // `station.status` is the revision-fenced core collection read model. The
+  // latest snapshot may belong to an isolated task such as published_status.
+  if (row.station.status === "warning" && loginRequired) {
     return createStationIssueTag("login_required", row.latestSnapshot?.errorMessage ?? "当前登录状态需要重新进行窗口授权");
   }
 
-  if (snapshotStatus === "failed" || snapshotStatus === "error" || row.station.status === "error") {
-    return createStationIssueTag("collection_failed", row.latestSnapshot?.errorMessage ?? "最近一次采集失败");
+  if (row.station.status === "warning") {
+    return createStationIssueTag("collection_warning", "站点核心采集状态需要关注，请打开详情查看最近任务");
   }
 
-  if (row.station.status === "unchecked" && !row.latestSnapshot) {
+  if (row.station.status === "error") {
+    return createStationIssueTag("collection_failed", "站点核心采集状态异常，请打开详情查看最近任务");
+  }
+
+  if (row.station.status === "unchecked") {
     return createStationIssueTag("not_collected");
   }
 
