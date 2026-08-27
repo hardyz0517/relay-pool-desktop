@@ -526,15 +526,19 @@ describe("LocalRoutingSettingsEditor", () => {
       (section) => section.querySelector("h2")?.textContent === "策略配置",
     );
     const proxyCard = Array.from(host.querySelectorAll("section")).find(
-      (section) => section.querySelector("h2")?.textContent === "出站代理",
+      (section) => section.querySelector("#routing-outbound-proxy-title"),
     );
 
     expect(strategyCard?.querySelector('[aria-label="本地路由出站代理"]')).toBeNull();
     const proxySelect = proxyCard?.querySelector('[aria-label="本地路由出站代理"]');
     expect(proxySelect).toBeTruthy();
     expect(proxySelect?.textContent).toContain("继承全局设置（使用系统代理）");
+    expect(proxySelect?.className).toContain("sm:w-auto");
     expect(proxyCard?.textContent).not.toContain("当前使用：");
-    expect(proxyCard?.querySelector("h2")?.textContent).toBe("出站代理");
+    expect(proxyCard?.querySelector("header h2")?.textContent).toBe("网络出口");
+    expect(proxyCard?.querySelector("#routing-outbound-proxy-title")?.textContent).toBe("出站代理");
+    expect(proxyCard?.querySelector("#routing-outbound-proxy-title")?.parentElement?.parentElement?.className)
+      .toContain("sm:grid-cols-[minmax(0,1fr)_auto]");
 
     await act(async () => root.unmount());
     queryClient.clear();

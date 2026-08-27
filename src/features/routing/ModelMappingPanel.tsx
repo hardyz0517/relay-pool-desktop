@@ -249,91 +249,88 @@ export function ModelMappingPanel() {
   }
 
   if (workspaceQuery.isPending && !workspaceQuery.data) {
-    return <SectionCard title="模型映射"><p className="text-sm text-muted-foreground" role="status">正在加载映射配置...</p></SectionCard>;
+    return <SectionCard><p className="text-sm text-muted-foreground" role="status">正在加载映射配置...</p></SectionCard>;
   }
   if (workspaceQuery.error && !workspaceQuery.data) {
-    return <SectionCard title="模型映射"><p className="text-sm text-destructive" role="alert">{readError(workspaceQuery.error)}</p></SectionCard>;
+    return <SectionCard><p className="text-sm text-destructive" role="alert">{readError(workspaceQuery.error)}</p></SectionCard>;
   }
   if (!draft) {
     return <EmptyState title="暂无模型映射配置" description="后端尚未提供可编辑的映射文档。" />;
   }
 
   return (
-    <SectionCard title="模型映射" description="把客户端请求的模型名转换为指定的上游模型名。">
-      <div className="grid min-w-0 gap-4">
-        <section className="grid gap-3" aria-labelledby="model-mapping-catalog-title">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h3 id="model-mapping-catalog-title" className="text-sm font-semibold text-foreground">模型映射</h3>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={Boolean(savingKind)}
-                onClick={() => void refreshModelList()}
-              >
-                <RefreshCw className={`h-4 w-4 ${savingKind === "refresh" ? "animate-spin" : ""}`} aria-hidden="true" />
-                获取模型列表
-              </Button>
-              <Button type="button" size="sm" disabled={Boolean(savingKind)} onClick={addModel}><Plus className="h-4 w-4" aria-hidden="true" />添加模型</Button>
-            </div>
-          </div>
-
-          <div className="overflow-hidden">
-            {legacyRules.length > 0 ? (
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-3 border border-border bg-muted/20 px-3 py-2.5 text-xs text-muted-foreground">
-                <span>检测到 {legacyRules.length} 条旧版复杂规则。它们无法用一对一模型映射表示，因此会继续兼容执行，直到你确认清理。</span>
-                <Button type="button" variant="outline" size="sm" disabled={Boolean(savingKind)} onClick={() => setLegacyCleanupRequested(true)}>清理旧规则</Button>
-              </div>
-            ) : null}
-            {visibleRows.length > 0 ? (
-              <div className="hidden px-0 py-2 text-xs font-medium text-muted-foreground md:grid md:grid-cols-[minmax(11rem,1.1fr)_minmax(11rem,1.1fr)_auto] md:items-center md:gap-2">
-                <span>实际请求模型</span>
-                <span>上游目标模型</span>
-                <span className="sr-only">操作</span>
-              </div>
-            ) : null}
-            {visibleRows.length === 0 ? (
-              <div className="grid justify-items-center gap-2 px-4 py-9 text-center">
-                <p className="text-sm font-medium text-foreground">还没有模型映射</p>
-                <p className="text-xs text-muted-foreground">添加一行即可开始填写。</p>
-              </div>
-            ) : visibleRows.map((row) => (
-              <MappingRow
-                key={row.rule.id}
-                row={row}
-                modelOptions={modelOptions}
-                disabled={Boolean(savingKind)}
-                onChange={(next) => updateRow(row.rule.id, () => ({ ...next, feedback: null }))}
-                onCommit={() => void saveRow(row.rule.id)}
-                onDelete={() => requestDeleteRow(row.rule.id)}
-              />
-            ))}
-          </div>
-        </section>
-
+    <section className="grid gap-1.5" aria-labelledby="model-mapping-catalog-title">
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="min-w-0">
+          <h3 id="model-mapping-catalog-title" className="text-sm font-semibold text-foreground">模型映射</h3>
+          <p className="mt-0.5 break-words text-sm text-muted-foreground">把客户端请求的模型名转换为指定的上游模型名。</p>
+        </div>
+        <div className="ml-auto flex flex-wrap justify-end gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={Boolean(savingKind)}
+            onClick={() => void refreshModelList()}
+          >
+            <RefreshCw className={`h-4 w-4 ${savingKind === "refresh" ? "animate-spin" : ""}`} aria-hidden="true" />
+            获取模型列表
+          </Button>
+          <Button type="button" size="sm" disabled={Boolean(savingKind)} onClick={addModel}><Plus className="h-4 w-4" aria-hidden="true" />添加模型</Button>
+        </div>
       </div>
-      <ConfirmDialog
-        open={deleteRuleId !== null}
-        title="删除模型映射"
-        description="确认删除这条模型映射吗？删除后会立即保存。"
-        confirmLabel="删除映射"
-        confirming={savingKind === "delete"}
-        onCancel={() => setDeleteRuleId(null)}
-        onConfirm={() => void confirmDeleteRule()}
-      />
-      <ConfirmDialog
-        open={legacyCleanupRequested}
-        title="清理旧版复杂规则"
-        description="这些规则包含回退、拒绝、通配符或请求条件，无法等价转换为一对一模型映射。清理后将不再参与路由。"
-        confirmLabel="清理规则"
-        confirming={savingKind === "legacyCleanup"}
-        onCancel={() => setLegacyCleanupRequested(false)}
-        onConfirm={() => void confirmLegacyCleanup()}
-      />
-    </SectionCard>
+      <SectionCard>
+        <div className="overflow-hidden">
+          {legacyRules.length > 0 ? (
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3 border border-border bg-muted/20 px-3 py-2.5 text-xs text-muted-foreground">
+              <span>检测到 {legacyRules.length} 条旧版复杂规则。它们无法用一对一模型映射表示，因此会继续兼容执行，直到你确认清理。</span>
+              <Button type="button" variant="outline" size="sm" disabled={Boolean(savingKind)} onClick={() => setLegacyCleanupRequested(true)}>清理旧规则</Button>
+            </div>
+          ) : null}
+          {visibleRows.length > 0 ? (
+            <div className="hidden px-0 py-2 text-xs font-medium text-muted-foreground md:grid md:grid-cols-[minmax(11rem,1.1fr)_minmax(11rem,1.1fr)_auto] md:items-center md:gap-2">
+              <span>实际请求模型</span>
+              <span>上游目标模型</span>
+              <span className="sr-only">操作</span>
+            </div>
+          ) : null}
+          {visibleRows.length === 0 ? (
+            <div className="grid justify-items-center gap-2 px-4 py-9 text-center">
+              <p className="text-sm font-medium text-foreground">还没有模型映射</p>
+              <p className="text-xs text-muted-foreground">添加一行即可开始填写。</p>
+            </div>
+          ) : visibleRows.map((row) => (
+            <MappingRow
+              key={row.rule.id}
+              row={row}
+              modelOptions={modelOptions}
+              disabled={Boolean(savingKind)}
+              onChange={(next) => updateRow(row.rule.id, () => ({ ...next, feedback: null }))}
+              onCommit={() => void saveRow(row.rule.id)}
+              onDelete={() => requestDeleteRow(row.rule.id)}
+            />
+          ))}
+        </div>
+        <ConfirmDialog
+          open={deleteRuleId !== null}
+          title="删除模型映射"
+          description="确认删除这条模型映射吗？删除后会立即保存。"
+          confirmLabel="删除映射"
+          confirming={savingKind === "delete"}
+          onCancel={() => setDeleteRuleId(null)}
+          onConfirm={() => void confirmDeleteRule()}
+        />
+        <ConfirmDialog
+          open={legacyCleanupRequested}
+          title="清理旧版复杂规则"
+          description="这些规则包含回退、拒绝、通配符或请求条件，无法等价转换为一对一模型映射。清理后将不再参与路由。"
+          confirmLabel="清理规则"
+          confirming={savingKind === "legacyCleanup"}
+          onCancel={() => setLegacyCleanupRequested(false)}
+          onConfirm={() => void confirmLegacyCleanup()}
+        />
+      </SectionCard>
+    </section>
   );
 }
 

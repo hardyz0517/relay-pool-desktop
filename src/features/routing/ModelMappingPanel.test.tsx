@@ -69,7 +69,17 @@ describe("ModelMappingPanel", () => {
     expect(host.textContent).not.toContain("为每个模型填写实际请求模型和上游目标模型，填写完成并离开后自动用于路由。");
     expect(host.textContent).not.toContain("菜单显示名");
     expect(host.textContent).toContain("还没有模型映射");
+    const title = host.querySelector("#model-mapping-catalog-title");
+    expect(title?.textContent).toBe("模型映射");
     expect(Array.from(host.querySelectorAll("button")).filter((button) => button.textContent?.includes("添加模型"))).toHaveLength(1);
+    const toolbarButtons = Array.from(host.querySelectorAll("button")).filter((button) => button.textContent?.includes("获取模型列表") || button.textContent?.includes("添加模型"));
+    expect(toolbarButtons).toHaveLength(2);
+    const toolbar = title?.parentElement?.nextElementSibling;
+    expect(toolbar?.querySelectorAll("button")).toHaveLength(2);
+    const card = title?.parentElement?.parentElement?.nextElementSibling;
+    expect(card?.tagName).toBe("SECTION");
+    expect(card?.querySelector("h2")).toBeNull();
+    expect(toolbarButtons.every((button) => !card?.contains(button))).toBe(true);
     expect(host.textContent).not.toContain("配置未保存");
     expect(host.querySelector('[aria-label^="保存模型映射"]')).toBeNull();
 

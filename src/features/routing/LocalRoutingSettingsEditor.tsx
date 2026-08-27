@@ -463,33 +463,38 @@ export function LocalRoutingSettingsEditor() {
         </div>
       </SectionCard>
 
-      <SectionCard
-        title="出站代理"
-        description="本地路由向中转站发请求时使用的网络出口；站点单独设置仍优先于此项。"
-      >
-        <div className="grid gap-3 sm:max-w-xl">
-          <SelectControl
-            ariaLabel="本地路由出站代理"
-            className={inputClassName}
-            value={(config.outboundProxyMode in routingProxyModeLabels
-              ? config.outboundProxyMode
-              : "inherit") as RoutingProxyMode}
-            options={Object.entries(routingProxyModeLabels).map(([value, label]) => ({
-              value: value as RoutingProxyMode,
-              label: value === "inherit" ? `${label}（${globalProxyLabel}）` : label,
-            }))}
-            onChange={(value) => update("outboundProxyMode", value)}
-          />
-          {config.outboundProxyMode === "manual" ? (
-            <input
-              aria-label="本地路由手动代理地址"
-              className={inputClassName}
-              placeholder="http://127.0.0.1:7890"
-              value={config.outboundProxyUrl ?? ""}
-              onChange={(event) => update("outboundProxyUrl", event.target.value || null)}
-            />
-          ) : null}
-          {config.outboundProxyMode !== "inherit" ? <p className="text-xs text-muted-foreground">当前使用：{currentProxyLabel}</p> : null}
+      <SectionCard contentClassName="p-0" title="网络出口">
+        <div className="grid min-h-14 items-start gap-2 px-3 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-4">
+          <div className="min-w-0">
+            <h2 id="routing-outbound-proxy-title" className="text-sm font-medium text-foreground">出站代理</h2>
+            <p className="mt-0.5 break-words text-xs text-muted-foreground">本地路由向中转站发请求时使用的网络出口；站点单独设置仍优先于此项。</p>
+          </div>
+          <div className="min-w-0 w-full justify-self-stretch sm:w-auto sm:justify-self-end">
+            <div className="grid gap-2">
+              <SelectControl
+                ariaLabel="本地路由出站代理"
+                className={`${inputClassName} sm:w-auto`}
+                value={(config.outboundProxyMode in routingProxyModeLabels
+                  ? config.outboundProxyMode
+                  : "inherit") as RoutingProxyMode}
+                options={Object.entries(routingProxyModeLabels).map(([value, label]) => ({
+                  value: value as RoutingProxyMode,
+                  label: value === "inherit" ? `${label}（${globalProxyLabel}）` : label,
+                }))}
+                onChange={(value) => update("outboundProxyMode", value)}
+              />
+              {config.outboundProxyMode === "manual" ? (
+                <input
+                  aria-label="本地路由手动代理地址"
+                  className={`${inputClassName} sm:w-[260px]`}
+                  placeholder="http://127.0.0.1:7890"
+                  value={config.outboundProxyUrl ?? ""}
+                  onChange={(event) => update("outboundProxyUrl", event.target.value || null)}
+                />
+              ) : null}
+              {config.outboundProxyMode !== "inherit" ? <p className="text-right text-xs text-muted-foreground">当前使用：{currentProxyLabel}</p> : null}
+            </div>
+          </div>
         </div>
       </SectionCard>
     </div>
