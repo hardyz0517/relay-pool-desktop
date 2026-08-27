@@ -364,8 +364,10 @@ pub(crate) fn compose_station_key_connectivity_command_facade(
     services: &AppServices,
 ) -> StationKeyConnectivityCommandFacade {
     StationKeyConnectivityCommandFacade::new(
+        Arc::clone(&services.collectors),
         Arc::clone(&services.credentials),
         Arc::clone(&services.routing),
+        Arc::clone(&services.settings),
     )
 }
 

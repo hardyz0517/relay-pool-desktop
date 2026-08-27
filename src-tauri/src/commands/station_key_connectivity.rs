@@ -42,7 +42,7 @@ use crate::{
         OutboundHeaders, OutboundRequest, ProxyPolicy, RequestBudget, SecretHeaderValue,
     },
     services::{
-        endpoint_ping::ping_station_endpoint,
+        endpoint_ping::ping_station_endpoint_with_proxy,
         protocol_streaming::{
             OpenAiChatReducer, OpenAiResponsesReducer, SseDecoder, SseLimits, StreamError,
         },
@@ -352,6 +352,7 @@ async fn run_station_key_model_discovery_operation(
         &outbound,
         &target.key.station_api_base_url,
         target.api_key.as_str(),
+        &target.proxy,
         context.cancellation_token.clone(),
     )
     .await
@@ -391,6 +392,7 @@ async fn run_station_key_connectivity_operation(
         station_id.clone(),
         endpoint_revision,
         target.key.station_api_base_url.clone(),
+        target.proxy.clone(),
     );
     let model_probe = run_station_key_connectivity_prepared_outbound(
         &context,
@@ -436,11 +438,13 @@ async fn collect_station_endpoint_ping(
     station_id: String,
     endpoint_revision: i64,
     base_url: String,
+    proxy: ProxyPolicy,
 ) {
-    let probe = ping_station_endpoint(
+    let probe = ping_station_endpoint_with_proxy(
         outbound,
         &base_url,
         STATION_ENDPOINT_PING_TIMEOUT,
+        proxy,
         context.cancellation_token.clone(),
     )
     .await;
@@ -477,6 +481,7 @@ async fn run_station_key_connectivity_prepared_outbound(
         outbound,
         &target.key.station_api_base_url,
         target.api_key.as_str(),
+        &target.proxy,
         context.cancellation_token.clone(),
     )
     .await
@@ -497,6 +502,7 @@ async fn run_station_key_connectivity_prepared_outbound(
             outbound,
             &target.key.station_api_base_url,
             target.api_key.as_str(),
+            &target.proxy,
             candidate,
             &upstream_api_format,
             Some(&target.capabilities),
@@ -547,6 +553,7 @@ async fn discover_station_key_connectivity_models_outbound(
     outbound: &AsyncOutboundClient,
     base_url: &str,
     api_key: &str,
+    proxy: &ProxyPolicy,
     cancellation_token: tokio_util::sync::CancellationToken,
 ) -> Result<Vec<String>, OperationTerminal> {
     let url = build_api_url(base_url, "/v1/models").map_err(|_| OperationTerminal::Failed {
@@ -562,6 +569,7 @@ async fn discover_station_key_connectivity_models_outbound(
                 Vec::new(),
                 STATION_KEY_CONNECTIVITY_MODEL_DISCOVERY_TIMEOUT,
                 &[],
+                proxy.clone(),
             )
             .map_err(outbound_failure_terminal_or_result)?,
             cancellation_token,
@@ -585,6 +593,7 @@ async fn run_station_key_connectivity_single_model_probe_outbound(
     outbound: &AsyncOutboundClient,
     base_url: &str,
     api_key: &str,
+    proxy: &ProxyPolicy,
     model: &str,
     upstream_api_format: &UpstreamApiFormat,
     capabilities: Option<&StationKeyCapabilities>,
@@ -595,6 +604,7 @@ async fn run_station_key_connectivity_single_model_probe_outbound(
         outbound,
         base_url,
         api_key,
+        proxy,
         model,
         StationKeyConnectivityProbeKind::Responses,
         client_profile,
@@ -616,6 +626,7 @@ async fn run_station_key_connectivity_single_model_probe_outbound(
         outbound,
         base_url,
         api_key,
+        proxy,
         model,
         StationKeyConnectivityProbeKind::ChatCompletions,
         client_profile,
@@ -647,6 +658,7 @@ async fn send_station_key_connectivity_probe_outbound(
     outbound: &AsyncOutboundClient,
     base_url: &str,
     api_key: &str,
+    proxy: &ProxyPolicy,
     model: &str,
     kind: StationKeyConnectivityProbeKind,
     requested_client_profile: StationKeyConnectivityClientProfile,
@@ -659,6 +671,7 @@ async fn send_station_key_connectivity_probe_outbound(
         outbound,
         base_url,
         api_key,
+        proxy,
         model,
         kind,
         client_profile,
@@ -677,6 +690,7 @@ async fn send_station_key_connectivity_probe_outbound(
         outbound,
         base_url,
         api_key,
+        proxy,
         model,
         kind,
         client_profile,
@@ -718,6 +732,7 @@ async fn send_station_key_connectivity_non_stream_probe_outbound(
     outbound: &AsyncOutboundClient,
     base_url: &str,
     api_key: &str,
+    proxy: &ProxyPolicy,
     model: &str,
     kind: StationKeyConnectivityProbeKind,
     client_profile: StationKeyConnectivityClientProfile,
@@ -749,6 +764,7 @@ async fn send_station_key_connectivity_non_stream_probe_outbound(
                 serde_json::to_vec(&body).unwrap_or_default(),
                 STATION_KEY_CONNECTIVITY_PROBE_TIMEOUT,
                 station_key_connectivity_profile_headers(client_profile),
+                proxy.clone(),
             )
             .map_err(|_| OperationTerminal::Failed {
                 code: OperationFailureCode::new("connectivity-request-invalid"),
@@ -788,6 +804,7 @@ async fn send_station_key_connectivity_stream_probe_outbound(
     outbound: &AsyncOutboundClient,
     base_url: &str,
     api_key: &str,
+    proxy: &ProxyPolicy,
     model: &str,
     kind: StationKeyConnectivityProbeKind,
     client_profile: StationKeyConnectivityClientProfile,
@@ -826,6 +843,7 @@ async fn send_station_key_connectivity_stream_probe_outbound(
                 serde_json::to_vec(&request_body).unwrap_or_default(),
                 STATION_KEY_CONNECTIVITY_PROBE_TIMEOUT,
                 station_key_connectivity_profile_headers(client_profile),
+                proxy.clone(),
             )
             .map_err(|_| OperationTerminal::Failed {
                 code: OperationFailureCode::new("connectivity-request-invalid"),
@@ -989,6 +1007,7 @@ fn outbound_json_request(
     body: Vec<u8>,
     timeout: Duration,
     profile_headers: &[(&'static str, &'static str)],
+    proxy: ProxyPolicy,
 ) -> Result<OutboundRequest, OutboundFailure> {
     let policy = OutboundHeaderPolicy::provider_default();
     let mut headers = OutboundHeaders::new();
@@ -1018,7 +1037,7 @@ fn outbound_json_request(
         correlation_id: correlation::current_id_string(),
         headers,
         body,
-        proxy: ProxyPolicy::Direct,
+        proxy,
         budget: RequestBudget::from_now(timeout),
         retry_policy: Default::default(),
     })
@@ -1055,6 +1074,23 @@ fn elapsed_ms(started: Instant) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn station_key_connectivity_request_preserves_resolved_proxy_policy() {
+        let request = outbound_json_request(
+            Method::GET,
+            "https://relay.example/v1/models".to_string(),
+            "sk-test-model-discovery",
+            "application/json",
+            Vec::new(),
+            Duration::from_secs(5),
+            &[],
+            ProxyPolicy::System,
+        )
+        .expect("model discovery request");
+
+        assert_eq!(request.proxy, ProxyPolicy::System);
+    }
 
     #[test]
     fn station_key_connectivity_probe_uses_low_token_responses_request() {

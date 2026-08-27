@@ -8,6 +8,7 @@ use zeroize::Zeroizing;
 
 use crate::{
     application::{
+        collectors::CollectorService,
         connectivity_probe::{
             StationKeyConnectivityClientProfile, StationKeyConnectivityProbeKind,
             StationKeyConnectivityResponseMode,
@@ -15,9 +16,11 @@ use crate::{
         credentials::CredentialService,
         error::ApplicationError,
         routing::RoutingService,
+        settings::SettingsService,
     },
     background_tasks::OperationId,
     models::{routing::StationKeyCapabilities, station_keys::KeyPoolItem},
+    outbound::ProxyPolicy,
 };
 
 const CONNECTIVITY_RESULT_TTL: Duration = Duration::from_secs(30 * 60);
@@ -39,6 +42,7 @@ pub(crate) struct StationKeyConnectivityProbeTarget {
     pub(crate) key: KeyPoolItem,
     pub(crate) api_key: Zeroizing<String>,
     pub(crate) capabilities: StationKeyCapabilities,
+    pub(crate) proxy: ProxyPolicy,
 }
 
 #[derive(Clone, Debug)]
@@ -225,17 +229,26 @@ impl StationKeyModelDiscoveryResultStore {
 
 #[derive(Clone)]
 pub(crate) struct StationKeyConnectivityCommandFacade {
+    collectors: Arc<CollectorService>,
     credentials: Arc<CredentialService>,
     routing: Arc<RoutingService>,
+    settings: Arc<SettingsService>,
     results: StationKeyConnectivityResultStore,
     model_discovery_results: StationKeyModelDiscoveryResultStore,
 }
 
 impl StationKeyConnectivityCommandFacade {
-    pub(crate) fn new(credentials: Arc<CredentialService>, routing: Arc<RoutingService>) -> Self {
+    pub(crate) fn new(
+        collectors: Arc<CollectorService>,
+        credentials: Arc<CredentialService>,
+        routing: Arc<RoutingService>,
+        settings: Arc<SettingsService>,
+    ) -> Self {
         Self {
+            collectors,
             credentials,
             routing,
+            settings,
             results: StationKeyConnectivityResultStore::default(),
             model_discovery_results: StationKeyModelDiscoveryResultStore::default(),
         }
@@ -291,6 +304,25 @@ impl StationKeyConnectivityCommandFacade {
                 "Station Key does not have a saved API key".to_string(),
             ));
         }
+        let (station, settings) = tokio::try_join!(
+            self.collectors.station_for_collection(&key.station_id),
+            self.settings.load(),
+        )?;
+        let proxy_config = crate::services::outbound::resolve_proxy_config(
+            &station.collector_proxy_mode,
+            station.collector_proxy_url,
+            &settings.collector_proxy_mode,
+            settings.collector_proxy_url,
+        );
+        let proxy = crate::services::outbound::proxy_policy_from_mode(
+            &proxy_config.mode,
+            proxy_config.url.as_deref(),
+        )
+        .map_err(|_| {
+            StationKeyConnectivityCommandError::Message(
+                "Station proxy configuration is invalid".to_string(),
+            )
+        })?;
         let secret = self
             .credentials
             .resolve_station_key_secret(station_key_id.clone())
@@ -310,6 +342,7 @@ impl StationKeyConnectivityCommandFacade {
             key,
             api_key,
             capabilities,
+            proxy,
         })
     }
 
