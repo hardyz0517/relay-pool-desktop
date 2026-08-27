@@ -55,6 +55,13 @@ export type CollectorRunResult = {
   events: CollectorEvent[];
 };
 
+export type StationRedemptionResult = {
+  provider: string;
+  success: boolean;
+  message: string;
+  creditedDetail: string | null;
+};
+
 export type StationLoginTestInput = {
   stationType?: string;
   websiteUrl: string;

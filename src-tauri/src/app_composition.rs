@@ -242,6 +242,7 @@ pub(crate) fn compose_station_collection_command_facade(
     outbound: AsyncOutboundClient,
     providers: Arc<ProviderRegistry>,
     station_collection_coordinator: StationCollectionCoordinator,
+    station_collection_feedback: crate::services::station_collection_feedback::StationCollectionFeedback,
 ) -> StationCollectionCommandFacade {
     StationCollectionCommandFacade::new(
         Arc::clone(&services.collectors),
@@ -251,6 +252,7 @@ pub(crate) fn compose_station_collection_command_facade(
         outbound,
         providers,
         station_collection_coordinator,
+        station_collection_feedback,
     )
 }
 

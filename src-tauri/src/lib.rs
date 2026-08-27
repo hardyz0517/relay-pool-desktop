@@ -1197,6 +1197,8 @@ pub fn run() {
                                 NonZeroUsize::new(usize::from(settings.collector_max_concurrency))
                                     .expect("settings store validates collector concurrency as non-zero"),
                             );
+                        let station_collection_feedback =
+                            services::station_collection_feedback::StationCollectionFeedback::default();
                         app.manage(app_composition::compose_alerting_command_facade(
                             runtime.handle(),
                             Arc::clone(&alerting_updates),
@@ -1264,6 +1266,7 @@ pub fn run() {
                                 outbound_client.clone(),
                                 Arc::clone(&provider_registry),
                                 station_collection_coordinator.clone(),
+                                station_collection_feedback.clone(),
                             );
                         let station_key_connectivity_command_facade =
                             app_composition::compose_station_key_connectivity_command_facade(
@@ -1442,6 +1445,7 @@ pub fn run() {
                                     Arc::new(remote_keys_command_facade.clone()),
                                 ),
                                 station_collection_coordinator,
+                                station_collection_feedback,
                             )
                             .map_err(|error| {
                                 format!("failed to start station collector runner: {error}")

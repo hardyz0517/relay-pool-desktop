@@ -133,6 +133,7 @@ export class DemoBackend implements BackendClient {
     collectStationInfo: (_stationId: string) => this.rejectUnsupported("collectors"),
     collectStationTask: (_stationId: string) => this.rejectUnsupported("collectors"),
     scanStationRecharge: (_stationId: string) => this.rejectUnsupported("collectors"),
+    redeemStationCode: (_stationId: string, _code: string) => this.rejectUnsupported("collectors"),
     testStationLogin: (_stationId: string) => this.rejectUnsupported("collectors"),
     testStationLoginInput: () => this.rejectUnsupported("collectors"),
     listCollectorSnapshots: (_stationId: string) => this.rejectUnsupported("collectors"),

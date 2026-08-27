@@ -377,9 +377,15 @@ impl RemoteKeysCommandFacade {
         let source = self.source();
         let job = self
             .blocking
-            .submit(kind, None, correlation_id, None, move |_| {
-                Ok(prepare(source))
-            })
+            .submit_wait_for_capacity(
+                kind,
+                None,
+                correlation_id,
+                None,
+                &cancellation_token,
+                move |_| Ok(prepare(source)),
+            )
+            .await
             .map_err(remote_key_blocking_error)?;
         let job_cancellation_token = job.cancellation_token();
         tokio::select! {

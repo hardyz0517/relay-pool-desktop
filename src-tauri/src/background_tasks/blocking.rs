@@ -129,6 +129,66 @@ impl BlockingExecutor {
         Ok(BlockingJobHandle { id, token, join })
     }
 
+    /// Submit a job after waiting briefly for a bounded queue slot.
+    ///
+    /// `submit` intentionally keeps its immediate `QueueFull` contract for
+    /// callers that need fail-fast admission. Long-running collectors can
+    /// instead use this helper so transient saturation does not discard a
+    /// scheduled collection. The job is still bounded by the configured queue
+    /// timeout and can be cancelled while waiting.
+    pub async fn submit_wait_for_capacity<T, F>(
+        &self,
+        kind: impl Into<String> + Clone,
+        operation_id: Option<String>,
+        correlation_id: Option<String>,
+        deadline: Option<Instant>,
+        cancellation: &CancellationToken,
+        job: F,
+    ) -> Result<BlockingJobHandle<T>, BlockingExecutorError>
+    where
+        T: Send + 'static,
+        F: FnOnce(BlockingJobContext) -> Result<T, BlockingExecutorError> + Send + 'static,
+    {
+        let job = Arc::new(std::sync::Mutex::new(Some(job)));
+        let wait_deadline = bounded_timeout_deadline(self.config.queue_timeout, deadline);
+        loop {
+            if cancellation.is_cancelled() {
+                return Err(BlockingExecutorError::CancelledBeforeStart);
+            }
+            let job_for_attempt = Arc::clone(&job);
+            let result = self.submit(
+                kind.clone(),
+                operation_id.clone(),
+                correlation_id.clone(),
+                deadline,
+                move |context| {
+                    let job = job_for_attempt
+                        .lock()
+                        .expect("blocking job holder mutex")
+                        .take()
+                        .expect("blocking job submitted more than once");
+                    job(context)
+                },
+            );
+            match result {
+                Ok(handle) => return Ok(handle),
+                Err(BlockingExecutorError::QueueFull) => {
+                    let remaining = wait_deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        return Err(BlockingExecutorError::QueueTimeout);
+                    }
+                    tokio::select! {
+                        _ = cancellation.cancelled() => {
+                            return Err(BlockingExecutorError::CancelledBeforeStart);
+                        }
+                        _ = tokio::time::sleep(remaining.min(Duration::from_millis(25))) => {}
+                    }
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
     pub fn close(&self) {
         self.closed.store(true, Ordering::SeqCst);
     }
@@ -183,6 +243,11 @@ fn bounded_timeout(default_timeout: Duration, deadline: Option<Instant>) -> Dura
     };
     let remaining = deadline.saturating_duration_since(Instant::now());
     default_timeout.min(remaining)
+}
+
+fn bounded_timeout_deadline(default_timeout: Duration, deadline: Option<Instant>) -> Instant {
+    let now = Instant::now();
+    now + bounded_timeout(default_timeout, deadline)
 }
 
 pub struct BlockingJobHandle<T> {

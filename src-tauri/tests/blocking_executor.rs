@@ -66,6 +66,39 @@ async fn rejects_when_queue_capacity_is_full() {
 }
 
 #[tokio::test]
+async fn waits_for_queue_capacity_before_admitting_retryable_work() {
+    let executor = configured_executor(1, 1, Duration::from_secs(1), Duration::from_secs(1));
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+    let first = executor
+        .submit("dialog", None, None, None, move |_| {
+            release_rx.recv().expect("release first job");
+            Ok("first")
+        })
+        .expect("first job admitted");
+    wait_for_running(&executor, 1).await;
+    let queued = executor
+        .submit("dialog", None, None, None, |_| Ok("queued"))
+        .expect("second job admitted to queue");
+
+    let cancellation = tokio_util::sync::CancellationToken::new();
+    let waiting =
+        executor
+            .submit_wait_for_capacity("dialog", None, None, None, &cancellation, |_| Ok("waited"));
+    tokio::pin!(waiting);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), &mut waiting)
+            .await
+            .is_err()
+    );
+
+    release_tx.send(()).expect("release first");
+    first.result().await.expect("first succeeds");
+    queued.result().await.expect("queued succeeds");
+    let admitted = waiting.await.expect("waiting job is admitted");
+    assert_eq!(admitted.result().await.expect("waited succeeds"), "waited");
+}
+
+#[tokio::test]
 async fn queued_job_times_out_without_real_sleep() {
     let executor = configured_executor(1, 2, Duration::ZERO, Duration::from_millis(1_000));
     let (release_tx, release_rx) = mpsc::channel::<()>();

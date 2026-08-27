@@ -27,6 +27,7 @@ pub mod station_capacity_domains;
 pub mod station_endpoints;
 pub mod station_keys;
 pub mod station_published_status;
+pub mod station_redemption;
 pub mod stations;
 
 use serde::Serialize;

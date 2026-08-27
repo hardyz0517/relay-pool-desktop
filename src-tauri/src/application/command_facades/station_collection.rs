@@ -11,6 +11,7 @@ use crate::{
     },
     background_tasks::{BlockingExecutor, BlockingExecutorError},
     models::collector::{CollectorEvent, CollectorRunResult},
+    models::station_redemption::StationRedemptionResult,
     observability::correlation,
     outbound::AsyncOutboundClient,
     services::{
@@ -19,6 +20,7 @@ use crate::{
         station_collection_coordinator::{
             StationCollectionAdmissionError, StationCollectionCoordinator,
         },
+        station_collection_feedback::StationCollectionFeedback,
     },
 };
 
@@ -29,6 +31,7 @@ const REMOTE_KEY_REFRESH_EVENT: &str = "remote_keys";
 #[derive(Debug)]
 pub(crate) enum StationCollectionCommandError {
     Admission(StationCollectionAdmissionError),
+    Scheduled,
     Prepare(ApplicationError),
     Apply(ApplicationError),
     Blocking(BlockingExecutorError),
@@ -44,6 +47,7 @@ pub(crate) struct StationCollectionCommandFacade {
     providers: Arc<collectors::orchestration::ProviderRegistry>,
     remote_keys: RemoteKeysCommandFacade,
     station_collection_coordinator: StationCollectionCoordinator,
+    station_collection_feedback: StationCollectionFeedback,
 }
 
 impl StationCollectionCommandFacade {
@@ -55,6 +59,7 @@ impl StationCollectionCommandFacade {
         outbound: AsyncOutboundClient,
         providers: Arc<collectors::orchestration::ProviderRegistry>,
         station_collection_coordinator: StationCollectionCoordinator,
+        station_collection_feedback: StationCollectionFeedback,
     ) -> Self {
         let remote_keys = RemoteKeysCommandFacade::new(
             Arc::clone(&collectors),
@@ -73,6 +78,7 @@ impl StationCollectionCommandFacade {
             providers,
             remote_keys,
             station_collection_coordinator,
+            station_collection_feedback,
         }
     }
 
@@ -81,13 +87,34 @@ impl StationCollectionCommandFacade {
         station_id: String,
         task: CollectorTask,
     ) -> Result<CollectorRunResult, StationCollectionCommandError> {
+        if let Some(result) = self
+            .station_collection_feedback
+            .wait_for_scheduled_result(&station_id)
+            .await
+        {
+            return result.map_err(|_| StationCollectionCommandError::Scheduled);
+        }
         let station_id_for_lease = station_id.clone();
-        run_with_station_collection_lease(
-            &self.station_collection_coordinator,
-            &station_id_for_lease,
-            || self.run_station_collection_inner(station_id, task),
-        )
-        .await
+        let _lease = match self
+            .station_collection_coordinator
+            .try_acquire(&station_id_for_lease)
+        {
+            Ok(lease) => lease,
+            Err(StationCollectionAdmissionError::AlreadyRunning) => {
+                if let Some(result) = self
+                    .station_collection_feedback
+                    .wait_for_scheduled_result(&station_id_for_lease)
+                    .await
+                {
+                    return result.map_err(|_| StationCollectionCommandError::Scheduled);
+                }
+                return Err(StationCollectionCommandError::Admission(
+                    StationCollectionAdmissionError::AlreadyRunning,
+                ));
+            }
+            Err(error) => return Err(StationCollectionCommandError::Admission(error)),
+        };
+        self.run_station_collection_inner(station_id, task).await
     }
 
     /// Scan recharge pages through the same station lease and credential
@@ -108,6 +135,62 @@ impl StationCollectionCommandFacade {
                 .await
                 .map_err(StationCollectionCommandError::Admission)?;
         self.scan_station_recharge_inner(app, station_id).await
+    }
+
+    pub(crate) async fn redeem_station_code(
+        &self,
+        station_id: String,
+        code: String,
+    ) -> Result<StationRedemptionResult, StationCollectionCommandError> {
+        let station = self
+            .collectors
+            .station_for_collection(&station_id)
+            .await
+            .map_err(|_| StationCollectionCommandError::Prepare(ApplicationError::Internal))?;
+        let settings = self
+            .settings
+            .load()
+            .await
+            .map_err(|_| StationCollectionCommandError::Prepare(ApplicationError::Internal))?;
+        let credentials = self
+            .credentials
+            .get_station_credentials(station_id.clone())
+            .await
+            .map_err(|_| StationCollectionCommandError::Prepare(ApplicationError::Internal))?;
+        let source = self.source();
+        let session = collectors::resolve_station_session_for_browser(
+            &source,
+            &self.outbound,
+            station_id,
+            tokio_util::sync::CancellationToken::new(),
+            current_correlation_id(),
+        )
+        .await
+        .map_err(StationCollectionCommandError::Prepare)?;
+        let proxy_config = crate::services::outbound::resolve_proxy_config(
+            &station.collector_proxy_mode,
+            station.collector_proxy_url.clone(),
+            &settings.collector_proxy_mode,
+            settings.collector_proxy_url,
+        );
+        let proxy = crate::services::outbound::proxy_policy_from_mode(
+            &proxy_config.mode,
+            proxy_config.url.as_deref(),
+        )
+        .map_err(|_| StationCollectionCommandError::Prepare(ApplicationError::Internal))?;
+
+        Ok(crate::services::station_redemption::redeem_station_code(
+            &self.outbound,
+            &station,
+            &session,
+            code.trim(),
+            credentials.session_user_agent.as_deref(),
+            proxy,
+            std::time::Duration::from_secs(u64::from(settings.collector_timeout_seconds)),
+            tokio_util::sync::CancellationToken::new(),
+            current_correlation_id(),
+        )
+        .await)
     }
 
     async fn scan_station_recharge_inner(
@@ -269,19 +352,22 @@ impl StationCollectionCommandFacade {
     ) -> Result<CollectorRunResult, StationCollectionCommandError> {
         let station_id_for_remote_keys = station_id.clone();
         let source = self.source();
+        let cancellation_token = tokio_util::sync::CancellationToken::new();
         let prepared = self
             .blocking
-            .submit(
+            .submit_wait_for_capacity(
                 "station_collection_prepare",
                 None,
                 current_correlation_id(),
                 None,
+                &cancellation_token,
                 move |_| {
                     Ok(collectors::prepare_station_collection_route_v2(
                         &source, station_id, task,
                     ))
                 },
             )
+            .await
             .map_err(StationCollectionCommandError::Blocking)?
             .result()
             .await
@@ -341,19 +427,22 @@ impl StationCollectionCommandFacade {
         station_id: String,
     ) -> Result<CollectorRunResult, StationCollectionCommandError> {
         let source = self.source();
+        let cancellation_token = tokio_util::sync::CancellationToken::new();
         let prepared = self
             .blocking
-            .submit(
+            .submit_wait_for_capacity(
                 "station_login_prepare",
                 None,
                 current_correlation_id(),
                 None,
+                &cancellation_token,
                 move |_| {
                     Ok(collectors::prepare_station_login_probe_v2(
                         &source, station_id,
                     ))
                 },
             )
+            .await
             .map_err(StationCollectionCommandError::Blocking)?
             .result()
             .await

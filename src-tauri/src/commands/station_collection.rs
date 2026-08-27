@@ -8,8 +8,9 @@ use crate::{
     ipc::dto::{
         collector_facts::CollectorStationIdInputDto,
         station_collector_operations::{
-            CollectorRunResultDto, StationCollectorTaskInputDto, StationCollectorTaskTypeDto,
-            StationLoginTestInputDto, StationLoginTestResultDto,
+            CollectorRunResultDto, RedeemStationCodeInputDto, StationCollectorTaskInputDto,
+            StationCollectorTaskTypeDto, StationLoginTestInputDto, StationLoginTestResultDto,
+            StationRedemptionResultDto,
         },
     },
     observability::correlation,
@@ -183,6 +184,32 @@ pub async fn scan_station_recharge(
 }
 
 #[tauri::command]
+pub async fn redeem_station_code(
+    facade: State<'_, StationCollectionCommandFacade>,
+    input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
+) -> Result<StationRedemptionResultDto, error::CommandError> {
+    correlation::in_command_scope_with_runtime_context(
+        "redeem_station_code",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = RedeemStationCodeInputDto::parse(input)?;
+            facade
+                .redeem_station_code(input.station_id, input.code)
+                .await
+                .map_err(public_station_collection_error)
+        },
+    )
+    .await
+}
+
+#[tauri::command]
 pub async fn test_station_login(
     facade: State<'_, StationCollectionCommandFacade>,
     input: Value,
@@ -266,6 +293,12 @@ fn public_station_collection_error(error: StationCollectionCommandError) -> erro
                 error::CommandError::internal(None)
             }
         },
+        StationCollectionCommandError::Scheduled => {
+            error::CommandError::from_driver(error::DriverFailure::ExternalUnavailable {
+                provider: None,
+                upstream_status: None,
+            })
+        }
         StationCollectionCommandError::Prepare(error) => {
             super::public_command_application_error(error)
         }

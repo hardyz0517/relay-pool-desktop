@@ -6,6 +6,7 @@ use crate::models::collector::{CollectorEvent, CollectorSnapshot};
 use crate::models::{
     capture::{CaptureSessionStatus, CapturedHttpEventInput},
     collector::{CollectorRunResult, StationLoginTestInput, StationLoginTestResult},
+    station_redemption::StationRedemptionResult,
 };
 
 use super::{invalid_input, TypeDescriptor};
@@ -14,6 +15,7 @@ const MAX_ID_BYTES: usize = 128;
 const MAX_URL_BYTES: usize = 2_048;
 const MAX_LOGIN_USERNAME_BYTES: usize = 512;
 const MAX_LOGIN_PASSWORD_BYTES: usize = 8_192;
+const MAX_REDEMPTION_CODE_BYTES: usize = 512;
 const MAX_CAPTURE_TEXT_BYTES: usize = 8_192;
 const MAX_CAPTURE_RESPONSE_TEXT_BYTES: usize = 256 * 1024;
 const MAX_CAPTURE_RESPONSE_JSON_BYTES: usize = 512 * 1024;
@@ -23,6 +25,30 @@ const MAX_NON_NEGATIVE_CAPTURE_METRIC: i64 = 128 * 1024 * 1024;
 pub type CaptureSessionStatusDto = CaptureSessionStatus;
 pub type CollectorRunResultDto = CollectorRunResult;
 pub type StationLoginTestResultDto = StationLoginTestResult;
+pub type StationRedemptionResultDto = StationRedemptionResult;
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RedeemStationCodeInputDto {
+    pub station_id: String,
+    pub code: String,
+}
+
+impl RedeemStationCodeInputDto {
+    pub fn parse(value: Value) -> Result<Self, crate::commands::error::CommandError> {
+        let input: Self = parse_value(value)?;
+        validate_id(&input.station_id)?;
+        validate_secret_text("code", &input.code, MAX_REDEMPTION_CODE_BYTES)?;
+        if input.code.trim().is_empty() {
+            return Err(invalid_input(
+                "code",
+                "required",
+                "The redemption code is required.",
+            ));
+        }
+        Ok(input)
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -375,6 +401,7 @@ pub(crate) fn serialization_fixtures() -> Vec<Value> {
         serde_json::json!({"command":"detect_station_info","input":{"stationId":"station-1"},"output":run.clone()}),
         serde_json::json!({"command":"collect_station_info","input":{"stationId":"station-1"},"output":run.clone()}),
         serde_json::json!({"command":"collect_station_task","input":{"stationId":"station-1","taskType":"groups"},"output":run.clone()}),
+        serde_json::json!({"command":"redeem_station_code","input":{"stationId":"station-1","code":"fixture-redemption-code"},"output":{"provider":"sub2api","success":true,"message":"兑换成功。","creditedDetail":"已添加：$10.00"}}),
         serde_json::json!({"command":"test_station_login","input":{"stationId":"station-1"},"output":run}),
         serde_json::json!({
             "command":"test_station_login_input",
@@ -477,6 +504,23 @@ mod tests {
             };
             assert_eq!(error.code, CommandErrorCode::InvalidInput);
             assert!(!error.message.contains(credential));
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_redemption_codes_without_echoing_them() {
+        let code = "fake-sensitive-code";
+        for value in [
+            serde_json::json!({"stationId":"station-1","code":""}),
+            serde_json::json!({"stationId":"station-1","code":format!("{}\n", code)}),
+            serde_json::json!({"stationId":"station-1","code":code,"unexpected":true}),
+        ] {
+            let error = match RedeemStationCodeInputDto::parse(value) {
+                Ok(_) => panic!("invalid redemption input"),
+                Err(error) => error,
+            };
+            assert_eq!(error.code, CommandErrorCode::InvalidInput);
+            assert!(!error.message.contains(code));
         }
     }
 

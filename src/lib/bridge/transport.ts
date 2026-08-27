@@ -56,7 +56,18 @@ export function classifyNonIdempotentRejection(
   command: IpcCommand,
   error: unknown,
 ): BackendError | ResultUnknownError {
-  return isCommandErrorEnvelope(error)
-    ? toBackendError(error)
-    : new ResultUnknownError(command, error);
+  if (isCommandErrorEnvelope(error)) {
+    return toBackendError(error);
+  }
+  if (isCommandUnavailableBeforeDispatch(command, error)) {
+    return new BackendError(
+      "runtime_unavailable",
+      "This desktop build does not expose the requested operation.",
+    );
+  }
+  return new ResultUnknownError(command, error);
+}
+
+function isCommandUnavailableBeforeDispatch(command: IpcCommand, error: unknown): boolean {
+  return error === `${command} not allowed. Command not found`;
 }

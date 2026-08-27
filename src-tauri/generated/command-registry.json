@@ -2,7 +2,7 @@
   "schema_version": 1,
   "generator_version": 1,
   "ipc_contract_version": 1,
-  "contract_hash": "e6ac3a861d4f79f52301126d8a4f32b066991e1319b6f69a136e991cc5f4bdd2",
+  "contract_hash": "c662bcb79d9825bd3d534bcc276425f566bcd71b461440199f9bc81accb443d9",
   "commands": [
     {
       "name": "activate_data_store_candidate",
@@ -1567,6 +1567,17 @@
       "runtime_validation": "rust_dto_pre_application"
     },
     {
+      "name": "redeem_station_code",
+      "transport": "ordinary",
+      "input_schema_hash": "3bb5e19e442d66df07eaac7c5d1417ee72f331dcaf676afcb241b041da11c8e1",
+      "output_schema_hash": "505a757ecc56def44f7d488b4e4f04f2e4e653c10a7b9c8b9fdce0e48609b985",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "non_idempotent",
+      "transport_retry": false,
+      "result_unknown": true,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
       "name": "refresh_data_store_candidates",
       "transport": "ordinary",
       "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
@@ -2208,6 +2219,6 @@
   "streaming_surfaces": [],
   "evidence": {
     "kind": "compiled-rust-registry",
-    "serialization_fixture_hash": "475ebabd6fc44bd38997cdf2bbc9e687b3769918a4607fa4228fd0fbae3d734e"
+    "serialization_fixture_hash": "9683e33ea1da49a8b78dfbeae85f54cfecfa7878e52ed599fb62627f05798d40"
   }
 }

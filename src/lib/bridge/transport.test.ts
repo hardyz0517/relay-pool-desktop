@@ -30,6 +30,15 @@ describe("non-idempotent transport", () => {
     expect(error).toBeInstanceOf(ResultUnknownError);
   });
 
+  it("treats a Tauri ACL rejection as a confirmed pre-dispatch failure", () => {
+    const error = classifyNonIdempotentRejection(
+      "create_station",
+      "create_station not allowed. Command not found",
+    );
+    expect(error).toBeInstanceOf(BackendError);
+    expect((error as BackendError).code).toBe("runtime_unavailable");
+  });
+
   it("injects the validated runtime context at the one transport boundary", async () => {
     configureRuntimeContextSession("ctx_0123456789abcdef0123456789abcdef");
     await runUserInteraction(() => invoke("app_status", { input: {} }));

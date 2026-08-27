@@ -13,6 +13,7 @@ use crate::{
         BlockingExecutor, BlockingExecutorError, TaskFailure, TaskId, TaskRunContext, TaskSpec,
         TaskSupervisor, TaskSupervisorError,
     },
+    models::collector::{CollectorEvent, CollectorRunResult},
     observability::correlation,
     outbound::AsyncOutboundClient,
     services::{
@@ -26,6 +27,7 @@ use crate::{
         station_collection_coordinator::{
             StationCollectionAdmissionError, StationCollectionCoordinator,
         },
+        station_collection_feedback::StationCollectionFeedback,
     },
 };
 
@@ -34,6 +36,7 @@ const RUNNER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 const RUNNER_TASK_ID: &str = "station-collector-runner";
 const RUNNER_TASK_KIND: &str = "station_collector_runner";
 const RUNNER_CONCURRENCY_KEY: &str = "station-collector-runner";
+const REMOTE_KEY_REFRESH_EVENT: &str = "remote_keys";
 
 pub(crate) fn v2_runner_port(
     services: &AppServices,
@@ -52,6 +55,7 @@ pub(crate) fn v2_runner_port(
     let tasks: Arc<dyn StationCollectorTaskPort> = Arc::new(V2StationCollectorTaskAdapter::new(
         source,
         apply,
+        Arc::clone(&services.collectors),
         blocking,
         outbound,
         Arc::clone(&providers),
@@ -74,9 +78,10 @@ pub(crate) trait StationCollectorRemoteKeyRefreshPort: Send + Sync + 'static {
     ) -> BoxFuture<'static, Result<(), String>>;
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub(crate) struct StationCollectorTaskOutcome {
     refresh_remote_keys: bool,
+    result: CollectorRunResult,
 }
 
 pub(crate) trait StationCollectorTaskPort: Send + Sync + 'static {
@@ -99,6 +104,7 @@ pub(crate) struct StationCollectorTaskContext {
 pub(crate) struct V2StationCollectorTaskAdapter {
     source: Arc<dyn CollectorSourcePort>,
     apply: Arc<dyn CollectorApplyPort>,
+    collectors: Arc<CollectorService>,
     blocking: BlockingExecutor,
     outbound: AsyncOutboundClient,
     providers: Arc<collectors::orchestration::ProviderRegistry>,
@@ -108,6 +114,7 @@ impl V2StationCollectorTaskAdapter {
     pub(crate) fn new(
         source: Arc<dyn CollectorSourcePort>,
         apply: Arc<dyn CollectorApplyPort>,
+        collectors: Arc<CollectorService>,
         blocking: BlockingExecutor,
         outbound: AsyncOutboundClient,
         providers: Arc<collectors::orchestration::ProviderRegistry>,
@@ -115,6 +122,7 @@ impl V2StationCollectorTaskAdapter {
         Self {
             source,
             apply,
+            collectors,
             blocking,
             outbound,
             providers,
@@ -132,17 +140,19 @@ impl StationCollectorTaskPort for V2StationCollectorTaskAdapter {
         let source = self.source.clone();
         let finish_source = self.source.clone();
         let apply = self.apply.clone();
+        let collector_service = Arc::clone(&self.collectors);
         let blocking = self.blocking.clone();
         let outbound = self.outbound.clone();
         let providers = self.providers.clone();
         Box::pin(async move {
             let operation_id = Some(format!("{}:{}", context.task_id, context.run_id));
             let prepare = blocking
-                .submit(
+                .submit_wait_for_capacity(
                     "station_collector_prepare",
                     operation_id,
                     Some(context.correlation_id.clone()),
                     None,
+                    &context.cancellation_token,
                     move |_| {
                         Ok(collectors::prepare_station_task_route_v2(
                             source.as_ref(),
@@ -151,6 +161,7 @@ impl StationCollectorTaskPort for V2StationCollectorTaskAdapter {
                         ))
                     },
                 )
+                .await
                 .map_err(blocking_executor_error_message)?;
             let prepare_cancellation_token = prepare.cancellation_token();
             let prepared = tokio::select! {
@@ -193,16 +204,21 @@ impl StationCollectorTaskPort for V2StationCollectorTaskAdapter {
                 task,
                 prepared.2.status.as_str(),
             );
-            apply_prepared_station_task_cancellable_v2(
+            let applied = apply_prepared_station_task_cancellable_v2(
                 apply.as_ref(),
                 prepared.0,
                 prepared.1,
                 prepared.2,
                 context.cancellation_token.clone(),
             )
-            .await
-            .map(|_| StationCollectorTaskOutcome {
+            .await?;
+            let result = collector_service
+                .result_for_apply(&applied, task.as_str())
+                .await
+                .map_err(|error| error.to_string())?;
+            Ok(StationCollectorTaskOutcome {
                 refresh_remote_keys,
+                result,
             })
         })
     }
@@ -381,6 +397,7 @@ impl StationCollectorRunnerState {
         supervisor: TaskSupervisor,
         port: Arc<dyn StationCollectorRunnerPort>,
         coordinator: StationCollectionCoordinator,
+        station_collection_feedback: StationCollectionFeedback,
     ) -> Result<Self, String> {
         let task_id = TaskId::from(RUNNER_TASK_ID);
         let runner_port = Arc::clone(&port);
@@ -389,7 +406,13 @@ impl StationCollectorRunnerState {
                 TaskSpec::new(task_id.clone(), RUNNER_TASK_KIND, move |context| {
                     let port = Arc::clone(&runner_port);
                     let coordinator = coordinator.clone();
-                    Box::pin(runner_loop_v2(port, coordinator, context))
+                    let station_collection_feedback = station_collection_feedback.clone();
+                    Box::pin(runner_loop_v2(
+                        port,
+                        coordinator,
+                        station_collection_feedback,
+                        context,
+                    ))
                 })
                 .with_concurrency_key(RUNNER_CONCURRENCY_KEY)
                 .with_shutdown_timeout(RUNNER_SHUTDOWN_TIMEOUT),
@@ -408,6 +431,7 @@ impl StationCollectorRunnerState {
 async fn runner_loop_v2(
     port: Arc<dyn StationCollectorRunnerPort>,
     coordinator: StationCollectionCoordinator,
+    station_collection_feedback: StationCollectionFeedback,
     context: TaskRunContext,
 ) -> Result<(), TaskFailure> {
     let mut interval = tokio::time::interval(COLLECTOR_BACKGROUND_INTERVAL);
@@ -418,26 +442,46 @@ async fn runner_loop_v2(
                 return Err(TaskFailure::cancelled());
             }
             _ = interval.tick() => {
-                run_due_station_collections_once_v2(port.as_ref(), &coordinator, &context).await;
+                run_due_station_collections_once_with_feedback_v2(
+                    port.as_ref(),
+                    &coordinator,
+                    &station_collection_feedback,
+                    &context,
+                )
+                .await;
             }
         }
     }
 }
 
-async fn run_due_station_collections_once_v2(
+async fn run_due_station_collections_once_with_feedback_v2(
     port: &dyn StationCollectorRunnerPort,
     coordinator: &StationCollectionCoordinator,
+    station_collection_feedback: &StationCollectionFeedback,
     context: &TaskRunContext,
 ) {
     match port.due_station_collections(256).await {
         Ok(collections) => {
             let max_concurrency = coordinator.max_concurrency().get();
+            let station_collection_feedback = station_collection_feedback.clone();
+            let collections = collections
+                .into_iter()
+                .map(|collection| {
+                    let feedback =
+                        station_collection_feedback.begin_scheduled(&collection.station_id);
+                    (collection, feedback)
+                })
+                .collect::<Vec<_>>();
             stream::iter(collections)
-                .for_each_concurrent(Some(max_concurrency), |collection| async move {
-                    match run_station_collection_guarded_v2(port, coordinator, &collection, context)
-                        .await
-                    {
-                        Ok(ScheduledStationCollectionOutcome::Completed)
+                .for_each_concurrent(Some(max_concurrency), |(collection, feedback)| async move {
+                    let result =
+                        run_station_collection_guarded_v2(port, coordinator, &collection, context)
+                            .await;
+                    if let Some(feedback) = feedback {
+                        feedback.complete(scheduled_collection_feedback_result(&result));
+                    }
+                    match result {
+                        Ok(ScheduledStationCollectionOutcome::Completed(_))
                         | Ok(ScheduledStationCollectionOutcome::SkippedAlreadyRunning)
                         | Ok(ScheduledStationCollectionOutcome::Cancelled) => {}
                         Err(_error) => {
@@ -453,11 +497,47 @@ async fn run_due_station_collections_once_v2(
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 enum ScheduledStationCollectionOutcome {
-    Completed,
+    Completed(CollectorRunResult),
     SkippedAlreadyRunning,
     Cancelled,
+}
+
+impl PartialEq for ScheduledStationCollectionOutcome {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                ScheduledStationCollectionOutcome::Completed(left),
+                ScheduledStationCollectionOutcome::Completed(right),
+            ) => left.snapshot.id == right.snapshot.id && left.events.len() == right.events.len(),
+            (
+                ScheduledStationCollectionOutcome::SkippedAlreadyRunning,
+                ScheduledStationCollectionOutcome::SkippedAlreadyRunning,
+            )
+            | (
+                ScheduledStationCollectionOutcome::Cancelled,
+                ScheduledStationCollectionOutcome::Cancelled,
+            ) => true,
+            _ => false,
+        }
+    }
+}
+
+fn scheduled_collection_feedback_result(
+    result: &Result<ScheduledStationCollectionOutcome, String>,
+) -> Result<CollectorRunResult, String> {
+    match result {
+        Ok(ScheduledStationCollectionOutcome::Completed(result)) => Ok(result.clone()),
+        Ok(ScheduledStationCollectionOutcome::SkippedAlreadyRunning) => Err(
+            "Scheduled station collection was skipped because the station is already running"
+                .to_string(),
+        ),
+        Ok(ScheduledStationCollectionOutcome::Cancelled) => {
+            Err("Scheduled station collection was cancelled".to_string())
+        }
+        Err(error) => Err(error.clone()),
+    }
 }
 
 async fn run_station_collection_guarded_v2(
@@ -489,6 +569,7 @@ async fn run_station_collection_guarded_v2(
     }
 
     let mut failures = Vec::new();
+    let mut last_result = None;
     for task in &collection.tasks {
         if context.cancellation_token.is_cancelled() {
             return Ok(ScheduledStationCollectionOutcome::Cancelled);
@@ -498,34 +579,54 @@ async fn run_station_collection_guarded_v2(
             context,
             task_correlation_id.as_str().to_string(),
         );
-        let result: Result<(), String> =
+        let result: Result<StationCollectorTaskOutcome, String> =
             correlation::in_scope("station.collector.task", task_correlation_id, async {
-                let outcome = port
+                let mut outcome = port
                     .collect_task(collection.station_id.clone(), *task, task_context.clone())
                     .await?;
                 if outcome.refresh_remote_keys {
                     if task_context.cancellation_token.is_cancelled() {
-                        return Ok(());
+                        return Ok(outcome);
                     }
-                    port.refresh_remote_keys(collection.station_id.clone(), task_context)
+                    let refresh_event = match port
+                        .refresh_remote_keys(collection.station_id.clone(), task_context)
                         .await
-                        .map_err(|error| format!("remote key refresh failed: {error}"))?;
+                    {
+                        Ok(()) => CollectorEvent {
+                            event_type: REMOTE_KEY_REFRESH_EVENT.to_string(),
+                            message: "Remote keys refreshed".to_string(),
+                            status: "success".to_string(),
+                        },
+                        Err(error) => CollectorEvent {
+                            event_type: REMOTE_KEY_REFRESH_EVENT.to_string(),
+                            message: format!("Remote key refresh failed: {error}"),
+                            status: "failed".to_string(),
+                        },
+                    };
+                    outcome.result.events.push(refresh_event);
                 }
-                Ok(())
+                last_result = Some(outcome.result.clone());
+                Ok(outcome)
             })
             .await;
         if context.cancellation_token.is_cancelled() {
             return Ok(ScheduledStationCollectionOutcome::Cancelled);
         }
-        if let Err(error) = result {
-            if context.cancellation_token.is_cancelled() {
-                return Ok(ScheduledStationCollectionOutcome::Cancelled);
+        match result {
+            Ok(_outcome) => {}
+            Err(error) => {
+                if context.cancellation_token.is_cancelled() {
+                    return Ok(ScheduledStationCollectionOutcome::Cancelled);
+                }
+                failures.push(format!("{} collection failed: {error}", task.as_str()));
             }
-            failures.push(format!("{} collection failed: {error}", task.as_str()));
         }
     }
     if failures.is_empty() {
-        Ok(ScheduledStationCollectionOutcome::Completed)
+        let result = last_result.ok_or_else(|| {
+            "scheduled collection completed without a collector result".to_string()
+        })?;
+        Ok(ScheduledStationCollectionOutcome::Completed(result))
     } else {
         Err(failures.join("; "))
     }
@@ -619,6 +720,7 @@ mod tests {
     use super::*;
     use crate::application::error::ApplicationError;
     use crate::background_tasks::{TaskRunId, TaskState};
+    use crate::models::collector::CollectorSnapshot;
     use crate::observability::runtime::bootstrap;
     use crate::observability::runtime::{RuntimeEvent, RuntimeLogReader, RuntimeLogService};
     use crate::services::collectors::facts::CollectorFacts;
@@ -771,7 +873,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn guarded_collection_reports_remote_key_refresh_failure() {
+    async fn guarded_collection_preserves_result_when_remote_key_refresh_fails() {
         let port = RecordingRunnerPort::with_refresh_results(
             vec![Ok(task_outcome(true))],
             vec![Err("scan unavailable".to_string())],
@@ -786,11 +888,17 @@ mod tests {
         )
         .await;
 
+        let result = match result.expect("collection result is preserved") {
+            ScheduledStationCollectionOutcome::Completed(result) => result,
+            outcome => panic!("unexpected scheduled collection outcome: {outcome:?}"),
+        };
+        assert_eq!(result.snapshot.id, "snapshot-1");
+        assert_eq!(result.events.len(), 1);
+        assert_eq!(result.events[0].event_type, REMOTE_KEY_REFRESH_EVENT);
+        assert_eq!(result.events[0].status, "failed");
         assert_eq!(
-            result,
-            Err(
-                "groups collection failed: remote key refresh failed: scan unavailable".to_string()
-            )
+            result.events[0].message,
+            "Remote key refresh failed: scan unavailable"
         );
         assert_eq!(port.remote_key_refreshes().len(), 1);
     }
@@ -865,8 +973,13 @@ mod tests {
         let port_for_run = port.clone();
         let coordinator_for_run = coordinator.clone();
         let running = tokio::spawn(async move {
-            run_due_station_collections_once_v2(&port_for_run, &coordinator_for_run, &context)
-                .await;
+            run_due_station_collections_once_with_feedback_v2(
+                &port_for_run,
+                &coordinator_for_run,
+                &StationCollectionFeedback::default(),
+                &context,
+            )
+            .await;
         });
 
         port.wait_until_started(2).await;
@@ -891,7 +1004,13 @@ mod tests {
         let _held = coordinator.try_acquire("station-a").expect("a is held");
         let context = test_run_context();
 
-        run_due_station_collections_once_v2(&port, &coordinator, &context).await;
+        run_due_station_collections_once_with_feedback_v2(
+            &port,
+            &coordinator,
+            &StationCollectionFeedback::default(),
+            &context,
+        )
+        .await;
 
         assert_eq!(
             port.calls(),
@@ -908,7 +1027,13 @@ mod tests {
         ]);
         let coordinator = coordinator(3);
 
-        run_due_station_collections_once_v2(&port, &coordinator, &test_run_context()).await;
+        run_due_station_collections_once_with_feedback_v2(
+            &port,
+            &coordinator,
+            &StationCollectionFeedback::default(),
+            &test_run_context(),
+        )
+        .await;
 
         assert_eq!(
             port.completed_station_ids(),
@@ -927,7 +1052,13 @@ mod tests {
         let coordinator = coordinator(1);
 
         bootstrap::with_test_service(Arc::clone(&service), || async {
-            run_due_station_collections_once_v2(&port, &coordinator, &test_run_context()).await;
+            run_due_station_collections_once_with_feedback_v2(
+                &port,
+                &coordinator,
+                &StationCollectionFeedback::default(),
+                &test_run_context(),
+            )
+            .await;
         })
         .await;
         service.flush();
@@ -953,7 +1084,13 @@ mod tests {
         let running_coordinator = coordinator.clone();
 
         let running = tokio::spawn(async move {
-            run_due_station_collections_once_v2(&port, &running_coordinator, &context).await;
+            run_due_station_collections_once_with_feedback_v2(
+                &port,
+                &running_coordinator,
+                &StationCollectionFeedback::default(),
+                &context,
+            )
+            .await;
             port.calls()
         });
         tokio::task::yield_now().await;
@@ -978,6 +1115,7 @@ mod tests {
             supervisor.clone(),
             Arc::clone(&port) as Arc<dyn StationCollectorRunnerPort>,
             coordinator.clone(),
+            StationCollectionFeedback::default(),
         )
         .expect("runner starts");
 
@@ -1015,6 +1153,22 @@ mod tests {
     fn task_outcome(refresh_remote_keys: bool) -> StationCollectorTaskOutcome {
         StationCollectorTaskOutcome {
             refresh_remote_keys,
+            result: CollectorRunResult {
+                snapshot: CollectorSnapshot {
+                    id: "snapshot-1".to_string(),
+                    station_id: "station-1".to_string(),
+                    endpoint_revision: 1,
+                    source: "fixture".to_string(),
+                    status: "success".to_string(),
+                    fetched_at: "1700000000000".to_string(),
+                    summary_json: serde_json::json!({}),
+                    normalized_json: serde_json::json!({}),
+                    raw_json_redacted: None,
+                    error_message: None,
+                    created_at: "1700000000000".to_string(),
+                },
+                events: Vec::new(),
+            },
         }
     }
 
@@ -1439,9 +1593,13 @@ mod tests {
         let task_id = TaskId::from(RUNNER_TASK_ID);
         let port = Arc::new(RecordingRunnerPort::new(Vec::new()));
 
-        let runner =
-            StationCollectorRunnerState::start_v2(supervisor.clone(), port, coordinator(1))
-                .expect("runner starts");
+        let runner = StationCollectorRunnerState::start_v2(
+            supervisor.clone(),
+            port,
+            coordinator(1),
+            StationCollectionFeedback::default(),
+        )
+        .expect("runner starts");
 
         assert_eq!(
             supervisor.status(&task_id).expect("runner status").state,

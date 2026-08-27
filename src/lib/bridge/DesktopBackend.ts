@@ -28,6 +28,7 @@ import {
   collectStationInfo as collectStationInfoBinding,
   collectStationTask as collectStationTaskBinding,
   scanStationRecharge as scanStationRechargeBinding,
+  redeemStationCode as redeemStationCodeBinding,
   collectSub2apiStation as collectSub2apiStationBinding,
   collectProviderDraftPreview as collectProviderDraftPreviewBinding,
   commitProviderDraft as commitProviderDraftBinding,
@@ -317,6 +318,7 @@ export class DesktopBackend implements BackendClient {
     collectStationTask: (stationId: string, taskType: Parameters<BackendClient["collectors"]["collectStationTask"]>[1]) =>
       collectStationTaskBinding({ stationId, taskType }),
     scanStationRecharge: (stationId: string) => scanStationRechargeBinding({ stationId }),
+    redeemStationCode: (stationId: string, code: string) => redeemStationCodeBinding({ stationId, code }),
     testStationLogin: (stationId: string) => testStationLoginBinding({ stationId }),
     testStationLoginInput: (input: Parameters<BackendClient["collectors"]["testStationLoginInput"]>[0]) =>
       testStationLoginInputBinding({

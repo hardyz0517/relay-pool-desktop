@@ -25,6 +25,10 @@ export function scanStationRecharge(stationId: string) {
   return getActiveBackendClient().collectors.scanStationRecharge(stationId);
 }
 
+export function redeemStationCode(stationId: string, code: string) {
+  return getActiveBackendClient().collectors.redeemStationCode(stationId, code);
+}
+
 export function testStationLogin(stationId: string) {
   return getActiveBackendClient().collectors.testStationLogin(stationId);
 }

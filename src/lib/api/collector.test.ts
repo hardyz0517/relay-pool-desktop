@@ -20,6 +20,7 @@ import {
   listLatestCollectorSnapshots,
   startCaptureSession,
   startManualAuthorization,
+  redeemStationCode,
   testStationLogin,
   testStationLoginInput,
 } from "./collector";
@@ -32,6 +33,7 @@ describe("collector backend cutover", () => {
     collectStationInfo: vi.fn(async () => runResult()),
     collectStationTask: vi.fn(async () => runResult()),
     scanStationRecharge: vi.fn(async () => runResult()),
+    redeemStationCode: vi.fn(async () => ({ provider: "sub2api", success: true, message: "兑换成功", creditedDetail: "已添加：$1.00" })),
     testStationLogin: vi.fn(async () => runResult()),
     testStationLoginInput: vi.fn(async () => ({
       status: "success",
@@ -75,6 +77,7 @@ describe("collector backend cutover", () => {
     await collectStationInfo("station-1");
     await collectStationTask("station-1", "full");
     await scanStationRecharge("station-1");
+    await redeemStationCode("station-1", "fixture-code");
     await testStationLogin("station-1");
     await testStationLoginInput(loginInput);
     await listCollectorSnapshots("station-1");
@@ -94,6 +97,7 @@ describe("collector backend cutover", () => {
     expect(collectors.collectStationInfo).toHaveBeenCalledWith("station-1");
     expect(collectors.collectStationTask).toHaveBeenCalledWith("station-1", "full");
     expect(collectors.scanStationRecharge).toHaveBeenCalledWith("station-1");
+    expect(collectors.redeemStationCode).toHaveBeenCalledWith("station-1", "fixture-code");
     expect(collectors.testStationLogin).toHaveBeenCalledWith("station-1");
     expect(collectors.testStationLoginInput).toHaveBeenCalledWith(loginInput);
     expect(collectors.listCollectorSnapshots).toHaveBeenCalledWith("station-1");

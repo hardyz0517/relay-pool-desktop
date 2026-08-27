@@ -18,7 +18,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "e6ac3a861d4f79f52301126d8a4f32b066991e1319b6f69a136e991cc5f4bdd2";
+    "c662bcb79d9825bd3d534bcc276425f566bcd71b461440199f9bc81accb443d9";
 
 #[cfg_attr(
     not(test),
@@ -257,6 +257,7 @@ macro_rules! ipc_command_registry {
             collect_station_info => $crate::commands::station_collection::collect_station_info,
             collect_station_task => $crate::commands::station_collection::collect_station_task,
             scan_station_recharge => $crate::commands::station_collection::scan_station_recharge,
+            redeem_station_code => $crate::commands::station_collection::redeem_station_code,
             test_station_login => $crate::commands::station_collection::test_station_login,
             test_station_login_input => $crate::commands::station_collection::test_station_login_input,
             detect_sub2api_station => $crate::commands::station_collection::detect_sub2api_station,
@@ -764,6 +765,12 @@ fn command_contract(name: &str) -> CommandContract {
         "collect_station_task" => migrated_mutation(
             "StationCollectorTaskInputDto",
             "CollectorRunResultDto",
+            "non_idempotent",
+            true,
+        ),
+        "redeem_station_code" => migrated_mutation(
+            "RedeemStationCodeInputDto",
+            "StationRedemptionResultDto",
             "non_idempotent",
             true,
         ),
@@ -1589,6 +1596,10 @@ export function collectStationTask(input: StationCollectorTaskInputDto): Promise
 
 export function scanStationRecharge(input: CollectorStationIdInputDto): Promise<CollectorRunResultDto> {
   return invokeNonIdempotent<CollectorRunResultDto>("scan_station_recharge", { input });
+}
+
+export function redeemStationCode(input: RedeemStationCodeInputDto): Promise<StationRedemptionResultDto> {
+  return invokeNonIdempotent<StationRedemptionResultDto>("redeem_station_code", { input });
 }
 
 export function testStationLogin(input: CollectorStationIdInputDto): Promise<CollectorRunResultDto> {

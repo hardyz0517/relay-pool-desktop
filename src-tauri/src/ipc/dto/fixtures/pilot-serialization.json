@@ -2112,6 +2112,19 @@
       }
     },
     {
+      "command": "redeem_station_code",
+      "input": {
+        "code": "fixture-redemption-code",
+        "stationId": "station-1"
+      },
+      "output": {
+        "creditedDetail": "已添加：$10.00",
+        "message": "兑换成功。",
+        "provider": "sub2api",
+        "success": true
+      }
+    },
+    {
       "command": "test_station_login",
       "input": {
         "stationId": "station-1"

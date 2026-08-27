@@ -6,6 +6,7 @@ import type {
   CollectorTaskType,
   StationLoginTestInput,
   StationLoginTestResult,
+  StationRedemptionResult,
 } from "@/lib/types/collector";
 import type {
   ChannelMonitor,
@@ -373,6 +374,7 @@ export type CollectorsDomainClient = {
   collectStationInfo(stationId: string): Promise<CollectorRunResult>;
   collectStationTask(stationId: string, taskType: CollectorTaskType): Promise<CollectorRunResult>;
   scanStationRecharge(stationId: string): Promise<CollectorRunResult>;
+  redeemStationCode(stationId: string, code: string): Promise<StationRedemptionResult>;
   testStationLogin(stationId: string): Promise<CollectorRunResult>;
   testStationLoginInput(input: StationLoginTestInput): Promise<StationLoginTestResult>;
   listCollectorSnapshots(stationId: string): Promise<CollectorSnapshot[]>;
