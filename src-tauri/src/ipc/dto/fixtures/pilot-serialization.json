@@ -2651,7 +2651,7 @@
         {
           "builtIn": false,
           "cacheCreationPrice": 1.25,
-          "cacheCreationPriceAbove1hr": null,
+          "cacheCreationPriceAbove1Hr": null,
           "cacheCreationPricePriority": null,
           "cacheReadPrice": 0.1,
           "cacheReadPricePriority": null,

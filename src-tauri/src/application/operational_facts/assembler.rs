@@ -131,10 +131,14 @@ pub(crate) struct OperationalCandidateFact {
     capacity_domain_revision: Option<RecordRevision>,
     endpoint: EndpointFacts,
     credential: CredentialAvailabilityFact,
+    schedulable: bool,
     priority: i64,
     backup_only: bool,
     group_binding_id: Option<String>,
     group_record_revision: Option<RecordRevision>,
+    group_binding_status: Option<String>,
+    station_native_multiplier: Option<f64>,
+    credit_per_cny: Option<f64>,
     account_record_revision: RecordRevision,
     group_id_hash: Option<String>,
     group_category: Option<String>,
@@ -191,6 +195,10 @@ impl OperationalCandidateFact {
         &self.credential
     }
 
+    pub(crate) fn schedulable(&self) -> bool {
+        self.schedulable
+    }
+
     pub(crate) fn priority(&self) -> i64 {
         self.priority
     }
@@ -202,6 +210,12 @@ impl OperationalCandidateFact {
     }
     pub(crate) fn group_record_revision(&self) -> Option<RecordRevision> {
         self.group_record_revision
+    }
+    pub(crate) fn station_native_multiplier(&self) -> Option<f64> {
+        self.station_native_multiplier
+    }
+    pub(crate) fn credit_per_cny(&self) -> Option<f64> {
+        self.credit_per_cny
     }
     pub(crate) fn account_record_revision(&self) -> RecordRevision {
         self.account_record_revision
@@ -286,10 +300,14 @@ impl OperationalCandidateFact {
                 true,
                 RecordRevision::new(1).expect("valid record revision"),
             ),
+            schedulable: true,
             priority: 0,
             backup_only: false,
             group_binding_id: group_binding_id.map(ToString::to_string),
             group_record_revision: group_binding_id.map(|_| RecordRevision::new(1).unwrap()),
+            group_binding_status: group_binding_id.map(|_| "bound".to_string()),
+            station_native_multiplier: Some(1.0),
+            credit_per_cny: Some(1.0),
             account_record_revision: RecordRevision::new(1).unwrap(),
             group_id_hash: group_id_hash.map(ToString::to_string),
             group_category: group_category.map(ToString::to_string),
@@ -322,6 +340,26 @@ impl OperationalCandidateFact {
     ) {
         self.cooldown_until = cooldown_until.map(ToString::to_string);
         self.last_error_summary = last_error_summary.map(ToString::to_string);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_multiplier_for_planning_test(
+        &mut self,
+        station_native_multiplier: Option<f64>,
+        credit_per_cny: Option<f64>,
+    ) {
+        self.station_native_multiplier = station_native_multiplier;
+        self.credit_per_cny = credit_per_cny;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_balance_for_planning_test(
+        &mut self,
+        balance_value: Option<f64>,
+        balance_status: Option<&str>,
+    ) {
+        self.balance_value = balance_value;
+        self.balance_status = balance_status.map(ToString::to_string);
     }
 }
 
@@ -446,6 +484,7 @@ pub(crate) fn assemble_operational_fact_bundle(
                     row.credential_available,
                     key_record_revision,
                 ),
+                schedulable: row.schedulable,
                 priority: row.priority,
                 backup_only: row.backup_only,
                 group_binding_id: row.group_binding_id,
@@ -453,6 +492,9 @@ pub(crate) fn assemble_operational_fact_bundle(
                     .group_record_revision
                     .map(RecordRevision::new)
                     .transpose()?,
+                group_binding_status: row.group_binding_status,
+                station_native_multiplier: row.station_native_multiplier,
+                credit_per_cny: row.credit_per_cny,
                 account_record_revision: RecordRevision::new(row.account_record_revision)?,
                 group_id_hash: row.group_id_hash,
                 group_category: row.group_category,

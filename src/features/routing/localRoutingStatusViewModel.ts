@@ -40,6 +40,16 @@ const candidateHealthDisplays: Record<
 };
 
 const previewRejectReasonLabels: Record<string, string> = {
+  model_mapping_no_target: "模型映射没有可用目标",
+  model_mapping_invalid_model: "请求模型无效",
+  model_mapping_context_required: "模型映射需要候选上下文",
+  model_mapping_profile_not_found: "模型映射配置不存在",
+  unsupported_model: "模型被健康能力记录拒绝",
+  model_health_rejected: "模型健康状态阻止路由",
+  scoped_health_rejected: "候选健康状态阻止路由",
+  error_rate_rejected: "错误率保护阻止路由",
+  error_rate_probe_discovery: "仅用于恢复探测",
+  credential_unavailable: "凭据不可用",
   candidate_disabled: "密钥已停用",
   candidate_unschedulable: "密钥已暂停路由",
   credential_missing: "缺少可用凭据",

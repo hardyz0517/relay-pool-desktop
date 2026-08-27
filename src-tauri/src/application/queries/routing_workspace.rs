@@ -48,6 +48,8 @@ pub(crate) struct RoutingWorkspaceSnapshot {
     pub(crate) page: RoutingReadPage,
     pub(crate) candidates: Vec<RoutingWorkspaceCandidate>,
     pub(crate) read_model_status: RoutingReadModelStatus,
+    pub(crate) planner_evaluation: RoutingPlannerEvaluationStatus,
+    pub(crate) planner_evaluation_code: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -65,6 +67,23 @@ pub(crate) enum RoutingReadModelStatus {
     Unavailable,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RoutingPlannerEvaluationStatus {
+    Available,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RoutingScoreStatus {
+    Scored,
+    Excluded,
+    CandidateLimit,
+    ProbeDiscovery,
+    Unavailable,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RoutingWorkspaceCandidate {
@@ -78,6 +97,11 @@ pub(crate) struct RoutingWorkspaceCandidate {
     pub(crate) health_state: String,
     /// Normalized utility score (0..=10000) from the active routing policy.
     pub(crate) score: Option<u16>,
+    pub(crate) score_status: RoutingScoreStatus,
+    pub(crate) planner_exclusion_codes: Vec<String>,
+    pub(crate) assessment_snapshot_id: Option<String>,
+    pub(crate) assessment_durable_revision: Option<u64>,
+    pub(crate) assessment_request_context_fingerprint: Option<String>,
     pub(crate) score_details: Option<RoutingCandidateScoreSnapshot>,
     pub(crate) group: Option<RoutingCandidateGroupSnapshot>,
     pub(crate) multiplier: RoutingCandidateMultiplierSnapshot,
@@ -334,6 +358,11 @@ pub(crate) fn workspace_snapshot_from_canonical_candidates(
     routing_group_filter: RoutingGroupFilter,
     candidates: Vec<(CanonicalRoutingCandidate, Option<ResolvedPricingContext>)>,
     scores: &BTreeMap<String, RoutingCandidateScoreSnapshot>,
+    score_statuses: &BTreeMap<String, RoutingScoreStatus>,
+    planner_exclusion_codes: &BTreeMap<String, Vec<String>>,
+    assessment_provenance: &BTreeMap<String, (String, u64, String)>,
+    planner_evaluation: RoutingPlannerEvaluationStatus,
+    planner_evaluation_code: Option<String>,
     quality_summaries: &BTreeMap<String, QualitySummary>,
     request: &RouteRequestFacts,
     input: RoutingWorkspaceSnapshotInput,
@@ -350,12 +379,24 @@ pub(crate) fn workspace_snapshot_from_canonical_candidates(
         .into_iter()
         .map(|(candidate, pricing)| {
             let score_details = scores.get(&candidate.station_key_id).cloned();
+            let score_status = score_statuses
+                .get(&candidate.station_key_id)
+                .copied()
+                .unwrap_or(RoutingScoreStatus::Unavailable);
+            let exclusion_codes = planner_exclusion_codes
+                .get(&candidate.station_key_id)
+                .cloned()
+                .unwrap_or_default();
+            let provenance = assessment_provenance.get(&candidate.station_key_id);
             candidate_from_canonical(
                 candidate,
                 pricing,
                 request,
                 generated_at_ms,
                 score_details,
+                score_status,
+                exclusion_codes,
+                provenance,
                 quality_summaries,
             )
         })
@@ -392,18 +433,13 @@ pub(crate) fn workspace_snapshot_from_canonical_candidates(
         },
         candidates: rows,
         read_model_status: RoutingReadModelStatus::Available,
+        planner_evaluation,
+        planner_evaluation_code,
     }
 }
 
 fn depleted_rank(value: Option<f64>, status: Option<&str>) -> u8 {
-    if value.is_some_and(|value| value.is_finite() && value <= 0.0)
-        || status.is_some_and(|status| {
-            matches!(
-                status.trim().to_ascii_lowercase().as_str(),
-                "low" | "depleted" | "exhausted" | "empty"
-            )
-        })
-    {
+    if crate::models::routing::balance_is_depleted(value, status) {
         1
     } else {
         0
@@ -505,6 +541,11 @@ mod tests {
     }
 
     #[test]
+    fn low_positive_balance_stays_in_the_normal_display_tier() {
+        assert_eq!(depleted_rank(Some(4.71), Some("low")), 0);
+    }
+
+    #[test]
     fn configured_capacity_identity_is_projected_without_claiming_runtime_health() {
         let projected = failure_domain_snapshot(&candidate(), &request(Some("gpt-test")));
         assert_eq!(
@@ -587,9 +628,34 @@ fn candidate_from_canonical(
     request: &RouteRequestFacts,
     generated_at_ms: i64,
     score_details: Option<RoutingCandidateScoreSnapshot>,
+    score_status: RoutingScoreStatus,
+    planner_exclusion_codes: Vec<String>,
+    assessment_provenance: Option<&(String, u64, String)>,
     quality_summaries: &BTreeMap<String, QualitySummary>,
 ) -> RoutingWorkspaceCandidate {
     let failure_domain = failure_domain_snapshot(&candidate, request);
+    let source_snapshot_id = assessment_provenance
+        .map(|value| value.0.clone())
+        .unwrap_or_else(|| format!("workspace-{generated_at_ms}"));
+    let source_fact_version_vector = assessment_provenance
+        .map(|value| format!("durable_revision:{};request_context:{}", value.1, value.2))
+        .unwrap_or_else(|| {
+            format!(
+                "endpoint:{};capabilities:{};health:{};balance:{}",
+                candidate.station_endpoint_revision,
+                candidate.capabilities.updated_at,
+                candidate
+                    .health
+                    .as_ref()
+                    .map(|health| health.updated_at.as_str())
+                    .unwrap_or("missing"),
+                candidate
+                    .balance_snapshot
+                    .as_ref()
+                    .and_then(|balance| balance.collected_at.as_deref())
+                    .unwrap_or("missing")
+            )
+        });
     let score_details = score_details.map(|mut details| {
         let quality_summary = quality_summaries
             .get(&format!("station_key:{}", candidate.station_key_id))
@@ -866,6 +932,11 @@ fn candidate_from_canonical(
         schedulable: candidate.schedulable,
         health_state,
         score: score_details.as_ref().map(|details| details.total),
+        score_status,
+        planner_exclusion_codes,
+        assessment_snapshot_id: assessment_provenance.map(|value| value.0.clone()),
+        assessment_durable_revision: assessment_provenance.map(|value| value.1),
+        assessment_request_context_fingerprint: assessment_provenance.map(|value| value.2.clone()),
         score_details,
         group,
         multiplier: RoutingCandidateMultiplierSnapshot {
@@ -965,22 +1036,8 @@ fn candidate_from_canonical(
             station_key_id: candidate.station_key_id,
             station_id: candidate.station_id,
             endpoint_revision: candidate.station_endpoint_revision,
-            snapshot_id: format!("workspace-{generated_at_ms}"),
-            fact_version_vector: format!(
-                "endpoint:{};capabilities:{};health:{};balance:{}",
-                candidate.station_endpoint_revision,
-                candidate.capabilities.updated_at,
-                candidate
-                    .health
-                    .as_ref()
-                    .map(|health| health.updated_at.as_str())
-                    .unwrap_or("missing"),
-                candidate
-                    .balance_snapshot
-                    .as_ref()
-                    .and_then(|balance| balance.collected_at.as_deref())
-                    .unwrap_or("missing")
-            ),
+            snapshot_id: source_snapshot_id,
+            fact_version_vector: source_fact_version_vector,
             projector_version: "routing_workspace_canonical_v1".to_string(),
         },
         hard_rejection_codes,

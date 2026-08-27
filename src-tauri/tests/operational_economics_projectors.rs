@@ -389,12 +389,26 @@ fn balance_unknown_not_supported_and_not_applicable_are_not_depleted() {
 }
 
 #[test]
-fn balance_depleted_emergency_requires_authoritative_scope_matched_fresh_evidence() {
-    let depleted = project_balance(
+fn balance_depleted_emergency_requires_non_positive_authoritative_fresh_evidence() {
+    let positive_low = project_balance(
         Some(balance(
             BalanceScope::StationKey,
             BalanceEvidenceStatus::Available,
             Some(1.0),
+            Some(10.0),
+            true,
+            1,
+        )),
+        None,
+        now(),
+    );
+    assert_eq!(positive_low.status, BalanceProjectionStatus::Healthy);
+
+    let depleted = project_balance(
+        Some(balance(
+            BalanceScope::StationKey,
+            BalanceEvidenceStatus::Available,
+            Some(0.0),
             Some(10.0),
             true,
             1,

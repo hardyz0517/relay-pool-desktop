@@ -1,7 +1,7 @@
 use crate::{
     application::{
         operational_facts::{
-            balance_projector::{BalanceProjection, BalanceProjectionStatus},
+            balance_projector::{project_runtime_balance, BalanceProjectionStatus},
             candidate_projector::{
                 project_route_candidate, CandidateIdentityProjection,
                 CandidateOperationalProjections, CapabilityProjectionSet, CapacityProjection,
@@ -175,7 +175,7 @@ pub(crate) fn route_projection_from_runtime_candidate_with_pricing(
         group,
         multiplier,
         pricing,
-        balance: balance_projection(candidate.balance_snapshot.as_ref(), now),
+        balance: project_runtime_balance(candidate.balance_snapshot.as_ref(), now),
         capabilities: capability_projection_set(request, &candidate)?,
         health: health_projection_set(request, &candidate, now)?,
         capacity: capacity_projection(&candidate),
@@ -448,33 +448,6 @@ fn revision_refs(
     // Runtime economic rows do not carry a domain revision. Timestamps are
     // freshness evidence only and must never become a revision substitute.
     Vec::new()
-}
-
-fn balance_projection(
-    balance: Option<&crate::models::routing::RuntimeRoutingBalance>,
-    now: UnixMillis,
-) -> BalanceProjection {
-    let (status, reason) = match balance {
-        Some(balance) if balance.is_depleted() => (
-            BalanceProjectionStatus::DepletedEmergency,
-            "balance_depleted",
-        ),
-        Some(_) => (BalanceProjectionStatus::Healthy, "balance_healthy"),
-        None => (BalanceProjectionStatus::Missing, "balance_missing"),
-    };
-    BalanceProjection {
-        status,
-        selected_scope: None,
-        health_hint: crate::models::operational::HealthState::Unknown,
-        trace: ProjectionTrace::new(
-            vec!["runtime_candidate_projection"],
-            PriceConfidence::new(if balance.is_some() { 0.8 } else { 0.0 })
-                .expect("valid confidence"),
-            now,
-            reason,
-            Vec::new(),
-        ),
-    }
 }
 
 fn capability_projection_set(

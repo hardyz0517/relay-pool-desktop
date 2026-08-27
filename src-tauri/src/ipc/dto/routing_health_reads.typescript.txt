@@ -10,6 +10,8 @@ export type StationKeyOperationalDetailInputDto = { stationKeyId: string };
 export type RequestDecisionTraceInputDto = { requestLogId: string };
 export type RoutingCapacityReadModeDto = "snapshot_only";
 export type RoutingReadModelStatusDto = "available" | "unavailable";
+export type RoutingPlannerEvaluationStatusDto = "available" | "unavailable";
+export type RoutingScoreStatusDto = "scored" | "excluded" | "candidate_limit" | "probe_discovery" | "unavailable";
 export type RouteDecisionReadModelStatusDto = "available" | "unavailable";
 export type OperationalDetailReadModelStatusDto = "available" | "unavailable";
 export type RequestDecisionTraceStatusDto = "durable_summary" | "runtime_trace" | "legacy_summary" | "trace_unavailable";
@@ -317,6 +319,11 @@ export type RoutingWorkspaceCandidateDto = {
   schedulable: boolean;
   healthState: string;
   score: number | null;
+  scoreStatus: RoutingScoreStatusDto;
+  plannerExclusionCodes: string[];
+  assessmentSnapshotId: string | null;
+  assessmentDurableRevision: number | null;
+  assessmentRequestContextFingerprint: string | null;
   scoreDetails: RoutingCandidateScoreSnapshotDto | null;
   group: RoutingCandidateGroupSnapshotDto | null;
   multiplier: RoutingCandidateMultiplierSnapshotDto;
@@ -396,6 +403,8 @@ export type RoutingWorkspaceSnapshotDto = {
   page: RoutingReadPageDto;
   candidates: RoutingWorkspaceCandidateDto[];
   readModelStatus: RoutingReadModelStatusDto;
+  plannerEvaluation?: RoutingPlannerEvaluationStatusDto;
+  plannerEvaluationCode?: string | null;
 };
 
 export type RoutingRuntimeCandidateOverlayDto = {

@@ -24,6 +24,11 @@ function candidate(overrides: Partial<RoutingCandidateView> = {}): RoutingCandid
     cooldownUntil: null,
     routingGroupScope: "all_groups",
     routingGroupMatch: true,
+    scoreStatus: "scored",
+    plannerExclusionCodes: [],
+    assessmentSnapshotId: null,
+    assessmentDurableRevision: null,
+    assessmentRequestContextFingerprint: null,
     previewEligible: true,
     previewRejectReasons: [],
     facts: [

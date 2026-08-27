@@ -180,6 +180,8 @@ describe("local routing candidate rows", () => {
         <>
           <LocalRoutingCandidateRow
             candidate={candidate({
+              scoreStatus: "excluded",
+              plannerExclusionCodes: ["group_mismatch"],
               previewEligible: false,
               previewRejectReasons: ["group_mismatch"],
               routingGroupMatch: false,
@@ -188,6 +190,8 @@ describe("local routing candidate rows", () => {
           <LocalRoutingCandidateRow
             candidate={candidate({
               schedulable: false,
+              scoreStatus: "excluded",
+              plannerExclusionCodes: ["candidate_unschedulable"],
               previewEligible: false,
               previewRejectReasons: ["candidate_unschedulable"],
             })}
@@ -239,6 +243,11 @@ function candidate(overrides: Partial<LocalRoutingCandidate> = {}): LocalRouting
     cooldownUntil: null,
     routingGroupScope: "all_groups",
     routingGroupMatch: true,
+    scoreStatus: "scored",
+    plannerExclusionCodes: [],
+    assessmentSnapshotId: null,
+    assessmentDurableRevision: null,
+    assessmentRequestContextFingerprint: null,
     previewEligible: true,
     previewRejectReasons: [],
     facts: [],

@@ -113,6 +113,15 @@ struct RuntimeMappingState {
     compiled: CompiledModelMappingConfiguration,
 }
 
+/// Immutable mapping inputs captured for one evaluation. Callers should pass
+/// this value through planning instead of reading the mutable global state at
+/// multiple points in a request lifecycle.
+#[derive(Debug, Clone)]
+pub(crate) struct ModelMappingSnapshot {
+    pub(crate) configuration: CompiledModelMappingConfiguration,
+    pub(crate) revision: u64,
+}
+
 static RUNTIME_STATE: OnceLock<RwLock<RuntimeMappingState>> = OnceLock::new();
 
 fn runtime_state() -> &'static RwLock<RuntimeMappingState> {
@@ -780,6 +789,19 @@ pub(crate) fn current_configuration() -> CompiledModelMappingConfiguration {
         .expect("mapping runtime lock poisoned")
         .compiled
         .clone()
+}
+
+/// Captures the compiled mapping and its revision atomically under one read
+/// lock. The returned pair is self-consistent even if another task installs a
+/// newer document immediately afterwards.
+pub(crate) fn current_snapshot() -> ModelMappingSnapshot {
+    let guard = runtime_state()
+        .read()
+        .expect("mapping runtime lock poisoned");
+    ModelMappingSnapshot {
+        revision: guard.compiled.mapping_revision,
+        configuration: guard.compiled.clone(),
+    }
 }
 
 pub(crate) async fn persist_document(

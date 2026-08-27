@@ -2,6 +2,8 @@ import type { ProxyStatus } from "./proxy";
 import type {
   RouteEndpointKind,
   RoutingGroupFilter,
+  RoutingPlannerEvaluationStatus,
+  RoutingScoreStatus,
   RoutingRuntimeOverlay,
   RoutingWorkspaceCandidate,
   RoutingWorkspaceSnapshot,
@@ -46,6 +48,11 @@ export type RoutingCandidateView = {
   cooldownUntil: string | null;
   routingGroupScope: RoutingGroupFilter;
   routingGroupMatch: boolean;
+  scoreStatus: RoutingScoreStatus;
+  plannerExclusionCodes: string[];
+  assessmentSnapshotId: string | null;
+  assessmentDurableRevision: number | null;
+  assessmentRequestContextFingerprint: string | null;
   previewEligible: boolean;
   previewRejectReasons: string[];
   facts: DecisionFact[];
@@ -65,6 +72,8 @@ export type RoutingWorkspaceView = {
     routingGroupFilter: RoutingGroupFilter;
     fallbackEnabled: boolean;
     previewKind: "baseline_eligibility";
+    plannerEvaluation: RoutingPlannerEvaluationStatus;
+    plannerEvaluationCode: string | null;
   };
   summary: {
     candidateCount: number;
@@ -84,13 +93,13 @@ function healthState(value: string): RouteHealthState {
   return healthStates.has(value as RouteHealthState) ? (value as RouteHealthState) : "unknown";
 }
 
-function candidateFacts(candidate: RoutingWorkspaceCandidate): DecisionFact[] {
+function candidateFacts(candidate: RoutingWorkspaceCandidate, plannerExclusionCodes: string[]): DecisionFact[] {
   const facts: DecisionFact[] = [
     {
       kind: "capability",
       label: "Capability",
       value: candidate.capabilityVerdicts.protocol,
-      severity: candidate.hardRejectionCodes.length > 0 ? "warning" : "info",
+      severity: plannerExclusionCodes.length > 0 ? "warning" : "info",
     },
     {
       kind: "pricing",
@@ -116,7 +125,26 @@ export function toRoutingWorkspaceView(
   );
   const candidates = snapshot.candidates.map((candidate, index) => {
     const health = healthState(candidate.healthState);
-    const hardRejectionCodes = [...candidate.hardRejectionCodes];
+    // Keep the DTO boundary tolerant of snapshots persisted before the
+    // explicit planner status fields were introduced. New backend payloads
+    // always provide these fields; this is only a one-way read compatibility
+    // adapter for old fixtures/cache entries.
+    const legacyCandidate = candidate as RoutingWorkspaceCandidate & {
+      scoreStatus?: RoutingScoreStatus;
+      plannerExclusionCodes?: string[];
+      previewEligible?: boolean;
+      previewRejectReasons?: string[];
+    };
+    const plannerExclusionCodes = [
+      ...(legacyCandidate.plannerExclusionCodes ?? legacyCandidate.previewRejectReasons ?? []),
+    ];
+    const scoreStatus =
+      legacyCandidate.scoreStatus ??
+      (candidate.score != null || legacyCandidate.previewEligible
+        ? "scored"
+        : plannerExclusionCodes.length > 0
+          ? "excluded"
+          : "unavailable");
     const runtime = runtimeByKey.get(candidate.stationKeyId);
     const matchingRuntime =
       runtime?.stationId === candidate.stationId &&
@@ -145,10 +173,15 @@ export function toRoutingWorkspaceView(
       lastFailureAt: null,
       cooldownUntil: matchingRuntime?.cooldownUntil ?? null,
       routingGroupScope: snapshot.routingGroupFilter,
-      routingGroupMatch: !hardRejectionCodes.includes("group_mismatch"),
-      previewEligible: hardRejectionCodes.length === 0,
-      previewRejectReasons: hardRejectionCodes,
-      facts: candidateFacts(candidate),
+      routingGroupMatch: !plannerExclusionCodes.includes("group_mismatch"),
+      scoreStatus,
+      plannerExclusionCodes,
+      assessmentSnapshotId: candidate.assessmentSnapshotId ?? null,
+      assessmentDurableRevision: candidate.assessmentDurableRevision ?? null,
+      assessmentRequestContextFingerprint: candidate.assessmentRequestContextFingerprint ?? null,
+      previewEligible: scoreStatus === "scored",
+      previewRejectReasons: plannerExclusionCodes,
+      facts: candidateFacts(candidate, plannerExclusionCodes),
       balanceValue: candidate.balanceValue,
       balanceCurrency: candidate.balanceCurrency,
     } satisfies RoutingCandidateView;
@@ -166,11 +199,13 @@ export function toRoutingWorkspaceView(
       routingGroupFilter: snapshot.routingGroupFilter,
       fallbackEnabled: true,
       previewKind: "baseline_eligibility",
+      plannerEvaluation: snapshot.plannerEvaluation ?? "unavailable",
+      plannerEvaluationCode: snapshot.plannerEvaluationCode ?? null,
     },
     summary: {
       candidateCount: candidates.length,
-      previewEligibleCandidateCount: candidates.filter((candidate) => candidate.previewEligible).length,
-      previewExcludedCandidateCount: candidates.filter((candidate) => !candidate.previewEligible).length,
+      previewEligibleCandidateCount: candidates.filter((candidate) => candidate.scoreStatus === "scored").length,
+      previewExcludedCandidateCount: candidates.filter((candidate) => candidate.scoreStatus === "excluded").length,
       cooldownCandidateCount: candidates.filter((candidate) => candidate.healthState === "cooldown").length,
       lastDecisionAt: latestDecision?.decidedAt ?? null,
     },

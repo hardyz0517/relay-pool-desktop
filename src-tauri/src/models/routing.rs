@@ -1,5 +1,4 @@
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -310,12 +309,39 @@ pub struct RuntimeRoutingBalance {
 
 impl RuntimeRoutingBalance {
     pub fn is_depleted(&self) -> bool {
-        self.value
-            .is_some_and(|value| value.is_finite() && value <= 0.0)
-            || matches!(
-                self.status.trim().to_ascii_lowercase().as_str(),
-                "low" | "depleted" | "exhausted" | "empty"
+        balance_is_depleted(self.value, Some(self.status.as_str()))
+    }
+
+    pub(crate) fn has_explicit_status(&self) -> bool {
+        matches!(
+            self.status.trim().to_ascii_lowercase().as_str(),
+            "normal"
+                | "available"
+                | "usable"
+                | "low"
+                | "warning"
+                | "depleted"
+                | "exhausted"
+                | "empty"
+        )
+    }
+}
+
+/// Returns whether a balance is exhausted for routing admission.
+///
+/// `low`/`warning` are advisory states: a positive balance remains routeable.
+/// A finite numeric balance is the freshest spendability fact; a conflicting
+/// textual status is treated as stale metadata. Explicit exhausted states are
+/// only used when the provider did not return a numeric balance.
+pub(crate) fn balance_is_depleted(value: Option<f64>, status: Option<&str>) -> bool {
+    match value.filter(|value| value.is_finite()) {
+        Some(value) => value <= 0.0,
+        None => status.is_some_and(|status| {
+            matches!(
+                status.trim().to_ascii_lowercase().as_str(),
+                "depleted" | "exhausted" | "empty"
             )
+        }),
     }
 }
 
@@ -500,5 +526,33 @@ mod automatic_scheduler_contract_tests {
         };
 
         assert!(balance.is_depleted());
+    }
+
+    #[test]
+    fn positive_runtime_balance_with_low_status_remains_routeable() {
+        let balance = RuntimeRoutingBalance {
+            scope: "station".to_string(),
+            value: Some(4.71),
+            currency: "USD".to_string(),
+            low_balance_threshold: Some(5.0),
+            status: "low".to_string(),
+            collected_at: None,
+        };
+
+        assert!(!balance.is_depleted());
+    }
+
+    #[test]
+    fn positive_balance_wins_over_stale_depleted_status() {
+        assert!(!balance_is_depleted(Some(4.71), Some("depleted")));
+        assert!(!balance_is_depleted(Some(4.71), Some("EXHAUSTED")));
+        assert!(!balance_is_depleted(Some(4.71), Some("empty")));
+    }
+
+    #[test]
+    fn explicit_depleted_status_is_used_when_value_is_missing() {
+        assert!(balance_is_depleted(None, Some("depleted")));
+        assert!(balance_is_depleted(None, Some("EXHAUSTED")));
+        assert!(balance_is_depleted(None, Some("empty")));
     }
 }

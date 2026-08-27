@@ -53,16 +53,15 @@ export function LocalRoutingStatusCandidateRow({
     candidate.cooldownUntil == null ? null : toTimestampMillis(candidate.cooldownUntil);
   const cooldown = buildCooldownDisplay(candidate.healthState, cooldownUntilMs, nowMs);
   const displayFacts = buildCandidateDisplayFacts(candidate);
-  const participationTone = !candidate.schedulable
+  const scoreStatus = candidate.scoreStatus;
+  const participationTone = !candidate.schedulable || scoreStatus === "unavailable"
     ? "disabled"
-    : candidate.previewEligible
+    : scoreStatus === "scored"
       ? "healthy"
       : "warning";
   const participationLabel = !candidate.schedulable
     ? "已暂停路由"
-    : candidate.previewEligible
-      ? "可参与"
-      : "不参与";
+    : scoreStatusLabel(scoreStatus);
   const [scoreDialogOpen, setScoreDialogOpen] = useState(false);
 
   return (
@@ -102,7 +101,7 @@ export function LocalRoutingStatusCandidateRow({
       </div>
       <MetricCell label="参与状态">
         <StatusBadge tone={participationTone}>{participationLabel}</StatusBadge>
-        {!candidate.previewEligible && displayFacts.rejectReasonLabel ? (
+        {scoreStatus !== "scored" && displayFacts.rejectReasonLabel ? (
           <div className="mt-1 text-xs text-warning-foreground">
             {displayFacts.rejectReasonLabel}
           </div>
@@ -117,11 +116,14 @@ export function LocalRoutingStatusCandidateRow({
           )}
           aria-label={`查看${candidate.keyName}的评分计算`}
           title="查看评分计算"
+          disabled={scoreStatus !== "scored"}
           onPointerDown={(event) => event.stopPropagation()}
           onPointerUp={(event) => event.stopPropagation()}
-          onClick={() => setScoreDialogOpen(true)}
+          onClick={() => {
+            if (scoreStatus === "scored") setScoreDialogOpen(true);
+          }}
         >
-          {formatCandidateScore(candidate.score)}
+          {formatCandidateScore(candidate.score, scoreStatus)}
         </button>
       </MetricCell>
       <MetricCell label="有效倍率" value={displayFacts.multiplierLabel} detail={displayFacts.multiplierDetail} />
@@ -215,7 +217,21 @@ function ScoreDetailsDialog({
   );
 }
 
-function formatCandidateScore(score: number | null) {
+function scoreStatusLabel(status: LocalRoutingCandidate["scoreStatus"]) {
+  switch (status) {
+    case "scored": return "可参与";
+    case "candidate_limit": return "候选上限外";
+    case "probe_discovery": return "仅恢复探测";
+    case "unavailable": return "评分暂不可用";
+    default: return "未进入评分";
+  }
+}
+
+function formatCandidateScore(
+  score: number | null,
+  status: LocalRoutingCandidate["scoreStatus"],
+) {
+  if (status !== "scored") return scoreStatusLabel(status);
   return score == null ? "—" : `${Math.round(score / 100)} 分`;
 }
 
@@ -264,7 +280,7 @@ function ScoreBreakdown({
     <div className="grid gap-4 p-5 text-sm">
       <section className="border-b border-border pb-4" aria-labelledby="score-summary-title">
         <div id="score-summary-title" className="text-xs font-medium text-muted-foreground">最终评分</div>
-        <div className="mt-1 text-2xl font-semibold tabular-nums text-info-foreground">{formatCandidateScore(details.total)}</div>
+        <div className="mt-1 text-2xl font-semibold tabular-nums text-info-foreground">{Math.round(details.total / 100)} 分</div>
         <div className="mt-2 text-xs leading-5 text-muted-foreground">
           主要贡献：{factors.map(({ label, factor }) => `${label} ${formatContribution(factor.contribution)}`).join(" · ")}
         </div>

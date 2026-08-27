@@ -1,5 +1,7 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct OperationalFactReadOptions {
+    /// Maximum number of executable (credentialed) routing candidates. The
+    /// source query applies this bound after excluding credentialless keys.
     candidate_limit: usize,
     requested_model: Option<String>,
     include_model_catalog: bool,
@@ -71,10 +73,14 @@ pub(crate) struct RawOperationalCandidateRow {
     pub(crate) key_record_revision: i64,
     pub(crate) station_record_revision: i64,
     pub(crate) account_record_revision: i64,
+    pub(crate) schedulable: bool,
     pub(crate) priority: i64,
     pub(crate) backup_only: bool,
     pub(crate) group_binding_id: Option<String>,
     pub(crate) group_record_revision: Option<i64>,
+    pub(crate) group_binding_status: Option<String>,
+    pub(crate) station_native_multiplier: Option<f64>,
+    pub(crate) credit_per_cny: Option<f64>,
     pub(crate) group_id_hash: Option<String>,
     pub(crate) group_category: Option<String>,
     pub(crate) supports_chat_completions: bool,

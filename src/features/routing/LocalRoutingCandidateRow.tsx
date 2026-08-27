@@ -73,15 +73,18 @@ export function LocalRoutingCandidateRow({
   const cooldown = buildCooldownDisplay(candidate.healthState, cooldownUntilMs, Date.now());
   const health = buildCandidateHealthDisplay(candidate.healthState);
   const displayFacts = buildCandidateDisplayFacts(candidate);
+  const scoreStatus = candidate.scoreStatus;
   const participationTone = !candidate.schedulable
     ? "disabled"
-    : candidate.previewEligible
+    : scoreStatus === "scored"
       ? "healthy"
       : "warning";
   const participationLabel = !candidate.schedulable
     ? "已暂停路由"
-    : candidate.previewEligible
+    : scoreStatus === "scored"
       ? "可参与"
+      : scoreStatus === "probe_discovery"
+        ? "恢复探测"
       : "不参与";
 
   return (
@@ -129,7 +132,7 @@ export function LocalRoutingCandidateRow({
           <StatusBadge tone={participationTone}>{participationLabel}</StatusBadge>
           {!candidate.enabled ? <StatusBadge tone="disabled">停用</StatusBadge> : null}
         </div>
-        {!candidate.previewEligible && displayFacts.rejectReasonLabel ? (
+        {scoreStatus !== "scored" && displayFacts.rejectReasonLabel ? (
           <div className="mt-1 text-xs text-warning-foreground">
             {displayFacts.rejectReasonLabel}
           </div>

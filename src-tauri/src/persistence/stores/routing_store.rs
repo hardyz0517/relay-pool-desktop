@@ -1029,12 +1029,37 @@ fn newest_balance(
     station: Option<&RankedRuntimeBalance>,
 ) -> Option<RuntimeRoutingBalance> {
     match (key, station) {
+        // A finite positive amount is the strongest spendability fact. This
+        // prevents stale textual depleted/exhausted metadata from masking a
+        // usable balance at either scope.
+        (Some(key), Some(_station)) if balance_has_positive_value(&key.balance) => {
+            Some(key.balance)
+        }
+        (Some(_), Some(station)) if balance_has_positive_value(&station.balance) => {
+            Some(station.balance.clone())
+        }
+        // When neither scope has a positive amount, key-scoped status remains
+        // the narrower fact and therefore wins over station-level status.
+        (Some(key), _) if balance_is_usable(&key.balance) => Some(key.balance),
+        (Some(_), Some(station)) if balance_is_usable(&station.balance) => {
+            Some(station.balance.clone())
+        }
         (Some(key), Some(station)) if balance_rank_is_at_least(&key, station) => Some(key.balance),
         (Some(_), Some(station)) => Some(station.balance.clone()),
         (Some(key), None) => Some(key.balance),
         (None, Some(station)) => Some(station.balance.clone()),
         (None, None) => None,
     }
+}
+
+fn balance_is_usable(balance: &RuntimeRoutingBalance) -> bool {
+    balance_has_positive_value(balance) || balance.has_explicit_status()
+}
+
+fn balance_has_positive_value(balance: &RuntimeRoutingBalance) -> bool {
+    balance
+        .value
+        .is_some_and(|value| value.is_finite() && value > 0.0)
 }
 
 fn balance_rank_is_at_least(left: &RankedRuntimeBalance, right: &RankedRuntimeBalance) -> bool {
@@ -1174,8 +1199,71 @@ mod tests {
     use sqlx::Connection;
 
     use super::{
-        row_to_operational_execution_target_ref, OPERATIONAL_EXECUTION_TARGET_REFS_QUERY_PREFIX,
+        newest_balance, row_to_operational_execution_target_ref, RankedRuntimeBalance,
+        OPERATIONAL_EXECUTION_TARGET_REFS_QUERY_PREFIX,
     };
+    use crate::models::routing::RuntimeRoutingBalance;
+
+    fn ranked_balance(value: Option<f64>, status: &str, updated_at: &str) -> RankedRuntimeBalance {
+        RankedRuntimeBalance {
+            balance: RuntimeRoutingBalance {
+                scope: "station".to_string(),
+                value,
+                currency: "USD".to_string(),
+                low_balance_threshold: Some(5.0),
+                status: status.to_string(),
+                collected_at: None,
+            },
+            updated_at: updated_at.to_string(),
+            created_at: updated_at.to_string(),
+            id: updated_at.to_string(),
+        }
+    }
+
+    #[test]
+    fn explicit_station_status_overrides_stale_key_balance() {
+        let key = ranked_balance(Some(0.0), "depleted", "3");
+        let station = ranked_balance(Some(3.61), "normal", "2");
+
+        let selected = newest_balance(Some(key), Some(&station)).expect("balance");
+
+        assert_eq!(selected.value, Some(3.61));
+        assert_eq!(selected.status, "normal");
+    }
+
+    #[test]
+    fn unknown_station_status_falls_back_to_explicit_key_fact() {
+        let key = ranked_balance(Some(2.5), "normal", "2");
+        let station = ranked_balance(Some(0.0), "unknown", "3");
+
+        let selected = newest_balance(Some(key), Some(&station)).expect("balance");
+
+        assert_eq!(selected.value, Some(2.5));
+        assert_eq!(selected.status, "normal");
+    }
+
+    #[test]
+    fn low_station_status_remains_selected_as_routeable_advisory() {
+        let key = ranked_balance(Some(0.0), "depleted", "3");
+        let station = ranked_balance(Some(4.71), "low", "2");
+
+        let selected = newest_balance(Some(key), Some(&station)).expect("balance");
+
+        assert_eq!(selected.value, Some(4.71));
+        assert_eq!(selected.status, "low");
+        assert!(!selected.is_depleted());
+    }
+
+    #[test]
+    fn positive_key_balance_wins_over_station_depleted_status() {
+        let key = ranked_balance(Some(2.5), "normal", "2");
+        let station = ranked_balance(Some(0.0), "depleted", "3");
+
+        let selected = newest_balance(Some(key), Some(&station)).expect("balance");
+
+        assert_eq!(selected.value, Some(2.5));
+        assert_eq!(selected.status, "normal");
+    }
 
     #[tokio::test]
     async fn operational_execution_target_ref_preserves_capacity_domain_from_join() {

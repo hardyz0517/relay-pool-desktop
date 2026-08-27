@@ -31,6 +31,7 @@ import {
 } from "@/lib/query/resourceQueries";
 import { alertingCurrentQueryOptions } from "@/lib/queries/alertingQueries";
 import { invalidateAlertingReadModels } from "@/lib/query/alertingQuerySynchronization";
+import { refreshRoutingQueries } from "@/lib/query/routingQuerySynchronization";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import type { CollectorSnapshot } from "@/lib/types/collector";
 import type { CollectorRun } from "@/lib/types/collectorRuns";
@@ -275,6 +276,7 @@ export function useStationsPageController({
         queryClient.invalidateQueries({ queryKey: queryKeys.balanceSnapshots }),
         queryClient.invalidateQueries({ queryKey: queryKeys.stationAssets }),
         invalidateAlertingReadModels(queryClient),
+        refreshRoutingQueries(queryClient),
       ]);
     },
     [queryClient],

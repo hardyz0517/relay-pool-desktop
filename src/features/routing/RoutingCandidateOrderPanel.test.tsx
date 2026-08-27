@@ -96,7 +96,7 @@ function keyPoolItems(): KeyPoolItem[] {
 function workspace(): RoutingWorkspaceView {
   return {
     settings: { routingGroupFilter: "all_groups" },
-    candidates: ["key-1", "key-2", "key-3"].map((stationKeyId) => ({ stationKeyId, keyName: stationKeyId, stationId: "station-1", stationName: "Station", endpoint: "chat_completions", priority: 0, enabled: true, schedulable: true, healthState: "ready", score: { "key-1": 9_600, "key-3": 8_200 }[stationKeyId] ?? null, scoreDetails: null, currentConcurrency: null, lastSuccessAt: null, lastFailureAt: null, cooldownUntil: null, routingGroupScope: "all_groups", routingGroupMatch: true, previewEligible: true, previewRejectReasons: [], facts: [] })) as RoutingWorkspaceView["candidates"],
+    candidates: ["key-1", "key-2", "key-3"].map((stationKeyId) => ({ stationKeyId, keyName: stationKeyId, stationId: "station-1", stationName: "Station", endpoint: "chat_completions", priority: 0, enabled: true, schedulable: true, healthState: "ready", score: { "key-1": 9_600, "key-3": 8_200 }[stationKeyId] ?? null, scoreDetails: null, currentConcurrency: null, lastSuccessAt: null, lastFailureAt: null, cooldownUntil: null, routingGroupScope: "all_groups", routingGroupMatch: true, scoreStatus: "scored", plannerExclusionCodes: [], assessmentSnapshotId: null, assessmentDurableRevision: null, assessmentRequestContextFingerprint: null, previewEligible: true, previewRejectReasons: [], facts: [] })) as RoutingWorkspaceView["candidates"],
     summary: { candidateCount: 3, previewEligibleCandidateCount: 3, previewExcludedCandidateCount: 0, cooldownCandidateCount: 0, lastDecisionAt: null },
   } as RoutingWorkspaceView;
 }

@@ -208,6 +208,12 @@ impl RouteRequestFacts {
     pub(crate) fn mapping_endpoint(&self) -> Option<EndpointKind> {
         self.mapping_endpoint
     }
+
+    #[cfg(test)]
+    pub(crate) fn with_max_rate_multiplier_for_test(mut self, value: Option<f64>) -> Self {
+        self.max_rate_multiplier = value;
+        self
+    }
 }
 
 pub(crate) struct RouteRequestClassifier;

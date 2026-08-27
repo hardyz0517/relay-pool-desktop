@@ -7,6 +7,19 @@ use sha2::{Digest, Sha256};
 /// ingress-owned absolute deadline instead.
 const NON_PROXY_PLANNING_DEADLINE: Duration = Duration::from_secs(5);
 
+fn planner_error_code_for(error: &ApplicationError) -> String {
+    match error {
+        ApplicationError::DeadlineExceeded => "deadline".to_string(),
+        ApplicationError::ConstraintViolation => "planner_constraint_violation".to_string(),
+        ApplicationError::StaleRevision => "planner_stale_revision".to_string(),
+        ApplicationError::Unavailable => "planner_fact_unavailable".to_string(),
+        ApplicationError::NotFound => "planner_policy_missing".to_string(),
+        ApplicationError::IncompatibleSchema => "planner_schema_incompatible".to_string(),
+        ApplicationError::Internal => "planner_internal".to_string(),
+        _ => "planner_unavailable".to_string(),
+    }
+}
+
 use crate::{
     application::routing_engine::{
         algorithm_profile::DispatchAlgorithmProfile,
@@ -29,7 +42,7 @@ use crate::{
                 route_projection_from_runtime_candidate_with_pricing,
                 route_request_facts_for_read_model, validated_route_settings,
             },
-            planning_snapshot::PlanningSnapshotBuilder,
+            planning_snapshot::{PlanningBuildResult, PlanningSnapshotBuilder},
             pricing_projector::{
                 pricing_context_from_resolution, request_cost_comparison_context, PricingRouteKind,
             },
@@ -50,8 +63,8 @@ use crate::{
                 RoutingRuntimeActivity, RoutingRuntimeCandidateFact, RoutingRuntimeOverlay,
             },
             routing_workspace::{
-                workspace_snapshot_from_canonical_candidates, RoutingWorkspaceSnapshot,
-                RoutingWorkspaceSnapshotInput,
+                workspace_snapshot_from_canonical_candidates, RoutingPlannerEvaluationStatus,
+                RoutingScoreStatus, RoutingWorkspaceSnapshot, RoutingWorkspaceSnapshotInput,
             },
         },
         routing_policy::RoutingPolicyAggregate,
@@ -397,7 +410,43 @@ impl RoutingService {
         health_probe: Option<crate::application::health_protection::HealthProtectionProbe>,
         health_probe_mode: crate::application::health_protection::HealthProbeAdmissionMode,
     ) -> Result<Option<PlanningSnapshot>, ApplicationError> {
+        Ok(self
+            .load_intelligent_planning_build_result_within_deadline(
+                request,
+                runtime,
+                health_probe,
+                health_probe_mode,
+            )
+            .await?
+            .map(|result| result.snapshot))
+    }
+
+    async fn load_intelligent_planning_build_result_within_deadline(
+        &self,
+        request: &crate::application::routing_engine::request::RouteRequestFacts,
+        runtime: RuntimeOverlaySnapshot,
+        health_probe: Option<crate::application::health_protection::HealthProtectionProbe>,
+        health_probe_mode: crate::application::health_protection::HealthProbeAdmissionMode,
+    ) -> Result<Option<PlanningBuildResult>, ApplicationError> {
         let mut read = self.runtime.begin_read().await?;
+        self.load_intelligent_planning_build_result_in_read(
+            &mut read,
+            request,
+            runtime,
+            health_probe,
+            health_probe_mode,
+        )
+        .await
+    }
+
+    async fn load_intelligent_planning_build_result_in_read(
+        &self,
+        read: &mut crate::persistence::ReadSession,
+        request: &crate::application::routing_engine::request::RouteRequestFacts,
+        runtime: RuntimeOverlaySnapshot,
+        health_probe: Option<crate::application::health_protection::HealthProtectionProbe>,
+        health_probe_mode: crate::application::health_protection::HealthProbeAdmissionMode,
+    ) -> Result<Option<PlanningBuildResult>, ApplicationError> {
         let stored = RoutingPolicyStore
             .load(read.connection())
             .await
@@ -430,18 +479,15 @@ impl RoutingService {
             .admission_config_for_policy(compiled.protection_enabled);
         let error_rate_statuses = if error_rate_admission.enabled {
             crate::persistence::stores::routing_health_verdict_store::RoutingHealthVerdictStore
-                .load_health_protection_statuses(
-                    read.connection(),
-                    chrono::Utc::now().timestamp_millis().max(0),
-                )
+                .load_health_protection_statuses(read.connection(), request.admitted_at_ms().max(0))
                 .await
                 .map_err(ApplicationError::from)?
         } else {
             Vec::new()
         };
-        let mut snapshot = builder
-            .build(
-                &mut read,
+        let mut result = builder
+            .build_with_assessments(
+                read,
                 &options,
                 policy,
                 routing_policy_revision,
@@ -464,21 +510,22 @@ impl RoutingService {
                 ApplicationError::ConstraintViolation
             })?;
         if let Some(model) = request.requested_model() {
-            let ids = snapshot
+            let ids = result
+                .snapshot
                 .candidates
                 .iter()
                 .map(|candidate| candidate.station_key_id.clone())
                 .collect::<Vec<_>>();
             let pricing = PricingStore
                 .resolve_station_key_pricing_many(
-                    &mut read,
+                    read,
                     &ids,
                     model,
                     &request.admitted_at_ms().to_string(),
                 )
                 .await
                 .map_err(ApplicationError::from)?;
-            for candidate in &mut snapshot.candidates {
+            for candidate in &mut result.snapshot.candidates {
                 if let Some(resolution) = pricing.get(&candidate.station_key_id) {
                     let resolved = pricing_context_from_resolution(
                         &candidate.station_key_id,
@@ -515,7 +562,7 @@ impl RoutingService {
         // the typed config directly; this rejects a malformed status/version
         // before any candidate can reach proxy admission.
         let _ = compiled;
-        Ok(Some(snapshot))
+        Ok(Some(result))
     }
 
     pub(crate) async fn load_monitoring_target_snapshots(
@@ -669,7 +716,8 @@ impl RoutingService {
         // read in this operation; each helper must not restart it.
         let planning_context = PlanningRequestContext::from_now(NON_PROXY_PLANNING_DEADLINE);
         let now_ms = chrono::Utc::now().timestamp_millis();
-        let (settings, policy_config, request, candidates) = {
+        let mut planner_error_code: Option<String> = None;
+        let (settings, policy_config, request, candidates, planning_result, quality_summaries) = {
             let mut read = self.runtime.begin_read().await?;
             let settings = self.store.load_execution_settings(&mut read).await?;
             let stored_policy = RoutingPolicyStore
@@ -687,7 +735,61 @@ impl RoutingService {
                 .into_iter()
                 .map(|row| (row.candidate, row.pricing_context))
                 .collect::<Vec<_>>();
-            (settings, policy_config, request, candidates)
+            // Keep the candidate source, planner assessment, and quality
+            // summary inside the same caller-owned durable read. A later
+            // write cannot produce a mixed-version workspace response.
+            let planning_result = match tokio::time::timeout_at(
+                tokio::time::Instant::from_std(planning_context.deadline()),
+                self.load_intelligent_planning_build_result_in_read(
+                    &mut read,
+                    &request,
+                    RuntimeOverlaySnapshot {
+                        runtime_instance_id: "routing-workspace".to_string(),
+                        runtime_revision: 1,
+                        candidate_set_revision: 1,
+                        in_flight: 0,
+                        max_concurrency: 1,
+                        affinity_station_key_id: None,
+                    },
+                    None,
+                    crate::application::health_protection::HealthProbeAdmissionMode::Normal,
+                ),
+            )
+            .await
+            {
+                Ok(Ok(result)) => result,
+                Ok(Err(ApplicationError::DeadlineExceeded)) | Err(_) => {
+                    return Err(ApplicationError::DeadlineExceeded)
+                }
+                Ok(Err(error)) => {
+                    planner_error_code = Some(planner_error_code_for(&error));
+                    None
+                }
+            };
+            let scopes = candidates
+                .iter()
+                .map(|(candidate, _)| format!("station_key:{}", candidate.station_key_id))
+                .collect::<Vec<_>>();
+            let quality_summaries = RoutingQualityStore
+                .load_summary_json(read.connection(), &scopes)
+                .await?
+                .into_iter()
+                .filter_map(|(scope, value)| {
+                    serde_json::from_value::<
+                        crate::application::quality_projection::QualitySummary,
+                    >(value)
+                    .ok()
+                    .map(|summary| (scope, summary))
+                })
+                .collect::<BTreeMap<_, _>>();
+            (
+                settings,
+                policy_config,
+                request,
+                candidates,
+                planning_result,
+                quality_summaries,
+            )
         };
         // Use the immutable planner snapshot as the score source so this
         // read model stays aligned with the actual routing policy semantics.
@@ -707,35 +809,84 @@ impl RoutingService {
                 Some((candidate.station_key_id.clone(), multiplier))
             })
             .collect::<BTreeMap<_, _>>();
-        let planning_snapshot = match self
-            .load_intelligent_planning_snapshot(
-                &request,
-                RuntimeOverlaySnapshot {
-                    runtime_instance_id: "routing-workspace".to_string(),
-                    runtime_revision: 1,
-                    candidate_set_revision: 1,
-                    in_flight: 0,
-                    max_concurrency: 1,
-                    affinity_station_key_id: None,
-                },
-                planning_context,
-            )
-            .await
-        {
-            Ok(snapshot) => snapshot,
-            // A local workspace read may tolerate an unavailable planner
-            // snapshot, but it must not hide the caller-owned deadline.
-            Err(ApplicationError::DeadlineExceeded) => {
-                return Err(ApplicationError::DeadlineExceeded)
-            }
-            Err(_) => None,
-        };
-        let score_by_key = planning_snapshot
-            .map(|snapshot| {
-                snapshot
+        let mut score_statuses = BTreeMap::new();
+        let mut planner_exclusion_codes = BTreeMap::new();
+        let mut assessment_provenance = BTreeMap::new();
+        let (score_by_key, planner_evaluation, planner_evaluation_code) = planning_result
+            .map(|result| {
+                // The planner assesses every enabled key, including keys
+                // without a credential. The legacy Workspace source omits
+                // those non-executable rows, so integrity is directional:
+                // every displayed row must have exactly one compatible
+                // assessment; undisplayed assessments are harmless.
+                let assessment_integrity_ok = candidates.iter().all(|(candidate, _)| {
+                    result
+                        .assessments
+                        .iter()
+                        .filter(|assessment| {
+                            assessment.station_key_id == candidate.station_key_id
+                                && assessment.endpoint_revision
+                                    == candidate.station_endpoint_revision
+                                && assessment.snapshot_id == result.snapshot.snapshot_id
+                                && assessment.durable_revision == result.snapshot.durable_revision
+                        })
+                        .count()
+                        == 1
+                }) && result.assessments.iter().all(|assessment| {
+                    assessment.snapshot_id == result.snapshot.snapshot_id
+                        && assessment.durable_revision == result.snapshot.durable_revision
+                });
+                if !assessment_integrity_ok {
+                    return (
+                        BTreeMap::new(),
+                        RoutingPlannerEvaluationStatus::Unavailable,
+                        Some("planner_assessment_source_mismatch".to_string()),
+                    );
+                }
+                for assessment in &result.assessments {
+                    let status = match (assessment.eligibility, assessment.candidate_set) {
+                        (
+                            crate::application::operational_facts::planning_snapshot::PlanningCandidateEligibility::ProbeDiscoveryOnly,
+                            _,
+                        ) => RoutingScoreStatus::ProbeDiscovery,
+                        (
+                            crate::application::operational_facts::planning_snapshot::PlanningCandidateEligibility::AdmittedForScoring,
+                            crate::application::operational_facts::planning_snapshot::PlanningCandidateSet::CappedByCandidateLimit,
+                        ) => RoutingScoreStatus::CandidateLimit,
+                        (
+                            crate::application::operational_facts::planning_snapshot::PlanningCandidateEligibility::AdmittedForScoring,
+                            crate::application::operational_facts::planning_snapshot::PlanningCandidateSet::WithinLimit,
+                        ) => RoutingScoreStatus::Scored,
+                        _ => RoutingScoreStatus::Excluded,
+                    };
+                    score_statuses.insert(assessment.station_key_id.clone(), status);
+                    if let Some(reason) = &assessment.primary_reason {
+                        planner_exclusion_codes.insert(
+                            assessment.station_key_id.clone(),
+                            std::iter::once(reason.clone())
+                                .chain(assessment.secondary_reason_codes.iter().cloned())
+                                .collect(),
+                        );
+                    }
+                    assessment_provenance.insert(
+                        assessment.station_key_id.clone(),
+                        (
+                            assessment.snapshot_id.clone(),
+                            assessment.durable_revision,
+                            assessment.request_context_fingerprint.clone(),
+                        ),
+                    );
+                }
+                let score_by_key = result
+                    .snapshot
                     .candidates
                     .iter()
                     .filter_map(|candidate| {
+                        if score_statuses.get(&candidate.station_key_id)
+                            != Some(&RoutingScoreStatus::Scored)
+                        {
+                            return None;
+                        }
                         let multiplier_cost_basis = multiplier_by_key
                             .get(&candidate.station_key_id)
                             .copied()
@@ -751,32 +902,35 @@ impl RoutingService {
                         )
                         .map(|breakdown| (candidate.station_key_id.clone(), breakdown.into()))
                     })
-                    .collect::<BTreeMap<_, _>>()
+                    .collect::<BTreeMap<_, _>>();
+                (
+                    score_by_key,
+                    RoutingPlannerEvaluationStatus::Available,
+                    None,
+                )
             })
-            .unwrap_or_default();
-        let quality_summaries = {
-            let scopes = candidates
-                .iter()
-                .map(|(candidate, _)| format!("station_key:{}", candidate.station_key_id))
-                .collect::<Vec<_>>();
-            let mut read = self.runtime.begin_read().await?;
-            RoutingQualityStore
-                .load_summary_json(read.connection(), &scopes)
-                .await?
-                .into_iter()
-                .filter_map(|(scope, value)| {
-                    serde_json::from_value::<crate::application::quality_projection::QualitySummary>(value)
-                        .ok()
-                        .map(|summary| (scope, summary))
-                })
-                .collect::<BTreeMap<_, _>>()
-        };
+            .unwrap_or_else(|| {
+                (
+                    BTreeMap::new(),
+                    RoutingPlannerEvaluationStatus::Unavailable,
+                    Some(
+                        planner_error_code
+                            .take()
+                            .unwrap_or_else(|| "planner_build_unavailable".to_string()),
+                    ),
+                )
+            });
         Ok(workspace_snapshot_from_canonical_candidates(
             policy_config,
             settings.max_rate_multiplier,
             settings.routing_group_scope,
             candidates,
             &score_by_key,
+            &score_statuses,
+            &planner_exclusion_codes,
+            &assessment_provenance,
+            planner_evaluation,
+            planner_evaluation_code,
             &quality_summaries,
             &request,
             input,

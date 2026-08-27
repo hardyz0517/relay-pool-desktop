@@ -141,22 +141,31 @@ impl StationCatalogStore {
         .execute(write.connection())
         .await?;
 
+        // Pricing is an independent input to routing economics. Keep an
+        // explicit scope so changing the exchange rate invalidates durable
+        // assessments even when the endpoint revision is unchanged.
+        let now_ms = station.now.parse::<i64>().map_err(|_| {
+            PersistenceError::InvariantViolation("station timestamp is not numeric".into())
+        })?;
         sqlx::query(
             "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance) VALUES (?1, 1, ?2, 'transactional_write') ON CONFLICT(scope) DO NOTHING",
         )
         .bind(format!("station:{}", station.id))
-        .bind(station.now.parse::<i64>().map_err(|_| {
-            PersistenceError::InvariantViolation("station timestamp is not numeric".into())
-        })?)
+        .bind(now_ms)
         .execute(write.connection())
         .await?;
         sqlx::query(
             "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance) VALUES (?1, 1, ?2, 'transactional_write') ON CONFLICT(scope) DO NOTHING",
         )
         .bind(format!("station_account:{}", station.id))
-        .bind(station.now.parse::<i64>().map_err(|_| {
-            PersistenceError::InvariantViolation("station timestamp is not numeric".into())
-        })?)
+        .bind(now_ms)
+        .execute(write.connection())
+        .await?;
+        sqlx::query(
+            "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance) VALUES (?1, 1, ?2, 'transactional_write') ON CONFLICT(scope) DO NOTHING",
+        )
+        .bind(format!("station_pricing:{}", station.id))
+        .bind(now_ms)
         .execute(write.connection())
         .await?;
 
@@ -226,7 +235,8 @@ async fn update_station(
 ) -> Result<Station, PersistenceError> {
     let existing = sqlx::query(
         r#"
-        SELECT api_key, api_key_secret_id, station_type, website_url, api_base_url, endpoint_revision
+        SELECT api_key, api_key_secret_id, station_type, website_url, api_base_url,
+               endpoint_revision, credit_per_cny
         FROM stations
         WHERE id = ?1
         "#,
@@ -243,6 +253,7 @@ async fn update_station(
     let existing_api_base_url: String = existing.get("api_base_url");
     let existing_station_type: String = existing.get("station_type");
     let existing_endpoint_revision: i64 = existing.get("endpoint_revision");
+    let existing_credit_per_cny: f64 = existing.get("credit_per_cny");
 
     let new_api_key = change
         .input
@@ -324,6 +335,22 @@ async fn update_station(
     .execute(&mut *connection)
     .await?;
 
+    // Fence every station mutation, and separately fence pricing mutations.
+    // This keeps the exchange-rate lifecycle independent from endpoint
+    // revisions while preserving a monotonic station aggregate revision.
+    let now_ms = change.now.parse::<i64>().map_err(|_| {
+        PersistenceError::InvariantViolation("station timestamp is not numeric".into())
+    })?;
+    advance_station_revision(connection, &change.input.id, now_ms).await?;
+    if (change.input.credit_per_cny - existing_credit_per_cny).abs() > f64::EPSILON {
+        advance_scoped_revision(
+            connection,
+            &format!("station_pricing:{}", change.input.id),
+            now_ms,
+        )
+        .await?;
+    }
+
     if website_origin_changed {
         clear_station_origin_bound_login_material(&mut *connection, &change.input.id, &change.now)
             .await?;
@@ -333,6 +360,34 @@ async fn update_station(
     }
 
     station_by_id(&mut *connection, &change.input.id).await
+}
+
+async fn advance_station_revision(
+    connection: &mut SqliteConnection,
+    station_id: &str,
+    now_ms: i64,
+) -> Result<(), PersistenceError> {
+    advance_scoped_revision(connection, &format!("station:{station_id}"), now_ms).await
+}
+
+async fn advance_scoped_revision(
+    connection: &mut SqliteConnection,
+    scope: &str,
+    now_ms: i64,
+) -> Result<(), PersistenceError> {
+    sqlx::query(
+        "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance)
+         VALUES (?1, 1, ?2, 'transactional_write')
+         ON CONFLICT(scope) DO UPDATE SET
+             revision = domain_revisions.revision + 1,
+             updated_at_ms = excluded.updated_at_ms,
+             provenance = 'transactional_write'",
+    )
+    .bind(scope)
+    .bind(now_ms)
+    .execute(connection)
+    .await?;
+    Ok(())
 }
 
 async fn clear_station_endpoint_health_state(
@@ -581,4 +636,41 @@ fn bool_to_i64(value: bool) -> i64 {
 
 fn i64_to_bool(value: i64) -> bool {
     value != 0
+}
+
+#[cfg(test)]
+mod tests {
+    use sqlx::{Connection, Executor, Row, SqliteConnection};
+
+    use super::advance_scoped_revision;
+    use crate::persistence::migrations::migrator;
+
+    #[tokio::test]
+    async fn pricing_revision_is_created_and_advanced_independently() {
+        let mut connection = SqliteConnection::connect("sqlite::memory:")
+            .await
+            .expect("open sqlite");
+        migrator()
+            .run(&mut connection)
+            .await
+            .expect("run migrations");
+
+        advance_scoped_revision(&mut connection, "station_pricing:station-a", 100)
+            .await
+            .expect("create pricing revision");
+        advance_scoped_revision(&mut connection, "station_pricing:station-a", 100)
+            .await
+            .expect("advance pricing revision");
+
+        let row = sqlx::query(
+            "SELECT revision, updated_at_ms, provenance
+             FROM domain_revisions WHERE scope = 'station_pricing:station-a'",
+        )
+        .fetch_one(&mut connection)
+        .await
+        .expect("load pricing revision");
+        assert_eq!(row.get::<i64, _>("revision"), 2);
+        assert_eq!(row.get::<i64, _>("updated_at_ms"), 100);
+        assert_eq!(row.get::<String, _>("provenance"), "transactional_write");
+    }
 }

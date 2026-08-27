@@ -47,9 +47,13 @@ impl OperationalFactStore {
                     WHEN TRIM(k.api_key) != '' OR k.api_key_secret_id IS NOT NULL THEN 1
                     ELSE 0
                 END AS credential_available,
+                COALESCE(k.schedulable, 1) AS schedulable,
                 k.priority AS priority,
                 COALESCE(c.only_use_as_backup, 0) AS backup_only,
                 k.group_binding_id AS group_binding_id,
+                group_binding.binding_status AS group_binding_status,
+                group_binding.effective_rate_multiplier AS station_native_multiplier,
+                s.credit_per_cny AS credit_per_cny,
                 COALESCE(k.group_id_hash, group_binding.group_id_hash) AS group_id_hash,
                 COALESCE(group_binding.group_category_override, group_binding.inferred_group_category) AS group_category,
                 COALESCE(c.supports_chat_completions, 1) AS supports_chat_completions,
@@ -80,10 +84,58 @@ impl OperationalFactStore {
             LEFT JOIN station_group_bindings group_binding ON group_binding.id = k.group_binding_id
             LEFT JOIN station_capacity_domains capacity_domain ON capacity_domain.station_id = s.id
             LEFT JOIN balance_snapshots b ON b.id = (
-                SELECT latest.id
-                FROM balance_snapshots latest
-                WHERE latest.station_key_id = k.id
-                ORDER BY latest.updated_at DESC, latest.created_at DESC, latest.id DESC
+                SELECT selected.id
+                FROM (
+                    SELECT latest.id, latest.value, latest.status,
+                           latest.updated_at, latest.created_at, 0 AS scope_rank
+                    FROM balance_snapshots latest
+                    WHERE latest.station_key_id IS NULL
+                      AND latest.station_id = k.station_id
+                      AND latest.scope = 'station'
+                      AND latest.id = (
+                          SELECT station_latest.id
+                          FROM balance_snapshots station_latest
+                          WHERE station_latest.station_key_id IS NULL
+                            AND station_latest.station_id = k.station_id
+                            AND station_latest.scope = 'station'
+                          ORDER BY station_latest.updated_at DESC,
+                                   station_latest.created_at DESC,
+                                   station_latest.id DESC
+                          LIMIT 1
+                      )
+                    UNION ALL
+                    SELECT latest.id, latest.value, latest.status,
+                           latest.updated_at, latest.created_at, 1 AS scope_rank
+                    FROM balance_snapshots latest
+                    WHERE latest.station_key_id = k.id
+                      AND latest.scope = 'station_key'
+                      AND latest.id = (
+                          SELECT key_latest.id
+                          FROM balance_snapshots key_latest
+                          WHERE key_latest.station_key_id = k.id
+                            AND key_latest.scope = 'station_key'
+                          ORDER BY key_latest.updated_at DESC,
+                                   key_latest.created_at DESC,
+                                   key_latest.id DESC
+                          LIMIT 1
+                      )
+                ) selected
+                WHERE (
+                          selected.scope_rank = 0
+                          AND selected.value > 0
+                      )
+                   OR (
+                          selected.scope_rank = 1
+                          AND selected.value IS NOT NULL
+                      )
+                   OR LOWER(TRIM(selected.status)) IN (
+                          'normal', 'available', 'usable', 'low', 'warning',
+                          'depleted', 'exhausted', 'empty'
+                      )
+                ORDER BY selected.scope_rank,
+                         selected.updated_at DESC,
+                         selected.created_at DESC,
+                         selected.id DESC
                 LIMIT 1
             )
             LEFT JOIN domain_revisions key_revision
@@ -96,6 +148,11 @@ impl OperationalFactStore {
                 ON group_revision.scope = 'station_group:' || k.group_binding_id
             WHERE k.enabled = 1
               AND s.enabled = 1
+              -- Credentialless keys are configuration/diagnostic rows, not
+              -- executable routing candidates. Filtering them before the
+              -- deterministic bound keeps the planner and workspace source
+              -- sets aligned and prevents them from starving usable keys.
+              AND (TRIM(k.api_key) != '' OR k.api_key_secret_id IS NOT NULL)
             ORDER BY COALESCE(k.routing_order, k.priority) ASC,
                      k.priority ASC,
                      k.created_at ASC,
@@ -175,10 +232,14 @@ impl OperationalFactStore {
                     endpoint_revision: row.get("endpoint_revision"),
                     api_base_url: row.get("api_base_url"),
                     credential_available: row.get::<i64, _>("credential_available") != 0,
+                    schedulable: row.get::<i64, _>("schedulable") != 0,
                     priority: row.get("priority"),
                     backup_only: row.get::<i64, _>("backup_only") != 0,
                     group_binding_id: row.get("group_binding_id"),
                     group_record_revision: row.get("group_record_revision"),
+                    group_binding_status: row.get("group_binding_status"),
+                    station_native_multiplier: row.get("station_native_multiplier"),
+                    credit_per_cny: row.get("credit_per_cny"),
                     group_id_hash: row.get("group_id_hash"),
                     group_category: row.get("group_category"),
                     supports_chat_completions: row.get::<i64, _>("supports_chat_completions") != 0,

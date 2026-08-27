@@ -66,7 +66,7 @@ export function RoutingStatusDiagnosticsPanel({
     snapshot?.candidates.filter((candidate) => {
       const overlay = overlayByKey.get(candidate.stationKeyId);
       const healthState = overlay?.healthState ?? candidate.healthState;
-      return ["ready", "available"].includes(healthState) && candidate.hardRejectionCodes.length === 0;
+      return ["ready", "available"].includes(healthState) && candidate.scoreStatus === "scored";
     }).length ?? 0;
   const domainGroups = useMemo(
     () => sortFailureDomainDiagnostics(protectionStatus?.failureDomains),
@@ -111,7 +111,10 @@ export function RoutingStatusDiagnosticsPanel({
       <SectionCard
         title="路由诊断"
         description="把候选、价格、实时并发、故障域和最近决策合在状态页里看。"
-        action={<StatusBadge tone={snapshot.readModelStatus === "available" ? "healthy" : "warning"}>{readModelStatusLabel(snapshot.readModelStatus)}</StatusBadge>}
+        action={<div className="flex flex-wrap items-center justify-end gap-2">
+          <StatusBadge tone={snapshot.readModelStatus === "available" ? "healthy" : "warning"}>{readModelStatusLabel(snapshot.readModelStatus)}</StatusBadge>
+          <StatusBadge tone={snapshot.plannerEvaluation === "available" ? "healthy" : "warning"}>{plannerEvaluationLabel(snapshot.plannerEvaluation)}</StatusBadge>
+        </div>}
         contentClassName="grid min-w-0 gap-3"
       >
         <div className="grid min-w-0 gap-2 text-sm sm:grid-cols-4">
@@ -243,7 +246,7 @@ function CandidateLine({
 }) {
   const healthState = overlay?.healthState ?? candidate.healthState;
   const inFlight = overlay?.inFlight ?? candidate.capacity.inFlight;
-  const blocked = candidate.hardRejectionCodes.length > 0;
+  const blocked = candidate.scoreStatus !== "scored";
 
   return (
     <div className={`grid min-w-0 gap-2 rounded-[var(--surface-radius)] border px-3 py-2 text-sm md:grid-cols-[minmax(0,1.2fr)_minmax(0,0.9fr)_auto] md:items-center ${highlighted ? "border-info-border bg-info-surface" : "border-border bg-surface"}`}>
@@ -260,7 +263,7 @@ function CandidateLine({
       </div>
       <div className="flex flex-wrap items-center gap-2 md:justify-end">
         <StatusBadge tone={blocked ? "warning" : ["ready", "available"].includes(healthState) ? "healthy" : healthState === "degraded" ? "warning" : "disabled"}>
-          {blocked ? "不可参与" : healthStateLabel(healthState)}
+          {blocked ? scoreStatusLabel(candidate.scoreStatus) : healthStateLabel(healthState)}
         </StatusBadge>
         <span className="text-xs text-muted-foreground">
           本地在途 {inFlight ?? 0}/{formatConcurrencyLimit(candidate.capacity.maxConcurrency)}
@@ -268,6 +271,20 @@ function CandidateLine({
       </div>
     </div>
   );
+}
+
+function plannerEvaluationLabel(status: RoutingWorkspaceSnapshot["plannerEvaluation"] | undefined) {
+  return status === "available" ? "基线评估可用" : "基线评估暂不可用";
+}
+
+function scoreStatusLabel(status: RoutingWorkspaceCandidate["scoreStatus"] | undefined) {
+  switch (status) {
+    case "scored": return "已评分";
+    case "candidate_limit": return "候选上限外";
+    case "probe_discovery": return "仅恢复探测";
+    case "unavailable": return "评分暂不可用";
+    default: return "未进入评分";
+  }
 }
 
 function ProtectionSummary({ status }: { status: RoutingProtectionStatus | null }) {

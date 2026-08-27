@@ -11,11 +11,15 @@ describe("routing workspace view", () => {
   it("keeps request eligibility separate from the administrative schedulable switch", () => {
     const excluded = candidate({
       schedulable: true,
+      scoreStatus: "excluded",
+      plannerExclusionCodes: ["group_mismatch"],
       hardRejectionCodes: ["group_mismatch"],
     });
     const paused = candidate({
       stationKeyId: "paused",
       schedulable: false,
+      scoreStatus: "excluded",
+      plannerExclusionCodes: ["candidate_unschedulable"],
       hardRejectionCodes: ["candidate_unschedulable"],
     });
 
@@ -49,6 +53,30 @@ describe("routing workspace view", () => {
 
     expect(current.candidates[0].currentConcurrency).toBe(3);
     expect(stale.candidates[0].currentConcurrency).toBeNull();
+  });
+
+  it("does not resurrect stale canonical balance rejection for an assessed score", () => {
+    const view = toRoutingWorkspaceView(
+      snapshot([
+        candidate({
+          score: 7100,
+          scoreDetails: null,
+          scoreStatus: "scored",
+          plannerExclusionCodes: [],
+          balanceStatus: "depleted",
+          balanceValue: 3.61,
+          hardRejectionCodes: ["balance_depleted"],
+        }),
+      ]),
+      proxyStatus(),
+    );
+
+    expect(view.candidates[0]).toMatchObject({
+      scoreStatus: "scored",
+      previewEligible: true,
+      previewRejectReasons: [],
+      balanceValue: 3.61,
+    });
   });
 });
 
@@ -85,6 +113,11 @@ function candidate(overrides: Partial<RoutingWorkspaceCandidate> = {}): RoutingW
     schedulable: true,
     healthState: "ready",
     score: null,
+    scoreStatus: "unavailable",
+    plannerExclusionCodes: [],
+    assessmentSnapshotId: null,
+    assessmentDurableRevision: null,
+    assessmentRequestContextFingerprint: null,
     scoreDetails: null,
     group: null,
     multiplier: {

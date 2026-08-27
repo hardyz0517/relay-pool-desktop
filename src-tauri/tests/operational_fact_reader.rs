@@ -125,6 +125,7 @@ async fn create_schema(pool: &SqlitePool) {
             name TEXT NOT NULL,
             api_base_url TEXT NOT NULL,
             endpoint_revision INTEGER NOT NULL,
+            credit_per_cny REAL NOT NULL DEFAULT 1.0,
             enabled INTEGER NOT NULL,
             updated_at TEXT NOT NULL
         );
@@ -136,6 +137,7 @@ async fn create_schema(pool: &SqlitePool) {
             enabled INTEGER NOT NULL,
             priority INTEGER NOT NULL,
             routing_order INTEGER,
+            schedulable INTEGER NOT NULL DEFAULT 1,
             group_binding_id TEXT,
             group_id_hash TEXT,
             created_at TEXT NOT NULL,
@@ -175,7 +177,9 @@ async fn create_schema(pool: &SqlitePool) {
             id TEXT PRIMARY KEY,
             group_id_hash TEXT,
             group_category_override TEXT,
-            inferred_group_category TEXT
+            inferred_group_category TEXT,
+            binding_status TEXT,
+            effective_rate_multiplier REAL
         );
         CREATE TABLE station_capacity_domains (
             station_id TEXT PRIMARY KEY,
@@ -315,6 +319,115 @@ async fn insert_candidate(pool: &SqlitePool, index: usize) {
     .execute(pool)
     .await
     .expect("insert key revision");
+}
+
+#[tokio::test]
+async fn planner_prefers_explicit_station_balance_over_stale_key_balance() {
+    let pool = test_pool().await;
+    insert_candidate(&pool, 1).await;
+
+    sqlx::query(
+        "INSERT INTO balance_snapshots
+         (id, station_id, station_key_id, scope, value, currency, status, created_at, updated_at)
+         VALUES ('key-depleted', 'station-1', 'key-1', 'station_key', 0, 'USD', 'depleted', '3', '3')",
+    )
+    .execute(&pool)
+    .await
+    .expect("key balance");
+    sqlx::query(
+        "INSERT INTO balance_snapshots
+         (id, station_id, station_key_id, scope, value, currency, status, created_at, updated_at)
+         VALUES ('station-available', 'station-1', NULL, 'station', 3.61, 'USD', 'normal', '2', '2')",
+    )
+    .execute(&pool)
+    .await
+    .expect("station balance");
+
+    let store = OperationalFactStore;
+    let mut read = TestReadSession::begin(&pool).await;
+    let rows = store
+        .load_raw(
+            &mut read,
+            &OperationalFactReadOptions::for_request_model("gpt-4.1"),
+        )
+        .await
+        .expect("raw facts");
+
+    assert_eq!(rows.candidates.len(), 1);
+    assert_eq!(rows.candidates[0].balance_status.as_deref(), Some("normal"));
+    assert_eq!(rows.candidates[0].balance_value, Some(3.61));
+}
+
+#[tokio::test]
+async fn planner_prefers_explicit_key_balance_when_station_status_is_unknown() {
+    let pool = test_pool().await;
+    insert_candidate(&pool, 1).await;
+
+    sqlx::query(
+        "INSERT INTO balance_snapshots
+         (id, station_id, station_key_id, scope, value, currency, status, created_at, updated_at)
+         VALUES ('key-available', 'station-1', 'key-1', 'station_key', 2.5, 'USD', 'normal', '2', '2')",
+    )
+    .execute(&pool)
+    .await
+    .expect("key balance");
+    sqlx::query(
+        "INSERT INTO balance_snapshots
+         (id, station_id, station_key_id, scope, value, currency, status, created_at, updated_at)
+         VALUES ('station-unknown', 'station-1', NULL, 'station', 0, 'USD', 'unknown', '3', '3')",
+    )
+    .execute(&pool)
+    .await
+    .expect("station balance");
+
+    let store = OperationalFactStore;
+    let mut read = TestReadSession::begin(&pool).await;
+    let rows = store
+        .load_raw(
+            &mut read,
+            &OperationalFactReadOptions::for_request_model("gpt-4.1"),
+        )
+        .await
+        .expect("raw facts");
+
+    assert_eq!(rows.candidates[0].balance_status.as_deref(), Some("normal"));
+    assert_eq!(rows.candidates[0].balance_value, Some(2.5));
+}
+
+#[tokio::test]
+async fn planner_uses_latest_station_balance_instead_of_historical_depleted_status() {
+    let pool = test_pool().await;
+    insert_candidate(&pool, 1).await;
+
+    sqlx::query(
+        "INSERT INTO balance_snapshots
+         (id, station_id, station_key_id, scope, value, currency, status, created_at, updated_at)
+         VALUES ('station-old-depleted', 'station-1', NULL, 'station', 0, 'USD', 'depleted', '1', '1')",
+    )
+    .execute(&pool)
+    .await
+    .expect("historical station balance");
+    sqlx::query(
+        "INSERT INTO balance_snapshots
+         (id, station_id, station_key_id, scope, value, currency, status, created_at, updated_at)
+         VALUES ('station-current', 'station-1', NULL, 'station', 4.71, 'USD', 'low', '2', '2')",
+    )
+    .execute(&pool)
+    .await
+    .expect("current station balance");
+
+    let store = OperationalFactStore;
+    let mut read = TestReadSession::begin(&pool).await;
+    let rows = store
+        .load_raw(
+            &mut read,
+            &OperationalFactReadOptions::for_request_model("gpt-4.1"),
+        )
+        .await
+        .expect("raw facts");
+
+    assert_eq!(rows.candidates[0].balance_status.as_deref(), Some("low"));
+    assert_eq!(rows.candidates[0].balance_value, Some(4.71));
 }
 
 async fn insert_alias_revision(pool: &SqlitePool, id: &str) {
@@ -506,6 +619,44 @@ async fn candidate_limit_is_a_deterministic_sql_bound() {
     assert_eq!(rows.candidates.len(), 2);
     assert_eq!(rows.candidates[0].station_key_id, "key-0");
     assert_eq!(rows.candidates[1].station_key_id, "key-1");
+}
+
+#[tokio::test]
+async fn credentialless_keys_do_not_consume_candidate_limit() {
+    let pool = test_pool().await;
+    insert_candidate(&pool, 1).await;
+    // Put a credentialless key ahead of the usable key in the deterministic
+    // ordering. The source bound must be applied after the executable-key
+    // predicate, otherwise the usable key would be starved.
+    sqlx::query(
+        "INSERT INTO station_keys
+         (id, station_id, api_key, api_key_secret_id, enabled, priority, routing_order, created_at, updated_at)
+         VALUES ('key-empty', 'station-1', '', NULL, 1, -1, -1, '-1', '1')",
+    )
+    .execute(&pool)
+    .await
+    .expect("insert credentialless key");
+    sqlx::query(
+        "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance)
+         VALUES ('station_key:key-empty', 1, 0, 'baseline_snapshot')",
+    )
+    .execute(&pool)
+    .await
+    .expect("insert credentialless key revision");
+
+    let store = OperationalFactStore;
+    let mut read = TestReadSession::begin(&pool).await;
+    let rows = store
+        .load_raw(
+            &mut read,
+            &OperationalFactReadOptions::for_request_model("gpt-4.1").with_candidate_limit(1),
+        )
+        .await
+        .expect("candidate rows are bounded");
+
+    assert_eq!(rows.candidates.len(), 1);
+    assert_eq!(rows.candidates[0].station_key_id, "key-1");
+    assert!(rows.candidates[0].credential_available);
 }
 
 #[tokio::test]
