@@ -386,10 +386,6 @@ function monitorRefKey(value: Pick<PricingGroupRefInput, "stationId" | "groupBin
   ].join("|");
 }
 
-export function pricingMonitorRefFromRow(row: PricingComparisonRow): PricingGroupRefInput {
-  return row.monitorRef;
-}
-
 function rowMatchesQuery(row: PricingComparisonRow, query: string, sectionTitle: string) {
   return [sectionTitle, row.stationName, row.stationKeyName ?? "", row.groupName]
     .map(normalizeText)

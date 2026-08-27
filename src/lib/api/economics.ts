@@ -2,7 +2,6 @@ import { getActiveBackendClient } from "@/lib/bridge/activeBackendClient";
 import type {
   RequestKind,
   ModelPriceSyncConfig,
-  UpsertBalanceSnapshotInput,
   UpsertModelBasePriceInput,
 } from "@/lib/types/economics";
 
@@ -58,18 +57,10 @@ export function openModelPriceCatalogDirectory() {
   return getActiveBackendClient().economics.openModelPriceCatalogDirectory();
 }
 
-export function listBalanceSnapshots() {
-  return getActiveBackendClient().economics.listBalanceSnapshots();
-}
-
 export function listCurrentStationBalanceSnapshots() {
   return getActiveBackendClient().economics.listCurrentStationBalanceSnapshots();
 }
 
 export function listBalanceSnapshotsForStation(stationId: string) {
   return getActiveBackendClient().economics.listBalanceSnapshotsForStation(stationId);
-}
-
-export function upsertBalanceSnapshot(input: UpsertBalanceSnapshotInput) {
-  return getActiveBackendClient().economics.upsertBalanceSnapshot(input);
 }

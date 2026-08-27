@@ -1,4 +1,3 @@
-import { BALANCE_CURRENCY } from "@/lib/balanceCurrency";
 import {
   buildCurrentStationBalanceFacts,
   type StationBalanceCurrentFact,
@@ -13,7 +12,6 @@ import type { BalanceSnapshot } from "@/lib/types/economics";
 import type { GroupRateRecord, StationGroupBinding } from "@/lib/types/groupFacts";
 import type { StationKey } from "@/lib/types/stationKeys";
 import type { Station } from "@/lib/types/stations";
-import type { StatusTone } from "@/components/ui";
 
 export type RateChip = {
   label: string;
@@ -194,14 +192,6 @@ export function extractRateChips(snapshot: CollectorSnapshot | null): RateChip[]
       tone: !Number.isFinite(multiplier) ? "neutral" : multiplier > 1 ? "warning" : multiplier < 1 ? "good" : "neutral",
     };
   });
-}
-
-export function formatStationBalance(row: StationAssetRow) {
-  const value = row.currentBalance.value;
-  if (value == null) {
-    return "未采集";
-  }
-  return `${BALANCE_CURRENCY} ${value.toFixed(2)}`;
 }
 
 export function stationIssueTags(row: StationAssetRow): StationIssueTag[] {
@@ -405,26 +395,4 @@ function countMissingRates(bindings: StationGroupBinding[], rates: GroupRateReco
   ).length;
   const missingRateRecords = rates.filter((rate) => rate.effectiveRateMultiplier == null).length;
   return collectedBindingsWithoutRates + missingRateRecords;
-}
-
-export function stationRiskTone(row: StationAssetRow): StatusTone {
-  if (!row.station.enabled) {
-    return "disabled";
-  }
-  if (row.riskEvents.some((event) => event.severity === "critical")) {
-    return "error";
-  }
-  if (row.riskEvents.some((event) => event.severity === "warning") || row.warningKeyCount > 0) {
-    return "warning";
-  }
-  if (row.station.status === "healthy") {
-    return "healthy";
-  }
-  if (row.station.status === "error") {
-    return "error";
-  }
-  if (row.station.status === "warning") {
-    return "warning";
-  }
-  return "info";
 }

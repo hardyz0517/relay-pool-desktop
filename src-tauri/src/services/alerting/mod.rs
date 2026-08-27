@@ -3,6 +3,6 @@ pub(crate) mod read_model_updates;
 
 pub(crate) use desktop_notification::{
     DesktopNotificationAdapter, DesktopNotificationError, DesktopNotificationPayload,
-    DesktopNotificationPermission, TauriDesktopNotificationAdapter,
+    TauriDesktopNotificationAdapter,
 };
 pub(crate) use read_model_updates::TauriAlertingReadModelUpdatePublisher;

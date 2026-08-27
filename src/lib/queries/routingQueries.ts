@@ -1,23 +1,17 @@
 import {
   getRoutingProtectionStatus,
-  listErrorRateHistory,
   getRequestDecisionTrace,
   getStationKeyOperationalDetail,
-  listModelAliases,
   listRecentRouteDecisions,
   loadRoutingRuntimeOverlay,
   loadRoutingPolicy,
   loadRoutingWorkspaceSnapshot,
   simulateRoute,
 } from "@/lib/api/routing";
-import { getSettings } from "@/lib/api/settings";
 import type {
-  ModelAlias,
   RecentRouteDecisionsInput,
   RecentRouteDecisionsPage,
   RequestDecisionTrace,
-  ErrorRateHistoryInput,
-  ErrorRateHistoryPage,
   RouteSimulationInput,
   RouteSimulationResult,
   RoutingRuntimeOverlay,
@@ -26,29 +20,12 @@ import type {
   RoutingProtectionStatusInput,
   StationKeyOperationalDetail,
 } from "@/lib/types/routing";
-import type { AppSettings } from "@/lib/types/settings";
-
-export type RoutingWorkspace = {
-  settings: AppSettings;
-  modelAliases: ModelAlias[];
-};
-
-export async function loadRoutingWorkspace(): Promise<RoutingWorkspace> {
-  const [settings, modelAliases] = await Promise.all([getSettings(), listModelAliases()]);
-
-  return {
-    settings,
-    modelAliases,
-  };
-}
 
 export const routingQueryKeys = {
   all: ["routing"] as const,
   policy: () => ["routing", "policy"] as const,
   protectionStatus: (input: RoutingProtectionStatusInput = {}) =>
     ["routing", "protectionStatus", input.model ?? null] as const,
-  errorRateHistory: (input: ErrorRateHistoryInput = {}) =>
-    ["routing", "errorRateHistory", input.beforeMs ?? null, input.limit ?? null] as const,
   workspaceSnapshot: (input: RoutingWorkspaceSnapshotInput = {}) =>
     ["routing", "workspaceSnapshot", input.limit ?? null, input.cursor ?? null] as const,
   runtimeOverlay: () => ["routing", "runtimeOverlay"] as const,
@@ -97,20 +74,6 @@ export function routingProtectionStatusQueryOptions(input: RoutingProtectionStat
     retry: false,
     meta: { suppressGlobalErrorNotification: true },
   } as const;
-}
-
-export function errorRateHistoryQueryOptions(input: ErrorRateHistoryInput = {}) {
-  return {
-    queryKey: routingQueryKeys.errorRateHistory(input),
-    queryFn: () => listErrorRateHistory(input),
-    staleTime: 5_000,
-    retry: false,
-    meta: { suppressGlobalErrorNotification: true },
-  } as const;
-}
-
-export function listErrorRateHistoryQuery(input: ErrorRateHistoryInput = {}): Promise<ErrorRateHistoryPage> {
-  return listErrorRateHistory(input);
 }
 
 export function loadRoutingWorkspaceSnapshotQuery(

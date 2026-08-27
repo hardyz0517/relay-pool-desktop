@@ -1,6 +1,8 @@
 use serde::{de::Error as DeError, Deserialize, Deserializer, Serialize, Serializer};
-use sha2::{Digest, Sha256};
 use uuid::Uuid;
+
+#[cfg(test)]
+use sha2::{Digest, Sha256};
 
 pub(crate) const MAX_STABLE_CODE_BYTES: usize = 64;
 const RESOURCE_HASH_BYTES: usize = 32;

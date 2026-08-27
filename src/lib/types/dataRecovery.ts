@@ -10,8 +10,6 @@ export type StartupUpgradeStatus = {
   failureStage: Exclude<StartupUpgradeStage, "blocked"> | null;
 };
 
-export type DataStoreRuntimeMode = "writable" | "inspectionOnly" | "recovery";
-
 export type CompatibilityDecisionCode =
   | "writable"
   | "inspectionOnly"

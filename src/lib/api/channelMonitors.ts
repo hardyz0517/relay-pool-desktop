@@ -4,7 +4,6 @@ import type {
   CreateChannelMonitorTemplateInput,
   ChannelMonitorAttemptHistoryInput,
   ChannelMonitorExecutionListInput,
-  ChannelStatusWorkspaceInput,
   UpdateChannelMonitorInput,
   UpdateChannelMonitorTemplateInput,
 } from "@/lib/types/channelMonitors";
@@ -27,10 +26,6 @@ export function deleteChannelMonitor(id: string) {
 
 export function runChannelMonitorNow(monitorId: string) {
   return getActiveBackendClient().channels.runChannelMonitorNow(monitorId);
-}
-
-export function runChannelMonitorNowWithTrigger(monitorId: string, triggerRequestId: string) {
-  return getActiveBackendClient().channels.runChannelMonitorNow(monitorId, triggerRequestId);
 }
 
 export function cancelChannelMonitorExecution(executionId: string) {
@@ -71,8 +66,4 @@ export function duplicateChannelMonitorTemplate(id: string) {
 
 export function deleteChannelMonitorTemplate(id: string) {
   return getActiveBackendClient().channels.deleteChannelMonitorTemplate(id);
-}
-
-export function loadChannelStatusWorkspace(input: ChannelStatusWorkspaceInput = {}) {
-  return getActiveBackendClient().channels.loadChannelStatusWorkspace(input);
 }

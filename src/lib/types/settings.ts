@@ -165,15 +165,6 @@ export function appSettingsToUpdateInput(settings: AppSettings): UpdateSettingsI
   };
 }
 
-export const routingStrategyLabels: Record<RoutingStrategy, string> = {
-  automatic_balanced: "自动路由",
-  priority_fallback: "优先级轮换",
-  stable_first: "稳定优先",
-  backup_only: "备用模式",
-  cheap_first: "便宜优先",
-  cost_stable_first: "低价稳定优先",
-};
-
 export const collectorProxyModeLabels: Record<CollectorProxyMode, string> = {
   direct: "直连",
   system: "使用系统代理",

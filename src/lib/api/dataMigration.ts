@@ -2,8 +2,6 @@ import { getActiveBackendClient } from "@/lib/bridge/activeBackendClient";
 import type {
   InspectPortableImportInput,
   PortableExportResult,
-  PortableImportInspection,
-  PortableImportPrepareResult,
   PortableImportRecoveryState,
   PortableMigrationCapability,
   PortableMigrationOperation,
@@ -39,18 +37,10 @@ export function startPortableImportInspection(
   return getActiveBackendClient().dataMigration.startPortableImportInspection(input);
 }
 
-export function getPortableImportInspection(resourceId: string): Promise<PortableImportInspection> {
-  return getActiveBackendClient().dataMigration.getPortableImportInspection(resourceId);
-}
-
 export function startPortableImportPrepare(
   input: PreparePortableImportInput,
 ): Promise<PortableMigrationOperationStarted> {
   return getActiveBackendClient().dataMigration.startPortableImportPrepare(input);
-}
-
-export function getPortableImportPrepareResult(resourceId: string): Promise<PortableImportPrepareResult> {
-  return getActiveBackendClient().dataMigration.getPortableImportPrepareResult(resourceId);
 }
 
 export function getPortableMigrationOperation(operationId: string): Promise<PortableMigrationOperation> {

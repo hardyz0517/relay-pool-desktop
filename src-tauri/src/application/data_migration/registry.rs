@@ -1,27 +1,17 @@
-#![allow(
-    dead_code,
-    reason = "Task 12 publishes typed portable migration registry infrastructure before Task 13+ wire the import/export IPC flows"
-)]
-
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, VecDeque},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
-use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use crate::{
     background_tasks::{
         BoxOperationFuture, OperationContext, OperationId, OperationOwner, OperationRegistry,
         OperationRegistryError, OperationStartRequest, OperationState, OperationTerminal,
     },
-    services::{
-        data_store::file_identity::FileIdentity,
-        portable_migration::limits::PortableMigrationLimitsV1,
-    },
+    services::portable_migration::limits::PortableMigrationLimitsV1,
 };
 
 const OWNER_FEATURE: &str = "portable-data-migration";
@@ -39,13 +29,29 @@ pub(crate) struct PortableMigrationOperationRegistry {
 
 impl PortableMigrationOperationRegistry {
     pub(crate) fn new(operations: OperationRegistry) -> Self {
-        Self::with_config(
+        let limits = PortableMigrationLimitsV1::CURRENT;
+        let config = PortableMigrationRegistryConfig::default();
+        assert!(
+            !config.terminal_result_ttl.is_zero(),
+            "terminal result TTL must be positive"
+        );
+        assert!(
+            config.terminal_result_max_entries > 0,
+            "terminal result capacity must be positive"
+        );
+        Self {
             operations,
-            PortableMigrationLimitsV1::CURRENT,
-            PortableMigrationRegistryConfig::default(),
-        )
+            limits,
+            inner: Arc::new(Mutex::new(PortableMigrationOperationRegistryInner {
+                config,
+                typed_slots: HashMap::new(),
+                results: HashMap::new(),
+                result_order: VecDeque::new(),
+            })),
+        }
     }
 
+    #[cfg(test)]
     pub(crate) fn with_config(
         operations: OperationRegistry,
         limits: PortableMigrationLimitsV1,
@@ -59,19 +65,14 @@ impl PortableMigrationOperationRegistry {
             config.terminal_result_max_entries > 0,
             "terminal result capacity must be positive"
         );
-        let mut process_hmac_key = [0_u8; 32];
-        OsRng.fill_bytes(&mut process_hmac_key);
         Self {
             operations,
             limits,
             inner: Arc::new(Mutex::new(PortableMigrationOperationRegistryInner {
-                process_hmac_key,
                 config,
                 typed_slots: HashMap::new(),
                 results: HashMap::new(),
                 result_order: VecDeque::new(),
-                idempotency: HashMap::new(),
-                prepare_owners: HashSet::new(),
             })),
         }
     }
@@ -212,73 +213,6 @@ impl PortableMigrationOperationRegistry {
             terminal,
         })
     }
-
-    pub(crate) fn digest(
-        &self,
-        input: &PortableIdempotencyDigestInput<'_>,
-    ) -> PortableIdempotencyDigest {
-        let inner = self
-            .inner
-            .lock()
-            .expect("portable operation registry mutex");
-        let passphrase_hmac = keyed_hmac(&inner.process_hmac_key, input.passphrase.as_bytes());
-        let mut data = Vec::new();
-        data.extend_from_slice(input.kind.operation_kind().as_bytes());
-        data.extend_from_slice(b"\0identity\0");
-        update_identity(&mut data, input.identity);
-        data.extend_from_slice(b"\0options\0");
-        input.options.update_digest_input(&mut data);
-        data.extend_from_slice(b"\0passphrase-hmac\0");
-        data.extend_from_slice(&passphrase_hmac);
-        PortableIdempotencyDigest(keyed_hmac(&inner.process_hmac_key, &data))
-    }
-
-    pub(crate) fn reserve_idempotency(
-        &self,
-        key: impl Into<String>,
-        digest: PortableIdempotencyDigest,
-        operation_id: OperationId,
-    ) -> Result<IdempotencyReservation, PortableMigrationRegistryError> {
-        let key = key.into();
-        let mut inner = self
-            .inner
-            .lock()
-            .expect("portable operation registry mutex");
-        match inner.idempotency.get(&key) {
-            Some(binding) if binding.digest == digest => Ok(IdempotencyReservation::Existing {
-                operation_id: binding.operation_id,
-            }),
-            Some(_) => Err(PortableMigrationRegistryError::IdempotencyConflict),
-            None => {
-                inner.idempotency.insert(
-                    key,
-                    IdempotencyBinding {
-                        digest,
-                        operation_id,
-                    },
-                );
-                Ok(IdempotencyReservation::Reserved)
-            }
-        }
-    }
-
-    pub(crate) fn try_claim_prepare_owner(
-        &self,
-        digest: PortableIdempotencyDigest,
-    ) -> Result<PrepareOwnerGuard, PortableMigrationRegistryError> {
-        let mut inner = self
-            .inner
-            .lock()
-            .expect("portable operation registry mutex");
-        if !inner.prepare_owners.insert(digest) {
-            return Err(PortableMigrationRegistryError::PrepareAlreadyOwned);
-        }
-        Ok(PrepareOwnerGuard {
-            digest,
-            registry: Arc::clone(&self.inner),
-            released: false,
-        })
-    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -298,13 +232,10 @@ impl Default for PortableMigrationRegistryConfig {
 
 #[derive(Debug)]
 struct PortableMigrationOperationRegistryInner {
-    process_hmac_key: [u8; 32],
     config: PortableMigrationRegistryConfig,
     typed_slots: HashMap<OperationId, TypedOperationSlot>,
     results: HashMap<OperationId, TerminalResultEntry>,
     result_order: VecDeque<OperationId>,
-    idempotency: HashMap<String, IdempotencyBinding>,
-    prepare_owners: HashSet<PortableIdempotencyDigest>,
 }
 
 #[derive(Debug)]
@@ -324,43 +255,6 @@ struct LastPortableProgress {
 struct TerminalResultEntry {
     result: PortableMigrationTerminalResult,
     recorded_at: Instant,
-}
-
-#[derive(Clone, Debug)]
-struct IdempotencyBinding {
-    digest: PortableIdempotencyDigest,
-    operation_id: OperationId,
-}
-
-#[derive(Debug)]
-pub(crate) struct PrepareOwnerGuard {
-    digest: PortableIdempotencyDigest,
-    registry: Arc<Mutex<PortableMigrationOperationRegistryInner>>,
-    released: bool,
-}
-
-impl PrepareOwnerGuard {
-    pub(crate) fn release(mut self) {
-        self.release_inner();
-    }
-
-    fn release_inner(&mut self) {
-        if self.released {
-            return;
-        }
-        self.registry
-            .lock()
-            .expect("portable operation registry mutex")
-            .prepare_owners
-            .remove(&self.digest);
-        self.released = true;
-    }
-}
-
-impl Drop for PrepareOwnerGuard {
-    fn drop(&mut self) {
-        self.release_inner();
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -485,72 +379,6 @@ pub(crate) struct PortableMigrationOperationSnapshot {
     pub(crate) terminal: Option<PortableMigrationTerminal>,
 }
 
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
-pub(crate) struct PortableIdempotencyDigest([u8; 32]);
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum IdempotencyReservation {
-    Reserved,
-    Existing { operation_id: OperationId },
-}
-
-pub(crate) struct PortableIdempotencyDigestInput<'a> {
-    pub(crate) kind: PortableOperationKind,
-    pub(crate) identity: &'a FileIdentity,
-    pub(crate) options: PortableCommandOptions,
-    pub(crate) passphrase: &'a str,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum PortableCommandOptions {
-    Export {
-        include_history: bool,
-        overwrite_existing: bool,
-        confirmation_matched: bool,
-    },
-    Inspect,
-    PrepareImport {
-        mode: PortableImportMode,
-    },
-}
-
-impl PortableCommandOptions {
-    fn update_digest_input(&self, data: &mut Vec<u8>) {
-        match self {
-            Self::Export {
-                include_history,
-                overwrite_existing,
-                confirmation_matched,
-            } => {
-                data.extend_from_slice(b"export");
-                data.extend_from_slice(&[*include_history as u8]);
-                data.extend_from_slice(&[*overwrite_existing as u8]);
-                data.extend_from_slice(&[*confirmation_matched as u8]);
-            }
-            Self::Inspect => data.extend_from_slice(b"inspect"),
-            Self::PrepareImport { mode } => {
-                data.extend_from_slice(b"prepare_import");
-                data.extend_from_slice(mode.as_bytes());
-            }
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PortableImportMode {
-    Merge,
-    Replace,
-}
-
-impl PortableImportMode {
-    fn as_bytes(self) -> &'static [u8] {
-        match self {
-            Self::Merge => b"merge",
-            Self::Replace => b"replace",
-        }
-    }
-}
-
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub(crate) enum PortableMigrationRegistryError {
     #[error("operation registry error")]
@@ -559,12 +387,6 @@ pub(crate) enum PortableMigrationRegistryError {
     OwnerMismatch,
     #[error("operation not found")]
     NotFound,
-    #[error("operation completed but terminal result is missing")]
-    CompletedResultMissing,
-    #[error("idempotency key is already bound to different input")]
-    IdempotencyConflict,
-    #[error("prepare operation is already owned")]
-    PrepareAlreadyOwned,
     #[error("portable migration progress is invalid")]
     InvalidProgress,
 }
@@ -608,45 +430,6 @@ fn gc_results_locked(inner: &mut PortableMigrationOperationRegistryInner, now: I
     inner
         .result_order
         .retain(|id| inner.results.contains_key(id));
-}
-
-fn keyed_hmac(key: &[u8; 32], value: &[u8]) -> [u8; 32] {
-    hmac_sha256(key, value)
-}
-
-fn hmac_sha256(key: &[u8], value: &[u8]) -> [u8; 32] {
-    let mut ipad = [0x36_u8; 64];
-    let mut opad = [0x5c_u8; 64];
-    let key_digest;
-    let normalized_key = if key.len() > 64 {
-        key_digest = Sha256::digest(key);
-        key_digest.as_slice()
-    } else {
-        key
-    };
-    for (index, byte) in normalized_key.iter().enumerate() {
-        ipad[index] ^= byte;
-        opad[index] ^= byte;
-    }
-
-    let mut inner = Sha256::new();
-    inner.update(ipad);
-    inner.update(value);
-    let inner_digest = inner.finalize();
-
-    let mut outer = Sha256::new();
-    outer.update(opad);
-    outer.update(inner_digest);
-    outer.finalize().into()
-}
-
-fn update_identity(data: &mut Vec<u8>, identity: &FileIdentity) {
-    data.extend_from_slice(&identity.volume_serial.unwrap_or(0).to_be_bytes());
-    data.extend_from_slice(&[identity.volume_serial.is_some() as u8]);
-    data.extend_from_slice(&identity.file_id.unwrap_or(0).to_be_bytes());
-    data.extend_from_slice(&[identity.file_id.is_some() as u8]);
-    data.extend_from_slice(&identity.length.to_be_bytes());
-    data.extend_from_slice(identity.sha256.as_bytes());
 }
 
 #[cfg(test)]
@@ -849,98 +632,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn idempotency_digest_includes_kind_identity_options_and_passphrase_hmac() {
-        let facade = facade();
-        let identity = identity("file");
-        let export = PortableIdempotencyDigestInput {
-            kind: PortableOperationKind::ExportPackage,
-            identity: &identity,
-            options: PortableCommandOptions::Export {
-                include_history: true,
-                overwrite_existing: false,
-                confirmation_matched: true,
-            },
-            passphrase: "secret",
-        };
-        let same = facade.digest(&export);
-        let different_kind = facade.digest(&PortableIdempotencyDigestInput {
-            kind: PortableOperationKind::InspectPackage,
-            identity: &identity,
-            options: PortableCommandOptions::Inspect,
-            passphrase: "secret",
-        });
-        let different_passphrase = facade.digest(&PortableIdempotencyDigestInput {
-            kind: PortableOperationKind::ExportPackage,
-            identity: &identity,
-            options: PortableCommandOptions::Export {
-                include_history: true,
-                overwrite_existing: false,
-                confirmation_matched: true,
-            },
-            passphrase: "other",
-        });
-
-        assert_eq!(same, facade.digest(&export));
-        assert_ne!(same, different_kind);
-        assert_ne!(same, different_passphrase);
-
-        let operation_id = OperationId::from_u64(7).expect("operation id");
-        assert_eq!(
-            facade
-                .reserve_idempotency("idem", same, operation_id)
-                .expect("reserve"),
-            IdempotencyReservation::Reserved
-        );
-        assert_eq!(
-            facade
-                .reserve_idempotency("idem", same, operation_id)
-                .expect("same binding"),
-            IdempotencyReservation::Existing { operation_id }
-        );
-        assert_eq!(
-            facade
-                .reserve_idempotency("idem", different_kind, operation_id)
-                .unwrap_err(),
-            PortableMigrationRegistryError::IdempotencyConflict
-        );
-    }
-
-    #[test]
-    fn concurrent_prepare_claim_has_exactly_one_owner() {
-        let facade = facade();
-        let digest = facade.digest(&PortableIdempotencyDigestInput {
-            kind: PortableOperationKind::PrepareImport,
-            identity: &identity("prepare"),
-            options: PortableCommandOptions::PrepareImport {
-                mode: PortableImportMode::Merge,
-            },
-            passphrase: "secret",
-        });
-
-        let first = facade.try_claim_prepare_owner(digest).expect("first owner");
-        assert_eq!(
-            facade.try_claim_prepare_owner(digest).unwrap_err(),
-            PortableMigrationRegistryError::PrepareAlreadyOwned
-        );
-        first.release();
-        let second = facade
-            .try_claim_prepare_owner(digest)
-            .expect("released owner");
-        drop(second);
-    }
-
-    #[test]
-    fn local_hmac_sha256_matches_rfc4231_vector() {
-        let key = [0x0b_u8; 20];
-        let digest = hmac_sha256(&key, b"Hi There");
-
-        assert_eq!(
-            hex(&digest),
-            "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"
-        );
-    }
-
     fn facade() -> PortableMigrationOperationRegistry {
         PortableMigrationOperationRegistry::new(OperationRegistry::new(
             OperationRegistryConfig::architecture_budget(),
@@ -953,18 +644,5 @@ mod tests {
 
     fn completed_body(_context: OperationContext) -> BoxOperationFuture {
         Box::pin(async { OperationTerminal::Completed })
-    }
-
-    fn identity(seed: &str) -> FileIdentity {
-        FileIdentity {
-            volume_serial: None,
-            file_id: None,
-            length: seed.len() as u64,
-            sha256: format!("{:x}", sha2::Sha256::digest(seed.as_bytes())),
-        }
-    }
-
-    fn hex(bytes: &[u8]) -> String {
-        bytes.iter().map(|byte| format!("{byte:02x}")).collect()
     }
 }

@@ -37,10 +37,6 @@ export function getRoutingProtectionStatus(
   return getActiveBackendClient().routing.getRoutingProtectionStatus(input);
 }
 
-export function listErrorRateHistory(input: import("@/lib/types/routing").ErrorRateHistoryInput = {}) {
-  return getActiveBackendClient().routing.listErrorRateHistory(input);
-}
-
 export function loadRoutingPolicy() {
   return getActiveBackendClient().routing.loadRoutingPolicy();
 }

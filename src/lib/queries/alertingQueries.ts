@@ -1,35 +1,18 @@
 import { queryOptions } from "@tanstack/react-query";
 import {
-  getAlertingIncident,
   listAlertingDeliveries,
-  getAlertingSettings,
   listAlertingActivity,
   listCurrentAlertingIncidents,
   listAlertingOccurrences,
-  listAlertPolicies,
   loadAlertingWorkspace,
 } from "@/lib/api/alerting";
-import type { AlertingActivityInput, AlertingCurrentInput, AlertingHistoryInput, AlertingIncidentInput } from "@/lib/types/alerting";
+import type { AlertingActivityInput, AlertingCurrentInput, AlertingHistoryInput } from "@/lib/types/alerting";
 import { queryKeys } from "@/lib/query/queryKeys";
 
 export const alertingWorkspaceQueryOptions = () =>
   queryOptions({
     queryKey: queryKeys.alertingWorkspace,
     queryFn: loadAlertingWorkspace,
-    staleTime: 30_000,
-  });
-
-export const alertingSettingsQueryOptions = () =>
-  queryOptions({
-    queryKey: queryKeys.alertingSettings,
-    queryFn: getAlertingSettings,
-    staleTime: 30_000,
-  });
-
-export const alertPoliciesQueryOptions = () =>
-  queryOptions({
-    queryKey: queryKeys.alertPolicies,
-    queryFn: listAlertPolicies,
     staleTime: 30_000,
   });
 
@@ -56,13 +39,6 @@ export const unreadChangeActivityQueryOptions = () =>
     recordType: "change",
     unreadOnly: true,
     limit: 1,
-  });
-
-export const alertingIncidentQueryOptions = (input: AlertingIncidentInput) =>
-  queryOptions({
-    queryKey: queryKeys.alertingIncident(input.incidentId, input.episodeNumber),
-    queryFn: () => getAlertingIncident(input),
-    staleTime: 2_000,
   });
 
 export const alertingOccurrencesQueryOptions = (input: AlertingHistoryInput) =>

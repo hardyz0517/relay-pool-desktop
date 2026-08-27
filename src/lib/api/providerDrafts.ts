@@ -14,10 +14,6 @@ export function createOrResumeProviderDraft(payload: ProviderDraftPayload) {
   });
 }
 
-export function getProviderDraft(draftId: string) {
-  return providerDraftsClient().get(draftId);
-}
-
 export function patchProviderDraft(input: ProviderDraftPatch) {
   return providerDraftsClient().patch(input);
 }

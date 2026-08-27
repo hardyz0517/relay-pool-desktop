@@ -8,8 +8,6 @@ import type {
   AlertingCurrentInput,
   AlertingHistoryInput,
   AlertingDomainClient,
-  AlertingIncident,
-  AlertingIncidentInput,
   AlertingClearInput,
   AlertingMarkAllSeenInput,
   AlertingIncidentPage,
@@ -30,16 +28,8 @@ export function loadAlertingWorkspace(): Promise<AlertingWorkspace> {
   return alertingClient().loadWorkspace();
 }
 
-export function getAlertingSettings(): Promise<AlertingSettings> {
-  return alertingClient().getSettings();
-}
-
 export function updateAlertingSettings(input: AlertingSettingsInput): Promise<AlertingSettings> {
   return alertingClient().updateSettings(input);
-}
-
-export function listAlertPolicies(): Promise<AlertPolicy[]> {
-  return alertingClient().listPolicies();
 }
 
 export function upsertAlertPolicy(input: AlertPolicyInput): Promise<AlertPolicy> {
@@ -70,10 +60,6 @@ export function listAlertingActivity(input: AlertingActivityInput = {}): Promise
   return alertingClient().listActivity(input);
 }
 
-export function getAlertingIncident(input: AlertingIncidentInput): Promise<AlertingIncident> {
-  return alertingClient().getIncident(input);
-}
-
 export function listAlertingOccurrences(input: AlertingHistoryInput) {
   return alertingClient().listOccurrences(input);
 }
@@ -90,14 +76,6 @@ export function markAllAlertingSeen(input: AlertingMarkAllSeenInput = {}): Promi
   return alertingClient().markAllSeen(input);
 }
 
-export function resolveAllAlertingIncidents(input: AlertingMarkAllSeenInput = {}): Promise<number> {
-  return alertingClient().resolveAllActive(input);
-}
-
 export function clearAlertingActivity(input: AlertingClearInput = {}): Promise<number> {
   return alertingClient().clearActivity(input);
-}
-
-export function snoozeAlertingIncident(incidentId: string, episodeNumber: number, untilMs: number): Promise<void> {
-  return alertingClient().snooze(incidentId, episodeNumber, untilMs);
 }

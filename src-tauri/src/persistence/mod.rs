@@ -1,7 +1,5 @@
 mod backup;
-pub(crate) use backup::{
-    create_verified_backup_from_path, temporary_backup_path, validate_read_only_sqlite,
-};
+pub(crate) use backup::{create_verified_backup_from_path, validate_read_only_sqlite};
 pub(crate) mod error;
 mod health_check;
 mod inspection;

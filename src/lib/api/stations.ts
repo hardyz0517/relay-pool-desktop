@@ -37,10 +37,6 @@ export function clearStationCapacityDomain(stationId: string, expectedRevision: 
   return getActiveBackendClient().stations.clearStationCapacityDomain(stationId, expectedRevision);
 }
 
-export function listStationEndpointHealth() {
-  return getActiveBackendClient().stations.listStationEndpointHealth();
-}
-
 export function pingStationEndpoint(stationId: string) {
   return getActiveBackendClient().stations.pingStationEndpoint(stationId);
 }

@@ -28,11 +28,6 @@ type StationGroupRowsEditorProps = {
 const inputClassName =
   "h-8 w-full min-w-0 rounded-[var(--surface-radius)] border border-border bg-surface px-2.5 text-xs text-foreground outline-none transition placeholder:text-muted-foreground/70 focus:border-ring focus:ring-2 focus:ring-ring/30 disabled:bg-surface-subtle disabled:text-muted-foreground";
 const groupRowsGridTemplate = "minmax(9rem,1fr) 7.5rem 6rem 5.5rem 2.5rem";
-export const groupCategoryOptions = groupCategoryDefinitions.map((definition) => ({
-  value: definition.value,
-  label: definition.label,
-}));
-
 export function createEmptyStationGroupDraft(index: number): StationGroupDraft {
   return {
     clientId: `station-group-draft-${Date.now()}-${index}`,

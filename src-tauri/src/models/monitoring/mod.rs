@@ -1,19 +1,11 @@
-#![allow(dead_code, unused_imports)]
-
 pub mod definition;
 pub mod execution;
 pub mod outcome;
 pub mod policy;
 pub mod read_model;
 
-pub use definition::{
-    ClientProfileId, ClientProfileRef, DefinitionRevision, MonitorDefinition,
-    MonitorDefinitionDraft, TargetScope, TargetScopeKind,
-};
-pub use execution::{
-    AttemptOrdinal, AttemptRole, AvailabilitySummary, ExecutionSummary, MonitorExecutionStatus,
-    MonitorTargetResult, ProbeAttempt, TriggerKind,
-};
+pub use definition::{ClientProfileId, ClientProfileRef, DefinitionRevision, TargetScope};
+pub use execution::TriggerKind;
 pub use outcome::{FailureKind, ProbeOutcome, ProtocolKind, SemanticConfidence};
 pub use policy::{
     HealthPolicy, HealthWritebackMode, RetryPolicy, RiskPolicy, SchedulePolicy,

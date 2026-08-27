@@ -1,4 +1,3 @@
-export const PRICING_GROUP_MONITORING_SCHEMA_VERSION = 1 as const;
 export const MAX_PRICING_GROUP_REFS = 500;
 
 export type PricingGroupRefInput = {

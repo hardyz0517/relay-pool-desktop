@@ -224,8 +224,10 @@ const selectControlSource = await readFile("src/components/ui/SelectControl.tsx"
 const addProviderSource = await readFile("src/features/stations/AddProviderPage.tsx", "utf8");
 const addProviderControllerSource = await readFile("src/features/stations/useAddProviderPageController.ts", "utf8");
 assert.ok(
-  editorSource.includes("groupCategoryOverride") && editorSource.includes("groupCategoryOptions"),
-  "station group editor should expose a type dropdown backed by manual group category override",
+  editorSource.includes("groupCategoryOverride") &&
+    editorSource.includes("groupCategoryDefinitions") &&
+    editorSource.includes("groupCategorySelectOptions"),
+  "station group editor should derive type options from the current category definitions",
 );
 assert.ok(
   editorSource.includes("SelectControl") && !editorSource.includes("<select"),

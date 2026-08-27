@@ -24,6 +24,7 @@ async function importStationAssetViewModels() {
   const groupCategoriesPath = join(tempRoot, "groupCategories.mjs");
   const groupFactsPath = join(tempRoot, "groupFacts.mjs");
   const balanceFactsPath = join(tempRoot, "balanceFacts.mjs");
+  const balanceCurrencyPath = join(tempRoot, "balanceCurrency.mjs");
   const assetPath = join(tempRoot, "stationAssetViewModels.mjs");
   const timePath = join(tempRoot, "time.mjs");
   await writeFile(
@@ -31,11 +32,13 @@ async function importStationAssetViewModels() {
     "export function toTimestampMillis(value) { return Date.parse(value); }",
     "utf8",
   );
+  await writeFile(balanceCurrencyPath, 'export const BALANCE_CURRENCY = "CNY";', "utf8");
   await transpileTsFile("src/lib/groupCategories.ts", groupCategoriesPath);
   await transpileTsFile("src/lib/projections/groupFacts.ts", groupFactsPath, [
     ['@/lib/groupCategories', "./groupCategories.mjs"],
   ]);
   await transpileTsFile("src/lib/projections/balanceFacts.ts", balanceFactsPath, [
+    ['@/lib/balanceCurrency', "./balanceCurrency.mjs"],
     ['@/lib/time', "./time.mjs"],
   ]);
   await transpileTsFile("src/features/stations/stationAssetViewModels.ts", assetPath, [
@@ -46,7 +49,7 @@ async function importStationAssetViewModels() {
   return import(`file://${assetPath.replaceAll("\\", "/")}`);
 }
 
-const { buildStationAssetRows, formatStationBalance } = await importStationAssetViewModels();
+const { buildStationAssetRows } = await importStationAssetViewModels();
 
 const rows = buildStationAssetRows({
   stations: [
@@ -76,7 +79,7 @@ const rows = buildStationAssetRows({
       ],
     ],
   ]),
-  changes: [],
+  incidents: [],
 });
 
 assert.deepEqual(
@@ -84,9 +87,6 @@ assert.deepEqual(
   [{ label: "current", value: "0.80x", tone: "good" }],
   "station assets should build rate chips from shared current group facts and hide missing groups",
 );
-assert.equal(formatStationBalance(rows[0]), "CNY 13.00", "station asset balance should prefer station-scope current balance");
-assert.equal(formatStationBalance(rows[1]), "CNY 6.00", "station asset balance should fallback to station cache");
-
 const assetSource = await readFile("src/features/stations/stationAssetViewModels.ts", "utf8");
 assert.ok(
   assetSource.includes("deriveStationGroupDisplayFacts") &&

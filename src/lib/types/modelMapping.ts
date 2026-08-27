@@ -36,8 +36,6 @@ export type {
   ValidateModelMappingDocumentInputDto,
 };
 
-export type ModelMappingDraft = ModelMappingDocumentDto;
-
 /**
  * Rebuild a document with only the fields accepted by the apply IPC DTO.
  * Workspace responses may outlive the frontend contract during an app update;

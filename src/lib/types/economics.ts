@@ -196,15 +196,3 @@ export type ResolvedPricingContext = {
   reason: string | null;
   resolvedAt: string;
 };
-
-export type RequestCost = {
-  promptTokens: number | null;
-  completionTokens: number | null;
-  totalTokens: number | null;
-  estimatedInputCost: number | null;
-  estimatedOutputCost: number | null;
-  estimatedTotalCost: number | null;
-  costCurrency: string | null;
-  pricingSource: string | null;
-  costStatus: string | null;
-};

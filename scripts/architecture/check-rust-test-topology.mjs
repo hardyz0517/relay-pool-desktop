@@ -13,7 +13,6 @@ const legacySourceAssembly = new Set([
   "monitoring_adapter_contracts.rs",
   "monitoring_buckets_retention.rs",
   "monitoring_concurrency.rs",
-  "monitoring_domain.rs",
   "monitoring_execution_integration.rs",
   "monitoring_faults.rs",
   "monitoring_orchestrator.rs",

@@ -1,4 +1,3 @@
-import type { StatusTone } from "@/components/ui";
 import type { StationGroupCategory } from "@/lib/groupCategories";
 import type {
   ChannelMonitor,
@@ -13,7 +12,7 @@ import type {
 import type { StationKeyCapabilities } from "@/lib/types/routing";
 import type { KeyPoolItem } from "@/lib/types/stationKeys";
 import type { Station } from "@/lib/types/stations";
-import { parseTimestampLikeDate, toTimestampMillis } from "@/lib/time";
+import { toTimestampMillis } from "@/lib/time";
 
 export type ChannelMonitorDraft = {
   name: string;
@@ -42,11 +41,6 @@ export type ChannelMonitorDraft = {
   healthFailureThreshold: string;
   healthRecoveryThreshold: string;
   note: string;
-};
-
-export type RunStatusView = {
-  label: string;
-  tone: StatusTone;
 };
 
 type MonitorValidationContext = {
@@ -502,37 +496,12 @@ export function formatTargetLabel(
   return station ? `${station.name} · 未选择密钥` : "未知密钥";
 }
 
-export function formatTemplateLabel(template: ChannelMonitorRequestTemplate | undefined) {
-  if (!template) {
-    return "未知模板";
-  }
-  const state = template.enabled ? "" : " · 已停用";
-  const builtIn = template.builtIn ? " · 内置" : "";
-  return `${template.name}${builtIn}${state}`;
-}
-
 export function formatInterval(intervalSeconds: number, jitterSeconds: number) {
   const base = `每 ${formatDuration(intervalSeconds)}`;
   if (jitterSeconds <= 0) {
     return base;
   }
   return `${base} · 抖动 ${formatDuration(jitterSeconds)}`;
-}
-
-export function formatRunTimestamp(value: string | null) {
-  if (!value) {
-    return "未运行";
-  }
-  const date = parseTimestampLikeDate(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return date.toLocaleString("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }
 
 function formatDuration(seconds: number) {

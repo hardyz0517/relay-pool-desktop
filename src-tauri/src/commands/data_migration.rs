@@ -367,20 +367,6 @@ pub(crate) fn public_portable_migration_error(
                 )
                 .expect("portable operation not-found error is bounded")
             }
-            crate::application::data_migration::registry::PortableMigrationRegistryError::CompletedResultMissing => {
-                error::CommandError::from_work(error::WorkFailure::ResultUnknown)
-            }
-            crate::application::data_migration::registry::PortableMigrationRegistryError::IdempotencyConflict
-            | crate::application::data_migration::registry::PortableMigrationRegistryError::PrepareAlreadyOwned => {
-                error::CommandError::try_new(
-                    error::CommandErrorCode::Conflict,
-                    "A portable migration operation with different input already exists.",
-                    false,
-                    None,
-                    None,
-                )
-                .expect("portable operation conflict error is bounded")
-            }
             crate::application::data_migration::registry::PortableMigrationRegistryError::InvalidProgress => {
                 error::CommandError::internal(None)
             }

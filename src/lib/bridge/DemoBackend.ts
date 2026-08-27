@@ -334,10 +334,6 @@ export class DemoBackend implements BackendClient {
   }
 }
 
-export function createDemoBackendClient(): BackendClient {
-  return new DemoBackend();
-}
-
 function createInitialStore(): DemoStore {
   return {
     seed: DEMO_SEED,

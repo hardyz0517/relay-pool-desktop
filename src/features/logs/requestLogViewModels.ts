@@ -7,10 +7,6 @@ import type { Station } from "@/lib/types/stations";
 export type RequestLatencyTone = "normal" | "notice" | "warning" | "critical" | "muted";
 export type RequestLatencyMetricKind = "first_token" | "total";
 
-export const requestLogFieldLabels = {
-  reasoningEffort: "推理强度",
-} as const;
-
 const latencyToneSeverity: Record<RequestLatencyTone, number> = {
   muted: 0,
   normal: 1,
@@ -104,20 +100,6 @@ export function reasoningEffortLabel(value: string | null) {
 export function billingModeLabel(value: string | null) {
   if (!value) return "-";
   return billingModeLabels[value] ?? "-";
-}
-
-export function tokenBreakdown(log: RequestLog) {
-  const rows = [
-    { label: "输入", value: formatCount(log.promptTokens) },
-    { label: "输出", value: formatCount(log.completionTokens) },
-  ];
-  if (log.cacheReadTokens != null && log.cacheReadTokens > 0) {
-    rows.push({ label: "缓存读", value: formatCount(log.cacheReadTokens) });
-  }
-  if (log.cacheCreationTokens != null && log.cacheCreationTokens > 0) {
-    rows.push({ label: "缓存写", value: formatCount(log.cacheCreationTokens) });
-  }
-  return rows;
 }
 
 export function latencyBreakdown(log: RequestLog) {
@@ -248,19 +230,6 @@ export function pricingStatusLabel(value: string | null | undefined) {
   return "未知";
 }
 
-export function pricingStatusTone(value: string | null | undefined) {
-  if (value === "priced" || value === "complete_single_currency") return "healthy";
-  if (value === "complete_mixed_currency" || value === "incomplete" || value === "pricing_incomplete") return "warning";
-  if (value === "base_price_only" || value === "legacy_estimate") return "warning";
-  if (
-    value === "missing_rate" ||
-    value === "missing_model_price" ||
-    value === "unsupported_billing_mode" ||
-    value === "unpriced"
-  ) return "error";
-  return "info";
-}
-
 export function normalizationLabel(value: string | null | undefined) {
   if (!value) return "未知";
   if (value === "complete") return "完整";
@@ -271,10 +240,6 @@ export function normalizationLabel(value: string | null | undefined) {
 
 export function statusFallback(value: string | null | undefined) {
   return value ?? "未知";
-}
-
-function formatCount(value: number | null) {
-  return value == null ? "-" : value.toLocaleString("zh-CN");
 }
 
 function formatDuration(value: number | null) {

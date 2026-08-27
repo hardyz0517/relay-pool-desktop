@@ -321,11 +321,6 @@ export type ChannelStatusWorkspace = {
   rows: ChannelStatusRow[];
 };
 
-export type RunChannelMonitorNowInput = {
-  monitorId: string;
-  triggerRequestId: string | null;
-};
-
 export type RunChannelMonitorReceipt = {
   executionId: string;
   monitorId: string;
