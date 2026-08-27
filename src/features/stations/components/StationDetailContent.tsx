@@ -37,6 +37,7 @@ export type StationDetailContentProps = {
   onBack: () => void;
   onEdit: () => void;
   onOpenWebsite?: () => void;
+  onOpenRechargeCenter: () => void;
   onOpenRoutingDeepLink?: () => void;
   onAuthorize: () => void;
   onRefresh: (action: StationDetailRefreshAction) => void;
@@ -99,6 +100,7 @@ export function StationDetailContent({
   onBack,
   onEdit,
   onOpenWebsite,
+  onOpenRechargeCenter,
   onOpenRoutingDeepLink,
   onAuthorize,
   onRefresh,
@@ -126,6 +128,10 @@ export function StationDetailContent({
           >
             <RefreshCw className={cn("h-3.5 w-3.5", loadingAction === "balance" && "animate-spin")} />
             刷新余额
+          </Button>
+          <Button variant="secondary" size="sm" onClick={onOpenRechargeCenter}>
+            <WalletCards className="h-3.5 w-3.5" />
+            充值中心
           </Button>
           <Button
             variant="secondary"

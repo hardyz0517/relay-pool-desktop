@@ -45,9 +45,9 @@
   --primary: 211 100% 42%;
   --primary-solid: 211 100% 42%;
   --primary-foreground: 0 0% 100%;
-  --success-surface: 149 80% 90%; --success-foreground: 163 94% 24%; --success-border: 152 60% 72%;
+  --success-surface: 151.765 80.952% 95.882%; --success-foreground: 163 94% 24%; --success-border: 152 60% 72%;
   --warning-surface: 48 96% 89%; --warning-foreground: 32 95% 28%; --warning-border: 45 86% 70%;
-  --danger-surface: 356 100% 95%; --danger-foreground: 346 83% 41%; --danger-border: 0 84% 84%; --danger-solid: 350 75% 44%;
+  --danger-surface: 0 85.714% 97.255%; --danger-foreground: 346 83% 41%; --danger-border: 0 84% 84%; --danger-solid: 350 75% 44%;
   --info-surface: 214 95% 93%; --info-foreground: 224 76% 48%; --info-border: 213 90% 82%;
   --metric-slate-surface: 220 20% 96%; --metric-slate-foreground: 215 25% 27%;
   --metric-emerald-surface: 149 80% 90%; --metric-emerald-foreground: 163 94% 24%;

@@ -28,6 +28,7 @@ import {
   type StationDetailRefreshAction,
 } from "./components/StationDetailContent";
 import { StationPublishedStatusSection } from "./components/StationPublishedStatusSection";
+import { RechargeDialog } from "./components/RechargeDialog";
 import {
   invalidateStationPublishedStatusCollectionQueries,
   useStationPublishedStatus,
@@ -92,6 +93,7 @@ export function StationDetailPage({
   const [pageError, setPageError] = useState<string | null>(null);
   const [sectionError, setSectionError] = useState<string | null>(null);
   const [loadingAction, setLoadingAction] = useState<StationDetailLoadingAction | null>(null);
+  const [rechargeCenterOpen, setRechargeCenterOpen] = useState(false);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -198,6 +200,7 @@ export function StationDetailPage({
     activeStationIdRef.current = stationId;
     refreshRequestRef.current += 1;
     setLoadingAction(null);
+    setRechargeCenterOpen(false);
 
     if (!stationId) {
       loadRequestRef.current += 1;
@@ -318,38 +321,47 @@ export function StationDetailPage({
   }
 
   return (
-    <StationDetailContent
-      viewModel={viewModel}
-      loadingAction={loadingAction}
-      sectionError={sectionError}
-      onBack={onBack}
-      onEdit={() => onEditProvider(viewModel.station.id)}
-      onOpenWebsite={() => void openStationWebsite(viewModel.station.websiteUrl)}
-      onOpenRoutingDeepLink={
-        onOpenRoutingDeepLink
-          ? () =>
-              onOpenRoutingDeepLink({
-                kind: "station",
-                stationId: viewModel.station.id,
-                source: "station_endpoint_health",
-              })
-          : undefined
-      }
-      onAuthorize={() => void handleManualAuthorization()}
-      onRefresh={(action) => void handleRefresh(action)}
-      publishedStatusSection={
-        <StationPublishedStatusSection
-          stationName={viewModel.station.name}
-          workspace={publishedStatus.workspace}
-          isLoading={publishedStatus.isLoading}
-          isError={publishedStatus.isError}
-          isRefreshing={publishedStatus.isRefreshing}
-          isRefreshError={publishedStatus.isRefreshError}
-          onRefresh={publishedStatus.refresh}
-          onRetryWorkspace={publishedStatus.retryWorkspace}
-        />
-      }
-    />
+    <>
+      <StationDetailContent
+        viewModel={viewModel}
+        loadingAction={loadingAction}
+        sectionError={sectionError}
+        onBack={onBack}
+        onEdit={() => onEditProvider(viewModel.station.id)}
+        onOpenWebsite={() => void openStationWebsite(viewModel.station.websiteUrl)}
+        onOpenRechargeCenter={() => setRechargeCenterOpen(true)}
+        onOpenRoutingDeepLink={
+          onOpenRoutingDeepLink
+            ? () =>
+                onOpenRoutingDeepLink({
+                  kind: "station",
+                  stationId: viewModel.station.id,
+                  source: "station_endpoint_health",
+                })
+            : undefined
+        }
+        onAuthorize={() => void handleManualAuthorization()}
+        onRefresh={(action) => void handleRefresh(action)}
+        publishedStatusSection={
+          <StationPublishedStatusSection
+            stationName={viewModel.station.name}
+            workspace={publishedStatus.workspace}
+            isLoading={publishedStatus.isLoading}
+            isError={publishedStatus.isError}
+            isRefreshing={publishedStatus.isRefreshing}
+            isRefreshError={publishedStatus.isRefreshError}
+            onRefresh={publishedStatus.refresh}
+            onRetryWorkspace={publishedStatus.retryWorkspace}
+          />
+        }
+      />
+      <RechargeDialog
+        station={rechargeCenterOpen ? viewModel.station : null}
+        onClose={() => setRechargeCenterOpen(false)}
+        onAuthorize={() => void handleManualAuthorization()}
+        onOpenUrl={(url) => openStationWebsite(url)}
+      />
+    </>
   );
 }
 

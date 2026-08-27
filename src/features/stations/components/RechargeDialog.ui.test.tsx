@@ -5,18 +5,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RechargeDialog } from "./RechargeDialog";
 import { readRechargeEntries, writeRechargeEntries } from "./rechargeEntriesStorage";
 
-const { getLatestCollectorSnapshot, scanStationRecharge } = vi.hoisted(() => ({
+const { getLatestCollectorSnapshot, redeemStationCode, scanStationRecharge } = vi.hoisted(() => ({
   getLatestCollectorSnapshot: vi.fn(),
+  redeemStationCode: vi.fn(),
   scanStationRecharge: vi.fn(),
 }));
 
-vi.mock("@/lib/api/collector", () => ({ getLatestCollectorSnapshot, scanStationRecharge }));
+vi.mock("@/lib/api/collector", () => ({ getLatestCollectorSnapshot, redeemStationCode, scanStationRecharge }));
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const station = {
   id: "station-1",
   name: "Grox",
+  stationType: "sub2api",
   websiteUrl: "https://relay.example",
 } as never;
 
@@ -55,6 +57,7 @@ describe("RechargeDialog interaction state", () => {
     root = createRoot(host);
     window.localStorage.clear();
     getLatestCollectorSnapshot.mockReset().mockResolvedValue(null);
+    redeemStationCode.mockReset();
     scanStationRecharge.mockReset();
   });
 
@@ -70,9 +73,85 @@ describe("RechargeDialog interaction state", () => {
     });
 
     expect(scanStationRecharge).not.toHaveBeenCalled();
-    expect(document.body.textContent).toContain("扫描登录页");
-    expect([...document.querySelectorAll<HTMLButtonElement>("button")].filter((item) => item.textContent?.includes("扫描登录页"))).toHaveLength(1);
+    expect(document.body.textContent).toContain("扫描充值方式");
+    expect([...document.querySelectorAll<HTMLButtonElement>("button")].filter((item) => item.textContent?.includes("扫描充值方式"))).toHaveLength(1);
     expect(document.body.textContent).not.toContain("忽略");
+    expect([...document.querySelectorAll("button")].some((item) => item.textContent === "完成")).toBe(false);
+  });
+
+  it("redeems a Sub2API code and clears it after success", async () => {
+    redeemStationCode.mockResolvedValue({ provider: "sub2api", success: true, message: "兑换成功", creditedDetail: "已添加：$1.00" });
+    await act(async () => {
+      root.render(<RechargeDialog station={station} onClose={vi.fn()} onOpenUrl={vi.fn(async () => undefined)} />);
+    });
+    const input = document.querySelector<HTMLInputElement>('input[aria-label="兑换码"]');
+    expect(input).not.toBeNull();
+    await act(async () => {
+      if (input) {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, "SUB2-FAKE-CODE");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    });
+    await act(async () => button("兑换").click());
+
+    expect(redeemStationCode).toHaveBeenCalledWith("station-1", "SUB2-FAKE-CODE");
+    expect(document.body.textContent).toContain("兑换成功");
+    expect(document.body.textContent).toContain("已添加：$1.00");
+    expect(input?.value).toBe("");
+  });
+
+  it("renders a localized failure panel with the concrete reason", async () => {
+    redeemStationCode.mockResolvedValue({
+      provider: "sub2api",
+      success: false,
+      message: "该兑换码已被使用。",
+      creditedDetail: null,
+    });
+    await act(async () => {
+      root.render(<RechargeDialog station={station} onClose={vi.fn()} onOpenUrl={vi.fn(async () => undefined)} />);
+    });
+    const input = document.querySelector<HTMLInputElement>('input[aria-label="兑换码"]');
+    await act(async () => {
+      if (input) {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, "USED-FAKE-CODE");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    });
+    await act(async () => button("兑换").click());
+
+    const feedback = document.querySelector('[role="status"]');
+    expect(feedback?.textContent).toContain("兑换失败");
+    expect(feedback?.textContent).toContain("该兑换码已被使用。");
+    expect(feedback?.className).toContain("bg-danger-surface");
+  });
+
+  it("renders the NewAPI redemption input without explanatory copy", async () => {
+    await act(async () => {
+      root.render(<RechargeDialog station={{ ...(station as object), stationType: "newapi" } as never} onClose={vi.fn()} onOpenUrl={vi.fn(async () => undefined)} />);
+    });
+    expect(document.querySelector('input[aria-label="兑换码"]')).not.toBeNull();
+    expect(document.body.textContent).not.toContain("兑换到 NewAPI 钱包余额");
+  });
+
+  it("opens the manual entry form between recharge entries and redemption", async () => {
+    await act(async () => {
+      root.render(<RechargeDialog station={station} onClose={vi.fn()} onOpenUrl={vi.fn(async () => undefined)} />);
+    });
+    await act(async () => button("手动添加入口").click());
+
+    const entriesHeading = [...document.querySelectorAll("h3")]
+      .find((item) => item.textContent?.includes("充值入口"));
+    const entriesSection = entriesHeading?.closest("section");
+    const entryForm = [...document.querySelectorAll("form")]
+      .find((item) => item.textContent?.includes("添加充值入口"));
+    const redemptionForm = document.querySelector<HTMLFormElement>('form[aria-label="兑换码操作"]');
+    expect(document.querySelector('button[aria-label="取消编辑"]')).toBeNull();
+    expect(entriesSection && entryForm
+      ? entriesSection.compareDocumentPosition(entryForm) & Node.DOCUMENT_POSITION_FOLLOWING
+      : 0).toBeTruthy();
+    expect(entryForm && redemptionForm
+      ? entryForm.compareDocumentPosition(redemptionForm) & Node.DOCUMENT_POSITION_FOLLOWING
+      : 0).toBeTruthy();
   });
 
   it("round-trips manually managed entries in station-scoped storage", () => {
@@ -87,17 +166,35 @@ describe("RechargeDialog interaction state", () => {
     await act(async () => {
       root.render(<RechargeDialog station={station} onClose={vi.fn()} onOpenUrl={vi.fn(async () => undefined)} />);
     });
-    await act(async () => button("扫描登录页").click());
+    await act(async () => button("扫描充值方式").click());
 
     expect(document.body.textContent).toContain("扫描结果（1）");
     expect(document.body.textContent).toContain("新发现");
     expect(document.body.textContent).toContain("忽略");
     expect(document.querySelector('button[aria-label^="忽略："]')).toBeNull();
-    expect(document.body.textContent).toContain("已确认入口（0）");
+    expect(document.body.textContent).toContain("充值入口（0）");
 
     await act(async () => button("确认添加").click());
-    expect(document.body.textContent).toContain("已确认入口（1）");
+    expect(document.body.textContent).toContain("充值入口（1）");
     expect(document.body.textContent).toContain("已存在");
+  });
+
+  it("places scan errors in the results section before redemption", async () => {
+    scanStationRecharge.mockRejectedValue(new Error("timed_out"));
+    await act(async () => {
+      root.render(<RechargeDialog station={station} onClose={vi.fn()} onOpenUrl={vi.fn(async () => undefined)} />);
+    });
+    await act(async () => button("扫描充值方式").click());
+
+    const resultsHeading = [...document.querySelectorAll("h3")].find((item) => item.textContent?.includes("扫描结果"));
+    const resultsSection = resultsHeading?.closest("section");
+    const redemptionForm = document.querySelector<HTMLFormElement>('form[aria-label="兑换码操作"]');
+    expect(resultsSection?.textContent).toContain("扫描失败");
+    expect(resultsSection?.textContent).toContain("重试");
+    const relativePosition = resultsSection && redemptionForm
+      ? resultsSection.compareDocumentPosition(redemptionForm)
+      : 0;
+    expect(relativePosition & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("renders the entry actions menu outside the dialog scroll container", async () => {
