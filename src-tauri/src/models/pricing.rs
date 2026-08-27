@@ -12,6 +12,10 @@ pub struct ModelBasePrice {
     pub output_price_priority: Option<f64>,
     pub cache_creation_price: Option<f64>,
     pub cache_creation_price_priority: Option<f64>,
+    #[serde(
+        rename = "cacheCreationPriceAbove1Hr",
+        alias = "cacheCreationPriceAbove1hr"
+    )]
     pub cache_creation_price_above_1hr: Option<f64>,
     pub cache_read_price: Option<f64>,
     pub cache_read_price_priority: Option<f64>,
@@ -78,6 +82,10 @@ pub struct UpsertModelBasePriceInput {
     pub output_price_priority: Option<f64>,
     pub cache_creation_price: Option<f64>,
     pub cache_creation_price_priority: Option<f64>,
+    #[serde(
+        rename = "cacheCreationPriceAbove1Hr",
+        alias = "cacheCreationPriceAbove1hr"
+    )]
     pub cache_creation_price_above_1hr: Option<f64>,
     pub cache_read_price: Option<f64>,
     pub cache_read_price_priority: Option<f64>,
@@ -209,7 +217,7 @@ mod tests {
             output_price_priority: None,
             cache_creation_price: Some(0.3125),
             cache_creation_price_priority: None,
-            cache_creation_price_above_1hr: None,
+            cache_creation_price_above_1hr: Some(0.625),
             cache_read_price: Some(0.025),
             cache_read_price_priority: None,
             long_context_input_token_threshold: None,
@@ -232,6 +240,8 @@ mod tests {
         let json = serde_json::to_value(price).expect("json");
         assert_eq!(json["inputPrice"], 0.25);
         assert_eq!(json["cacheCreationPrice"], 0.3125);
+        assert_eq!(json["cacheCreationPriceAbove1Hr"], 0.625);
+        assert!(json.get("cacheCreationPriceAbove1hr").is_none());
         assert_eq!(json["cacheReadPrice"], 0.025);
         assert_eq!(json["supportsPromptCaching"], true);
         assert_eq!(

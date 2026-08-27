@@ -4,13 +4,17 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use chrono::Utc;
+use http::{header, HeaderValue};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
+
+#[cfg(test)]
+use crate::outbound::OutboundHeaderPolicy;
 
 use crate::{
     application::{error::ApplicationError, pagination::PageLimit, pricing::PricingService},
@@ -31,6 +35,7 @@ const MAX_REMOTE_CATALOG_BYTES: usize = 8 * 1024 * 1024;
 const MAX_LOCAL_CATALOG_BYTES: usize = 32 * 1024 * 1024;
 const MAX_MODEL_SELECTION_KEYS: usize = 20_000;
 const MODELS_DEV_FETCH_ATTEMPTS: usize = 2;
+const MODELS_DEV_FETCH_BUDGET: Duration = Duration::from_secs(15);
 const MODELS_DEV_RETRY_DELAY: Duration = Duration::from_millis(750);
 const COMMON_MODEL_LIMIT_PER_FAMILY: usize = 6;
 
@@ -322,6 +327,7 @@ impl ModelPriceSyncService {
         let mut document = self
             .load_document()
             .map_err(|_| ApplicationError::IoFailed)?;
+        let migrating_legacy_catalog = document.version < DOCUMENT_VERSION;
         if !force && !document.sync.auto_sync_enabled {
             return Ok(ModelPriceSyncResult {
                 state: state_from_document(&document, &self.catalog_path),
@@ -347,7 +353,14 @@ impl ModelPriceSyncService {
             });
         }
 
-        let response = match self.fetch_models_dev_catalog().await {
+        let response = match self
+            .fetch_models_dev_catalog(
+                (!migrating_legacy_catalog)
+                    .then_some(document.sync.etag.as_deref())
+                    .flatten(),
+            )
+            .await
+        {
             Ok(response) => response,
             Err(failure) => {
                 document.sync.last_sync_error = Some(outbound_failure_message(&failure).into());
@@ -358,6 +371,18 @@ impl ModelPriceSyncService {
                 });
             }
         };
+        if response.status == http::StatusCode::NOT_MODIFIED && !migrating_legacy_catalog {
+            document.version = DOCUMENT_VERSION;
+            document.sync.last_sync_at = Some(Utc::now().to_rfc3339());
+            document.sync.last_sync_error = None;
+            self.write_document(&document)
+                .map_err(|_| ApplicationError::IoFailed)?;
+            return Ok(ModelPriceSyncResult {
+                state: state_from_document(&document, &self.catalog_path),
+                imported_count: 0,
+                skipped_count: 0,
+            });
+        }
         if !response.status.is_success() {
             document.sync.last_sync_error =
                 Some(format!("models.dev 返回 HTTP {}", response.status));
@@ -389,10 +414,8 @@ impl ModelPriceSyncService {
                 });
             }
         };
-        let migrating_legacy_catalog = document.version < DOCUMENT_VERSION;
         document.version = DOCUMENT_VERSION;
         let selected = select_models(parsed, &document.sync);
-        let imported_count = selected.models.len();
         let skipped_count = selected.skipped_count;
         let now = Utc::now().to_rfc3339();
         let inputs = selected
@@ -400,6 +423,30 @@ impl ModelPriceSyncService {
             .iter()
             .map(catalog_to_input)
             .collect::<Vec<_>>();
+        let previous_overrides = document
+            .overrides
+            .iter()
+            .filter_map(|input| {
+                input
+                    .id
+                    .as_deref()
+                    .map(|id| (id.to_ascii_lowercase(), input))
+            })
+            .collect::<BTreeMap<_, _>>();
+        let mut changed_inputs = Vec::new();
+        let mut imported_count = 0;
+        for input in &inputs {
+            let previous = input
+                .id
+                .as_deref()
+                .and_then(|id| previous_overrides.get(&id.to_ascii_lowercase()).copied());
+            if sync_price_changed(previous, input) {
+                imported_count += 1;
+            }
+            if sync_input_changed(previous, input) {
+                changed_inputs.push(input.clone());
+            }
+        }
         if migrating_legacy_catalog {
             self.pricing
                 .replace_models_dev_prices(inputs.clone())
@@ -410,9 +457,9 @@ impl ModelPriceSyncService {
             document
                 .deleted_model_ids
                 .retain(|id| !id.starts_with("models-dev-"));
-        } else if !inputs.is_empty() {
+        } else if !changed_inputs.is_empty() {
             self.pricing
-                .upsert_models_dev_prices(inputs.clone())
+                .upsert_models_dev_prices(changed_inputs)
                 .await?;
         }
         if !inputs.is_empty() {
@@ -509,9 +556,17 @@ impl ModelPriceSyncService {
         Ok(())
     }
 
-    async fn fetch_models_dev_catalog(&self) -> Result<OutboundResponse, OutboundFailure> {
+    async fn fetch_models_dev_catalog(
+        &self,
+        etag: Option<&str>,
+    ) -> Result<OutboundResponse, OutboundFailure> {
+        let deadline = Instant::now() + MODELS_DEV_FETCH_BUDGET;
         for attempt in 0..MODELS_DEV_FETCH_ATTEMPTS {
-            let request = models_dev_request()?;
+            let request = models_dev_request_with_budget(
+                crate::services::outbound::current_system_proxy_url().as_deref(),
+                RequestBudget::from_deadline(deadline),
+                etag,
+            )?;
             match self
                 .outbound
                 .execute_with_success_body_limit(
@@ -526,7 +581,10 @@ impl ModelPriceSyncService {
                     if attempt + 1 < MODELS_DEV_FETCH_ATTEMPTS
                         && is_retryable_models_dev_failure(&failure) =>
                 {
-                    tokio::time::sleep(MODELS_DEV_RETRY_DELAY).await;
+                    let Some(remaining) = RequestBudget::from_deadline(deadline).remaining() else {
+                        return Err(failure);
+                    };
+                    tokio::time::sleep(MODELS_DEV_RETRY_DELAY.min(remaining)).await;
                 }
                 Err(failure) => return Err(failure),
             }
@@ -535,22 +593,33 @@ impl ModelPriceSyncService {
     }
 }
 
-fn models_dev_request() -> Result<OutboundRequest, OutboundFailure> {
-    let system_proxy_url = crate::services::outbound::current_system_proxy_url();
-    models_dev_request_with_system_proxy(system_proxy_url.as_deref())
-}
-
+#[cfg(test)]
 fn models_dev_request_with_system_proxy(
     system_proxy_url: Option<&str>,
 ) -> Result<OutboundRequest, OutboundFailure> {
-    let mut request = OutboundRequest::get(
-        MODELS_DEV_URL,
-        RequestBudget::from_now(Duration::from_secs(60)),
-    );
+    models_dev_request_with_budget(
+        system_proxy_url,
+        RequestBudget::from_now(MODELS_DEV_FETCH_BUDGET),
+        None,
+    )
+}
+
+fn models_dev_request_with_budget(
+    system_proxy_url: Option<&str>,
+    budget: RequestBudget,
+    etag: Option<&str>,
+) -> Result<OutboundRequest, OutboundFailure> {
+    let mut request = OutboundRequest::get(MODELS_DEV_URL, budget);
     request.proxy = match system_proxy_url {
         Some(url) => ProxyPolicy::Manual(ManualProxy::parse(url)?),
         None => ProxyPolicy::System,
     };
+    if let Some(etag) = etag.and_then(|value| HeaderValue::from_str(value).ok()) {
+        let policy = crate::outbound::OutboundHeaderPolicy::provider_default();
+        request
+            .headers
+            .insert_public(header::IF_NONE_MATCH, etag, &policy)?;
+    }
     Ok(request)
 }
 
@@ -973,6 +1042,33 @@ fn catalog_to_input(model: &CatalogModel) -> UpsertModelBasePriceInput {
             None => format!("{}; USD per M tokens", model.name),
         }),
     }
+}
+
+fn sync_price_changed(
+    previous: Option<&UpsertModelBasePriceInput>,
+    current: &UpsertModelBasePriceInput,
+) -> bool {
+    let Some(previous) = previous else {
+        return true;
+    };
+    previous.input_price != current.input_price
+        || previous.output_price != current.output_price
+        || previous.cache_creation_price != current.cache_creation_price
+        || previous.cache_read_price != current.cache_read_price
+}
+
+fn sync_input_changed(
+    previous: Option<&UpsertModelBasePriceInput>,
+    current: &UpsertModelBasePriceInput,
+) -> bool {
+    let Some(previous) = previous else {
+        return true;
+    };
+    let mut comparable_previous = previous.clone();
+    let mut comparable_current = current.clone();
+    comparable_previous.source_checked_at = None;
+    comparable_current.source_checked_at = None;
+    comparable_previous != comparable_current
 }
 
 fn stable_id(model: &str) -> String {
@@ -1613,6 +1709,55 @@ mod tests {
         );
     }
 
+    fn sync_input(input_price: f64) -> UpsertModelBasePriceInput {
+        UpsertModelBasePriceInput {
+            id: Some("builtin-gpt-test".into()),
+            provider: "openai".into(),
+            model: "gpt-test".into(),
+            input_price: Some(input_price),
+            output_price: Some(2.0),
+            input_price_priority: None,
+            output_price_priority: None,
+            cache_creation_price: Some(0.5),
+            cache_creation_price_priority: None,
+            cache_creation_price_above_1hr: None,
+            cache_read_price: Some(0.1),
+            cache_read_price_priority: None,
+            long_context_input_token_threshold: None,
+            long_context_input_cost_multiplier: None,
+            long_context_output_cost_multiplier: None,
+            supports_service_tier: false,
+            supports_prompt_caching: true,
+            currency: "USD".into(),
+            unit: "M".into(),
+            source_url: MODELS_DEV_URL.into(),
+            source_label: SOURCE_LABEL.into(),
+            source_checked_at: Some("2026-01-01T00:00:00Z".into()),
+            enabled: true,
+            built_in: false,
+            note: Some("GPT Test; USD per M tokens".into()),
+        }
+    }
+
+    #[test]
+    fn sync_ignores_check_timestamp_when_detecting_changes() {
+        let previous = sync_input(1.0);
+        let mut current = previous.clone();
+        current.source_checked_at = Some("2026-01-02T00:00:00Z".into());
+
+        assert!(!sync_price_changed(Some(&previous), &current));
+        assert!(!sync_input_changed(Some(&previous), &current));
+    }
+
+    #[test]
+    fn sync_counts_and_persists_only_real_price_changes() {
+        let previous = sync_input(1.0);
+        let current = sync_input(1.1);
+
+        assert!(sync_price_changed(Some(&previous), &current));
+        assert!(sync_input_changed(Some(&previous), &current));
+    }
+
     #[test]
     fn sync_request_preserves_system_fallback_without_a_configured_proxy() {
         let request = models_dev_request_with_system_proxy(None).expect("request");
@@ -1631,6 +1776,22 @@ mod tests {
         };
 
         assert_eq!(proxy.endpoint, "http://127.0.0.1:7890");
+    }
+
+    #[test]
+    fn sync_request_uses_a_valid_cached_etag() {
+        let request = models_dev_request_with_budget(
+            None,
+            RequestBudget::from_now(Duration::from_secs(15)),
+            Some("W/\"catalog-etag\""),
+        )
+        .expect("request");
+        let headers = request
+            .headers
+            .materialize(&OutboundHeaderPolicy::provider_default())
+            .expect("headers");
+
+        assert_eq!(headers[header::IF_NONE_MATCH], "W/\"catalog-etag\"");
     }
 
     #[test]

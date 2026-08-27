@@ -129,7 +129,7 @@ const transientPagePolicies = {
   modelBasePrices: {
     pageId: "modelBasePrices",
     kind: "transient",
-    parentRouteId: "pricing",
+    parentRouteId: "settings",
     retention: "keep",
     prewarmPriority: null,
   },

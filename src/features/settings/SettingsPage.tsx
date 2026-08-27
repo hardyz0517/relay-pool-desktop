@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Copy, ExternalLink, FileText, FolderOpen, Github, Play, RefreshCw, RotateCcw, Square, Wand2 } from "lucide-react";
+import { ChevronRight, Copy, ExternalLink, FileText, FolderOpen, Github, Play, RefreshCw, RotateCcw, Square, Wand2 } from "lucide-react";
 import relayPoolLogo from "@/assets/relay-pool-logo.png";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, SectionCard, SelectControl, StatusBadge, SwitchControl, useToast } from "@/components/ui";
@@ -81,7 +81,11 @@ const fallbackProxyStatus: ProxyStatus = {
 
 const REPOSITORY_URL = "https://github.com/hardyz0517/relay-pool-desktop";
 
-export function SettingsPage() {
+type SettingsPageProps = {
+  onOpenModelBasePrices?: () => void;
+};
+
+export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps = {}) {
   const toast = useToast();
   const queryClient = useQueryClient();
   const { state: updaterState, checkNow: checkForUpdates } = useUpdater();
@@ -447,6 +451,21 @@ export function SettingsPage() {
             label="默认网络出口"
           />
         </SectionCard>
+
+        {onOpenModelBasePrices ? (
+          <SectionCard contentClassName="p-0" title="模型定价">
+            <SettingRow
+              control={
+                <Button type="button" variant="outline" onClick={onOpenModelBasePrices}>
+                  管理
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              }
+              description="管理成本计算和价格比较使用的模型基准价格。"
+              label="模型基准价格"
+            />
+          </SectionCard>
+        ) : null}
 
         <SectionCard contentClassName="p-0" title="数据与备份">
           <SettingRow

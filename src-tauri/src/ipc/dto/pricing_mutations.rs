@@ -108,6 +108,10 @@ pub struct UpsertModelBasePriceInputDto {
     pub output_price_priority: Option<f64>,
     pub cache_creation_price: Option<f64>,
     pub cache_creation_price_priority: Option<f64>,
+    #[serde(
+        rename = "cacheCreationPriceAbove1Hr",
+        alias = "cacheCreationPriceAbove1hr"
+    )]
     pub cache_creation_price_above_1hr: Option<f64>,
     pub cache_read_price: Option<f64>,
     pub cache_read_price_priority: Option<f64>,
@@ -389,6 +393,17 @@ mod tests {
 
         assert!(!input.supports_service_tier);
         assert!(!input.supports_prompt_caching);
+    }
+
+    #[test]
+    fn accepts_the_canonical_long_lived_cache_price_field_name() {
+        let mut input = fixture_base_price_input();
+        input["cacheCreationPriceAbove1Hr"] = serde_json::json!(2.25);
+
+        let parsed = UpsertModelBasePriceInputDto::parse(input)
+            .expect("canonical cache price field should be accepted");
+
+        assert_eq!(parsed.cache_creation_price_above_1hr, Some(2.25));
     }
 
     #[test]

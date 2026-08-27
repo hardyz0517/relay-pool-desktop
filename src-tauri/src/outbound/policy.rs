@@ -66,6 +66,7 @@ impl OutboundHeaderPolicy {
             [
                 "accept",
                 "accept-language",
+                "if-none-match",
                 "content-type",
                 "user-agent",
                 "x-request-id",

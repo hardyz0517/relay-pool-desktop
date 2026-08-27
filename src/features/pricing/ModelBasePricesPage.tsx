@@ -6,6 +6,7 @@ import { Button, Dialog, IconButton, SectionCard, SelectControl, SwitchControl, 
 import { deleteModelBasePrice, getModelPriceSyncState, listModelPriceSyncCatalog, openModelPriceCatalogDirectory, reloadModelPriceCatalog, resetModelBasePricesToBuiltins, saveModelPriceSyncConfig, syncModelPrices, upsertModelBasePrice } from "@/lib/api/economics";
 import { readError } from "@/lib/errors";
 import { queryKeys } from "@/lib/query/queryKeys";
+import { refreshRoutingQueries } from "@/lib/query/routingQuerySynchronization";
 import { modelBasePricesQueryOptions, modelPriceSyncStateQueryOptions } from "@/lib/query/resourceQueries";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import type { ModelBasePrice, ModelPriceCatalogEntry } from "@/lib/types/economics";
@@ -165,6 +166,7 @@ export function ModelBasePricesPage({
       queryClient.setQueryData(queryKeys.modelPriceSyncState, nextState);
       await queryClient.invalidateQueries({ queryKey: queryKeys.modelBasePrices });
       await queryClient.invalidateQueries({ queryKey: queryKeys.modelPriceSyncState });
+      await refreshRoutingQueries(queryClient);
       if (showSuccess) {
         toast.success("模型基准价格已刷新");
       }
@@ -184,11 +186,14 @@ export function ModelBasePricesPage({
       const result = await syncModelPrices(force);
       setModelPriceCatalog(null);
       queryClient.setQueryData(queryKeys.modelPriceSyncState, result.state);
-      await queryClient.invalidateQueries({ queryKey: queryKeys.modelBasePrices });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.pricing });
+      void Promise.allSettled([
+        queryClient.invalidateQueries({ queryKey: queryKeys.modelBasePrices }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.pricing }),
+        refreshRoutingQueries(queryClient),
+      ]);
       toast.success(
         force
-          ? `已刷新 ${result.state.modelCount} 条供应商报价，并更新 ${result.importedCount} 个有效模型价格`
+          ? `定价同步完成：检查 ${result.state.modelCount} 个模型，更新 ${result.importedCount} 个`
           : result.importedCount
             ? `已自动更新 ${result.importedCount} 个模型价格`
             : "没有需要自动同步的模型",
@@ -341,6 +346,7 @@ export function ModelBasePricesPage({
       const nextRows = await resetModelBasePricesToBuiltins();
       queryClient.setQueryData(queryKeys.modelBasePrices, nextRows);
       await queryClient.invalidateQueries({ queryKey: queryKeys.pricing });
+      await refreshRoutingQueries(queryClient);
       toast.success("已恢复内置基准价格");
     } catch (requestError) {
       const message = readError(requestError);
@@ -375,6 +381,7 @@ export function ModelBasePricesPage({
         upsertRow(currentRows ?? [], saved),
       );
       await queryClient.invalidateQueries({ queryKey: queryKeys.pricing });
+      await refreshRoutingQueries(queryClient);
       setCreateDialogOpen(false);
       setCreateImportOpen(false);
       setCreateDraft(createEmptyDraft());
@@ -427,6 +434,7 @@ export function ModelBasePricesPage({
         upsertRow(currentRows ?? rows, saved),
       );
       await queryClient.invalidateQueries({ queryKey: queryKeys.pricing });
+      await refreshRoutingQueries(queryClient);
       setEditTarget(null);
       setEditDraft(null);
       setEditDisplayName("");
@@ -453,6 +461,7 @@ export function ModelBasePricesPage({
         (currentRows ?? rows).filter((item) => item.id !== row.id),
       );
       await queryClient.invalidateQueries({ queryKey: queryKeys.pricing });
+      await refreshRoutingQueries(queryClient);
       toast.success("模型基准价格已删除");
     } catch (requestError) {
       const message = readError(requestError);
@@ -652,7 +661,7 @@ export function ModelBasePricesPage({
           </IconButton>
         }
       >
-        <div className="flex min-h-0 flex-1 flex-col gap-5 pt-1">
+        <div className="flex min-h-0 flex-1 flex-col gap-5 pt-4">
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--surface-radius)] border border-border bg-surface-subtle px-3 py-2.5 text-xs text-muted-foreground">
             <span>
               {creating
@@ -830,10 +839,6 @@ export function ModelBasePricesPage({
       }
       actions={
         <>
-          <Button variant="outline" onClick={openCreateDialog}>
-            <Plus className="h-4 w-4" />
-            新增
-          </Button>
           <Button disabled={loading || saving || reloadingCatalog} variant="outline" onClick={() => void refresh(true)}>
             <RefreshCw className="h-4 w-4" />
             {reloadingCatalog ? "刷新中" : "刷新"}
@@ -852,7 +857,7 @@ export function ModelBasePricesPage({
               <div className="min-w-0 flex-1">
                 <h2 className="text-sm font-semibold text-foreground">自动同步 models.dev 定价</h2>
                 <p className="mt-1 max-w-[820px] text-xs leading-5 text-muted-foreground">
-                  开启后会定期更新勾选模型的价格；“立即同步”始终全量更新 models.dev 价格目录。
+                  开启后，会在启动时定期拉取所选模型的最新价格，并保存到本地定价文件。
                 </p>
               </div>
               <div className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">
@@ -906,10 +911,16 @@ export function ModelBasePricesPage({
         <SectionCard
           title="价格清单"
           action={
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span>{metrics.total} 个模型</span>
-              <span>{metrics.enabled} 个启用</span>
-              <span>{metrics.builtIn} 个内置</span>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <span>{metrics.total} 个模型</span>
+                <span>{metrics.enabled} 个启用</span>
+                <span>{metrics.builtIn} 个内置</span>
+              </div>
+              <Button variant="outline" onClick={openCreateDialog}>
+                <Plus className="h-4 w-4" />
+                新增
+              </Button>
             </div>
           }
           contentClassName="overflow-hidden rounded-none border-0 bg-transparent p-0 shadow-none"
@@ -940,10 +951,10 @@ export function ModelBasePricesPage({
                     <tr key={row.id} className="h-[68px] text-foreground transition-colors hover:bg-surface-subtle">
                       <td className="px-4 font-mono text-[12px] font-medium text-foreground">{row.model}</td>
                       <td className="px-4 text-foreground">{modelPriceDisplayName(row)}</td>
-                      <td className="px-3 text-right"><PriceListValue value={row.inputPrice} /></td>
-                      <td className="px-3 text-right"><PriceListValue value={row.outputPrice} /></td>
-                      <td className="px-3 text-right"><PriceListValue value={row.cacheReadPrice} /></td>
-                      <td className="px-3 text-right"><PriceListValue value={row.cacheCreationPrice} /></td>
+                      <td className="px-3 text-center"><PriceListValue value={row.inputPrice} /></td>
+                      <td className="px-3 text-center"><PriceListValue value={row.outputPrice} /></td>
+                      <td className="px-3 text-center"><PriceListValue value={row.cacheReadPrice} /></td>
+                      <td className="px-3 text-center"><PriceListValue value={row.cacheCreationPrice} /></td>
                       <td className="px-3 text-right">
                         <div className="flex items-center justify-end gap-1">
                           <IconButton label={`编辑 ${row.model}`} onClick={() => openEditDialog(row)}>
@@ -1128,10 +1139,10 @@ function TableColumnHeaderRow() {
       <tr className="h-10 border-b border-border bg-surface text-xs font-medium text-muted-foreground">
         <th className="w-[29%] px-4">模型</th>
         <th className="w-[22%] px-4">显示名称</th>
-        <th className="w-[11%] px-3 text-right">输入成本</th>
-        <th className="w-[11%] px-3 text-right">输出成本</th>
-        <th className="w-[11%] px-3 text-right">缓存命中</th>
-        <th className="w-[11%] px-3 text-right">缓存创建</th>
+        <th className="w-[11%] px-3 text-center">输入成本</th>
+        <th className="w-[11%] px-3 text-center">输出成本</th>
+        <th className="w-[11%] px-3 text-center">缓存命中</th>
+        <th className="w-[11%] px-3 text-center">缓存创建</th>
         <th className="w-[5%] px-3 text-right">操作</th>
       </tr>
     </thead>

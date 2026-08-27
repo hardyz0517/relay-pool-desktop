@@ -84,7 +84,6 @@ export const ShellPageContent = memo(function ShellPageContent({
     case "pricing":
       return (
         <PricingPage
-          onOpenModelBasePrices={actions.openModelBasePrices}
           onOpenRoutingDeepLink={routingDeepLinkHandler}
         />
       );
@@ -109,7 +108,7 @@ export const ShellPageContent = memo(function ShellPageContent({
         />
       );
     case "settings":
-      return <SettingsPage />;
+      return <SettingsPage onOpenModelBasePrices={actions.openModelBasePrices} />;
     case "dashboard":
     default:
       return (

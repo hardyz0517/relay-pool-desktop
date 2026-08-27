@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Coins, Image, RotateCcw, ShieldCheck, TrendingDown } from "lucide-react";
+import { Image, RotateCcw, ShieldCheck, TrendingDown } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import {
   Button,
@@ -75,11 +75,10 @@ function visibleGroupTypeFilterOptions(developerModeEnabled: boolean): Array<{ v
 }
 
 type PricingPageProps = {
-  onOpenModelBasePrices: () => void;
   onOpenRoutingDeepLink?: (link: RoutingDeepLink) => void;
 };
 
-export function PricingPage({ onOpenModelBasePrices, onOpenRoutingDeepLink }: PricingPageProps) {
+export function PricingPage({ onOpenRoutingDeepLink }: PricingPageProps) {
   const toast = useToast();
   const pricingQuery = useActivityQuery(
     pricingComparisonQueryOptions(),
@@ -217,15 +216,7 @@ export function PricingPage({ onOpenModelBasePrices, onOpenRoutingDeepLink }: Pr
   }
 
   return (
-    <PageScaffold
-      title="价格 / 倍率"
-      actions={
-        <Button variant="secondary" onClick={onOpenModelBasePrices}>
-          <Coins className="h-4 w-4" />
-          模型基准价格
-        </Button>
-      }
-    >
+    <PageScaffold title="价格 / 倍率">
       <div className="grid gap-[var(--shell-page-gap)] md:grid-cols-2">
         <MetricCard
           className="!shadow-none"

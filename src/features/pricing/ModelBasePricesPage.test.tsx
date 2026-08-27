@@ -227,6 +227,7 @@ describe("ModelBasePricesPage models.dev synchronization", () => {
     await click(buttonWithText("立即同步"));
 
     expect(mocks.syncModelPrices).toHaveBeenCalledWith(true);
+    expect(document.body.textContent).toContain("定价同步完成：检查 2 个模型，更新 2 个");
   });
 
   it("shows the persisted backend reason when synchronization exhausts its retries", async () => {
