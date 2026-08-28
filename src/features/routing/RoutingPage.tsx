@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePageQueryEnabled } from "@/app/navigation/PageVisibility";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { SegmentedControl, useToast } from "@/components/ui";
@@ -25,20 +25,25 @@ import type { VersionedRoutingDeepLink } from "@/lib/types/routingDeepLinks";
 import { useCooldownClock } from "./useCooldownClock";
 import { toRoutingWorkspaceView } from "@/lib/types/routingWorkspace";
 import type { RouteEndpointKind } from "@/lib/types/routing";
+import type { RoutingViewPreparationPort } from "./routingViewPreparation";
 
 type LocalRoutingTab = "status" | "edit";
 
 export function RoutingPage({
   deepLink,
   onOpenRequestLog,
+  onViewPreparationPort,
 }: {
   deepLink?: VersionedRoutingDeepLink | null;
   onOpenRequestLog?: (requestLogId: string) => void;
+  onViewPreparationPort?: (port: RoutingViewPreparationPort | null) => void;
 }) {
   const toast = useToast();
   const queryClient = useQueryClient();
   const queryEnabled = usePageQueryEnabled();
   const [activeTab, setActiveTab] = useState<LocalRoutingTab>("status");
+  const activeTabRef = useRef<LocalRoutingTab>(activeTab);
+  const mountedRef = useRef(true);
   const [proxyActionPending, setProxyActionPending] = useState(false);
   const [importingCCSwitch, setImportingCCSwitch] = useState(false);
   const proxyStatusQuery = useActivityQuery(proxyStatusQueryOptions());
@@ -169,52 +174,95 @@ export function RoutingPage({
     }
   }, [deepLink?.sequence]);
 
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    if (!onViewPreparationPort) return () => { mountedRef.current = false; };
+
+    const port: RoutingViewPreparationPort = {
+      showStatusView: () => {
+        const previous = activeTabRef.current;
+        setActiveTab("status");
+        let restored = false;
+        return () => {
+          if (restored) return;
+          restored = true;
+          if (mountedRef.current) setActiveTab(previous);
+        };
+      },
+      showSettingsView: () => {
+        const previous = activeTabRef.current;
+        setActiveTab("edit");
+        let restored = false;
+        return () => {
+          if (restored) return;
+          restored = true;
+          if (mountedRef.current) setActiveTab(previous);
+        };
+      },
+    };
+    onViewPreparationPort(port);
+    return () => {
+      mountedRef.current = false;
+      onViewPreparationPort(null);
+    };
+  }, [onViewPreparationPort]);
+
   return (
     <PageScaffold
       title="路由规则"
       actions={
         <div className="flex flex-wrap items-center justify-end gap-2">
-          <SegmentedControl
-            ariaLabel="本地路由页面"
-            value={activeTab}
-            options={[
-              { value: "status", label: "概览" },
-              { value: "edit", label: "设置" },
-            ]}
-            onChange={setActiveTab}
-          />
+          <div data-tour="routing-tabs">
+            <SegmentedControl
+              ariaLabel="本地路由页面"
+              value={activeTab}
+              options={[
+                { value: "status", label: "概览" },
+                { value: "edit", label: "设置" },
+              ]}
+              onChange={setActiveTab}
+            />
+          </div>
         </div>
       }
     >
-      {activeTab === "status" ? (
-        <div className="grid gap-4">
-          <LocalRoutingStatusTab
-            loading={loading}
-            workspace={workspace}
-            keyPoolItems={keyPoolItemsQuery.data}
-            maxRateMultiplier={routingSnapshotQuery.data?.maxRateMultiplier}
-            nowMs={nowMs}
-            proxyActionPending={proxyActionPending}
-            onToggleProxy={() => void handleToggleProxy()}
-            importingCCSwitch={importingCCSwitch}
-            onImportToCCSwitch={() => void handleImportToCCSwitch()}
-            deepLink={deepLink}
-          />
-          <RoutingStatusDiagnosticsPanel
-            snapshot={routingSnapshotQuery.data ?? null}
-            runtimeOverlay={routingRuntimeQuery.data ?? null}
-            decisions={routeDecisionsQuery.data ?? null}
-            protectionStatus={protectionStatusQuery.data ?? null}
-            loading={routingSnapshotQuery.isPending && routingSnapshotQuery.data === undefined}
-            developerModeEnabled={developerModeEnabled}
-            deepLink={deepLink}
-            onOpenRequestLog={onOpenRequestLog}
-          />
-        </div>
-      ) : activeTab === "edit" ? (
-        <LocalRoutingEditTab
-        />
-      ) : null}
+      <div
+        className="grid gap-4"
+        data-tour={activeTab === "status" ? "routing-status" : "routing-settings"}
+      >
+        {activeTab === "status" ? (
+          <>
+            <LocalRoutingStatusTab
+              loading={loading}
+              workspace={workspace}
+              keyPoolItems={keyPoolItemsQuery.data}
+              maxRateMultiplier={routingSnapshotQuery.data?.maxRateMultiplier}
+              nowMs={nowMs}
+              proxyActionPending={proxyActionPending}
+              onToggleProxy={() => void handleToggleProxy()}
+              importingCCSwitch={importingCCSwitch}
+              onImportToCCSwitch={() => void handleImportToCCSwitch()}
+              deepLink={deepLink}
+            />
+            <RoutingStatusDiagnosticsPanel
+              snapshot={routingSnapshotQuery.data ?? null}
+              runtimeOverlay={routingRuntimeQuery.data ?? null}
+              decisions={routeDecisionsQuery.data ?? null}
+              protectionStatus={protectionStatusQuery.data ?? null}
+              loading={routingSnapshotQuery.isPending && routingSnapshotQuery.data === undefined}
+              developerModeEnabled={developerModeEnabled}
+              deepLink={deepLink}
+              onOpenRequestLog={onOpenRequestLog}
+            />
+          </>
+        ) : activeTab === "edit" ? (
+          <LocalRoutingEditTab />
+        ) : null}
+      </div>
     </PageScaffold>
   );
 }

@@ -51,3 +51,32 @@ export type StationPublishedStatusWorkspace = {
   safeErrorKind: string | null;
   rows: StationPublishedStatusRow[];
 };
+
+export type StationPublishedStatusOverviewInput = {
+  filter?: { search?: string | null; stationId?: string | null; outcome?: StationPublishedStatusOutcome | null; sourceState?: StationPublishedStatusSourceState | null };
+  cursor?: string | null;
+  limit?: number;
+};
+
+export type StationPublishedStatusOverviewRow = StationPublishedStatusRow & {
+  stationId: string;
+  stationName: string;
+  stationType: string;
+  stationEnabled: boolean;
+  stationPriority: number;
+  endpointRevision: number;
+  sourceKind: string;
+  sourceState: StationPublishedStatusSourceState;
+  completeness: StationPublishedStatusCompleteness | null;
+  stale: boolean;
+  lastAttemptAtMs: number | null;
+  lastSuccessAtMs: number | null;
+  lastCompleteAtMs: number | null;
+};
+
+export type StationPublishedStatusOverview = {
+  readAtMs: number;
+  summary: Record<string, number>;
+  rows: StationPublishedStatusOverviewRow[];
+  page: { limit: number; returned: number; nextCursor: string | null };
+};

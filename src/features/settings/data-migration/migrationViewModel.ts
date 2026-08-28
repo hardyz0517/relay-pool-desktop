@@ -10,5 +10,3 @@ export {
   terminalLabel,
   validatePassphrase,
 } from "@/lib/dataMigrationViewModel";
-
-export type { PassphraseValidation } from "@/lib/dataMigrationViewModel";

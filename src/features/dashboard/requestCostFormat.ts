@@ -1,11 +1,3 @@
-export function formatRequestCost(
-  value: number | null | undefined,
-  currency?: string | null,
-  costStatus?: string | null,
-) {
-  return formatCurrencyCost(value, currency, costStatus, formatCostValue);
-}
-
 export function formatRecentRequestCost(
   value: number | null | undefined,
   currency?: string | null,
@@ -34,20 +26,6 @@ function formatCurrencyCost(
   return `${symbol}${formattedValue}`;
 }
 
-function formatCostValue(value: number) {
-  if (!Number.isFinite(value)) {
-    return "0.0000";
-  }
-  const absValue = Math.abs(value);
-  if (absValue > 0 && absValue < 0.00000001) {
-    return "< 0.00000001";
-  }
-  if (absValue > 0 && absValue < 0.0001) {
-    return trimTrailingZeros(value.toFixed(8));
-  }
-  return value.toFixed(4);
-}
-
 function formatRecentCostValue(value: number) {
   if (!Number.isFinite(value)) {
     return "0.0000";
@@ -57,10 +35,6 @@ function formatRecentCostValue(value: number) {
     return "< 0.0001";
   }
   return value.toFixed(4);
-}
-
-function trimTrailingZeros(value: string) {
-  return value.replace(/(\.\d*?[1-9])0+$/, "$1");
 }
 
 function currencySymbol(currency?: string) {

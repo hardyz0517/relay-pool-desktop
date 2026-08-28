@@ -27,7 +27,8 @@ import type {
   DataStoreStartupView,
   SchemaCompatibilityView,
 } from "@/lib/types/dataRecovery";
-import type { StationPublishedStatusWorkspace } from "@/lib/types/stationPublishedStatus";
+import type { StationPublishedStatusOverview, StationPublishedStatusWorkspace } from "@/lib/types/stationPublishedStatus";
+import type { StationPublishedStatusOverviewDto } from "./generated";
 
 export function normalizeSettings(settings: SettingsDto | AppSettings): AppSettings {
   const maybeSettings = settings as SettingsDto & Partial<Record<keyof AppSettings, unknown>>;
@@ -51,7 +52,7 @@ export function normalizeSettings(settings: SettingsDto | AppSettings): AppSetti
     groupRateIntervalMinutes: normalizeNumber(maybeSettings.groupRateIntervalMinutes, 20),
     publishedStatusIntervalMinutes: normalizeNumber(maybeSettings.publishedStatusIntervalMinutes, 5),
     pricingRefreshIntervalMinutes: normalizeNumber(maybeSettings.pricingRefreshIntervalMinutes, 60),
-    collectorTimeoutSeconds: normalizeNumber(maybeSettings.collectorTimeoutSeconds, 15),
+    collectorTimeoutSeconds: normalizeNumber(maybeSettings.collectorTimeoutSeconds, 60),
     collectorMaxConcurrency: normalizeNumber(maybeSettings.collectorMaxConcurrency, 3),
     developerModeEnabled: normalizeBoolean(
       maybeSettings.developerModeEnabled,
@@ -192,6 +193,48 @@ export function normalizeStationPublishedStatusWorkspace(
         }];
       }),
     })),
+  };
+}
+
+export function normalizeStationPublishedStatusOverview(
+  overview: StationPublishedStatusOverviewDto,
+): StationPublishedStatusOverview {
+  return {
+    readAtMs: overview.readAtMs,
+    summary: overview.summary,
+    rows: overview.rows.map((row) => ({
+      rowKey: row.id,
+      stationId: row.stationId,
+      stationName: row.stationName,
+      stationType: row.stationType,
+      stationEnabled: row.stationEnabled,
+      stationPriority: row.stationPriority,
+      endpointRevision: row.endpointRevision,
+      sourceKind: row.sourceKind,
+      sourceState: row.sourceState,
+      completeness: row.completeness,
+      stale: row.stale,
+      lastAttemptAtMs: row.lastAttemptAtMs,
+      lastSuccessAtMs: row.lastSuccessAtMs,
+      lastCompleteAtMs: row.lastCompleteAtMs,
+      upstreamMonitorId: row.upstreamMonitorId,
+      identityKind: row.identityKind,
+      name: row.name,
+      provider: row.provider,
+      groupName: row.groupName,
+      primaryModel: row.primaryModel,
+      extraModels: row.extraModels,
+      currentOutcome: row.currentOutcome,
+      currentLatencyMs: row.currentLatencyMs,
+      currentPingLatencyMs: row.currentPingLatencyMs,
+      recentAvailabilityPercent: row.recentAvailabilityPercent,
+      upstreamCheckedAtMs: row.upstreamCheckedAtMs,
+      recentSamples: row.samples.map((sample, index) => ({
+        id: `${row.id}:${sample.model}:${sample.checkedAtMs}:${index}`,
+        ...sample,
+      })),
+    })),
+    page: overview.page,
   };
 }
 

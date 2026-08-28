@@ -241,7 +241,8 @@ export function DashboardPage({
   return (
     <PageScaffold title="总览" actions={updateAction}>
       <div className="grid gap-4">
-        <MetricPanel
+        <div data-tour="dashboard-metrics">
+          <MetricPanel
           title="本地路由指标"
           columns={3}
           metrics={[
@@ -320,8 +321,10 @@ export function DashboardPage({
               accent: "violet",
             },
           ]}
-        />
-        <MetricPanel
+          />
+        </div>
+        <div data-tour="dashboard-station-metrics">
+          <MetricPanel
           title="中转站指标统计"
           columns={4}
           metrics={[
@@ -383,10 +386,11 @@ export function DashboardPage({
               accent: "amber",
             },
           ]}
-        />
+          />
+        </div>
       </div>
 
-      <section className="grid min-w-0 gap-3">
+      <section className="grid min-w-0 gap-3" data-tour="dashboard-risk">
         <header className="flex flex-wrap items-center justify-between gap-3">
           <h2 className="truncate text-[13px] font-semibold text-foreground">
             当前风险
@@ -438,7 +442,7 @@ export function DashboardPage({
         )}
       </section>
 
-      <section className="grid min-w-0 gap-3">
+      <section className="grid min-w-0 gap-3" data-tour="dashboard-key-health">
         <h2 className="truncate text-[13px] font-semibold text-foreground">
           密钥健康
         </h2>
@@ -467,7 +471,7 @@ export function DashboardPage({
       </section>
 
       <div className="grid min-w-0 items-start gap-4 md:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-        <section className="grid min-w-0 gap-3">
+      <section className="grid min-w-0 gap-3" data-tour="dashboard-routing-queue">
           <header className="flex items-center justify-between gap-3">
             <h2 className="truncate text-[13px] font-semibold text-foreground">
               路由队列
@@ -529,7 +533,7 @@ export function DashboardPage({
         </div>
         </section>
 
-        <section className="grid min-w-0 gap-3">
+        <section className="grid min-w-0 gap-3" data-tour="dashboard-recent-usage">
           <header className="flex items-center justify-between gap-3">
             <h2 className="truncate text-[13px] font-semibold text-foreground">
               最近使用

@@ -5,8 +5,6 @@ export type PageRetentionDecision = {
   reason: "active" | "transition" | "default-unmounted";
 };
 
-export const MAX_RETAINED_SHELL_PAGES = 2;
-
 export function getPageRetentionDecision({
   routeId,
   activeRouteId,

@@ -12,6 +12,7 @@ type DialogProps = {
   children: ReactNode;
   footer?: ReactNode;
   onClose: () => void;
+  onExited?: () => void;
   className?: string;
 };
 
@@ -25,12 +26,14 @@ export function Dialog({
   children,
   footer,
   onClose,
+  onExited,
   className,
 }: DialogProps) {
   const interactionActive = useInteractionActivity();
   const [mounted, setMounted] = useState(open);
   const [visible, setVisible] = useState(false);
   const closeTimerRef = useRef<number | null>(null);
+  const exitPendingRef = useRef(false);
 
   useEffect(() => () => {
     if (closeTimerRef.current !== null) {
@@ -52,6 +55,7 @@ export function Dialog({
 
       setVisible(false);
       closeTimerRef.current = window.setTimeout(() => {
+        exitPendingRef.current = true;
         setMounted(false);
         closeTimerRef.current = null;
       }, 200);
@@ -61,7 +65,14 @@ export function Dialog({
     setMounted(true);
     const frameId = window.requestAnimationFrame(() => setVisible(true));
     return () => window.cancelAnimationFrame(frameId);
-  }, [mounted, open]);
+  }, [mounted, onExited, open]);
+
+  useLayoutEffect(() => {
+    if (exitPendingRef.current && !mounted && !open) {
+      exitPendingRef.current = false;
+      onExited?.();
+    }
+  }, [mounted, onExited, open]);
 
   useLayoutEffect(() => {
     if (!interactionActive && open) {
@@ -96,6 +107,7 @@ export function Dialog({
     <div
       role="dialog"
       aria-modal="true"
+      data-tour-blocking="true"
       className={cn(
         "fixed inset-0 z-50 flex items-center justify-center bg-transparent p-4 backdrop-blur-0 transition-[background-color,backdrop-filter] duration-200 ease-out",
         visible && "bg-scrim/45 backdrop-blur-[1px]",

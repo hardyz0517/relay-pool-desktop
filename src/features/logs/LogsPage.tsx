@@ -140,7 +140,7 @@ export function LogsPage({ deepLink, onOpenRoutingDeepLink }: LogsPageProps = {}
     <PageScaffold
       title="使用记录"
       actions={
-        <>
+        <div className="flex flex-wrap items-center gap-2" data-tour="logs-display-controls">
           <SwitchControl
             ariaLabel="精简显示"
             checked={compactDisplay}
@@ -156,13 +156,14 @@ export function LogsPage({ deepLink, onOpenRoutingDeepLink }: LogsPageProps = {}
             <Trash2 className="h-4 w-4" />
             清空
           </Button>
-        </>
+        </div>
       }
     >
       <div className="grid gap-[var(--shell-page-gap)]">
         <div className="min-w-0">
           <div
             data-testid="request-log-table-surface"
+            data-tour="logs-list"
             className="overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface shadow-[var(--surface-shadow)]"
           >
             {error && <div className="border-b border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">{error}</div>}

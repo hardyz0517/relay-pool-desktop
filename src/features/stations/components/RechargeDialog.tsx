@@ -18,6 +18,7 @@ import {
 import { Button, ConfirmDialog, Dialog, IconButton, StatusBadge } from "@/components/ui";
 import { getLatestCollectorSnapshot, redeemStationCode, scanStationRecharge } from "@/lib/api/collector";
 import { readError } from "@/lib/errors";
+import { withQueryTimeout } from "@/lib/query/withQueryTimeout";
 import type { CollectorRunResult, CollectorSnapshot, StationRedemptionResult } from "@/lib/types/collector";
 import type { Station } from "@/lib/types/stations";
 import { readRechargeEntries, sanitizeRechargeUrl, writeRechargeEntries } from "./rechargeEntriesStorage";
@@ -56,6 +57,7 @@ const paymentLabels: Record<string, string> = {
 };
 const inputClassName = "h-8 w-full rounded-[var(--surface-radius)] border border-border bg-surface px-3 text-sm text-foreground outline-none transition placeholder:text-muted-foreground/70 focus:border-ring focus:ring-2 focus:ring-ring/30";
 const RECHARGE_SCAN_TIMEOUT_MS = 45_000;
+const REDEMPTION_FALLBACK_TIMEOUT_MS = 330_000;
 
 function emptyForm(): EntryFormState { return { label: "", url: "", note: "" }; }
 
@@ -202,7 +204,11 @@ export function RechargeDialog({ station, onClose, onOpenUrl, onAuthorize }: Rec
     setIsRedeeming(true);
     setRedemptionFeedback(null);
     try {
-      const result = await redeemStationCode(activeStation.id, code);
+      const result = await withQueryTimeout(
+        redeemStationCode(activeStation.id, code),
+        "station redemption",
+        REDEMPTION_FALLBACK_TIMEOUT_MS,
+      );
       setRedemptionFeedback(result);
       if (result.success) setRedemptionCode("");
     } catch (error) {
@@ -295,7 +301,7 @@ function RedemptionFeedback({ result }: { result: StationRedemptionResult }) {
   );
 }
 
-function localizeDesktopRedemptionError(message: string): string {
+export function localizeDesktopRedemptionError(message: string): string {
   const normalized = message.toLowerCase();
   if (normalized.includes("requested operation") || normalized.includes("runtime unavailable")) {
     return "当前软件版本无法执行兑换，请重启或更新软件后再试。";
@@ -305,6 +311,9 @@ function localizeDesktopRedemptionError(message: string): string {
   }
   if (normalized.includes("desktop operation failed")) {
     return "兑换请求未完成，请稍后重试。";
+  }
+  if (normalized.includes("station redemption timed out")) {
+    return "兑换请求超时，请稍后重试。";
   }
   return message;
 }
@@ -357,13 +366,6 @@ function ScanCandidateCard({ entry, existing, onConfirm, onIgnore }: { entry: Re
 
 function EntryForm({ editing, form, error, onChange, onCancel, onSubmit }: { editing: boolean; form: EntryFormState; error: string | null; onChange: (form: EntryFormState) => void; onCancel: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
   return <form className="space-y-3 rounded-[8px] border border-border bg-surface-subtle p-4" onSubmit={onSubmit}><div className="text-sm font-semibold text-foreground">{editing ? "编辑充值入口" : "添加充值入口"}</div><div className="grid gap-3 sm:grid-cols-2"><label className="grid gap-1.5 text-xs font-medium text-muted-foreground">入口名称<input className={inputClassName} value={form.label} onChange={(event) => onChange({ ...form, label: event.target.value })} placeholder="例如：订阅购买" required /></label><label className="grid gap-1.5 text-xs font-medium text-muted-foreground">入口地址<input className={inputClassName} value={form.url} onChange={(event) => onChange({ ...form, url: event.target.value })} placeholder="https://example.com/purchase" inputMode="url" required /></label></div><label className="grid gap-1.5 text-xs font-medium text-muted-foreground">备注 / 来源（可选）<input className={inputClassName} value={form.note} onChange={(event) => onChange({ ...form, note: event.target.value })} placeholder="例如：用户中心" /></label>{error ? <div className="text-xs text-danger-foreground">{error}</div> : null}<div className="flex justify-end gap-2"><Button variant="outline" size="sm" onClick={onCancel}>取消</Button><Button type="submit" size="sm">{editing ? "保存" : "添加入口"}</Button></div></form>;
-}
-
-export function detectProvider(station: Pick<Station, "name" | "websiteUrl">): RechargeProvider {
-  const identity = `${station.name} ${station.websiteUrl}`.toLowerCase();
-  if (identity.includes("链动") || identity.includes("liandong") || identity.includes("chain")) return "liandong";
-  if (identity.includes("云猫") || identity.includes("yuncat") || identity.includes("cloudcat")) return "cloudcat";
-  return "custom";
 }
 
 export function parseRechargeRun(result: CollectorRunResult): { status: RechargeScanStatus; entries: RechargeEntry[]; message: string } { return parseRechargeSnapshot(result.snapshot); }

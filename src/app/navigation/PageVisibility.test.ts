@@ -8,7 +8,6 @@ import { useInteractionActivity } from "@/components/ui/InteractionActivity";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import {
   getPageRetentionDecision,
-  MAX_RETAINED_SHELL_PAGES,
 } from "./pageRetentionPolicy";
 import {
   createPageVisibility,
@@ -98,7 +97,6 @@ describe("PageVisibility policy", () => {
       activeRouteId: "stations",
       previousRouteId: null,
     })).toEqual({ retain: false, reason: "default-unmounted" });
-    expect(MAX_RETAINED_SHELL_PAGES).toBe(2);
   });
 
   it("publishes canonical visibility to query and interaction consumers", async () => {

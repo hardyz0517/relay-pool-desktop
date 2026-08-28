@@ -40,10 +40,6 @@ export function currentStationBalanceFor(input: {
   );
 }
 
-export function latestStationBalanceSnapshots(balances: BalanceSnapshot[]) {
-  return Array.from(latestStationBalanceSnapshotsByStation(balances).values());
-}
-
 function latestStationBalanceSnapshotsByStation(balances: BalanceSnapshot[]) {
   const latest = new Map<string, BalanceSnapshot>();
   for (const balance of balances) {

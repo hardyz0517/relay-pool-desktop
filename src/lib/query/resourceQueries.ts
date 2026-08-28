@@ -6,6 +6,8 @@ import {
   listCollectorSnapshots,
 } from "@/lib/api/collector";
 import { getStationPublishedStatusWorkspace } from "@/lib/api/stationPublishedStatus";
+import { getStationPublishedStatusOverview } from "@/lib/api/stationPublishedStatusOverview";
+import type { StationPublishedStatusOverviewInput } from "@/lib/types/stationPublishedStatus";
 import { listCollectorRuns } from "@/lib/api/collectorRuns";
 import { getModelPriceSyncState, listCurrentStationBalanceSnapshots, listModelBasePrices } from "@/lib/api/economics";
 import {
@@ -150,6 +152,16 @@ export const stationPublishedStatusQueryOptions = (stationId: string | null) =>
     enabled: Boolean(stationId),
     queryFn: () => getStationPublishedStatusWorkspace(stationId ?? ""),
     staleTime: 5_000,
+    retry: false,
+    meta: { suppressGlobalErrorNotification: true },
+  });
+
+export const stationPublishedStatusOverviewQueryOptions = (input: StationPublishedStatusOverviewInput = {}, refetchInterval: number | false = false) =>
+  queryOptions({
+    queryKey: queryKeys.stationPublishedStatusOverview(input),
+    queryFn: () => getStationPublishedStatusOverview(input),
+    staleTime: 15_000,
+    refetchInterval,
     retry: false,
     meta: { suppressGlobalErrorNotification: true },
   });

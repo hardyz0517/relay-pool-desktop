@@ -20,11 +20,13 @@ export function ChannelStatusTab() {
 
   return (
     <div className="space-y-3">
-      <ChannelStatusToolbar
-        controller={controller}
-        viewMode={viewMode}
-        onViewModeChange={setViewMode}
-      />
+      <div data-tour="channels-local-toolbar">
+        <ChannelStatusToolbar
+          controller={controller}
+          viewMode={viewMode}
+          onViewModeChange={setViewMode}
+        />
+      </div>
 
       {error && (
         <div className="flex items-start gap-2 rounded-[var(--surface-radius)] border border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">
@@ -36,21 +38,23 @@ export function ChannelStatusTab() {
         </div>
       )}
 
-      {viewMode === "cards" ? (
-        <ChannelStatusCardGrid
-          rows={controller.workspaceView.rows}
-          loading={controller.statusQuery.isPending}
-        />
-      ) : (
-        <ChannelStatusTable
-          rows={controller.workspaceView.rows}
-          loading={controller.statusQuery.isPending}
-          actionPending={controller.isRunningAction}
-          onRunNow={controller.runNow}
-          onCancel={controller.cancel}
-          onOpenExecution={controller.setSelectedExecutionId}
-        />
-      )}
+      <div data-tour="channels-local-results">
+        {viewMode === "cards" ? (
+          <ChannelStatusCardGrid
+            rows={controller.workspaceView.rows}
+            loading={controller.statusQuery.isPending}
+          />
+        ) : (
+          <ChannelStatusTable
+            rows={controller.workspaceView.rows}
+            loading={controller.statusQuery.isPending}
+            actionPending={controller.isRunningAction}
+            onRunNow={controller.runNow}
+            onCancel={controller.cancel}
+            onOpenExecution={controller.setSelectedExecutionId}
+          />
+        )}
+      </div>
 
       <MonitorExecutionDrawer
         executionId={controller.selectedExecutionId}

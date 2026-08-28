@@ -141,14 +141,6 @@ export function groupNameForDialogSelection(
   return selectedGroupOption(options, value)?.groupName ?? fallback;
 }
 
-export function keyPoolItemGroupRow(item: KeyPoolItem) {
-  return {
-    groupBindingId: item.groupBindingId,
-    groupIdHash: item.groupIdHash,
-    groupName: item.groupName ?? "",
-  };
-}
-
 export function formFromItem(item: KeyPoolItem, options: StationGroupOption[] = []): KeyPoolEditForm {
   return {
     id: item.id,

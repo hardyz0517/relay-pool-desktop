@@ -1,5 +1,6 @@
 import { memo } from "react";
 import { ChannelStatusPage } from "@/features/channels";
+import type { ChannelViewPreparationPort } from "@/features/channels/channelViewPreparation";
 import { ChangeCenterPage, type ChangeCenterView } from "@/features/changes";
 import { CollectorsPage } from "@/features/collectors";
 import { DashboardPage } from "@/features/dashboard";
@@ -7,6 +8,7 @@ import { KeyPoolPage } from "@/features/key-pool";
 import { LogsPage } from "@/features/logs";
 import { PricingPage } from "@/features/pricing";
 import { RoutingPage } from "@/features/routing";
+import type { RoutingViewPreparationPort } from "@/features/routing/routingViewPreparation";
 import type { VersionedRequestLogDeepLink, RequestLogDeepLink } from "@/lib/types/requestLogDeepLinks";
 import type { VersionedRoutingDeepLink, RoutingDeepLink } from "@/lib/types/routingDeepLinks";
 import { SettingsPage } from "@/features/settings";
@@ -28,10 +30,13 @@ export type ShellPageActions = {
   openRequestLogs: () => void;
   openModelBasePrices: () => void;
   openChangeCenterSettings: () => void;
+  openTourCenter: () => void;
   changeCenterView: ChangeCenterView;
   setChangeCenterView: (view: ChangeCenterView) => void;
   openRoutingDeepLink: (link: RoutingDeepLink) => void;
   routingDeepLink: VersionedRoutingDeepLink | null;
+  registerRoutingViewPreparation: (port: RoutingViewPreparationPort | null) => void;
+  registerChannelViewPreparation: (port: ChannelViewPreparationPort | null) => void;
   openRequestLogDeepLink: (link: RequestLogDeepLink) => void;
   requestLogDeepLink: VersionedRequestLogDeepLink | null;
 };
@@ -67,7 +72,11 @@ export const ShellPageContent = memo(function ShellPageContent({
         />
       );
     case "channels":
-      return <ChannelStatusPage onOpenRoutingDeepLink={routingDeepLinkHandler} />;
+      return (
+        <ChannelStatusPage onOpenRoutingDeepLink={routingDeepLinkHandler}
+          onViewPreparationPort={actions.registerChannelViewPreparation}
+        />
+      );
     case "collectors":
       return <CollectorsPage onOpenRoutingDeepLink={routingDeepLinkHandler} />;
     case "runtimeDiagnostics":
@@ -91,6 +100,7 @@ export const ShellPageContent = memo(function ShellPageContent({
       return (
         <RoutingPage
           deepLink={actions.routingDeepLink}
+          onViewPreparationPort={actions.registerRoutingViewPreparation}
           onOpenRequestLog={(requestLogId) =>
             actions.openRequestLogDeepLink({
               kind: "request-log",
@@ -108,7 +118,12 @@ export const ShellPageContent = memo(function ShellPageContent({
         />
       );
     case "settings":
-      return <SettingsPage onOpenModelBasePrices={actions.openModelBasePrices} />;
+      return (
+        <SettingsPage
+          onOpenModelBasePrices={actions.openModelBasePrices}
+          onOpenTourCenter={actions.openTourCenter}
+        />
+      );
     case "dashboard":
     default:
       return (

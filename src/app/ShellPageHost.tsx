@@ -1,5 +1,5 @@
 import { motion, MotionConfig, type TargetAndTransition } from "framer-motion";
-import { memo, useCallback, useEffect, useLayoutEffect, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   markNavigation,
   measureNavigation,
@@ -100,6 +100,7 @@ export const ShellPageHost = memo(function ShellPageHost({
   activeTransientPage,
   actions,
   onExitComplete,
+  onPageReady,
   onRememberShellFocusTarget,
   pending,
 }: {
@@ -113,10 +114,12 @@ export const ShellPageHost = memo(function ShellPageHost({
   activeTransientPage: TransientPageDescriptor | null;
   actions: ShellPageActions;
   onExitComplete: () => void;
+  onPageReady?: (routeId: AppRouteId, sequence: number) => void;
   onRememberShellFocusTarget: (target: EventTarget | null) => void;
   pending: boolean;
 }) {
   const [completedNavigationSequence, setCompletedNavigationSequence] = useState(0);
+  const reportedNavigationSequenceRef = useRef(0);
   const handoffActive =
     !transientActive &&
     previousShellRouteId !== null &&
@@ -151,7 +154,11 @@ export const ShellPageHost = memo(function ShellPageHost({
       );
       return sequence;
     });
-  }, [committedNavigationSequence, intentNavigationSequence, intentShellRouteId]);
+    if (reportedNavigationSequenceRef.current < sequence) {
+      reportedNavigationSequenceRef.current = sequence;
+      onPageReady?.(routeId, sequence);
+    }
+  }, [committedNavigationSequence, intentNavigationSequence, intentShellRouteId, onPageReady]);
 
   useEffect(() => {
     if (!handoffActive) {

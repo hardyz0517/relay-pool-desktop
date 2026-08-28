@@ -76,7 +76,7 @@ describe("useStationPublishedStatus", () => {
 
     expect(mocks.collectStationTask).toHaveBeenCalledWith("station-1", "published_status");
     expect(invalidateQueries).toHaveBeenCalledWith({
-      queryKey: queryKeys.stationPublishedStatus("station-1"),
+      queryKey: queryKeys.stationPublishedStatusRoot,
     });
     expect(invalidateQueries).toHaveBeenCalledWith({
       queryKey: queryKeys.collectorRuns("station-1"),

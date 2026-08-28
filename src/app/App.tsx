@@ -25,6 +25,21 @@ import type { AppPageId, AppRouteId, TransientPageId } from "@/lib/types/navigat
 import type { Station } from "@/lib/types/stations";
 import { settingsQueryOptions } from "@/lib/query/resourceQueries";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
+import { createTourNavigationPort } from "@/app/tours/tourNavigation";
+import type { TourNavigationCurrent } from "@/app/tours/tourTypes";
+import { createDriverJsAdapter } from "@/app/tours/TourDriverAdapter";
+import { TourManager } from "@/app/tours/TourManager";
+import { TourProvider } from "@/app/tours/TourProvider";
+import { TourTargetResolver } from "@/app/tours/tourTargetResolver";
+import { TourPreparationRegistry } from "@/app/tours/tourPreparationRegistry";
+import { createTourProgressStore } from "@/app/tours/tourProgressStorage";
+import { PUBLISHED_TOURS } from "@/app/tours/tourCatalog";
+import { hasBlockingBusinessModal } from "@/app/tours/tourModalGuard";
+import { scheduleTourAutoStart } from "@/app/tours/tourAutoStart";
+import type { PublishedTourId } from "@/app/tours/tourTypes";
+import { TourCenterDialog } from "@/features/settings/TourCenterDialog";
+import type { RoutingViewPreparationPort } from "@/features/routing/routingViewPreparation";
+import type { ChannelViewPreparationPort } from "@/features/channels/channelViewPreparation";
 
 const ACTIONABLE_ELEMENT_SELECTOR = [
   "[data-page-autofocus]",
@@ -36,7 +51,7 @@ const ACTIONABLE_ELEMENT_SELECTOR = [
   '[tabindex]:not([tabindex^="-"])',
 ].join(", ");
 
-export function App() {
+export function App({ runtimeMode = "desktop" }: { runtimeMode?: "desktop" | "demo" } = {}) {
   const { intent, committed, pending, navigate } = useNavigationController("dashboard");
   const settingsQuery = useActivityQuery(settingsQueryOptions());
   const developerModeEnabled = settingsQuery.data?.developerModeEnabled === true;
@@ -57,12 +72,32 @@ export function App() {
   const lastShellFocusTargetRef = useRef<HTMLElement | null>(null);
   const transientReturnFocusRef = useRef<HTMLElement | null>(null);
   const activeRouteIdRef = useRef<AppPageId>(activeRouteId);
+  const developerModeRef = useRef(developerModeEnabled);
+  const autoStartedRef = useRef(false);
+  const navigationDisposeTimerRef = useRef<number | null>(null);
+  const initialDashboardReadyRef = useRef(false);
+  const pendingTourStartRef = useRef<PublishedTourId | null>(null);
+  const tourCenterOpenerRef = useRef<HTMLElement | null>(null);
+  const routingViewPreparationRef = useRef<RoutingViewPreparationPort | null>(null);
+  const channelViewPreparationRef = useRef<ChannelViewPreparationPort | null>(null);
+  const [tourCenterOpen, setTourCenterOpen] = useState(false);
+  const [, refreshTourProgress] = useState(0);
+  const navigationCurrentRef = useRef<TourNavigationCurrent>({
+    routeId: activeRouteId,
+    shellRouteId: resolveActiveShellRouteId(activeRouteId, transientParentRouteId),
+    sequence: committed.sequence,
+    pending,
+  });
   const activeShellRouteId = resolveActiveShellRouteId(
     activeRouteId,
     transientParentRouteId,
   );
   const activeShellRouteLabel =
     appRoutes.find((route) => route.id === activeShellRouteId)?.label ?? activeShellRouteId;
+  const availableTours = useMemo(
+    () => PUBLISHED_TOURS.filter((tour) => tour.requires !== "developer-mode" || developerModeEnabled),
+    [developerModeEnabled],
+  );
   const idlePrewarmCandidates = useMemo(
     () =>
       appRoutes
@@ -99,6 +134,10 @@ export function App() {
     activeRouteIdRef.current = activeRouteId;
   }, [activeRouteId]);
 
+  useEffect(() => {
+    developerModeRef.current = developerModeEnabled;
+  }, [developerModeEnabled]);
+
   const navigateTo = useCallback((routeId: AppPageId) => {
     if (isShellPage(activeRouteIdRef.current) && !isShellPage(routeId)) {
       const recordedTarget = lastShellFocusTargetRef.current;
@@ -112,6 +151,161 @@ export function App() {
 
     navigate(routeId);
   }, [navigate]);
+
+  navigationCurrentRef.current = {
+    routeId: activeRouteId,
+    shellRouteId: activeShellRouteId,
+    sequence: committed.sequence,
+    pending,
+  };
+  const tourNavigation = useMemo(
+    () =>
+      createTourNavigationPort({
+        navigate: navigateTo,
+        getCurrent: () => navigationCurrentRef.current,
+      }),
+    [navigateTo],
+  );
+  const handlePageReady = useCallback(
+    (routeId: AppRouteId, sequence: number) => {
+      tourNavigation.notifyReady({
+        routeId,
+        shellRouteId: routeId,
+        sequence,
+      });
+    },
+    [tourNavigation],
+  );
+
+  useEffect(() => {
+    if (navigationDisposeTimerRef.current !== null) {
+      window.clearTimeout(navigationDisposeTimerRef.current);
+      navigationDisposeTimerRef.current = null;
+    }
+    const dispose = () => tourNavigation.dispose();
+    window.addEventListener("pagehide", dispose);
+    return () => {
+      window.removeEventListener("pagehide", dispose);
+      navigationDisposeTimerRef.current = window.setTimeout(() => {
+        navigationDisposeTimerRef.current = null;
+        tourNavigation.dispose();
+      }, 0);
+    };
+  }, [tourNavigation]);
+
+  useEffect(() => {
+    if (initialDashboardReadyRef.current || activeRouteId !== "dashboard" || pending) return;
+    let cancelled = false;
+    const frameId = window.requestAnimationFrame(() => {
+      if (cancelled) return;
+      initialDashboardReadyRef.current = true;
+      tourNavigation.notifyReady({ routeId: "dashboard", shellRouteId: "dashboard", sequence: committed.sequence });
+    });
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [activeRouteId, committed.sequence, pending, tourNavigation]);
+
+  const tourBundle = useMemo(() => {
+    const progress = createTourProgressStore();
+    const targetResolver = new TourTargetResolver();
+    const manager = new TourManager({
+      catalog: PUBLISHED_TOURS,
+      driver: createDriverJsAdapter("relay-pool-tour-popover"),
+      navigation: tourNavigation,
+      targetResolver,
+      preparation: new TourPreparationRegistry({
+        actions: new Map([
+          ["routing-status-tab", () => {
+            const port = routingViewPreparationRef.current;
+            if (!port) throw new Error("Routing view preparation is unavailable");
+            return port.showStatusView();
+          }],
+          ["routing-settings-tab", () => {
+            const port = routingViewPreparationRef.current;
+            if (!port) throw new Error("Routing view preparation is unavailable");
+            return port.showSettingsView();
+          }],
+          ["channels-local-tab", () => {
+            const port = channelViewPreparationRef.current;
+            if (!port) throw new Error("Channel view preparation is unavailable");
+            return port.showLocalView();
+          }],
+          ["channels-official-tab", () => {
+            const port = channelViewPreparationRef.current;
+            if (!port) throw new Error("Channel view preparation is unavailable");
+            return port.showOfficialView();
+          }],
+          ["channels-monitoring-tab", () => {
+            const port = channelViewPreparationRef.current;
+            if (!port) throw new Error("Channel view preparation is unavailable");
+            return port.showMonitoringView();
+          }],
+        ]),
+      }),
+      progress,
+      isDeveloperMode: () => developerModeRef.current,
+      hasBlockingModal: () => hasBlockingBusinessModal(),
+    });
+    return { manager, progress, targetResolver };
+  }, [tourNavigation]);
+
+  const openTourCenter = useCallback(() => {
+    const activeElement = document.activeElement;
+    tourCenterOpenerRef.current = activeElement instanceof HTMLElement ? activeElement : null;
+    setTourCenterOpen(true);
+  }, []);
+
+  const startTourFromCenter = useCallback((tourId: PublishedTourId) => {
+    pendingTourStartRef.current = tourId;
+    setTourCenterOpen(false);
+  }, []);
+
+  const startPendingTourAfterCenterExit = useCallback(() => {
+    const tourId = pendingTourStartRef.current;
+    pendingTourStartRef.current = null;
+    const opener = tourCenterOpenerRef.current;
+    tourCenterOpenerRef.current = null;
+    if (opener?.isConnected && !opener.closest("[inert]")) {
+      try {
+        opener.focus({ preventScroll: true });
+      } catch {
+        opener.focus();
+      }
+    }
+    if (tourId) tourBundle.manager.start(tourId, "settings");
+  }, [tourBundle.manager]);
+
+  const resetTourProgress = useCallback(() => {
+    tourBundle.manager.resetProgress();
+    refreshTourProgress((current) => current + 1);
+  }, [tourBundle.manager]);
+
+  useEffect(() => tourBundle.manager.subscribe(() => {
+    // The progress store is intentionally independent from React state. A
+    // lightweight render tick keeps the settings dialog accurate after a
+    // tour completes or is skipped without coupling the manager to React.
+    refreshTourProgress((current) => current + 1);
+  }), [tourBundle.manager]);
+
+  useEffect(() => {
+    if (runtimeMode !== "desktop" || autoStartedRef.current || activeRouteId !== "dashboard" || pending) return;
+    const firstStep = PUBLISHED_TOURS.find((tour) => tour.id === "basic")?.steps[0];
+    return scheduleTourAutoStart({
+      canAttempt: () =>
+        !autoStartedRef.current &&
+        document.visibilityState !== "hidden" &&
+        activeRouteIdRef.current === "dashboard" &&
+        !navigationCurrentRef.current.pending &&
+        !hasBlockingBusinessModal(),
+      hasTarget: () => Boolean(
+        firstStep && tourBundle.targetResolver.resolveTarget(firstStep.target.anchor, firstStep.route),
+      ),
+      start: () => tourBundle.manager.start("basic", "auto"),
+      onAccepted: () => { autoStartedRef.current = true; },
+    });
+  }, [activeRouteId, pending, runtimeMode, tourBundle.manager, tourBundle.targetResolver]);
 
   const restoreTransientReturnFocus = useCallback(() => {
     const target = transientReturnFocusRef.current;
@@ -222,6 +416,14 @@ export function App() {
     navigateTo("routing");
   }, [navigateTo]);
 
+  const registerRoutingViewPreparation = useCallback((port: RoutingViewPreparationPort | null) => {
+    routingViewPreparationRef.current = port;
+  }, []);
+
+  const registerChannelViewPreparation = useCallback((port: ChannelViewPreparationPort | null) => {
+    channelViewPreparationRef.current = port;
+  }, []);
+
   const openRequestLogDeepLink = useCallback((link: RequestLogDeepLink) => {
     requestLogDeepLinkSequenceRef.current += 1;
     setRequestLogDeepLink({ ...link, sequence: requestLogDeepLinkSequenceRef.current });
@@ -240,10 +442,13 @@ export function App() {
       openRequestLogs,
       openModelBasePrices,
       openChangeCenterSettings,
+      openTourCenter,
       changeCenterView,
       setChangeCenterView,
       openRoutingDeepLink,
       routingDeepLink,
+      registerRoutingViewPreparation,
+      registerChannelViewPreparation,
       openRequestLogDeepLink,
       requestLogDeepLink,
     }),
@@ -258,9 +463,12 @@ export function App() {
       openRequestLogs,
       openModelBasePrices,
       openChangeCenterSettings,
+      openTourCenter,
       changeCenterView,
       openRoutingDeepLink,
       routingDeepLink,
+      registerRoutingViewPreparation,
+      registerChannelViewPreparation,
       openRequestLogDeepLink,
       requestLogDeepLink,
     ],
@@ -364,25 +572,37 @@ export function App() {
     previousRouteId && isShellPage(previousRouteId) ? previousRouteId : null;
 
   return (
-    <AppShell
-      activeRouteId={intent.shellRouteId}
-      navigationSequence={intent.sequence}
-      onRouteChange={navigateTo}
-    >
-      <ShellPageHost
-        actions={shellPageActions}
-        activeShellRouteId={activeShellRouteId}
-        activeTransientPage={activeTransientPage}
-        committedNavigationSequence={committed.sequence}
-        intentNavigationSequence={intent.sequence}
-        intentShellRouteId={intent.shellRouteId}
-        mountedRouteIds={mountedRouteIds}
-        onExitComplete={restoreTransientReturnFocus}
-        onRememberShellFocusTarget={rememberShellFocusTarget}
-        pending={pending}
-        previousShellRouteId={previousShellRouteId}
-        transientActive={isCurrentTransientPage}
-      />
-    </AppShell>
+      <TourProvider manager={tourBundle.manager}>
+        <AppShell
+          activeRouteId={intent.shellRouteId}
+          navigationSequence={intent.sequence}
+          onRouteChange={navigateTo}
+        >
+          <ShellPageHost
+            actions={shellPageActions}
+            activeShellRouteId={activeShellRouteId}
+            activeTransientPage={activeTransientPage}
+            committedNavigationSequence={committed.sequence}
+            intentNavigationSequence={intent.sequence}
+            intentShellRouteId={intent.shellRouteId}
+            mountedRouteIds={mountedRouteIds}
+            onExitComplete={restoreTransientReturnFocus}
+            onPageReady={handlePageReady}
+            onRememberShellFocusTarget={rememberShellFocusTarget}
+            pending={pending}
+            previousShellRouteId={previousShellRouteId}
+            transientActive={isCurrentTransientPage}
+          />
+        </AppShell>
+        <TourCenterDialog
+          open={tourCenterOpen}
+          tours={availableTours}
+          progress={tourBundle.progress.getSnapshot()}
+          onClose={() => setTourCenterOpen(false)}
+          onExited={startPendingTourAfterCenterExit}
+          onStart={startTourFromCenter}
+          onReset={resetTourProgress}
+        />
+      </TourProvider>
   );
 }

@@ -25,7 +25,7 @@ export type CollectorSettingsValue = {
 export const COLLECTOR_TIMEOUT_SECONDS = {
   min: 3,
   max: 300,
-  recommended: 30,
+  recommended: 60,
 } as const;
 
 type ParsedCollectorSettingsDraft =

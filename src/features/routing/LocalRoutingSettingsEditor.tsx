@@ -203,7 +203,11 @@ export function LocalRoutingSettingsEditor() {
             </label>
           </div>
         </section>
-        <section className={settingsBlockClassName} aria-labelledby="routing-policy-weights-title">
+        <section
+          className={settingsBlockClassName}
+          aria-labelledby="routing-policy-weights-title"
+          data-tour="routing-policy-profile"
+        >
           <div>
             <h3 id="routing-policy-weights-title" className="text-sm font-medium text-foreground">评分偏好</h3>
             <p className="mt-0.5 text-xs text-muted-foreground">调整各项因素的重要程度，其他比例会自动归一化。</p>
@@ -442,7 +446,10 @@ export function LocalRoutingSettingsEditor() {
           </div>
         </section>
 
-        <footer className={`flex flex-wrap items-center gap-3 pt-4 ${error || dirty ? "justify-between" : "justify-end"}`}>
+        <footer
+          className={`flex flex-wrap items-center gap-3 pt-4 ${error || dirty ? "justify-between" : "justify-end"}`}
+          data-tour="routing-policy-save"
+        >
           {error || dirty ? (
             <div className="min-h-5 text-xs" aria-live="polite">
               {error ? <p className="text-danger-foreground">{error}</p> : <span className="text-muted-foreground">存在未保存的修改</span>}

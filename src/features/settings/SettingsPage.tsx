@@ -58,7 +58,7 @@ const fallbackSettings: AppSettings = {
   groupRateIntervalMinutes: 20,
   publishedStatusIntervalMinutes: 5,
   pricingRefreshIntervalMinutes: 60,
-  collectorTimeoutSeconds: 30,
+  collectorTimeoutSeconds: 60,
   collectorMaxConcurrency: 3,
   allowDepletedFallback: false,
   developerModeEnabled: false,
@@ -83,9 +83,10 @@ const REPOSITORY_URL = "https://github.com/hardyz0517/relay-pool-desktop";
 
 type SettingsPageProps = {
   onOpenModelBasePrices?: () => void;
+  onOpenTourCenter?: () => void;
 };
 
-export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps = {}) {
+export function SettingsPage({ onOpenModelBasePrices, onOpenTourCenter }: SettingsPageProps = {}) {
   const toast = useToast();
   const queryClient = useQueryClient();
   const { state: updaterState, checkNow: checkForUpdates } = useUpdater();
@@ -334,18 +335,21 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps = {}) 
   return (
     <PageScaffold title="设置" width="settings">
       <div className="grid min-w-0 gap-[var(--shell-page-gap)]">
-        <ThemeSettings />
+        <div data-tour="settings-theme">
+          <ThemeSettings />
+        </div>
         <CommonLoginProfilesSettings />
 
-        <SectionCard
-          contentClassName="p-0"
-          title="本地代理"
-          action={
-            <StatusBadge tone={proxyStatus.running ? "healthy" : "disabled"}>
-              {proxyStatus.running ? "运行中" : "已停止"}
-            </StatusBadge>
-          }
-        >
+        <div data-tour="settings-local-proxy">
+          <SectionCard
+            contentClassName="p-0"
+            title="本地代理"
+            action={
+              <StatusBadge tone={proxyStatus.running ? "healthy" : "disabled"}>
+                {proxyStatus.running ? "运行中" : "已停止"}
+              </StatusBadge>
+            }
+          >
           <SettingRow
             control={
               <div className="flex w-full flex-wrap justify-start gap-2 sm:justify-end">
@@ -416,9 +420,11 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps = {}) 
             }
             label="本地访问密钥"
           />
-        </SectionCard>
+          </SectionCard>
+        </div>
 
-        <SectionCard contentClassName="p-0" title="网络与代理">
+        <div data-tour="settings-network">
+          <SectionCard contentClassName="p-0" title="网络与代理">
           <SettingRow
             control={
               <div className="grid w-full min-w-0 gap-2">
@@ -450,25 +456,29 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps = {}) 
             description="采集与转发默认使用；站点可单独覆盖。"
             label="默认网络出口"
           />
-        </SectionCard>
+          </SectionCard>
+        </div>
 
         {onOpenModelBasePrices ? (
-          <SectionCard contentClassName="p-0" title="模型定价">
-            <SettingRow
-              control={
-                <Button type="button" variant="outline" onClick={onOpenModelBasePrices}>
-                  管理
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
-              }
-              description="管理成本计算和价格比较使用的模型基准价格。"
-              label="模型基准价格"
-            />
-          </SectionCard>
+          <div data-tour="settings-pricing">
+            <SectionCard contentClassName="p-0" title="模型定价">
+              <SettingRow
+                control={
+                  <Button type="button" variant="outline" onClick={onOpenModelBasePrices}>
+                    管理
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                }
+                description="管理成本计算和价格比较使用的模型基准价格。"
+                label="模型基准价格"
+              />
+            </SectionCard>
+          </div>
         ) : null}
 
-        <SectionCard contentClassName="p-0" title="数据与备份">
-          <SettingRow
+        <div data-tour="settings-data-backup">
+          <SectionCard contentClassName="p-0" title="数据与备份">
+            <SettingRow
             control={
               <div className="flex w-full min-w-0 items-center gap-1.5">
                 <div
@@ -507,8 +517,9 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps = {}) 
             description={restartRequired ? "重启后使用新的数据目录；当前运行仍使用原数据库。" : undefined}
             label="数据目录"
           />
-          <DataMigrationSection />
-        </SectionCard>
+            <DataMigrationSection />
+          </SectionCard>
+        </div>
 
         <SectionCard contentClassName="p-0" title="高级">
           <SettingRow
@@ -523,6 +534,20 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps = {}) 
             }
             label="开发者模式"
           />
+          {onOpenTourCenter ? (
+            <div className="border-b border-border" data-tour="settings-tutorial-entry">
+              <SettingRow
+                control={
+                  <Button type="button" variant="outline" onClick={onOpenTourCenter}>
+                    打开教程
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                }
+                description="按场景重新查看 Relay Pool 的功能说明。"
+                label="使用教程"
+              />
+            </div>
+          ) : null}
           <SettingRow
             control={
               <SwitchControl

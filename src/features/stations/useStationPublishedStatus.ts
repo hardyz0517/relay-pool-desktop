@@ -12,7 +12,7 @@ export async function invalidateStationPublishedStatusCollectionQueries(
   stationId: string,
 ) {
   await Promise.all([
-    queryClient.invalidateQueries({ queryKey: queryKeys.stationPublishedStatus(stationId) }),
+    queryClient.invalidateQueries({ queryKey: queryKeys.stationPublishedStatusRoot }),
     queryClient.invalidateQueries({ queryKey: queryKeys.collectorRuns(stationId) }),
     queryClient.invalidateQueries({ queryKey: queryKeys.collectorSnapshots(stationId) }),
   ]);

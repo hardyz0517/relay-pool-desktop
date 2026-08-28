@@ -377,9 +377,11 @@ export function ChangeCenterPage({
       actions={
         <>
           {onOpenSettings ? (
-            <IconButton className="h-9 w-9" label="变更中心设置" title="变更中心设置" onClick={onOpenSettings}>
-              <Settings className="h-5 w-5" />
-            </IconButton>
+            <div data-tour="changes-settings-entry">
+              <IconButton className="h-9 w-9" label="变更中心设置" title="变更中心设置" onClick={onOpenSettings}>
+                <Settings className="h-5 w-5" />
+              </IconButton>
+            </div>
           ) : null}
         </>
       }
@@ -394,14 +396,18 @@ export function ChangeCenterPage({
           <div data-testid="change-center-toolbar-surface" className="rounded-[var(--surface-radius)] border border-border bg-surface shadow-[var(--surface-shadow)]">
             <Toolbar className="flex-wrap">
               <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-                <SegmentedControl value={view} options={CHANGE_CENTER_VIEW_OPTIONS} onChange={changeView} />
-                <SelectControl ariaLabel="严重度" className={inputClassName} value={severity} options={[{ value: "all", label: "全部类型" }, { value: "critical", label: "严重" }, { value: "warning", label: "警告" }, { value: "info", label: "信息" }]} onChange={changeSeverity} />
+                <div data-tour="changes-view-filter">
+                  <SegmentedControl value={view} options={CHANGE_CENTER_VIEW_OPTIONS} onChange={changeView} />
+                </div>
+                <div data-tour="changes-severity-filter">
+                  <SelectControl ariaLabel="严重度" className={inputClassName} value={severity} options={[{ value: "all", label: "全部类型" }, { value: "critical", label: "严重" }, { value: "warning", label: "警告" }, { value: "info", label: "信息" }]} onChange={changeSeverity} />
+                </div>
                 <div className="relative">
                   <Search className="pointer-events-none absolute left-2.5 top-2 h-4 w-4 text-muted-foreground" />
                   <input aria-label="搜索问题" className={`${inputClassName} pl-8`} value={query} placeholder="搜索事件或站点" onChange={(event) => { setQuery(event.target.value); resetPagination(); }} />
                 </div>
               </div>
-              <div className="flex shrink-0 items-center gap-2">
+              <div className="flex shrink-0 items-center gap-2" data-tour="changes-unread-actions">
                 <Button variant="secondary" onClick={() => void markAllSeen()} disabled={isMarkingAllSeen || (pageData?.unseenCount ?? 0) === 0}><CheckCheck className="h-4 w-4" />一键已读</Button>
                 <Button variant="secondary" onClick={() => void refresh(true)} disabled={activeQuery.isFetching}><RefreshCw className="h-4 w-4" />刷新</Button>
                 <details className="relative">
@@ -413,7 +419,7 @@ export function ChangeCenterPage({
               </div>
             </Toolbar>
           </div>
-          <div data-testid="change-center-list-surface" className="mt-3 min-w-0 overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface shadow-[var(--surface-shadow)]">
+          <div data-testid="change-center-list-surface" data-tour="changes-list" className="mt-3 min-w-0 overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface shadow-[var(--surface-shadow)]">
             {activeQuery.error ? <div className="border-b border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">{readError(activeQuery.error)}</div> : null}
             {pageInfo.items.length === 0 ? <EmptyState title={activeQuery.isPending ? "正在加载变更" : "暂无变更"} description="告警、恢复状态和信息类变更会按时间显示在这里。" /> : (
               <div className="divide-y divide-border bg-surface">

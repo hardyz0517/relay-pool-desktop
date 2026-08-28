@@ -4,6 +4,9 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   plugins: [react()],
+  // Tauri serves the bundled frontend from its local asset protocol.
+  // Relative URLs keep release assets resolvable outside the Vite dev server.
+  base: "./",
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

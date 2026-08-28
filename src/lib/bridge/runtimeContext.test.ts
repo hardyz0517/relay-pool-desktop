@@ -4,7 +4,6 @@ import {
   clearRuntimeContextSession,
   configureRuntimeContextSession,
   currentRuntimeContext,
-  isValidInteractionId,
   runUserInteraction,
 } from "./runtimeContext";
 
@@ -31,7 +30,7 @@ describe("runtime interaction context", () => {
         nested = currentRuntimeContext()?.interactionId ?? null;
       });
       expect(first).not.toBeNull();
-      expect(isValidInteractionId(first!)).toBe(true);
+      expect(first).toMatch(/^int_[0-9a-f]{32}$/);
     });
     expect(first).toBe(nested);
     expect(currentRuntimeContext()?.interactionId).toBeNull();

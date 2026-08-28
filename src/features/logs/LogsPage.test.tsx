@@ -106,4 +106,20 @@ describe("LogsPage pagination", () => {
     expect(compactSwitch.getAttribute("aria-checked")).toBe("false");
     expect(host.querySelector('[data-testid="request-log-table"]')?.getAttribute("data-compact")).toBe("false");
   });
+
+  it("keeps its ordinary-mode tour anchors available with no request data", () => {
+    mockState.logs = [];
+    act(() => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <ToastProvider>
+            <LogsPage />
+          </ToastProvider>
+        </QueryClientProvider>,
+      );
+    });
+
+    expect(host.querySelector('[data-tour="logs-display-controls"]')).not.toBeNull();
+    expect(host.querySelector('[data-tour="logs-list"]')).not.toBeNull();
+  });
 });

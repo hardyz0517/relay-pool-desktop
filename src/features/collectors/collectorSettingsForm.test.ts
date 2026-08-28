@@ -128,7 +128,7 @@ describe("collector settings form", () => {
       groupRateIntervalMinutes: "20",
       publishedStatusIntervalMinutes: "5",
       pricingRefreshIntervalMinutes: "60",
-      collectorTimeoutSeconds: "30",
+      collectorTimeoutSeconds: "60",
       collectorMaxConcurrency: "3",
     });
     expect(parseCollectorSettingsDraft(recommended)).toEqual({
@@ -138,7 +138,7 @@ describe("collector settings form", () => {
         groupRateIntervalMinutes: 20,
         publishedStatusIntervalMinutes: 5,
         pricingRefreshIntervalMinutes: 60,
-        collectorTimeoutSeconds: 30,
+        collectorTimeoutSeconds: 60,
         collectorMaxConcurrency: 3,
       },
     });

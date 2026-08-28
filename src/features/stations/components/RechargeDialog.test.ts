@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detectProvider, parseRechargeRun } from "./RechargeDialog";
+import { localizeDesktopRedemptionError, parseRechargeRun } from "./RechargeDialog";
 
 const run = (summaryJson: Record<string, unknown>, normalizedJson: Record<string, unknown>, status = "success") => ({
   snapshot: {
@@ -19,12 +19,6 @@ const run = (summaryJson: Record<string, unknown>, normalizedJson: Record<string
 });
 
 describe("recharge collection result parsing", () => {
-  it("recognizes Liandong and Cloudcat station identities", () => {
-    expect(detectProvider({ name: "链动小铺", websiteUrl: "https://relay.example" })).toBe("liandong");
-    expect(detectProvider({ name: "Cloudcat relay", websiteUrl: "https://relay.example" })).toBe("cloudcat");
-    expect(detectProvider({ name: "普通站点", websiteUrl: "https://relay.example" })).toBe("custom");
-  });
-
   it("only returns absolute entries supplied by the authenticated collector", () => {
     const parsed = parseRechargeRun(run(
       { status: "success", provider: "liandong" },
@@ -44,5 +38,12 @@ describe("recharge collection result parsing", () => {
   it("does not expose entries for login-required or partial scans", () => {
     expect(parseRechargeRun(run({ status: "login_required" }, { entries: [] }, "manual_required")).status).toBe("manual_required");
     expect(parseRechargeRun(run({ status: "no_match" }, { entries: [] }, "partial")).entries).toEqual([]);
+  });
+});
+
+describe("redemption error localization", () => {
+  it("turns the frontend fallback timeout into a user-facing Chinese message", () => {
+    expect(localizeDesktopRedemptionError("station redemption timed out after 330000ms"))
+      .toBe("兑换请求超时，请稍后重试。");
   });
 });

@@ -217,7 +217,10 @@ export function PricingPage({ onOpenRoutingDeepLink }: PricingPageProps) {
 
   return (
     <PageScaffold title="价格 / 倍率">
-      <div className="grid gap-[var(--shell-page-gap)] md:grid-cols-2">
+      <div
+        className="grid gap-[var(--shell-page-gap)] md:grid-cols-2"
+        data-tour="pricing-summary"
+      >
         <MetricCard
           className="!shadow-none"
           icon={ShieldCheck}
@@ -243,8 +246,9 @@ export function PricingPage({ onOpenRoutingDeepLink }: PricingPageProps) {
         title="分组倍率比较"
         contentClassName="overflow-visible rounded-none border-0 bg-transparent p-0 !shadow-none"
       >
-        <Toolbar className="mb-4 items-end rounded-[var(--surface-radius)] border bg-surface px-4 py-3 !shadow-none">
-          <div className="grid w-full grid-cols-1 items-end gap-3 sm:grid-cols-2 lg:grid-cols-[repeat(7,minmax(0,1fr))_auto]">
+        <div data-tour="pricing-filters">
+          <Toolbar className="mb-4 items-end rounded-[var(--surface-radius)] border bg-surface px-4 py-3 !shadow-none">
+            <div className="grid w-full grid-cols-1 items-end gap-3 sm:grid-cols-2 lg:grid-cols-[repeat(7,minmax(0,1fr))_auto]">
             <FilterField label="分组类型">
               <SelectControl
                 ariaLabel="按分组类型筛选"
@@ -327,10 +331,11 @@ export function PricingPage({ onOpenRoutingDeepLink }: PricingPageProps) {
                 重置
               </Button>
             </div>
-          </div>
-        </Toolbar>
+            </div>
+          </Toolbar>
+        </div>
 
-        <div className="space-y-4">
+        <div className="space-y-4" data-tour="pricing-comparison">
           {error && (
             <div className="rounded-[var(--surface-radius)] border border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">
               {error}

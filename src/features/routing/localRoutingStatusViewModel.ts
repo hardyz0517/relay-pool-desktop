@@ -23,22 +23,6 @@ export type CandidateDisplayFacts = {
   balanceDetail: string | null;
 };
 
-export type CandidateHealthDisplay = {
-  label: string;
-  tone: "healthy" | "warning" | "error" | "disabled";
-};
-
-const candidateHealthDisplays: Record<
-  RoutingCandidateView["healthState"],
-  CandidateHealthDisplay
-> = {
-  ready: { label: "就绪", tone: "healthy" },
-  cooldown: { label: "冷却", tone: "warning" },
-  degraded: { label: "降级", tone: "warning" },
-  offline: { label: "离线", tone: "error" },
-  unknown: { label: "未知", tone: "disabled" },
-};
-
 const previewRejectReasonLabels: Record<string, string> = {
   model_mapping_no_target: "模型映射没有可用目标",
   model_mapping_invalid_model: "请求模型无效",
@@ -79,12 +63,6 @@ const balanceStatusLabels: Record<string, string> = {
   insufficient: "不足",
   blocked: "已阻断",
 };
-
-export function buildCandidateHealthDisplay(
-  healthState: RoutingCandidateView["healthState"],
-): CandidateHealthDisplay {
-  return candidateHealthDisplays[healthState];
-}
 
 export function buildCooldownDisplay(
   healthState: RoutingCandidateView["healthState"],

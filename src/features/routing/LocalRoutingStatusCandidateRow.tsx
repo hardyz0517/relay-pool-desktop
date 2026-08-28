@@ -250,28 +250,24 @@ function ScoreBreakdown({
       key: "reliability",
       label: "可靠性",
       factor: details.reliability,
-      summary: "根据历史成功率计算，样本较少时会加入先验平滑。",
       formula: "窗口分：(成功次数 + 先验成功) / (成功次数 + 失败次数 + 先验总数)；最终分：近24小时分 × 近期权重 + 历史分 × 历史权重",
     },
     {
       key: "responsiveness",
       label: "响应速度",
       factor: details.responsiveness,
-      summary: "分别计算近期和历史 P95 延迟，再按样本量混合。",
       formula: "窗口速度分：max(0, 1 - 最近延迟 / 延迟上限)（最近延迟取窗口 P95）；最终分：近24小时速度分 × 近期权重 + 历史速度分 × 历史权重",
     },
     {
       key: "cost",
       label: "成本",
       factor: details.cost,
-      summary: "根据密钥的有效倍率计算；倍率越低代表请求成本越低。",
       formula: "1 / (1 + 密钥有效倍率)",
     },
     {
       key: "preference",
       label: "偏好",
       factor: details.preference,
-      summary: "根据候选基础优先级和策略修正计算。",
       formula: "10,000 - 候选优先级，再应用策略修正",
     },
   ] as const;
@@ -289,7 +285,6 @@ function ScoreBreakdown({
       <section className="grid gap-3" aria-labelledby="score-breakdown-title">
         <div>
           <h3 id="score-breakdown-title" className="text-sm font-semibold text-foreground">评分构成</h3>
-          <p className="mt-0.5 text-xs text-muted-foreground">因子分 × 权重 = 对最终评分的贡献</p>
         </div>
         <div className="grid grid-cols-[minmax(120px,1fr)_68px_58px_68px] gap-2 border-b border-border pb-1 text-[11px] text-muted-foreground">
           <span>评分因子</span>
@@ -297,7 +292,7 @@ function ScoreBreakdown({
           <span className="text-right">权重</span>
           <span className="text-right">贡献</span>
         </div>
-        {factors.map(({ key, label, factor, summary, formula }) => {
+        {factors.map(({ key, label, factor, formula }) => {
           const isExpanded = Boolean(expanded[key]);
           return (
             <div key={key} className="grid gap-2 border-b border-border/70 pb-3 last:border-b-0 last:pb-0">
@@ -310,10 +305,8 @@ function ScoreBreakdown({
               <div className="h-1 overflow-hidden rounded-full bg-surface-subtle" role="progressbar" aria-label={`${label}因子分`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={factor.score / 100}>
                 <div className="h-full rounded-full bg-info-foreground/70" style={{ width: `${Math.min(100, factor.score / 100)}%` }} />
               </div>
-              <p className="text-xs leading-4 text-muted-foreground">{summary}</p>
-              <div className="text-xs text-muted-foreground">{summaryInputs(label, factor)}</div>
-              {(key === "reliability" || key === "responsiveness") && factor.windowDetails ? (
-                <ScoreWindowDetails kind={key} details={factor.windowDetails} />
+              {!isExpanded ? (
+                <div className="text-xs leading-4 text-muted-foreground">{factorSummary(label, factor)}</div>
               ) : null}
               <button
                 type="button"
@@ -321,21 +314,25 @@ function ScoreBreakdown({
                 aria-expanded={isExpanded}
                 onClick={() => setExpanded((current) => ({ ...current, [key]: !isExpanded }))}
               >
-                {isExpanded ? "收起计算详情" : "查看计算详情"}
+                {isExpanded ? "收起详情" : "查看详情"}
               </button>
               {isExpanded ? (
-                <div className="grid gap-2 rounded-[var(--control-radius)] border border-border bg-surface-subtle px-3 py-2 text-xs">
+                <div className="grid gap-3 rounded-[var(--control-radius)] border border-border bg-surface-subtle px-3 py-2 text-xs">
                   <div className="font-medium text-foreground">计算详情</div>
                   <div><span className="text-muted-foreground">公式：</span>{formula}</div>
-                  <div className="grid gap-1">
-                    <div className="text-muted-foreground">输入参数</div>
-                    {factor.inputs.length > 0 ? factor.inputs.map((input) => (
-                      <div key={input.label} className="flex items-baseline justify-between gap-3">
-                        <span>{input.label}</span>
-                        <span className="font-medium tabular-nums text-foreground">{input.value}</span>
-                      </div>
-                    )) : <span className="text-muted-foreground">暂无输入数据</span>}
-                  </div>
+                  {(key === "reliability" || key === "responsiveness") && factor.windowDetails ? (
+                    <ScoreWindowDetails kind={key} details={factor.windowDetails} />
+                  ) : (
+                    <div className="grid gap-1">
+                      <div className="text-muted-foreground">输入参数</div>
+                      {factor.inputs.length > 0 ? factor.inputs.map((input) => (
+                        <div key={input.label} className="flex items-baseline justify-between gap-3">
+                          <span>{input.label}</span>
+                          <span className="font-medium tabular-nums text-foreground">{input.value}</span>
+                        </div>
+                      )) : <span className="text-muted-foreground">暂无输入数据</span>}
+                    </div>
+                  )}
                   <div className="flex items-baseline justify-between border-t border-border pt-1">
                     <span className="text-muted-foreground">计算结果</span>
                     <span className="font-semibold tabular-nums text-foreground">{formatBasisPoints(factor.score)}</span>
@@ -359,7 +356,7 @@ function ScoreWindowDetails({
 }) {
   const isReliability = kind === "reliability";
   return (
-    <div className="grid gap-2 rounded-[var(--control-radius)] border border-border/70 bg-surface-subtle px-3 py-2 text-xs">
+    <div className="grid gap-2">
       <div className="font-medium text-foreground">窗口明细</div>
       <div className="grid gap-2 md:grid-cols-2">
         <WindowColumn
@@ -442,6 +439,24 @@ function formatContribution(value: number) {
   return `+${(value / 100).toFixed(1)}`;
 }
 
+function factorSummary(
+  label: string,
+  factor: NonNullable<LocalRoutingCandidate["scoreDetails"]>["reliability"],
+) {
+  const windowDetails = factor.windowDetails;
+  if (label === "可靠性" && windowDetails) {
+    return `近24小时成功率 ${formatBasisPoints(windowDetails.recentScore)} · 历史成功率 ${formatBasisPoints(windowDetails.historicalScore)} · 近期/历史权重 ${formatBasisPoints(windowDetails.recentWeightBasisPoints)} / ${formatBasisPoints(windowDetails.historicalWeightBasisPoints)}`;
+  }
+  if (label === "响应速度" && windowDetails) {
+    return `近24小时 P95 ${formatOptionalLatency(windowDetails.recentP95LatencyMs)} · 历史 P95 ${formatOptionalLatency(windowDetails.historicalP95LatencyMs)} · 近期/历史权重 ${formatBasisPoints(windowDetails.recentResponsivenessWeightBasisPoints)} / ${formatBasisPoints(windowDetails.historicalResponsivenessWeightBasisPoints)}`;
+  }
+  return summaryInputs(label, factor);
+}
+
+function formatOptionalLatency(value: number | null) {
+  return value == null ? "暂无" : formatLatency(value);
+}
+
 function summaryInputs(
   label: string,
   factor: NonNullable<LocalRoutingCandidate["scoreDetails"]>["reliability"],
@@ -454,9 +469,14 @@ function summaryInputs(
     }
     return (
       <span>
-        密钥有效倍率 {multiplier} · 采用倍率代理分 {formatBasisPoints(factor.score)}
+        密钥有效倍率 {multiplier}
       </span>
     );
+  }
+
+  if (label === "偏好") {
+    const priority = factor.inputs.find((input) => input.label === "候选优先级")?.value;
+    return priority ? `基础优先级 ${priority}` : "暂无统计数据";
   }
 
   return factor.inputs.length > 0

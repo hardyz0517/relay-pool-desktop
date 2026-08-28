@@ -1,4 +1,1 @@
-export {
-  ModelDiscoveryOperationCancelledError,
-  runStationKeyModelDiscoveryOperation,
-} from "@/lib/stationKeyModelDiscovery";
+export { runStationKeyModelDiscoveryOperation } from "@/lib/stationKeyModelDiscovery";

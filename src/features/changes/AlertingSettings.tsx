@@ -474,5 +474,3 @@ function EditorRow({ label, children, className = "" }: { label: string; childre
 function NumberField({ ariaLabel, label, min, max, value, disabled, onChange }: { ariaLabel: string; label: string; min: number; max: number; value: number; disabled: boolean; onChange: (value: number) => void }) {
   return <EditorRow label={label}><input aria-label={ariaLabel} className={inputClassName} disabled={disabled} max={max} min={min} type="number" value={value} onChange={(event) => onChange(Number(event.target.value) || min)} /></EditorRow>;
 }
-
-export default AlertingSettings;

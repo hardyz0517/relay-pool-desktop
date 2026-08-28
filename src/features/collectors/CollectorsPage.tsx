@@ -395,17 +395,18 @@ export function CollectorsPage({ onOpenRoutingDeepLink }: CollectorsPageProps = 
         </div>
       )}
 
-      {loading ? (
-        <div className="rounded-[var(--surface-radius)] border border-border bg-surface px-4 py-5 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">
-          正在读取站点和采集快照...
-        </div>
-      ) : !selectedStation ? (
-        <EmptyState
-          title="还没有可采集的站点"
-          description="先在中转站添加一个站点账号，再回到这里做登录态采集。"
-        />
-      ) : (
-        <div className="grid gap-[var(--shell-page-gap)]">
+      <div data-tour="collectors-summary">
+        {loading ? (
+          <div className="rounded-[var(--surface-radius)] border border-border bg-surface px-4 py-5 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">
+            正在读取站点和采集快照...
+          </div>
+        ) : !selectedStation ? (
+          <EmptyState
+            title="还没有可采集的站点"
+            description="先在中转站添加一个站点账号，再回到这里做登录态采集。"
+          />
+        ) : (
+          <div className="grid gap-[var(--shell-page-gap)]">
           <div className="space-y-3">
             <SectionCard
               title="采集结论"
@@ -690,8 +691,9 @@ export function CollectorsPage({ onOpenRoutingDeepLink }: CollectorsPageProps = 
               </details>
             </InspectorPanel>
           </div>
-        </div>
-      )}
+          </div>
+        )}
+      </div>
 
       {actionBusy && (
         <div

@@ -68,6 +68,7 @@ import {
   getRuntimeStatus as getRuntimeStatusBinding,
   getSettings as getSettingsBinding,
   getStationPublishedStatusWorkspace as getStationPublishedStatusWorkspaceBinding,
+  getStationPublishedStatusOverview as getStationPublishedStatusOverviewBinding,
   getStationCredentials as getStationCredentialsBinding,
   getStationCapacityDomain as getStationCapacityDomainBinding,
   getStationKeyCapabilities as getStationKeyCapabilitiesBinding,
@@ -206,6 +207,7 @@ import {
   normalizeSettings,
   normalizeEndpointPingResult,
   normalizeStationPublishedStatusWorkspace,
+  normalizeStationPublishedStatusOverview,
   normalizeStation,
   normalizeStationEndpointHealth,
   normalizeDataStoreCandidate,
@@ -342,6 +344,8 @@ export class DesktopBackend implements BackendClient {
       getStationPublishedStatusWorkspaceBinding({ stationId }).then(
         normalizeStationPublishedStatusWorkspace,
       ),
+    getStationPublishedStatusOverview: (input: import("@/lib/bridge/generated").StationPublishedStatusOverviewInputDto = {}) =>
+      getStationPublishedStatusOverviewBinding(input).then(normalizeStationPublishedStatusOverview),
   };
   readonly providerDrafts: BackendClient["providerDrafts"] = {
     createOrResume: (input) => createOrResumeProviderDraftBinding(input),

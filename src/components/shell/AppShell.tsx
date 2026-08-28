@@ -19,6 +19,18 @@ type AppShellProps = {
   onRouteChange: (routeId: AppRouteId) => void;
 };
 
+const tourNavigationAnchors: Partial<Record<AppRouteId, string>> = {
+  dashboard: "nav-dashboard",
+  stations: "nav-stations",
+  keyPool: "nav-key-pool",
+  routing: "nav-routing",
+  pricing: "nav-pricing",
+  channels: "nav-channels",
+  changes: "nav-changes",
+  logs: "nav-logs",
+  settings: "nav-settings",
+};
+
 export function AppShell({
   activeRouteId,
   children,
@@ -63,7 +75,11 @@ export function AppShell({
         className="flex min-h-0 shrink-0 flex-col border-r border-border bg-surface"
         style={{ width: shellLayout.sidebarWidth }}
       >
-        <nav className="flex min-h-0 flex-1 flex-col items-center gap-1 overflow-y-auto px-2 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <nav
+          className="flex min-h-0 flex-1 flex-col items-center gap-1 overflow-y-auto px-2 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          data-tour="shell-sidebar"
+          data-tour-scope="global"
+        >
           {visibleRoutes.map((route) => {
             const Icon = route.icon;
             const active = route.id === activeRouteId;
@@ -72,6 +88,8 @@ export function AppShell({
               <button
                 key={route.id}
                 type="button"
+                data-tour={tourNavigationAnchors[route.id]}
+                data-tour-scope={tourNavigationAnchors[route.id] ? "global" : undefined}
                 data-navigation-route-id={route.id}
                 onClick={() => onRouteChange(route.id)}
                 title={route.label}

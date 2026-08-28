@@ -101,7 +101,7 @@ export function KeyPoolPage(props: KeyPoolPageShellProps) {
         </div>
       }
       actions={
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2" data-tour="key-pool-toolbar">
           <SelectControl
             ariaLabel="筛选中转站"
             className={selectClassName}
@@ -138,22 +138,23 @@ export function KeyPoolPage(props: KeyPoolPageShellProps) {
         </div>
       }
     >
-      {displayError && (
-        <div className="mb-3 rounded-[var(--surface-radius)] border border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">
-          {displayError}
-        </div>
-      )}
-      {loading ? (
-        <div className="rounded-[var(--surface-radius)] border border-info-border bg-surface/85 px-4 py-5 text-sm text-muted-foreground">
-          正在读取密钥池...
-        </div>
-      ) : filteredItems.length === 0 ? (
-        <EmptyState
-          title="还没有可管理的密钥"
-          description="先在中转站页创建一个站点和它下面的密钥。"
-        />
-      ) : (
-        <div className="space-y-[var(--shell-page-gap)]">
+      <div data-tour="key-pool-list">
+        {displayError && (
+          <div className="mb-3 rounded-[var(--surface-radius)] border border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">
+            {displayError}
+          </div>
+        )}
+        {loading ? (
+          <div className="rounded-[var(--surface-radius)] border border-info-border bg-surface/85 px-4 py-5 text-sm text-muted-foreground">
+            正在读取密钥池...
+          </div>
+        ) : filteredItems.length === 0 ? (
+          <EmptyState
+            title="还没有可管理的密钥"
+            description="先在中转站页创建一个站点和它下面的密钥。"
+          />
+        ) : (
+          <div className="space-y-[var(--shell-page-gap)]">
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
@@ -170,7 +171,7 @@ export function KeyPoolPage(props: KeyPoolPageShellProps) {
                     <TableHeadCell align="center">状态</TableHeadCell>
                     <TableHeadCell align="center">调度</TableHeadCell>
                     <TableHeadCell align="center">监控</TableHeadCell>
-                    <TableHeadCell align="center">分组</TableHeadCell>
+                    <TableHeadCell align="center">供应商</TableHeadCell>
                     <div className="text-right">操作</div>
                   </div>
                   <div className="divide-y divide-border">
@@ -208,8 +209,9 @@ export function KeyPoolPage(props: KeyPoolPageShellProps) {
               {activeDragItem ? <KeyRowContent overlay item={activeDragItem} /> : null}
             </DragOverlay>
           </DndContext>
-        </div>
-      )}
+          </div>
+        )}
+      </div>
 
       {(creatingKey || editingItem) && (
         <KeyEditDialog

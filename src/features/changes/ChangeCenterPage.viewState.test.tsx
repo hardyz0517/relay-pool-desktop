@@ -142,6 +142,28 @@ describe("ChangeCenterPage view retention", () => {
     }));
   });
 
+  it("keeps the ordinary-mode tour anchors available in the empty state", () => {
+    act(() => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <ToastProvider>
+            <ChangeCenterPage onOpenSettings={vi.fn()} />
+          </ToastProvider>
+        </QueryClientProvider>,
+      );
+    });
+
+    for (const anchor of [
+      "changes-view-filter",
+      "changes-severity-filter",
+      "changes-list",
+      "changes-unread-actions",
+      "changes-settings-entry",
+    ]) {
+      expect(host.querySelector(`[data-tour="${anchor}"]`), anchor).not.toBeNull();
+    }
+  });
+
   it("passes the search term to the paged alerting query", () => {
     render(true);
     const search = host.querySelector<HTMLInputElement>('[aria-label="搜索问题"]');

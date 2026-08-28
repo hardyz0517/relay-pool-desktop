@@ -113,7 +113,11 @@ export function StationsPage({
     <PageScaffold
       title="中转站资产"
       status={
-        <div className="flex min-w-0 flex-wrap items-center gap-1.5" aria-label="中转站资产状态">
+        <div
+          className="flex min-w-0 flex-wrap items-center gap-1.5"
+          aria-label="中转站资产状态"
+          data-tour="stations-summary"
+        >
           <StatusBadge tone="info" className="bg-surface-subtle text-muted-foreground">
             {`${filteredStationAssetRows.length} 站点`}
           </StatusBadge>
@@ -126,7 +130,10 @@ export function StationsPage({
         </div>
       }
       actions={
-        <div className="flex flex-wrap items-center justify-end gap-2">
+        <div
+          className="flex flex-wrap items-center justify-end gap-2"
+          data-tour="stations-toolbar"
+        >
           <SelectControl<StationIssueFilterValue>
             ariaLabel="筛选问题标签"
             className={stationAssetSelectClassName}
@@ -141,8 +148,8 @@ export function StationsPage({
         </div>
       }
     >
-      <div className="grid min-w-0 gap-3">
-        <div>
+      <div className="grid min-w-0 gap-3" data-tour="stations-list">
+        <div data-tour="stations-status-fields">
           {loading ? (
             <div className="rounded-[var(--surface-radius)] border border-border bg-surface px-4 py-5 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">
               正在读取本地数据...

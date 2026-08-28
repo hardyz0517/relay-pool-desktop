@@ -139,7 +139,7 @@ import type {
   PricingGroupMonitorStatusInput,
   PricingGroupMonitorStatusWorkspace,
 } from "@/lib/types/pricingMonitoring";
-import type { StationPublishedStatusWorkspace } from "@/lib/types/stationPublishedStatus";
+import type { StationPublishedStatusOverview, StationPublishedStatusOverviewInput, StationPublishedStatusWorkspace } from "@/lib/types/stationPublishedStatus";
 import type {
   RuntimeDiagnosticsPageDto,
   RuntimeDiagnosticsQueryDto,
@@ -390,6 +390,7 @@ export type CollectorsDomainClient = {
 
 export type StationPublishedStatusDomainClient = {
   getStationPublishedStatusWorkspace(stationId: string): Promise<StationPublishedStatusWorkspace>;
+  getStationPublishedStatusOverview?(input?: StationPublishedStatusOverviewInput): Promise<StationPublishedStatusOverview>;
 };
 
 export type ProviderDraftsDomainClient = {

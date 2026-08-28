@@ -73,7 +73,3 @@ export async function runUserInteraction<T>(callback: () => T | Promise<T>): Pro
   }
   return await result;
 }
-
-export function isValidInteractionId(value: string): value is InteractionId {
-  return isToken(value, INTERACTION_PREFIX);
-}
