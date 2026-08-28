@@ -1675,6 +1675,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn schema_59_upgrades_the_previous_collector_timeout_default() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join("relay-pool-v2.sqlite3");
+        initialize_database_through(&path, 58).await;
+        let pool = migration_pool_existing(&path)
+            .await
+            .expect("migration pool");
+
+        sqlx::query("UPDATE settings SET value = '30' WHERE key = 'collector_timeout_seconds'")
+            .execute(&pool)
+            .await
+            .expect("seed previous default");
+
+        migrator_through(59)
+            .expect("schema 59 migrator")
+            .run(&pool)
+            .await
+            .expect("schema 59 migration");
+
+        let after: String = sqlx::query_scalar(
+            "SELECT value FROM settings WHERE key = 'collector_timeout_seconds'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("upgraded timeout default");
+        let compatibility: i64 = sqlx::query_scalar(
+            "SELECT schema_version FROM persistence_schema_compatibility WHERE singleton_key = 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("schema compatibility");
+        assert_eq!(after, "60");
+        assert_eq!(compatibility, 59);
+        pool.close().await;
+    }
+
+    #[tokio::test]
     async fn group_missing_incidents_upgrade_to_one_informational_change() {
         let root = tempfile::tempdir().expect("tempdir");
         let path = root.path().join("relay-pool-v2.sqlite3");

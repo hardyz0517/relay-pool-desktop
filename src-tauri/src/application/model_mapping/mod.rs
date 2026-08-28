@@ -485,11 +485,10 @@ pub(crate) async fn reconcile_external_model_mapping_document(
         let sync = crate::persistence::stores::document_sync_store::DocumentSyncStore
             .load(read.connection(), MODEL_MAPPING_DOCUMENT_KIND)
             .await?;
-        let revision: i64 = sqlx::query_scalar(
-            "SELECT revision FROM model_mapping_policies WHERE singleton_key = 1",
-        )
-        .fetch_one(read.connection())
-        .await?;
+        let revision = crate::persistence::stores::model_mapping_store::ModelMappingStore
+            .load_policy(read.connection())
+            .await?
+            .revision;
         let revision = u64::try_from(revision).map_err(|_| {
             crate::persistence::error::PersistenceError::InvariantViolation(
                 "model mapping revision is invalid".into(),
@@ -623,9 +622,10 @@ async fn sync_model_mapping_file(
     })?;
     let current_revision: i64 = {
         let mut read = runtime.begin_read().await?;
-        sqlx::query_scalar("SELECT revision FROM model_mapping_policies WHERE singleton_key = 1")
-            .fetch_one(read.connection())
+        crate::persistence::stores::model_mapping_store::ModelMappingStore
+            .load_policy(read.connection())
             .await?
+            .revision
     };
     if current_revision != revision_i64 {
         return Ok(());
@@ -719,19 +719,18 @@ async fn sync_model_mapping_file(
     // document instead of leaving a stale mirror behind.
     let latest_revision: i64 = {
         let mut read = runtime.begin_read().await?;
-        sqlx::query_scalar("SELECT revision FROM model_mapping_policies WHERE singleton_key = 1")
-            .fetch_one(read.connection())
+        crate::persistence::stores::model_mapping_store::ModelMappingStore
+            .load_policy(read.connection())
             .await?
+            .revision
     };
     if latest_revision != revision_i64 {
         let latest_json: Option<String> = {
             let mut read = runtime.begin_read().await?;
-            sqlx::query_scalar(
-                "SELECT document_json FROM model_mapping_document_history WHERE revision = ?1",
-            )
-            .bind(latest_revision)
-            .fetch_optional(read.connection())
-            .await?
+            crate::persistence::stores::model_mapping_store::ModelMappingStore
+                .load_history_revision(read.connection(), latest_revision)
+                .await?
+                .map(|history| history.document_json)
         };
         drop(_operation_guard);
         if let Some(latest_json) = latest_json {
@@ -865,24 +864,20 @@ pub(crate) async fn persist_document_at_revision(
             "model mapping revision exceeds SQLite range".into(),
         )
     })?;
-    let current: i64 =
-        sqlx::query_scalar("SELECT revision FROM model_mapping_policies WHERE singleton_key = 1")
-            .fetch_one(&mut *connection)
-            .await?;
+    let current = crate::persistence::stores::model_mapping_store::ModelMappingStore
+        .load_policy(connection)
+        .await?
+        .revision;
     if current != expected_revision_i64 {
         return Err(
             crate::persistence::error::PersistenceError::RevisionConflict("model_mapping".into()),
         );
     }
     if let Some(idempotent_json) = idempotent_json.as_deref() {
-        let current_history: Option<String> = sqlx::query_scalar(
-            "SELECT document_json
-             FROM model_mapping_document_history
-             WHERE revision = ?1",
-        )
-        .bind(expected_revision_i64)
-        .fetch_optional(&mut *connection)
-        .await?;
+        let current_history = crate::persistence::stores::model_mapping_store::ModelMappingStore
+            .load_history_revision(connection, expected_revision_i64)
+            .await?
+            .map(|history| history.document_json);
         let current_history_json = current_history
             .as_deref()
             .and_then(|json| decode_document(json).ok())
@@ -913,210 +908,17 @@ pub(crate) async fn persist_document_at_revision(
             return Ok(active_document);
         }
     }
-    let now_ms = chrono::Utc::now().timestamp_millis();
-    let policy_changed = sqlx::query(
-        "UPDATE model_mapping_policies
-         SET revision = ?1, unmatched_model_behavior = ?2, updated_at_ms = ?3
-         WHERE singleton_key = 1 AND revision = ?4",
-    )
-    .bind(next_revision_i64)
-    .bind(match document.policy.unmatched_model_behavior {
-        crate::models::model_mapping::UnmatchedModelBehavior::Preserve => "preserve",
-        crate::models::model_mapping::UnmatchedModelBehavior::Reject => "reject",
-    })
-    .bind(now_ms)
-    .bind(expected_revision_i64)
-    .execute(&mut *connection)
-    .await?
-    .rows_affected();
-    if policy_changed != 1 {
-        return Err(
-            crate::persistence::error::PersistenceError::RevisionConflict("model_mapping".into()),
-        );
-    }
-    let domain_revision_changed = sqlx::query(
-        "UPDATE domain_revisions
-         SET revision = ?1, updated_at_ms = ?2, provenance = 'transactional_write'
-         WHERE scope = 'model_mapping' AND revision = ?3",
-    )
-    .bind(next_revision_i64)
-    .bind(now_ms)
-    .bind(expected_revision_i64)
-    .execute(&mut *connection)
-    .await?
-    .rows_affected();
-    if domain_revision_changed != 1 {
-        return Err(
-            crate::persistence::error::PersistenceError::RevisionConflict("model_mapping".into()),
-        );
-    }
-    sqlx::query("DELETE FROM model_mapping_rule_targets WHERE rule_id IN (SELECT id FROM model_mapping_rules)")
-        .execute(&mut *connection).await?;
-    sqlx::query("DELETE FROM model_mapping_rules")
-        .execute(&mut *connection)
-        .await?;
-    // Rule targets reference profiles with RESTRICT, so replace dependent
-    // bindings/profiles before inserting the new aggregate snapshot.
-    sqlx::query("DELETE FROM model_offering_bindings")
-        .execute(&mut *connection)
-        .await?;
-    sqlx::query("DELETE FROM model_profiles")
-        .execute(&mut *connection)
-        .await?;
-    for profile in &document.profiles {
-        sqlx::query("INSERT INTO model_profiles (id, canonical_model, display_name, default_upstream_model, status, note, created_at_ms, updated_at_ms, revision) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)")
-            .bind(&profile.id)
-            .bind(&profile.canonical_model)
-            .bind(&profile.display_name)
-            .bind(&profile.default_upstream_model)
-            .bind(match profile.status {
-                crate::models::model_mapping::ModelProfileStatus::Active => "active",
-                crate::models::model_mapping::ModelProfileStatus::Archived => "archived",
-            })
-            .bind(&profile.note)
-            .bind(profile.created_at_ms)
-            .bind(profile.updated_at_ms)
-            .bind(i64::try_from(profile.revision.max(1)).map_err(|_| crate::persistence::error::PersistenceError::InvariantViolation("model profile revision exceeds SQLite range".into()))?)
-            .execute(&mut *connection)
-            .await?;
-    }
-    for binding in &document.bindings {
-        sqlx::query("INSERT INTO model_offering_bindings (id, model_profile_id, station_key_id, station_id, upstream_model, source, enabled, note, created_at_ms, updated_at_ms, revision) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)")
-            .bind(&binding.id)
-            .bind(&binding.model_profile_id)
-            .bind(&binding.station_key_id)
-            .bind(&binding.station_id)
-            .bind(&binding.upstream_model)
-            .bind(match binding.source {
-                crate::models::model_mapping::ModelBindingSource::Manual => "manual",
-                crate::models::model_mapping::ModelBindingSource::Discovered => "discovered",
-                crate::models::model_mapping::ModelBindingSource::Migrated => "migrated",
-            })
-            .bind(if binding.enabled { 1_i64 } else { 0_i64 })
-            .bind(&binding.note)
-            .bind(binding.created_at_ms)
-            .bind(binding.updated_at_ms)
-            .bind(i64::try_from(binding.revision.max(1)).map_err(|_| crate::persistence::error::PersistenceError::InvariantViolation("model binding revision exceeds SQLite range".into()))?)
-            .execute(&mut *connection)
-            .await?;
-    }
-    for rule in &document.rules {
-        let (matcher_kind, matcher_value) = match &rule.matcher {
-            Matcher::Exact { model } => ("exact", Some(model.as_str())),
-            Matcher::Default => ("default", None),
-            Matcher::Glob { pattern } => ("glob", Some(pattern.as_str())),
-        };
-        let endpoint_json = serde_json::to_string(
-            &rule
-                .conditions
-                .endpoint_kinds
-                .clone()
-                .unwrap_or_default()
-                .into_iter()
-                .map(|endpoint| match endpoint {
-                    EndpointKind::ChatCompletions => "chat_completions",
-                    EndpointKind::Responses => "responses",
-                    EndpointKind::Embeddings => "embeddings",
-                    EndpointKind::Models => "models",
-                    EndpointKind::Usage => "usage",
-                })
-                .collect::<Vec<_>>(),
-        )
-        .map_err(|error| {
-            crate::persistence::error::PersistenceError::InvariantViolation(error.to_string())
-        })?;
-        let (action_kind, fallback_trigger, targets, rejection_kind, rejection_message): (
-            &str,
-            Option<&str>,
-            Vec<&TargetRef>,
-            Option<&str>,
-            Option<&str>,
-        ) = match &rule.action {
-            Action::MapFixed { target } => ("map_fixed", None, vec![target], None, None),
-            Action::MapFallbackChain {
-                targets,
-                fallback_trigger,
-            } => (
-                "map_fallback_chain",
-                Some(match fallback_trigger {
-                    crate::models::model_mapping::FallbackTrigger::NoEligibleTarget => {
-                        "no_eligible_target"
-                    }
-                    crate::models::model_mapping::FallbackTrigger::RetryExhaustedBeforeOutput => {
-                        "retry_exhausted_before_output"
-                    }
-                }),
-                targets.iter().collect(),
-                None,
-                None,
-            ),
-            Action::Preserve => ("preserve", None, Vec::new(), None, None),
-            Action::Reject {
-                rejection_kind,
-                message,
-            } => (
-                "reject",
-                None,
-                Vec::new(),
-                Some(match rejection_kind {
-                    RejectionKind::UnsupportedModel => "unsupported_model",
-                    RejectionKind::PolicyDenied => "policy_denied",
-                    RejectionKind::ClientNotAllowed => "client_not_allowed",
-                }),
-                message.as_deref(),
-            ),
-        };
-        let fallback_trigger = fallback_trigger;
-        let targets = targets;
-        sqlx::query("INSERT INTO model_mapping_rules (id, priority, enabled, matcher_kind, matcher_value, endpoint_conditions_json, stream_condition, tools_condition, vision_condition, reasoning_condition, action_kind, fallback_trigger, rejection_kind, rejection_message, note, created_at_ms, updated_at_ms, revision) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?16, ?17)")
-            .bind(&rule.id).bind(rule.priority as i64).bind(if rule.enabled { 1_i64 } else { 0_i64 }).bind(matcher_kind).bind(matcher_value).bind(endpoint_json)
-            .bind(requirement_name(rule.conditions.stream)).bind(requirement_name(rule.conditions.tools)).bind(requirement_name(rule.conditions.vision)).bind(requirement_name(rule.conditions.reasoning)).bind(action_kind).bind(fallback_trigger).bind(rejection_kind).bind(rejection_message).bind(&rule.note).bind(now_ms).bind(i64::try_from(rule.revision.max(1)).map_err(|_| crate::persistence::error::PersistenceError::InvariantViolation("model mapping rule revision exceeds SQLite range".into()))?)
-            .execute(&mut *connection).await?;
-        for (position, target) in targets.into_iter().enumerate() {
-            let position = i64::try_from(position)
-                .map_err(|_| crate::persistence::error::PersistenceError::ConstraintViolation)?;
-            match target {
-                TargetRef::Literal { upstream_model } => {
-                    sqlx::query("INSERT INTO model_mapping_rule_targets (id, rule_id, position, target_kind, literal_upstream_model, model_profile_id) VALUES (?1, ?2, ?3, 'literal', ?4, NULL)")
-                        .bind(format!("{}:{}", rule.id, position)).bind(&rule.id).bind(position).bind(upstream_model).execute(&mut *connection).await?;
-                }
-                TargetRef::ModelProfile { model_profile_id } => {
-                    sqlx::query("INSERT INTO model_mapping_rule_targets (id, rule_id, position, target_kind, literal_upstream_model, model_profile_id) VALUES (?1, ?2, ?3, 'model_profile', NULL, ?4)")
-                        .bind(format!("{}:{}", rule.id, position)).bind(&rule.id).bind(position).bind(model_profile_id).execute(&mut *connection).await?;
-                }
-            }
-        }
-    }
-    // Rule-scoped revisions are part of the same aggregate replacement.  Drop
-    // stale rows first so deleted rules cannot remain observable as live
-    // revision subjects, then upsert the exact set represented by this document.
-    sqlx::query("DELETE FROM domain_revisions WHERE scope LIKE 'model_mapping_rule:%'")
-        .execute(&mut *connection)
-        .await?;
-    for rule in &document.rules {
-        sqlx::query(
-            "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance)
-             VALUES (?1, ?2, ?3, 'transactional_write')
-             ON CONFLICT(scope) DO UPDATE SET
-                 revision = excluded.revision,
-                 updated_at_ms = excluded.updated_at_ms,
-                 provenance = excluded.provenance",
-        )
-        .bind(format!("model_mapping_rule:{}", rule.id))
-        .bind(next_revision_i64)
-        .bind(now_ms)
-        .execute(&mut *connection)
-        .await?;
-    }
-    sqlx::query("INSERT INTO model_mapping_document_history (revision, document_json, source, created_at_ms) VALUES (?1, ?2, ?3, ?4)")
-        .bind(next_revision_i64).bind(&document_json).bind(source_label).bind(now_ms).execute(&mut *connection).await?;
     let digest = hex_digest(document_json.as_bytes());
-    crate::persistence::stores::document_sync_store::DocumentSyncStore
-        .upsert_desired(
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    crate::persistence::stores::model_mapping_store::ModelMappingStore
+        .replace_aggregate(
             connection,
-            crate::models::document_sync::MODEL_MAPPING_DOCUMENT_KIND,
-            next_revision,
-            Some(&digest),
+            &document,
+            expected_revision_i64,
+            next_revision_i64,
+            &document_json,
+            source_label,
+            &digest,
             now_ms,
         )
         .await?;
@@ -1142,14 +944,6 @@ fn hex_digest(bytes: &[u8]) -> String {
         let _ = write!(output, "{byte:02x}");
     }
     output
-}
-
-fn requirement_name(value: ConditionRequirement) -> &'static str {
-    match value {
-        ConditionRequirement::Any => "any",
-        ConditionRequirement::Required => "required",
-        ConditionRequirement::Forbidden => "forbidden",
-    }
 }
 
 pub(crate) fn resolve_request(

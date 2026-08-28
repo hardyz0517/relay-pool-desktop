@@ -28,18 +28,6 @@ export type OperationSnapshotDto = {
   terminal: OperationTerminalDto | null;
 };
 
-export type OperationEventKindDto =
-  | { event: "progress"; progress: OperationProgressDto }
-  | { event: "terminal"; terminal: OperationTerminalDto };
-
-export type OperationEventDto = {
-  schemaVersion: number;
-  eventId: string;
-  operationId: string;
-  sequence: number;
-  event: OperationEventKindDto;
-};
-
 export type CancelOperationOutcomeDto =
   | { outcome: "stopped"; terminal: OperationTerminalDto }
   | { outcome: "still_stopping" }

@@ -1,3 +1,11 @@
+#[path = "../src/application/error_rate_protection.rs"]
+pub mod application_error_rate_protection;
+#[path = "../src/application/health_protection.rs"]
+pub mod application_health_protection;
+#[path = "../src/application/spendability/mod.rs"]
+pub mod application_spendability;
+#[path = "../src/persistence/stores/domain_revision_store.rs"]
+pub mod domain_revision_store;
 #[path = "../src/persistence/stores/health_observation_store.rs"]
 pub mod health_observation_store;
 #[path = "../src/application/health_transitions.rs"]
@@ -6,6 +14,10 @@ pub mod health_transitions;
 pub mod model_health;
 #[path = "../src/models/monitoring/mod.rs"]
 pub mod model_monitoring;
+#[path = "../src/models/pricing.rs"]
+pub mod model_pricing;
+#[path = "../src/models/routing_policy.rs"]
+pub mod model_routing_policy;
 #[path = "../src/persistence/stores/monitoring/executions.rs"]
 pub mod monitoring_executions;
 #[path = "../src/persistence/stores/monitoring/retention.rs"]
@@ -14,10 +26,108 @@ pub mod monitoring_retention;
 pub mod observation_ingestion;
 #[path = "../src/persistence/error.rs"]
 pub mod persistence_error;
+#[path = "../src/persistence/stores/routing_error_rate_history_store.rs"]
+pub mod routing_error_rate_history_store;
+#[path = "../src/persistence/stores/routing_health_verdict_store.rs"]
+pub mod routing_health_verdict_store;
 #[path = "../src/models/routing_observation.rs"]
 pub mod routing_observation;
 #[path = "../src/persistence/stores/routing_observation_store.rs"]
 pub mod routing_observation_store;
+#[path = "../src/persistence/stores/routing_policy_store.rs"]
+pub mod routing_policy_store;
+mod persistence_runtime {
+    use std::path::{Path, PathBuf};
+
+    use sqlx::{sqlite::SqliteConnectOptions, Connection, Executor, SqliteConnection};
+
+    use super::persistence::WriteSession;
+
+    static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("src/persistence/migrations");
+
+    #[derive(Clone, Debug)]
+    pub(crate) struct PersistenceRuntime {
+        handle: PersistenceHandle,
+    }
+
+    #[derive(Clone, Debug)]
+    pub(crate) struct PersistenceHandle {
+        path: PathBuf,
+    }
+
+    pub(crate) struct ReadSession {
+        connection: SqliteConnection,
+    }
+
+    impl ReadSession {
+        pub(crate) fn connection(&mut self) -> &mut SqliteConnection {
+            &mut self.connection
+        }
+    }
+
+    impl PersistenceRuntime {
+        pub(crate) async fn initialize_new(path: &Path) -> Result<Self, sqlx::Error> {
+            let mut connection = SqliteConnection::connect_with(
+                &SqliteConnectOptions::new()
+                    .filename(path)
+                    .create_if_missing(true),
+            )
+            .await?;
+            MIGRATOR.run(&mut connection).await?;
+            Ok(Self {
+                handle: PersistenceHandle {
+                    path: path.to_path_buf(),
+                },
+            })
+        }
+
+        pub(crate) async fn open_current(path: &Path) -> Result<Self, sqlx::Error> {
+            let _ = SqliteConnection::connect_with(
+                &SqliteConnectOptions::new()
+                    .filename(path)
+                    .create_if_missing(false),
+            )
+            .await?;
+            Ok(Self {
+                handle: PersistenceHandle {
+                    path: path.to_path_buf(),
+                },
+            })
+        }
+
+        pub(crate) async fn begin_write(&self) -> Result<WriteSession, sqlx::Error> {
+            let mut connection = SqliteConnection::connect_with(
+                &SqliteConnectOptions::new()
+                    .filename(&self.handle.path)
+                    .create_if_missing(false),
+            )
+            .await?;
+            connection.execute("BEGIN IMMEDIATE").await?;
+            Ok(WriteSession::from_owned(connection))
+        }
+
+        pub(crate) fn handle(&self) -> PersistenceHandle {
+            self.handle.clone()
+        }
+
+        pub(crate) async fn close(self) -> Result<(), sqlx::Error> {
+            Ok(())
+        }
+    }
+
+    impl PersistenceHandle {
+        pub(crate) async fn begin_read(&self) -> Result<ReadSession, sqlx::Error> {
+            Ok(ReadSession {
+                connection: SqliteConnection::connect_with(
+                    &SqliteConnectOptions::new()
+                        .filename(&self.path)
+                        .create_if_missing(false),
+                )
+                .await?,
+            })
+        }
+    }
+}
 
 mod models {
     pub(crate) mod health {
@@ -31,27 +141,64 @@ mod models {
     pub(crate) mod routing_observation {
         pub(crate) use crate::routing_observation::*;
     }
+    pub(crate) mod pricing {
+        pub(crate) use crate::model_pricing::*;
+    }
+    pub(crate) mod routing_policy {
+        pub(crate) use crate::model_routing_policy::*;
+    }
 }
 
 mod persistence {
     pub(crate) struct WriteSession {
         connection: *mut sqlx::SqliteConnection,
+        owned_connection: Option<Box<sqlx::SqliteConnection>>,
     }
 
     impl WriteSession {
         pub(crate) fn new(connection: &mut sqlx::SqliteConnection) -> Self {
-            Self { connection }
+            Self {
+                connection,
+                owned_connection: None,
+            }
+        }
+
+        pub(crate) fn from_owned(connection: sqlx::SqliteConnection) -> Self {
+            let mut owned_connection = Box::new(connection);
+            let connection = &mut *owned_connection as *mut sqlx::SqliteConnection;
+            Self {
+                connection,
+                owned_connection: Some(owned_connection),
+            }
         }
 
         pub(crate) fn connection(&mut self) -> &mut sqlx::SqliteConnection {
-            // SAFETY: test-local wrapper is created from one mutable connection
-            // borrow and is used synchronously by the included application code.
+            // SAFETY: borrowed sessions cannot outlive their caller's mutable
+            // borrow, and owned sessions keep the boxed connection alive.
             unsafe { &mut *self.connection }
+        }
+
+        pub(crate) async fn commit(
+            mut self,
+        ) -> Result<(), crate::persistence_error::PersistenceError> {
+            if let Some(connection) = &mut self.owned_connection {
+                sqlx::Executor::execute(&mut **connection, "COMMIT").await?;
+            }
+            Ok(())
         }
     }
 
     pub(crate) mod error {
         pub(crate) use crate::persistence_error::*;
+    }
+    pub(crate) mod migrations {
+        pub(crate) fn migrator() -> &'static sqlx::migrate::Migrator {
+            static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("src/persistence/migrations");
+            &MIGRATOR
+        }
+    }
+    pub(crate) mod runtime {
+        pub(crate) use crate::persistence_runtime::*;
     }
 
     pub(crate) mod stores {
@@ -71,10 +218,32 @@ mod persistence {
         pub(crate) mod routing_observation_store {
             pub(crate) use crate::routing_observation_store::*;
         }
+        pub(crate) mod routing_health_verdict_store {
+            pub(crate) use crate::routing_health_verdict_store::*;
+        }
+        pub(crate) mod routing_policy_store {
+            pub(crate) use crate::routing_policy_store::*;
+        }
+        pub(crate) mod routing_error_rate_history_store {
+            pub(crate) use crate::routing_error_rate_history_store::*;
+        }
+        pub(crate) mod domain_revision_store {
+            pub(crate) use crate::domain_revision_store::*;
+        }
     }
 }
 
 mod application {
+    pub(crate) mod health_protection {
+        pub(crate) use crate::application_health_protection::*;
+    }
+    pub(crate) mod error_rate_protection {
+        pub(crate) use crate::application_error_rate_protection::*;
+    }
+    pub(crate) mod spendability {
+        pub(crate) use crate::application_spendability::*;
+    }
+
     pub(crate) mod observation_ingestion {
         pub(crate) use crate::observation_ingestion::*;
     }

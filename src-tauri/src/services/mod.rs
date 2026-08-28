@@ -24,6 +24,7 @@ pub(crate) mod station_collection_feedback;
 pub mod station_collectors;
 pub mod station_endpoints;
 pub mod station_redemption;
+pub(crate) mod station_sessions;
 pub mod stations;
 pub(crate) mod support_bundle;
 pub(crate) mod time;

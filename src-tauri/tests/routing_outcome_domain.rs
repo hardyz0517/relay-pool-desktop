@@ -1,4 +1,9 @@
 mod application {
+    pub(crate) mod health_protection {
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        pub(crate) struct HealthProtectionScope;
+    }
+
     pub(crate) mod request_finalization {
         pub(crate) mod failure {
             pub(crate) use crate::failure::*;

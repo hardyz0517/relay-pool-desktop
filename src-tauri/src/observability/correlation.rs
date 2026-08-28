@@ -195,7 +195,7 @@ pub(crate) async fn in_command_scope_with_interaction<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ipc::dto::runtime_context::RuntimeContextRegistry;
+    use crate::observability::runtime_context::RuntimeContextRegistry;
 
     async fn application_boundary() -> (CorrelationId, CorrelationId) {
         let application_id = current().expect("application receives command correlation");
@@ -227,7 +227,7 @@ mod tests {
     #[tokio::test]
     async fn command_scope_with_validated_interaction_propagates_without_leaking() {
         let registry = RuntimeContextRegistry::new();
-        let raw = crate::ipc::dto::runtime_context::IpcRuntimeContextV1 {
+        let raw = IpcRuntimeContextV1 {
             context_session_id: registry.context_session_id().to_owned(),
             interaction_id: Some("int_0123456789abcdef0123456789abcdef".to_owned()),
         };

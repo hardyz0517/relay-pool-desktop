@@ -36,6 +36,7 @@ commands.allow = [
   "reorder_stations",
   "get_station_capacity_domain",
   "get_station_published_status_workspace",
+  "get_station_published_status_overview",
   "upsert_station_capacity_domain",
   "clear_station_capacity_domain",
   "create_or_resume_provider_draft",

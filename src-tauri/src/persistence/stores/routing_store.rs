@@ -876,11 +876,10 @@ fn row_to_runtime_economic_snapshot(
         group_status: row.get(runtime_candidate_column::BINDING_STATUS),
         group_confidence: row.get(runtime_candidate_column::BINDING_CONFIDENCE),
         group_checked_at: row.get(runtime_candidate_column::BINDING_LAST_CHECKED_AT),
-        // `station_keys.rate_multiplier` is a compatibility cache. When a key
-        // is bound to a group, the binding is the current source of truth;
-        // otherwise a stale/display-normalized key cache can be divided by
-        // the station exchange rate a second time.
-        rate_multiplier: binding_effective_rate_multiplier.or(key_rate_multiplier),
+        // Keep the key-level multiplier in the runtime candidate projection.
+        // It is the normalized value consumed by routing fallback/projections;
+        // request-scoped pricing resolves the current group rate separately.
+        rate_multiplier: key_rate_multiplier.or(binding_effective_rate_multiplier),
         manual_rate_multiplier: row.get(runtime_candidate_column::MANUAL_RATE_MULTIPLIER),
         manual_rate_updated_at: row.get(runtime_candidate_column::MANUAL_RATE_UPDATED_AT),
         rate_source: row.get(runtime_candidate_column::RATE_SOURCE),

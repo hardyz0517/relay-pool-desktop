@@ -30,10 +30,6 @@ impl ProbeOutcome {
         }
     }
 
-    pub fn contributes_to_availability_denominator(self) -> bool {
-        !matches!(self, Self::Skipped)
-    }
-
     pub fn is_route_available(self) -> bool {
         matches!(self, Self::Available | Self::Degraded)
     }
@@ -100,10 +96,6 @@ impl SemanticConfidence {
             Self::ProtocolValidated => "protocol_validated",
             Self::LegacyHttpOnly => "legacy_http_only",
         }
-    }
-
-    pub fn allows_authoritative_health_writeback(self) -> bool {
-        matches!(self, Self::ProtocolValidated)
     }
 }
 

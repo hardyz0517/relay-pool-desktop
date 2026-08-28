@@ -13,8 +13,6 @@ pub(crate) mod multiplier_projector;
 pub(crate) mod planning_snapshot;
 pub(crate) mod pricing_projector;
 pub(crate) mod reader;
-pub(crate) mod reliability_projector;
-pub(crate) mod responsiveness_projector;
 #[cfg(test)]
 pub(crate) mod runtime_health_port;
 pub(crate) mod target_resolver;

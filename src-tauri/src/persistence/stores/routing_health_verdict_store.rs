@@ -9,6 +9,7 @@ use crate::{
         transition_code, ErrorRateHistoryEventV1, ErrorRateProtectionConfigV1,
     },
     application::health_protection::{
+        durable_health_scope_commitment, DurableHealthScopeCommitmentInput,
         HealthProtectionObservation, HealthProtectionObservationOutcome,
         HealthProtectionPersistenceKind, HealthProtectionProbe, HealthProtectionProfileV1,
         HealthProtectionReducer, HealthProtectionScope, HealthProtectionScopeKind,
@@ -295,20 +296,23 @@ impl ScopedHealthSubject {
         if !shape_valid {
             return Err(PersistenceError::ConstraintViolation);
         }
-        let canonical = serde_json::to_vec(&(
-            scope_kind,
-            &station_id,
-            &station_key_id,
-            &group_binding_id,
-            &resolved_model_commitment,
+        let scope = durable_health_scope_commitment(DurableHealthScopeCommitmentInput {
+            scope_kind: scope_kind.as_str(),
+            station_id: &station_id,
+            station_key_id: station_key_id.as_deref(),
+            group_binding_id: group_binding_id.as_deref(),
+            resolved_model_commitment: resolved_model_commitment.as_deref(),
             credential_revision,
             account_revision,
             group_revision,
             endpoint_revision,
             model_alias_revision,
-        ))
-        .map_err(|error| PersistenceError::InvariantViolation(error.to_string()))?;
-        let scope = format!("{}:v1:{}", scope_kind.as_str(), hex_digest(canonical));
+        })
+        .ok_or_else(|| {
+            PersistenceError::InvariantViolation(
+                "failed to encode scoped health subject".to_string(),
+            )
+        })?;
         Ok(Self {
             scope,
             scope_kind,

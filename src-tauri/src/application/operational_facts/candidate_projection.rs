@@ -341,8 +341,24 @@ fn pricing_context_for_request(
         };
     }
     let request_pricing = request_cost_comparison_context(route_kind, request_pricing);
-    if request_pricing.basis != RoutingCostBasis::Unpriced {
+    // Exact model tariffs are request-scoped and take precedence. A
+    // multiplier-only lookup is an auxiliary group fact; retain the
+    // candidate's normalized multiplier so compatibility/manual overrides are
+    // not replaced by a less specific binding projection.
+    if request_pricing.basis == RoutingCostBasis::ExactPrice {
         return request_pricing;
+    }
+    if request_pricing.basis == RoutingCostBasis::MultiplierProxy {
+        if let Some(rate_multiplier) = economics.and_then(|value| value.rate_multiplier) {
+            let mut context = request_pricing;
+            context.comparison_value = Some(rate_multiplier);
+            context.source_chain = multiplier_pricing_source_chain(multiplier, economics);
+            context.observed_at = economics
+                .and_then(|value| value.rate_collected_at.clone())
+                .or_else(|| economics.and_then(|value| value.key_updated_at.clone()));
+            context.confidence = economics.and_then(|value| value.group_confidence);
+            return context;
+        }
     }
     if multiplier.status == MultiplierResolutionStatus::Resolved {
         let multiplier_value = multiplier.multiplier.map(|value| value.get());

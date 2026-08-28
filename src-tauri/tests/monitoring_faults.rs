@@ -460,6 +460,13 @@ fn attempt(id: &str, execution_id: &str) -> NewAttemptRow {
         validation_passed: true,
         output_bytes: 12,
         error_summary: None,
+        canonical_failure_class: None,
+        failure_origin: None,
+        failure_scope_kind: None,
+        failure_dimension: None,
+        evidence_code: None,
+        evidence_confidence: None,
+        classifier_profile_version: None,
         created_at_ms: 1_000,
     }
 }
@@ -493,8 +500,13 @@ fn target(
         ttfb_ms: Some(40),
         first_content_ms: Some(55),
         semantic_confidence: "protocol_validated".to_string(),
+        availability_eligible: true,
+        latency_eligible: true,
         started_at_ms: 1_000,
         finished_at_ms: Some(1_120),
+        exclusion_reason: None,
+        technical_health_effect: "positive".to_string(),
+        disposition_profile_version: "v1".to_string(),
         created_at_ms: 1_120,
     }
 }

@@ -17,11 +17,7 @@ pub mod hierarchical_preview;
 pub(crate) mod intelligent_planner;
 pub(crate) mod planning_snapshot;
 pub(crate) mod request;
-#[cfg(test)]
-pub mod routing_economics;
 pub(crate) mod routing_failure;
 pub(crate) mod routing_health;
-#[cfg(test)]
-pub mod routing_preview;
 pub(crate) mod runtime_metrics;
 pub(crate) mod tiers;

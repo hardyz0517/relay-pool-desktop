@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 
 use super::upgrade_journal::{BaselineConversionJournal, Sha256Digest};
 use crate::services::data_store::atomic_file::{
-    create_new_file, replace_existing_file, sync_file, sync_parent, unique_sibling,
+    create_new_file, replace_existing_file, sync_file, sync_parent, unique_sibling, AtomicFileError,
 };
 
 pub(crate) const BASELINE_CONVERSION_JOURNAL_FILE: &str = "persistence-upgrade-journal.json";
@@ -81,8 +81,12 @@ pub(crate) fn write_baseline_conversion_journal_atomically(
         drop(file);
         sync_file(&temporary)
             .map_err(|error| format!("failed to sync baseline journal staging file: {error}"))?;
-        replace_existing_file(&temporary, journal_path)
-            .map_err(|error| format!("failed to publish baseline journal: {error}"))?;
+        let publish = if journal_path.exists() {
+            replace_existing_file(&temporary, journal_path)
+        } else {
+            fs::rename(&temporary, journal_path).map_err(AtomicFileError::Io)
+        };
+        publish.map_err(|error| format!("failed to publish baseline journal: {error}"))?;
         sync_parent(parent)
             .map_err(|error| format!("failed to sync baseline journal directory: {error}"))
     })();

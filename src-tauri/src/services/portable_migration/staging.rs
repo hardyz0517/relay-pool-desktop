@@ -11,7 +11,6 @@ use crate::services::{
         create_new_file, sync_parent, ApprovedLeaf, AtomicFileError, AtomicFilePublishPort,
         PublishEvidence, PublishMode,
     },
-    data_store::file_identity::{identity_for_path, FileIdentity},
     secrets::{
         rekey::{
             BufferedSecretRekeyWriter, SecretRekeyPolicy, SecretRekeyService, TransportSecretKey,
@@ -64,10 +63,8 @@ pub(crate) struct PortablePackageSelfTestReport {
 #[derive(Debug)]
 pub(crate) struct StagedImportPackage {
     pub(crate) staging_path: PathBuf,
-    pub(crate) staging_identity: FileIdentity,
     pub(crate) reader_kind: PortableReaderKind,
     pub(crate) manifest: PortableMigrationManifest,
-    pub(crate) sqlite_sha256: [u8; 32],
     pub(crate) transport_key: TransportKeyMaterial,
     pub(crate) row_counts: BTreeMap<String, u64>,
 }
@@ -229,16 +226,10 @@ pub(crate) async fn stage_and_verify_import_package<R: Read>(
         )
         .await?;
         verify_secret_rows_decrypt_with_transport_key(&staging_path, &parsed).await?;
-        let staging_identity = identity_for_path(&staging_path).map_err(|_| {
-            PortablePackageStagingError::Validation(PortableMigrationValidationError::OpenFailed)
-        })?;
-
         Ok(StagedImportPackage {
             staging_path: staging_path.clone(),
-            staging_identity,
             reader_kind,
             manifest: parsed.manifest,
-            sqlite_sha256: parsed.sqlite_sha256,
             transport_key: parsed.transport_key,
             row_counts,
         })

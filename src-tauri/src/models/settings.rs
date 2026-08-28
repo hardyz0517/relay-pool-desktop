@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::routing::{DispatchAlgorithmSettings, RoutingGroupFilter};
 
-pub const DEFAULT_COLLECTOR_TIMEOUT_SECONDS: u16 = 30;
+pub const DEFAULT_COLLECTOR_TIMEOUT_SECONDS: u16 = 60;
 pub const MIN_COLLECTOR_TIMEOUT_SECONDS: u16 = 3;
 pub const MAX_COLLECTOR_TIMEOUT_SECONDS: u16 = 300;
 

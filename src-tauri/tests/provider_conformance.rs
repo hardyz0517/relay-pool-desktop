@@ -564,8 +564,16 @@ mod services {
             if !path.starts_with('/') || path.contains("://") {
                 return Err("invalid path".to_string());
             }
-            let resource = path.strip_prefix("/v1/").unwrap_or(path);
-            Ok(format!("{base}/{resource}"))
+            let base_has_namespace = base_url
+                .split_once("://")
+                .map(|(_, authority_and_path)| authority_and_path.contains('/'))
+                .unwrap_or(false);
+            let resource = if base_has_namespace {
+                path.strip_prefix("/v1/").unwrap_or(path)
+            } else {
+                path
+            };
+            Ok(format!("{base}/{}", resource.trim_start_matches('/')))
         }
 
         pub fn build_management_url(base_url: &str, path: &str) -> Result<String, String> {

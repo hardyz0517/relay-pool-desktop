@@ -16,6 +16,13 @@ mod persistence {
     }
 }
 
+mod application {
+    pub(crate) mod health_protection {
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        pub(crate) struct HealthProtectionScope;
+    }
+}
+
 #[path = "../src/persistence/stores/request_cost_write.rs"]
 mod request_cost_write;
 #[path = "../src/persistence/stores/request_log_write.rs"]

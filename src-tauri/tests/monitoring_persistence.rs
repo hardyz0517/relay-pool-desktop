@@ -548,13 +548,15 @@ async fn insert_station_balance(
         r#"
         INSERT INTO balance_snapshots (
             id, station_id, station_key_id, scope, value, currency,
-            status, source, confidence, created_at, updated_at
+            status, source, confidence, created_at, updated_at,
+            evidence_confidence, spendability_authority
         ) VALUES (?1, 'station-1', NULL, 'station', ?2, 'CNY',
-                  'normal', 'fixture', 1.0, ?3, ?3)
+                  ?3, 'fixture', 1.0, ?4, ?4, 'confirmed', 'authoritative')
         "#,
     )
     .bind(id)
     .bind(value)
+    .bind(if value <= 0.0 { "depleted" } else { "normal" })
     .bind(updated_at)
     .execute(connection)
     .await
@@ -778,6 +780,13 @@ fn attempt(id: &str, execution_id: &str, key_id: &str, attempt_number: i64) -> N
         validation_passed: true,
         output_bytes: 12,
         error_summary: None,
+        canonical_failure_class: None,
+        failure_origin: None,
+        failure_scope_kind: None,
+        failure_dimension: None,
+        evidence_code: None,
+        evidence_confidence: None,
+        classifier_profile_version: None,
         created_at_ms: 10,
     }
 }
@@ -816,8 +825,13 @@ fn target(
         ttfb_ms: Some(4),
         first_content_ms: Some(5),
         semantic_confidence: "protocol_validated".to_string(),
+        availability_eligible: true,
+        latency_eligible: true,
         started_at_ms: 10,
         finished_at_ms: Some(20),
+        exclusion_reason: None,
+        technical_health_effect: "positive".to_string(),
+        disposition_profile_version: "v1".to_string(),
         created_at_ms: 20,
     }
 }

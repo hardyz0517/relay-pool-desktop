@@ -1,5 +1,35 @@
+#[path = "../src/application/error_rate_protection.rs"]
+mod application_error_rate_protection;
+#[path = "../src/application/health_protection.rs"]
+mod application_health_protection;
+#[path = "../src/persistence/stores/domain_revision_store.rs"]
+mod domain_revision_store;
+#[path = "../src/models/routing_observation.rs"]
+mod model_routing_observation;
+#[path = "../src/models/routing_policy.rs"]
+mod model_routing_policy;
 #[path = "../src/persistence/error.rs"]
 mod persistence_error;
+#[path = "../src/persistence/stores/routing_error_rate_history_store.rs"]
+mod routing_error_rate_history_store;
+
+mod application {
+    pub(crate) mod health_protection {
+        pub(crate) use crate::application_health_protection::*;
+    }
+    pub(crate) mod error_rate_protection {
+        pub(crate) use crate::application_error_rate_protection::*;
+    }
+}
+
+mod models {
+    pub(crate) mod routing_policy {
+        pub(crate) use crate::model_routing_policy::*;
+    }
+    pub(crate) mod routing_observation {
+        pub(crate) use crate::model_routing_observation::*;
+    }
+}
 
 mod persistence {
     pub(crate) mod error {
@@ -10,6 +40,17 @@ mod persistence {
             static MIGRATOR: sqlx::migrate::Migrator =
                 sqlx::migrate!("./src/persistence/migrations");
             &MIGRATOR
+        }
+    }
+    pub(crate) mod stores {
+        pub(crate) mod domain_revision_store {
+            pub(crate) use crate::domain_revision_store::*;
+        }
+        pub(crate) mod routing_error_rate_history_store {
+            pub(crate) use crate::routing_error_rate_history_store::*;
+        }
+        pub(crate) mod routing_health_verdict_store {
+            pub(crate) use crate::routing_health_verdict_store::*;
         }
     }
 }
@@ -175,7 +216,22 @@ async fn schema_35_moves_legacy_routing_boundaries_into_policy_without_resetting
     .await
     .expect("legacy group filter");
 
-    migrator().run(&mut connection).await.expect("schema 36");
+    let through_schema_36 = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            migrator()
+                .iter()
+                .filter(|migration| migration.version <= 36)
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    };
+    through_schema_36
+        .run(&mut connection)
+        .await
+        .expect("schema 36");
     let config: String =
         sqlx::query_scalar("SELECT config_json FROM routing_policy WHERE singleton_key = 1")
             .fetch_one(&mut connection)

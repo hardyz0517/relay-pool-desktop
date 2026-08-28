@@ -921,6 +921,8 @@ pub fn run() {
             );
             let blocking_executor = work_runtime.blocking.clone();
             let (app_config_dir, default_data_dir) = resolve_application_directories(app)?;
+            services::secrets::keychain::configure_for_app_identifier(&app.config().identifier)
+                .map_err(|error| format!("failed to configure credential namespace: {error}"))?;
             let runtime_log_root = default_data_dir.join("runtime-logs");
             let runtime_lifecycle = Arc::new(runtime_composition::RuntimeLogLifecycle::open(
                 &runtime_log_root,

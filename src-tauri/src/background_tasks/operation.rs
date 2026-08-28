@@ -217,10 +217,6 @@ impl OperationRegistry {
         Ok(id)
     }
 
-    pub async fn stop_admission_and_cancel(&self, wait: Duration) -> OperationDrainReport {
-        self.stop_admission_and_cancel_except(None, wait).await
-    }
-
     pub async fn stop_admission_and_cancel_except(
         &self,
         excluded: Option<OperationId>,

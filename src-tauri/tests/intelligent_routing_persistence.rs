@@ -156,7 +156,7 @@ fn portable_catalog_declares_foundation_tables_and_explicit_json_rules() {
             "catalog missing {table}"
         );
     }
-    assert!(catalog.contains("EXPECTED_USER_TABLE_COUNT_V1: usize = 66"));
+    assert!(catalog.contains("EXPECTED_USER_TABLE_COUNT_V1: usize = 77"));
     assert!(catalog.contains("ROUTING_POLICY_RULES"));
     assert!(catalog.contains("ROUTING_OBSERVATION_RULES"));
     assert!(catalog.contains("ROUTING_QUALITY_RULES"));
@@ -173,7 +173,7 @@ fn routing_policy_write_binds_domain_revision_and_history_to_one_transaction() {
 
 #[test]
 fn fresh_current_and_portable_upgrade_fixtures_are_executed() {
-    run_cargo_test("--test", "persistence_upgrade");
+    run_cargo_test("--test", "schema15_upgrade_fixture");
     run_cargo_test("--test", "portable_migration_e2e");
 }
 

@@ -293,12 +293,9 @@ impl DataMigrationImportService {
             sqlite_size_bytes: staged.manifest.sqlite_size_bytes,
         };
         let preparation = ImportPreparationLease {
-            source_identity: import_lease.identity,
             staging_path: staged.staging_path,
-            staging_identity: staged.staging_identity,
             reader_kind: staged.reader_kind,
             manifest: staged.manifest,
-            sqlite_sha256: staged.sqlite_sha256,
             transport_key: staged.transport_key,
         };
         Ok(match inspection_id {
@@ -672,6 +669,7 @@ mod tests {
     async fn portable_import_inspection_backs_off_after_five_consecutive_failures() {
         let directory = tempfile::tempdir().expect("tempdir");
         let service = service();
+        let test_now = Instant::now();
 
         for index in 0..5 {
             let path = directory.path().join(format!("bad-{index}.rpd-move"));
@@ -680,13 +678,15 @@ mod tests {
                 .path_tokens
                 .approve_import_path(&path, Instant::now())
                 .expect("token");
+            let mut inspection_request = request(
+                token.id,
+                directory.path().join(format!("scratch-{index}")),
+                "p",
+            );
+            inspection_request.now = test_now;
             service
                 .inspect_portable_package_with_options(
-                    request(
-                        token.id,
-                        directory.path().join(format!("scratch-{index}")),
-                        "p",
-                    ),
+                    inspection_request,
                     AgeEnvelopeOptions::TEST_FAST,
                     None,
                 )
@@ -699,13 +699,15 @@ mod tests {
             .path_tokens
             .approve_import_path(&valid, Instant::now())
             .expect("valid token");
+        let mut blocked_request = request(
+            token.id,
+            directory.path().join("scratch-blocked"),
+            "passphrase",
+        );
+        blocked_request.now = test_now;
         let blocked = service
             .inspect_portable_package_with_options(
-                request(
-                    token.id,
-                    directory.path().join("scratch-blocked"),
-                    "passphrase",
-                ),
+                blocked_request,
                 AgeEnvelopeOptions::TEST_FAST,
                 None,
             )

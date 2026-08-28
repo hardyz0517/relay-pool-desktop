@@ -71,18 +71,6 @@ impl AlertingReconciler {
         }
     }
 
-    #[expect(
-        dead_code,
-        reason = "contract=alerting.reconcile-limits; owner=application/alerting; remove_when=reconcile limits are fixed by runtime composition"
-    )]
-    pub(crate) fn with_limits(mut self, limits: ReconcileLimits) -> Self {
-        self.limits = ReconcileLimits {
-            page_size: limits.page_size.clamp(1, 500),
-            suppression_limit_per_incident: limits.suppression_limit_per_incident.clamp(1, 500),
-        };
-        self
-    }
-
     pub(crate) async fn reconcile_page(
         &self,
         cursor: Option<ReconcileCursor>,

@@ -1,8 +1,3 @@
-#![allow(
-    dead_code,
-    reason = "Task 12 publishes import inspection registry infrastructure before Task 13 wires the importer flow"
-)]
-
 use std::{
     collections::{HashMap, VecDeque},
     fs,
@@ -13,12 +8,9 @@ use std::{
 
 use rand::{rngs::OsRng, RngCore};
 
-use crate::services::{
-    data_store::file_identity::FileIdentity,
-    portable_migration::{
-        format::{PortableMigrationManifest, TransportKeyMaterial},
-        schema_reader::PortableReaderKind,
-    },
+use crate::services::portable_migration::{
+    format::{PortableMigrationManifest, TransportKeyMaterial},
+    schema_reader::PortableReaderKind,
 };
 
 const INSPECTION_TTL: Duration = Duration::from_secs(10 * 60);
@@ -170,11 +162,6 @@ impl ImportInspectionRegistry {
             .ok_or(ImportInspectionError::NotFound)
     }
 
-    pub(crate) fn gc(&self, now: Instant) {
-        let mut inner = self.inner.lock().expect("inspection registry mutex");
-        gc_locked(&mut inner, now, self.config.ttl);
-    }
-
     #[cfg(test)]
     fn process_nonce_for_test(&self) -> [u8; 16] {
         self.inner
@@ -222,12 +209,9 @@ pub(crate) struct ImportInspectionHandle {
 
 #[derive(Debug)]
 pub(crate) struct ImportPreparationLease {
-    pub(crate) source_identity: FileIdentity,
     pub(crate) staging_path: PathBuf,
-    pub(crate) staging_identity: FileIdentity,
     pub(crate) reader_kind: PortableReaderKind,
     pub(crate) manifest: PortableMigrationManifest,
-    pub(crate) sqlite_sha256: [u8; 32],
     pub(crate) transport_key: TransportKeyMaterial,
 }
 
@@ -368,7 +352,7 @@ mod tests {
     }
 
     #[test]
-    fn inspection_registry_ttl_capacity_process_nonce_and_gc_are_fail_closed() {
+    fn inspection_registry_ttl_capacity_and_process_nonce_are_fail_closed() {
         let registry = ImportInspectionRegistry::with_config(ImportInspectionRegistryConfig {
             ttl: Duration::from_secs(600),
             max_entries: 2,
@@ -381,7 +365,12 @@ mod tests {
                 .unwrap_err(),
             ImportInspectionError::Expired
         );
-        registry.gc(now + Duration::from_secs(601));
+        assert_eq!(
+            registry
+                .id_for_value(expired.id.as_str(), now + Duration::from_secs(601))
+                .unwrap_err(),
+            ImportInspectionError::NotFound
+        );
         assert_eq!(
             registry.consume(&expired.id, now).unwrap_err(),
             ImportInspectionError::NotFound
@@ -462,12 +451,9 @@ mod tests {
     fn lease_with_path(key: [u8; 32], staging_path: PathBuf) -> ImportPreparationLease {
         let manifest = manifest_struct("018f7f9a-1111-7000-8000-000000000001");
         ImportPreparationLease {
-            source_identity: identity("source"),
             staging_path,
-            staging_identity: identity("staging"),
             reader_kind: PortableReaderKind::V1EncryptedSecrets,
             manifest,
-            sqlite_sha256: [5; 32],
             transport_key: TransportKeyMaterial::from_bytes(key),
         }
     }
@@ -482,15 +468,6 @@ mod tests {
             include_history: false,
             record_counts: vec![("stations".to_string(), 1)],
             sqlite_size_bytes: 64,
-        }
-    }
-
-    fn identity(seed: &str) -> FileIdentity {
-        FileIdentity {
-            volume_serial: None,
-            file_id: None,
-            length: seed.len() as u64,
-            sha256: format!("{:x}", Sha256::digest(seed.as_bytes())),
         }
     }
 

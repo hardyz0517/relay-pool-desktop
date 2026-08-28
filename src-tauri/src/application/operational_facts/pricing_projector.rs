@@ -194,7 +194,16 @@ pub(crate) fn request_cost_comparison_context(
         estimated_output_price: pricing.estimated_output_price,
         estimated_cache_creation_price: pricing.estimated_cache_creation_price,
         estimated_cache_read_price: pricing.estimated_cache_read_price,
-        status_label: pricing.pricing_status.as_str().to_string(),
+        // A base model tariff is still an exact request price. Keep the
+        // diagnostic status distinct, but expose the route-level status as
+        // priced whenever exact input/output pricing is available.
+        status_label: if basis == RoutingCostBasis::ExactPrice
+            && matches!(pricing.pricing_status, PricingStatus::BasePriceOnly)
+        {
+            "priced".to_string()
+        } else {
+            pricing.pricing_status.as_str().to_string()
+        },
         source_chain: pricing.source_chain.clone(),
         observed_at: pricing
             .rate_collected_at

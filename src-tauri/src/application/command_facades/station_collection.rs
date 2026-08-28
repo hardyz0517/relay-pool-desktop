@@ -1,7 +1,5 @@
 use std::{future::Future, sync::Arc};
 
-use serde_json::json;
-
 use crate::{
     application::{
         collectors::{CaptureSnapshotRequest, CollectorService},
@@ -10,10 +8,13 @@ use crate::{
         settings::SettingsService,
     },
     background_tasks::{BlockingExecutor, BlockingExecutorError},
-    models::collector::{CollectorEvent, CollectorRunResult},
     models::station_redemption::StationRedemptionResult,
+    models::{
+        collector::{CollectorEvent, CollectorRunResult},
+        credentials::{PersistStationSessionInput, ResolvedSession, SessionResolveStatus},
+    },
     observability::correlation,
-    outbound::AsyncOutboundClient,
+    outbound::{AsyncOutboundClient, RequestBudget},
     services::{
         collectors::{self, output::CollectorTask, V2CollectorSourceAdapter},
         remote_keys::RemoteKeyOperationError,
@@ -35,6 +36,26 @@ pub(crate) enum StationCollectionCommandError {
     Prepare(ApplicationError),
     Apply(ApplicationError),
     Blocking(BlockingExecutorError),
+}
+
+#[derive(Debug)]
+pub(crate) struct RechargeScanRequest {
+    pub(crate) website_url: String,
+    pub(crate) station_type: String,
+    pub(crate) session_usable: bool,
+    pub(crate) cookie: Option<String>,
+    pub(crate) access_token: Option<String>,
+    pub(crate) refresh_token: Option<String>,
+    pub(crate) newapi_user_id: Option<String>,
+}
+
+#[derive(Debug)]
+pub(crate) struct RechargeScanCapture {
+    pub(crate) status: String,
+    pub(crate) summary_json: serde_json::Value,
+    pub(crate) normalized_json: serde_json::Value,
+    pub(crate) error_message: Option<String>,
+    pub(crate) event_count: i64,
 }
 
 #[derive(Clone)]
@@ -121,11 +142,15 @@ impl StationCollectionCommandFacade {
     /// source as balance/group collection. The browser result is persisted as
     /// a collector snapshot so the UI never invents an entry from a guessed
     /// path.
-    pub(crate) async fn scan_station_recharge(
+    pub(crate) async fn scan_station_recharge<F, Fut>(
         &self,
-        app: &tauri::AppHandle,
         station_id: String,
-    ) -> Result<CollectorRunResult, StationCollectionCommandError> {
+        scan: F,
+    ) -> Result<CollectorRunResult, StationCollectionCommandError>
+    where
+        F: FnOnce(RechargeScanRequest) -> Fut,
+        Fut: Future<Output = RechargeScanCapture>,
+    {
         // Background balance/group collection may already hold this station's
         // lease. Recharge discovery is user initiated and short-lived, so wait
         // briefly for that same lease instead of failing immediately with a
@@ -134,10 +159,22 @@ impl StationCollectionCommandFacade {
             acquire_recharge_station_lease(&self.station_collection_coordinator, &station_id)
                 .await
                 .map_err(StationCollectionCommandError::Admission)?;
-        self.scan_station_recharge_inner(app, station_id).await
+        self.scan_station_recharge_inner(station_id, scan).await
     }
 
     pub(crate) async fn redeem_station_code(
+        &self,
+        station_id: String,
+        code: String,
+    ) -> Result<StationRedemptionResult, StationCollectionCommandError> {
+        let _lease =
+            acquire_recharge_station_lease(&self.station_collection_coordinator, &station_id)
+                .await
+                .map_err(StationCollectionCommandError::Admission)?;
+        self.redeem_station_code_inner(station_id, code).await
+    }
+
+    async fn redeem_station_code_inner(
         &self,
         station_id: String,
         code: String,
@@ -152,21 +189,36 @@ impl StationCollectionCommandFacade {
             .load()
             .await
             .map_err(|_| StationCollectionCommandError::Prepare(ApplicationError::Internal))?;
+        let budget = RequestBudget::from_now(std::time::Duration::from_secs(u64::from(
+            settings.collector_timeout_seconds,
+        )));
+        let cancellation = tokio_util::sync::CancellationToken::new();
+        let correlation_id = current_correlation_id();
+        let code = code.trim().to_string();
         let credentials = self
             .credentials
             .get_station_credentials(station_id.clone())
             .await
             .map_err(|_| StationCollectionCommandError::Prepare(ApplicationError::Internal))?;
         let source = self.source();
-        let session = collectors::resolve_station_session_for_browser(
-            &source,
-            &self.outbound,
-            station_id,
-            tokio_util::sync::CancellationToken::new(),
-            current_correlation_id(),
+        let Some(session) = run_with_redemption_budget(
+            budget,
+            collectors::resolve_station_session_for_operation(
+                &source,
+                &self.outbound,
+                station_id.clone(),
+                collectors::StationSessionResolveMode::ReuseUsable,
+                cancellation.clone(),
+                correlation_id.clone(),
+            ),
         )
         .await
-        .map_err(StationCollectionCommandError::Prepare)?;
+        else {
+            return Ok(crate::services::station_redemption::timeout_result(
+                &station.station_type,
+            ));
+        };
+        let session = session.map_err(StationCollectionCommandError::Prepare)?;
         let proxy_config = crate::services::outbound::resolve_proxy_config(
             &station.collector_proxy_mode,
             station.collector_proxy_url.clone(),
@@ -179,25 +231,150 @@ impl StationCollectionCommandFacade {
         )
         .map_err(|_| StationCollectionCommandError::Prepare(ApplicationError::Internal))?;
 
-        Ok(crate::services::station_redemption::redeem_station_code(
+        let attempt = crate::services::station_redemption::redeem_station_code(
             &self.outbound,
             &station,
             &session,
-            code.trim(),
+            &code,
+            credentials.session_user_agent.as_deref(),
+            proxy.clone(),
+            budget,
+            cancellation.clone(),
+            correlation_id.clone(),
+        )
+        .await;
+        if !attempt.authentication_rejected || !station.station_type.eq_ignore_ascii_case("sub2api")
+        {
+            return Ok(attempt.result);
+        }
+        let mut last_attempt = attempt;
+        if let Some(saved_refresh_token) = session
+            .refresh_token
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            if let Some(refreshed) = crate::services::station_redemption::refresh_sub2api_session(
+                &self.outbound,
+                &station,
+                saved_refresh_token,
+                session.cookie.as_deref(),
+                credentials.session_user_agent.as_deref(),
+                proxy.clone(),
+                budget,
+                cancellation.clone(),
+                correlation_id.clone(),
+            )
+            .await
+            {
+                let refreshed_session = ResolvedSession {
+                    status: SessionResolveStatus::Ready,
+                    access_token: Some(refreshed.access_token.clone()),
+                    refresh_token: Some(
+                        refreshed
+                            .refresh_token
+                            .clone()
+                            .unwrap_or_else(|| saved_refresh_token.to_string()),
+                    ),
+                    cookie: refreshed.cookie.clone(),
+                    newapi_user_id: session.newapi_user_id.clone(),
+                    message: None,
+                };
+                let Some(persisted) = run_with_redemption_budget(
+                    budget,
+                    self.credentials.persist_station_session_if_revision(
+                        PersistStationSessionInput {
+                            station_id: station.id.clone(),
+                            access_token: refreshed_session.access_token.clone(),
+                            refresh_token: refreshed_session.refresh_token.clone(),
+                            cookie: refreshed_session.cookie.clone(),
+                            newapi_user_id: refreshed_session.newapi_user_id.clone(),
+                            token_expires_at: refreshed.token_expires_at.clone(),
+                            session_expires_at: refreshed.token_expires_at,
+                            session_source: "refresh_token".to_string(),
+                            session_user_agent: credentials.session_user_agent.clone(),
+                        },
+                        station.endpoint_revision,
+                    ),
+                )
+                .await
+                else {
+                    return Ok(crate::services::station_redemption::timeout_result(
+                        &station.station_type,
+                    ));
+                };
+                persisted.map_err(|_| {
+                    StationCollectionCommandError::Prepare(ApplicationError::Internal)
+                })?;
+                last_attempt = crate::services::station_redemption::redeem_station_code(
+                    &self.outbound,
+                    &station,
+                    &refreshed_session,
+                    &code,
+                    credentials.session_user_agent.as_deref(),
+                    proxy.clone(),
+                    budget,
+                    cancellation.clone(),
+                    correlation_id.clone(),
+                )
+                .await;
+                if !last_attempt.authentication_rejected {
+                    return Ok(last_attempt.result);
+                }
+            }
+        }
+
+        if budget.remaining().is_none() {
+            return Ok(crate::services::station_redemption::timeout_result(
+                &station.station_type,
+            ));
+        }
+        let Some(password_session) = run_with_redemption_budget(
+            budget,
+            collectors::resolve_station_session_for_operation(
+                &source,
+                &self.outbound,
+                station_id,
+                collectors::StationSessionResolveMode::ForcePasswordLogin,
+                cancellation.clone(),
+                correlation_id.clone(),
+            ),
+        )
+        .await
+        else {
+            return Ok(crate::services::station_redemption::timeout_result(
+                &station.station_type,
+            ));
+        };
+        let password_session = password_session.map_err(StationCollectionCommandError::Prepare)?;
+        if !redemption_session_has_authentication(&password_session) {
+            return Ok(last_attempt.result);
+        }
+
+        Ok(crate::services::station_redemption::redeem_station_code(
+            &self.outbound,
+            &station,
+            &password_session,
+            &code,
             credentials.session_user_agent.as_deref(),
             proxy,
-            std::time::Duration::from_secs(u64::from(settings.collector_timeout_seconds)),
-            tokio_util::sync::CancellationToken::new(),
-            current_correlation_id(),
+            budget,
+            cancellation,
+            correlation_id,
         )
-        .await)
+        .await
+        .result)
     }
 
-    async fn scan_station_recharge_inner(
+    async fn scan_station_recharge_inner<F, Fut>(
         &self,
-        app: &tauri::AppHandle,
         station_id: String,
-    ) -> Result<CollectorRunResult, StationCollectionCommandError> {
+        scan: F,
+    ) -> Result<CollectorRunResult, StationCollectionCommandError>
+    where
+        F: FnOnce(RechargeScanRequest) -> Fut,
+        Fut: Future<Output = RechargeScanCapture>,
+    {
         let source = self.source();
         let station = self
             .collectors
@@ -206,10 +383,11 @@ impl StationCollectionCommandFacade {
             .map_err(|_| StationCollectionCommandError::Prepare(ApplicationError::Internal))?;
         let session = match tokio::time::timeout(
             std::time::Duration::from_secs(25),
-            collectors::resolve_station_session_for_browser(
+            collectors::resolve_station_session_for_operation(
                 &source,
                 &self.outbound,
                 station_id.clone(),
+                collectors::StationSessionResolveMode::ReuseUsable,
                 tokio_util::sync::CancellationToken::new(),
                 current_correlation_id(),
             ),
@@ -221,102 +399,32 @@ impl StationCollectionCommandFacade {
                 "session resolve timed out; public recharge scan fallback",
             ),
         };
-        let session_usable = recharge_session_is_usable(&session);
+        let session_usable = recharge_session_is_usable(&station.station_type, &session);
         // A recharge page can be public even when the station has no saved
         // session (for example a public `/custom/...` shop). Do not turn the
         // absence of credentials into an authorization prompt before opening
         // the page. If the rendered page actually redirects to login, the
         // browser probe will return `login_required` and preserve that signal.
-        let browser_session = if session_usable {
-            crate::commands::browser_transport::RechargeSession {
-                cookie: session.cookie.as_deref(),
-                access_token: session.access_token.as_deref(),
-                refresh_token: session.refresh_token.as_deref(),
-                newapi_user_id: session.newapi_user_id.as_deref(),
-            }
-        } else {
-            crate::commands::browser_transport::RechargeSession::default()
-        };
-
-        let probe = crate::commands::browser_transport::scan_recharge_page(
-            app,
-            &station.website_url,
-            &station.station_type,
-            browser_session,
-        )
+        let capture = scan(RechargeScanRequest {
+            website_url: station.website_url,
+            station_type: station.station_type,
+            session_usable,
+            cookie: session_usable.then_some(session.cookie).flatten(),
+            access_token: session_usable.then_some(session.access_token).flatten(),
+            refresh_token: session_usable.then_some(session.refresh_token).flatten(),
+            newapi_user_id: session_usable.then_some(session.newapi_user_id).flatten(),
+        })
         .await;
-        match probe {
-            Ok(probe) => {
-                let status = match probe.status.as_str() {
-                    "success" => "success",
-                    "login_required" => "manual_required",
-                    "not_found" | "no_match" => "partial",
-                    _ => "failed",
-                };
-                let message = match probe.status.as_str() {
-                    "login_required" => Some("站点页面要求登录，请先完成浏览器授权。".to_string()),
-                    "not_found" => Some("页面明确返回 404，未生成充值入口。".to_string()),
-                    "no_match" => Some(if session_usable {
-                        "已打开登录后的页面，但未发现可确认的充值入口。".to_string()
-                    } else {
-                        "已打开站点页面，但未发现可确认的充值入口。".to_string()
-                    }),
-                    _ => None,
-                };
-                self.record_recharge_snapshot(
-                    station.id,
-                    station.endpoint_revision,
-                    status,
-                    json!({
-                        "collector": "recharge",
-                        "status": probe.status,
-                        "currentUrl": probe.current_url,
-                        "title": probe.title,
-                        "provider": probe.provider,
-                        "paymentMethods": probe.payment_methods,
-                        "protectedCandidates": probe.protected_candidates,
-                        "candidateDiagnostics": probe.candidate_diagnostics,
-                        "evidence": probe.evidence,
-                        "scan": {
-                            "phase": "completed",
-                            "sessionMode": if session_usable { "authenticated" } else { "public_fallback" },
-                            "candidateCount": probe.candidates_scanned,
-                            "entryCount": probe.entries.len()
-                        }
-                    }),
-                    json!({ "entries": probe.entries }),
-                    message,
-                    probe.entries.len() as i64,
-                )
-                .await
-            }
-            Err(error) => {
-                let message = if error.is_timeout() {
-                    error.recharge_message()
-                } else if matches!(
-                    error.recharge_diagnostic()["kind"].as_str(),
-                    Some("cross_origin_redirect")
-                ) {
-                    error.recharge_message()
-                } else {
-                    "充值页面采集失败，请检查站点地址和登录状态。".to_string()
-                };
-                self.record_recharge_snapshot(
-                    station.id,
-                    station.endpoint_revision,
-                    "failed",
-                    json!({
-                        "collector": "recharge",
-                        "status": "error",
-                        "scan": error.recharge_diagnostic()
-                    }),
-                    json!({ "entries": [] }),
-                    Some(message),
-                    0,
-                )
-                .await
-            }
-        }
+        self.record_recharge_snapshot(
+            station.id,
+            station.endpoint_revision,
+            &capture.status,
+            capture.summary_json,
+            capture.normalized_json,
+            capture.error_message,
+            capture.event_count,
+        )
+        .await
     }
 
     async fn record_recharge_snapshot(
@@ -480,25 +588,51 @@ impl StationCollectionCommandFacade {
     }
 }
 
-fn recharge_session_is_usable(session: &crate::models::credentials::ResolvedSession) -> bool {
+fn recharge_session_is_usable(
+    station_type: &str,
+    session: &crate::models::credentials::ResolvedSession,
+) -> bool {
     // `resolve_station_session` deliberately returns Ready for sessions that
     // can still be refreshed through the normal collector (for example an
     // expired access token plus a refresh token). A hidden WebView cannot
     // perform that application-level recovery safely, so only a session with
     // no recovery message and a directly injectable secret may start a scan.
-    session.message.is_none()
-        && session
+    let has_cookie = session
+        .cookie
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty());
+    let has_access_token = session
+        .access_token
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty());
+    let provider_identity_is_usable = !station_type.eq_ignore_ascii_case("newapi")
+        || session
             .newapi_user_id
             .as_deref()
-            .is_some_and(|value| !value.trim().is_empty())
-        && (session
+            .is_some_and(|value| !value.trim().is_empty());
+    (station_type.eq_ignore_ascii_case("sub2api") && has_cookie && !has_access_token)
+        || (session.message.is_none()
+            && provider_identity_is_usable
+            && (has_cookie || has_access_token))
+}
+
+fn redemption_session_has_authentication(session: &ResolvedSession) -> bool {
+    session
+        .access_token
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+        || session
             .cookie
             .as_deref()
             .is_some_and(|value| !value.trim().is_empty())
-            || session
-                .access_token
-                .as_deref()
-                .is_some_and(|value| !value.trim().is_empty()))
+}
+
+async fn run_with_redemption_budget<T, F>(budget: RequestBudget, future: F) -> Option<T>
+where
+    F: Future<Output = T>,
+{
+    let remaining = budget.remaining()?;
+    tokio::time::timeout(remaining, future).await.ok()
 }
 
 async fn run_with_station_collection_lease<T, F, Fut>(
@@ -639,18 +773,20 @@ mod tests {
             newapi_user_id: None,
             message: Some("session refresh or login is required".to_string()),
         };
-        assert!(!recharge_session_is_usable(&session));
+        assert!(!recharge_session_is_usable("sub2api", &session));
 
         session.access_token = Some("fixture-access".to_string());
-        session.newapi_user_id = Some("42".to_string());
         session.message = None;
-        assert!(recharge_session_is_usable(&session));
+        assert!(recharge_session_is_usable("sub2api", &session));
+        assert!(!recharge_session_is_usable("newapi", &session));
+        session.newapi_user_id = Some("42".to_string());
+        assert!(recharge_session_is_usable("newapi", &session));
         session.message = Some("refresh required".to_string());
-        assert!(!recharge_session_is_usable(&session));
+        assert!(!recharge_session_is_usable("sub2api", &session));
         session.access_token = None;
         session.message = None;
         session.cookie = Some("session=fixture".to_string());
-        assert!(recharge_session_is_usable(&session));
+        assert!(recharge_session_is_usable("sub2api", &session));
     }
 
     #[tokio::test]

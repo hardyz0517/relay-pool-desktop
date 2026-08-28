@@ -17,16 +17,6 @@ use crate::application::routing_engine::{
 use crate::application::routing_policy::AttemptBudgetProfileV1;
 use crate::models::model_mapping::FallbackTrigger;
 
-#[cfg(test)]
-use crate::application::routing_engine::candidate_plan::RoutePlanPricingSnapshot;
-
-#[cfg(test)]
-use crate::application::routing_engine::{
-    candidate_plan::RoutePlannerError,
-    hierarchical_preview::{ordered_plan_candidates, plan_route, PlanningInput},
-    request::PlanningRoundContext,
-};
-
 const MAX_RUNTIME_ONLY_REPLANS: u32 = 8;
 
 fn ordered_planned_candidates(plan: &RoutePlan) -> Vec<&PlannedCandidate> {
@@ -48,59 +38,6 @@ fn ordered_planned_candidates(plan: &RoutePlan) -> Vec<&PlannedCandidate> {
         candidate.tier != best_tier && candidate.routing_identity != plan.dispatch.selected_id
     }));
     ordered
-}
-
-#[cfg(test)]
-fn route_plan_candidate_from_projection(
-    projected: &crate::application::operational_facts::candidate_projector::RouteCandidateProjection,
-    planned: &PlannedCandidate,
-    snapshot_id: &str,
-) -> RoutePlanCandidate {
-    let tier = match planned.tier {
-        crate::application::routing_engine::tiers::AvailabilityTier::Primary => {
-            LegacyAvailabilityTier::Primary
-        }
-        crate::application::routing_engine::tiers::AvailabilityTier::Backup => {
-            LegacyAvailabilityTier::ConfiguredBackup
-        }
-    };
-    RoutePlanCandidate {
-        station_key_id: projected.identity.station_key_id.clone(),
-        station_id: projected.identity.station_id.clone(),
-        endpoint_revision: projected.identity.endpoint_revision,
-        credential_revision: 1,
-        account_revision: 1,
-        group_binding_id: None,
-        group_revision: None,
-        resolved_upstream_model: None,
-        model_alias_revision: 1,
-        model_variant: planned.variant.clone(),
-        capacity_domain: None,
-        capacity_domain_revision: None,
-        priority: projected.priority,
-        tier,
-        pricing: RoutePlanPricingSnapshot {
-            basis: projected.pricing.basis,
-            rate_multiplier: projected.pricing.rate_multiplier,
-            currency: projected.pricing.currency.clone(),
-            unit: projected.pricing.unit.clone(),
-            estimated_input_price: projected.pricing.estimated_input_price,
-            estimated_output_price: projected.pricing.estimated_output_price,
-            estimated_cache_creation_price: projected.pricing.estimated_cache_creation_price,
-            estimated_cache_read_price: projected.pricing.estimated_cache_read_price,
-            status_label: projected.pricing.status_label.clone(),
-        },
-        evidence: vec![
-            crate::application::routing_engine::candidate_plan::DecisionEvidence {
-                code: "planner_snapshot",
-                detail: snapshot_id.to_string(),
-            },
-            crate::application::routing_engine::candidate_plan::DecisionEvidence {
-                code: "utility_score",
-                detail: planned.utility.value().to_string(),
-            },
-        ],
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -498,101 +435,6 @@ impl RouteAdmissionCoordinator {
         }
     }
 
-    /// The old hierarchical planner is retained only for unit fixtures that
-    /// intentionally exercise the transport shell without a policy snapshot.
-    /// Production callers must use `next`, which requires a canonical
-    /// `PlanningSnapshot` and invokes the intelligent planner directly.
-    #[cfg(test)]
-    pub fn next_legacy(
-        &mut self,
-        input: AdmissionPlanningInput<'_>,
-    ) -> Result<AdmissionDecision, AdmissionFailure> {
-        if input.planning_snapshot.is_some() {
-            return self.next(input);
-        }
-        if let Some(kind) = self.fallback_blocked.clone() {
-            return Err(self.failure(kind, "fallback_blocked"));
-        }
-        if input.now_ms >= self.progress.view().deadline_ms {
-            return Err(self.failure(AdmissionFailureKind::Deadline, "deadline_elapsed"));
-        }
-        let context = PlanningRoundContext {
-            request: self.request.clone(),
-            progress: self.progress.view(),
-            snapshot_id: self.snapshot_id.clone(),
-            runtime_overlay_revision: self.runtime_overlay_revision,
-        };
-        let plan = plan_route(PlanningInput {
-            context: &context,
-            candidates: input.candidates,
-            affinity_station_key_id: input.affinity_station_key_id,
-        })
-        .map_err(|error| self.planner_failure(error))?;
-        if plan
-            .strata
-            .iter()
-            .map(|stratum| stratum.candidates.len())
-            .sum::<usize>()
-            == 0
-        {
-            return Err(self.failure(AdmissionFailureKind::NoEligible, "no_eligible_candidate"));
-        }
-        for candidate in ordered_plan_candidates(&plan) {
-            let Some(profile) = input.profiles.get(&candidate.station_key_id) else {
-                return Err(self.failure(AdmissionFailureKind::ConfigUnstable, "missing_profile"));
-            };
-            if self.capacity_state_blocks_candidate(&candidate, profile) {
-                continue;
-            }
-            if self.profile_invalidates_candidate(&candidate, profile) {
-                return self.rebuild_or_fail_config(profile);
-            }
-            match input
-                .capacity
-                .try_acquire(profile.capacity_request(candidate))
-            {
-                Ok(mut lease) => {
-                    let retry_permit = self.acquire_retry_permit_after_capacity(&mut lease)?;
-                    return Ok(AdmissionDecision::Selected(SelectedRoute {
-                        candidate: candidate.clone(),
-                        lease,
-                        retry_permit,
-                        evidence: vec![AdmissionEvidence::new(
-                            "selected",
-                            candidate.station_key_id.clone(),
-                        )],
-                        is_capacity_cross_domain_fallback: false,
-                    }));
-                }
-                Err(failure) => {
-                    self.pass_capacity.record_miss(miss_observation(&failure));
-                }
-            }
-        }
-        Err(self.failure(
-            AdmissionFailureKind::CapacityExhausted,
-            "all_strata_capacity_exhausted",
-        ))
-    }
-
-    #[cfg(test)]
-    pub fn record_wait_wakeup(&mut self, runtime_overlay_revision: u64) {
-        self.pass_capacity.clear();
-        self.runtime_overlay_revision = runtime_overlay_revision;
-        self.trace_event(AdmissionTransition::WaitWakeup, "wait_wakeup_replan");
-    }
-
-    #[cfg(test)]
-    pub fn record_actual_terminal(
-        &mut self,
-        selected: SelectedRoute,
-        outcome: ActualAttemptTerminal,
-    ) -> Result<(), AdmissionFailure> {
-        let station_key_id = selected.candidate.routing_identity();
-        drop(selected);
-        self.record_actual_terminal_for_station_key(station_key_id, outcome)
-    }
-
     pub fn record_actual_terminal_for_station_key(
         &mut self,
         station_key_id: String,
@@ -667,16 +509,6 @@ impl RouteAdmissionCoordinator {
         self.excluded_failure_domains
             .len()
             .min(usize::from(u16::MAX)) as u16
-    }
-
-    #[cfg(test)]
-    pub fn progress_view(&self) -> crate::application::routing_engine::request::RouteProgressView {
-        self.progress.view()
-    }
-
-    #[cfg(test)]
-    pub fn pass_capacity_state(&self) -> &PlanningRoundCapacityState {
-        &self.pass_capacity
     }
 
     #[cfg(test)]
@@ -782,19 +614,6 @@ impl RouteAdmissionCoordinator {
                 AdmissionFailureKind::CapacityExhausted,
                 "runtime_at_capacity",
             ),
-        }
-    }
-
-    #[cfg(test)]
-    fn planner_failure(&self, error: RoutePlannerError) -> AdmissionFailure {
-        match error {
-            RoutePlannerError::CandidateLimitExceeded { actual, limit } => AdmissionFailure {
-                kind: AdmissionFailureKind::ConfigUnstable,
-                evidence: vec![AdmissionEvidence::new(
-                    "candidate_limit",
-                    format!("{actual}>{limit}"),
-                )],
-            },
         }
     }
 

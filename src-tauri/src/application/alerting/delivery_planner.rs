@@ -41,38 +41,6 @@ impl DeliveryPlanner {
         self.plan_kind(kind, incident, policy, settings, attention, now_ms, 1)
     }
 
-    #[expect(
-        dead_code,
-        reason = "contract=alerting.repeat-delivery-planning; owner=application/alerting; remove_when=scheduled repeat delivery is retired"
-    )]
-    pub(crate) fn plan_repeat(
-        &self,
-        incident: &Incident,
-        policy: &AlertPolicy,
-        settings: &AlertingSettings,
-        attention: Option<&IncidentAttention>,
-        now_ms: i64,
-        sequence: u64,
-    ) -> Vec<PlannedDelivery> {
-        if !matches!(
-            policy.repeat_mode,
-            crate::models::alerting::RepeatMode::Interval
-                | crate::models::alerting::RepeatMode::IntervalAndEscalation
-        ) || incident.lifecycle_state != crate::models::alerting::LifecycleState::Open
-        {
-            return Vec::new();
-        }
-        self.plan_kind(
-            DeliveryKind::Repeated,
-            incident,
-            policy,
-            settings,
-            attention,
-            now_ms,
-            sequence.max(1),
-        )
-    }
-
     fn plan_kind(
         &self,
         kind: DeliveryKind,

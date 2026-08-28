@@ -4,14 +4,6 @@ pub(crate) enum AvailabilityTier {
     Backup,
 }
 
-#[cfg(test)]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct TieredCandidate {
-    pub(crate) station_key_id: String,
-    pub(crate) tier: AvailabilityTier,
-    pub(crate) rejection_reason: Option<&'static str>,
-}
-
 pub(crate) fn classify_tier(
     enabled: bool,
     healthy: bool,

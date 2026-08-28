@@ -19,9 +19,11 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     application::health_protection::{
-        failure_code_from_label, HealthProtectionFailureCode, HealthProtectionObservation,
-        HealthProtectionObservationOutcome, HealthProtectionProbe, HealthProtectionScope,
-        HealthProtectionScopeKind, HealthProtectionState, HealthProtectionStatus,
+        durable_health_scope_commitment, failure_code_from_label,
+        DurableHealthScopeCommitmentInput, HealthProtectionFailureCode,
+        HealthProtectionObservation, HealthProtectionObservationOutcome, HealthProtectionProbe,
+        HealthProtectionScope, HealthProtectionScopeKind, HealthProtectionState,
+        HealthProtectionStatus,
     },
     models::routing_observation::{
         ObservationOutcome, ObservationSource, RoutingObservation, TrafficEquivalence,
@@ -181,13 +183,19 @@ pub(crate) fn endpoint_health_scope(
     if station_id.trim().is_empty() || endpoint_revision <= 0 {
         return None;
     }
-    let subject =
-        crate::persistence::stores::routing_health_verdict_store::ScopedHealthSubject::endpoint(
-            station_id,
-            endpoint_revision,
-        )
-        .ok()?;
-    HealthProtectionScope::new(HealthProtectionScopeKind::Endpoint, subject.scope()).ok()
+    let commitment = durable_health_scope_commitment(DurableHealthScopeCommitmentInput {
+        scope_kind: "station_endpoint",
+        station_id,
+        station_key_id: None,
+        group_binding_id: None,
+        resolved_model_commitment: None,
+        credential_revision: None,
+        account_revision: None,
+        group_revision: None,
+        endpoint_revision: Some(endpoint_revision),
+        model_alias_revision: None,
+    })?;
+    HealthProtectionScope::new(HealthProtectionScopeKind::Endpoint, commitment).ok()
 }
 
 /// The scope used by the production error-rate probe bridge for one immutable

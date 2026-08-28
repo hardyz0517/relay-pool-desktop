@@ -28,6 +28,11 @@ mod observability {
 }
 
 mod application {
+    pub(crate) mod health_protection {
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        pub(crate) struct HealthProtectionScope;
+    }
+
     #[path = "../../src/application/request_lifecycle/mod.rs"]
     pub(crate) mod request_lifecycle;
 
@@ -254,6 +259,8 @@ async fn request_terminal_waits_for_selected_attempt_durable_ack() {
         Some(UpstreamAttemptFinalizationLease::new(
             attempt_reservation,
             attempt_context(&context),
+            None,
+            None,
         )),
         None,
     );
@@ -322,6 +329,8 @@ async fn attempt_ack_failure_records_interrupted_request_terminal_and_releases_r
         Some(UpstreamAttemptFinalizationLease::new(
             attempt_reservation,
             attempt_context(&context),
+            None,
+            None,
         )),
         None,
     );
@@ -429,6 +438,8 @@ fn attempt_context(context: &RequestContextSnapshot) -> AttemptContext {
         resolved_upstream_model: None,
         model_alias_revision: 1,
         started_at_ms: context.received_at_ms,
+        probe_scope: None,
+        probe_state_revision: None,
     }
 }
 

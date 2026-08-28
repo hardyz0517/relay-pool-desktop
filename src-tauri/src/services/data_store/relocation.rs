@@ -193,7 +193,6 @@ mod tests {
     };
 
     const DATABASE_FILE: &str = "relay-pool-desktop-v2.sqlite3";
-    const DATABASE_FILE_V2: &str = DATABASE_FILE;
     const CONFIG_FILE: &str = "relay-pool-data-dir.json";
 
     #[test]
@@ -232,7 +231,7 @@ mod tests {
         let default_data_dir = root.join("default");
         let source = root.join("source");
         let target = root.join("target");
-        create_station_db_file(&source.join(DATABASE_FILE_V2), "v2-station");
+        create_station_db_file(&source.join(DATABASE_FILE), "v2-station");
         write_config_v3(
             &default_data_dir.join(CONFIG_FILE),
             &DataDirConfigV3 {
@@ -256,8 +255,7 @@ mod tests {
         )
         .expect("relocate generation two");
 
-        assert_eq!(station_count(&target.join(DATABASE_FILE_V2)), 1);
-        assert!(!target.join(DATABASE_FILE).exists());
+        assert_eq!(station_count(&target.join(DATABASE_FILE)), 1);
         let config = read_config_v3(&default_data_dir.join(CONFIG_FILE))
             .expect("read V3 config")
             .expect("config");

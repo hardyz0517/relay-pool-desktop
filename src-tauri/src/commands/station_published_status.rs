@@ -5,6 +5,7 @@ use crate::{
     application::app_services::AppServices,
     commands::error,
     ipc::dto::station_published_status::{
+        StationPublishedStatusOverviewDto, StationPublishedStatusOverviewInputDto,
         StationPublishedStatusWorkspaceDto, StationPublishedStatusWorkspaceInputDto,
     },
     observability::correlation,
@@ -37,6 +38,37 @@ pub async fn get_station_published_status_workspace(
                     &input.station_id,
                     settings.published_status_interval_minutes,
                 )
+                .await
+                .map_err(super::public_command_application_error)
+        },
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn get_station_published_status_overview(
+    services: State<'_, AppServices>,
+    input: Value,
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
+) -> Result<StationPublishedStatusOverviewDto, error::CommandError> {
+    correlation::in_command_scope_with_runtime_context(
+        "get_station_published_status_overview",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = StationPublishedStatusOverviewInputDto::parse(input)?;
+            let settings = services
+                .settings
+                .load()
+                .await
+                .map_err(super::public_command_application_error)?;
+            services
+                .station_published_status
+                .load_overview(&input, settings.published_status_interval_minutes)
                 .await
                 .map_err(super::public_command_application_error)
         },

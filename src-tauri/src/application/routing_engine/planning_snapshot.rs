@@ -122,8 +122,6 @@ impl PlanningSnapshot {
                     variant.station_key_id != candidate.station_key_id
                         || variant.station_id != candidate.station_id
                         || variant.upstream_model.is_empty()
-                        || variant.credential_revision <= 0
-                        || variant.endpoint_revision <= 0
                 })
         }) {
             return Err("planning snapshot contains invalid or unavailable candidate");

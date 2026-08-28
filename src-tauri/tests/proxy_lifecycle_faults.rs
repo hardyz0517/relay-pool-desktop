@@ -1,4 +1,21 @@
 mod application {
+    pub(crate) mod health_protection {
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        pub(crate) struct HealthProtectionScope;
+    }
+
+    pub(crate) mod request_finalization {
+        pub(crate) mod failure {
+            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+            pub(crate) enum RetryDisposition {
+                RetrySameTarget,
+                TryDifferentFailureDomain,
+                WaitThenReplan,
+                StopRequest,
+            }
+        }
+    }
+
     #[path = "../../src/application/request_lifecycle/mod.rs"]
     pub(crate) mod request_lifecycle;
 }

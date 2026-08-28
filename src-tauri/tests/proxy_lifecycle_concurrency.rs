@@ -6,6 +6,23 @@ use std::{
 use futures_util::future::{join_all, BoxFuture};
 
 mod application {
+    pub(crate) mod health_protection {
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        pub(crate) struct HealthProtectionScope;
+    }
+
+    pub(crate) mod request_finalization {
+        pub(crate) mod failure {
+            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+            pub(crate) enum RetryDisposition {
+                RetrySameTarget,
+                TryDifferentFailureDomain,
+                WaitThenReplan,
+                StopRequest,
+            }
+        }
+    }
+
     #[path = "../../src/application/request_lifecycle/mod.rs"]
     pub(crate) mod request_lifecycle;
 }
@@ -190,10 +207,14 @@ fn attempt_record(request_id: &str) -> AttemptTerminalRecord {
             resolved_upstream_model: None,
             model_alias_revision: 1,
             started_at_ms: 2,
+            probe_scope: None,
+            probe_state_revision: None,
         },
         terminal: AttemptTerminal::Succeeded,
         output_committed: true,
         terminal_at_ms: 3,
+        probe_scope: None,
+        probe_state_revision: None,
     }
 }
 

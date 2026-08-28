@@ -167,6 +167,45 @@ pub(crate) enum HealthProtectionScopeKind {
     CapacityDomain,
 }
 
+/// Canonical identity used to derive the opaque key shared by durable health
+/// persistence and application-side reducer scopes. Keep this tuple-shaped
+/// encoding stable because existing SQLite rows retain the resulting key.
+pub(crate) struct DurableHealthScopeCommitmentInput<'identity> {
+    pub(crate) scope_kind: &'identity str,
+    pub(crate) station_id: &'identity str,
+    pub(crate) station_key_id: Option<&'identity str>,
+    pub(crate) group_binding_id: Option<&'identity str>,
+    pub(crate) resolved_model_commitment: Option<&'identity str>,
+    pub(crate) credential_revision: Option<i64>,
+    pub(crate) account_revision: Option<i64>,
+    pub(crate) group_revision: Option<i64>,
+    pub(crate) endpoint_revision: Option<i64>,
+    pub(crate) model_alias_revision: Option<i64>,
+}
+
+pub(crate) fn durable_health_scope_commitment(
+    input: DurableHealthScopeCommitmentInput<'_>,
+) -> Option<String> {
+    let canonical = serde_json::to_vec(&(
+        input.scope_kind,
+        input.station_id,
+        input.station_key_id,
+        input.group_binding_id,
+        input.resolved_model_commitment,
+        input.credential_revision,
+        input.account_revision,
+        input.group_revision,
+        input.endpoint_revision,
+        input.model_alias_revision,
+    ))
+    .ok()?;
+    Some(format!(
+        "{}:v1:{:x}",
+        input.scope_kind,
+        Sha256::digest(canonical)
+    ))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct HealthProtectionScope {

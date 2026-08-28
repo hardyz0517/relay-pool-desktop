@@ -1,5 +1,3 @@
-#[cfg(test)]
-use crate::models::remote_keys::RemoteStationKey;
 use crate::services::collectors::facts::CollectorFacts;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,12 +44,4 @@ impl AdapterOutput {
         self.execution_duration_ms = Some(duration_ms.max(0));
         self
     }
-}
-
-#[cfg(test)]
-#[derive(Debug, Clone)]
-pub struct CreatedRemoteKey {
-    pub remote_key: RemoteStationKey,
-    pub full_key_once: Option<String>,
-    pub message: String,
 }

@@ -1210,6 +1210,8 @@ const CHANNEL_MONITORS_COLUMNS: &[&str] = &[
     "schedule_revision",
     "next_due_at_ms",
     "pause_on_zero_balance",
+    "proxy_mode",
+    "proxy_url",
 ];
 const CHANNEL_MONITOR_EXECUTIONS_COLUMNS: &[&str] = &[
     "id",

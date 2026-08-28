@@ -1,11 +1,7 @@
-use std::{
-    future::Future,
-    sync::atomic::{AtomicU64, Ordering},
-    sync::Arc,
-    time::Duration,
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
 };
-
-use tokio_util::sync::CancellationToken;
 
 use crate::models::alerting::{DeliveryKind, NotificationChannel};
 use crate::persistence::{
@@ -68,16 +64,6 @@ impl DeliveryWorker {
             max_attempts: 3,
             token_counter: Arc::new(AtomicU64::new(1)),
         }
-    }
-
-    #[expect(
-        dead_code,
-        reason = "contract=alerting.delivery-worker-limits; owner=application/alerting; remove_when=worker limits are fixed by runtime composition"
-    )]
-    pub(crate) fn with_limits(mut self, lease_ms: i64, max_attempts: u32) -> Self {
-        self.lease_ms = lease_ms.max(1);
-        self.max_attempts = max_attempts.clamp(1, 10);
-        self
     }
 
     pub(crate) async fn claim_due(
@@ -213,45 +199,6 @@ impl DeliveryWorker {
                 })
             })
             .await
-    }
-
-    /// Run a bounded worker loop. The adapter is called only after a durable
-    /// claim and never while a database transaction is open.
-    #[expect(
-        dead_code,
-        reason = "contract=alerting.delivery-worker-loop; owner=application/alerting; remove_when=delivery worker is retired"
-    )]
-    pub(crate) async fn run<F, Fut>(
-        &self,
-        cancellation: CancellationToken,
-        interval: Duration,
-        mut dispatch: F,
-    ) -> Result<(), PersistenceError>
-    where
-        F: FnMut(DeliveryClaim) -> Fut,
-        Fut: Future<Output = Result<(), ()>>,
-    {
-        let interval = interval.max(Duration::from_millis(25));
-        loop {
-            if cancellation.is_cancelled() {
-                return Ok(());
-            }
-            let now_ms = chrono::Utc::now().timestamp_millis();
-            let claims = self.claim_due(now_ms, 50).await?;
-            for claim in claims {
-                let outcome = dispatch(claim.clone()).await;
-                let now_ms = chrono::Utc::now().timestamp_millis();
-                match outcome {
-                    Ok(()) => self.mark_delivered(&claim, now_ms).await?,
-                    Err(()) => self.mark_adapter_failure(&claim, now_ms).await?,
-                }
-            }
-            self.recover_expired(now_ms, 50).await?;
-            tokio::select! {
-                _ = cancellation.cancelled() => return Ok(()),
-                _ = tokio::time::sleep(interval) => {}
-            }
-        }
     }
 
     fn next_token(&self, now_ms: i64, id: &str) -> String {

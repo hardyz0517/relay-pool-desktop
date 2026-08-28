@@ -79,22 +79,6 @@ impl DeliveryStatus {
             Self::OutcomeUnknown => "outcome_unknown",
         }
     }
-
-    #[expect(
-        dead_code,
-        reason = "contract=alerting.delivery-status-parser; owner=models/alerting; remove_when=recovery and import adapters are retired"
-    )]
-    pub fn from_str(value: &str) -> Option<Self> {
-        Some(match value {
-            "scheduled" => Self::Scheduled,
-            "claimed" => Self::Claimed,
-            "delivered" => Self::Delivered,
-            "suppressed" => Self::Suppressed,
-            "failed" => Self::Failed,
-            "outcome_unknown" => Self::OutcomeUnknown,
-            _ => return None,
-        })
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -210,96 +194,6 @@ impl NotificationDelivery {
         })
     }
 
-    #[expect(
-        dead_code,
-        reason = "contract=alerting.delivery-claim-transition; owner=models/alerting; remove_when=delivery claim state is persisted without a domain transition helper"
-    )]
-    pub fn claim(
-        &mut self,
-        token: impl Into<String>,
-        now_ms: i64,
-        lease_ms: i64,
-    ) -> Result<(), String> {
-        if !matches!(
-            self.status,
-            DeliveryStatus::Scheduled | DeliveryStatus::OutcomeUnknown
-        ) {
-            return Err("only scheduled or outcome_unknown delivery can be claimed".to_string());
-        }
-        if lease_ms <= 0 {
-            return Err("lease_ms must be positive".to_string());
-        }
-        if self.status == DeliveryStatus::Scheduled && self.scheduled_at_ms > now_ms {
-            return Err("delivery is not due yet".to_string());
-        }
-        if self.status == DeliveryStatus::OutcomeUnknown
-            && self.retry_not_before_ms.is_some_and(|due| due > now_ms)
-        {
-            return Err("delivery retry is not due yet".to_string());
-        }
-        self.claim_token = Some(token.into());
-        self.claimed_at_ms = Some(now_ms);
-        self.lease_expires_at_ms = Some(now_ms.saturating_add(lease_ms));
-        self.attempt_count = self.attempt_count.saturating_add(1);
-        self.attempted_at_ms = Some(now_ms);
-        self.retry_not_before_ms = None;
-        self.status = DeliveryStatus::Claimed;
-        self.updated_at_ms = now_ms;
-        Ok(())
-    }
-
-    #[expect(
-        dead_code,
-        reason = "contract=alerting.delivery-mark-delivered; owner=models/alerting; remove_when=delivery completion is represented only by persistence state"
-    )]
-    pub fn mark_delivered(&mut self, token: &str, now_ms: i64) -> Result<(), String> {
-        self.require_claim(token)?;
-        self.status = DeliveryStatus::Delivered;
-        self.delivered_at_ms = Some(now_ms);
-        self.claim_token = None;
-        self.lease_expires_at_ms = None;
-        self.updated_at_ms = now_ms;
-        Ok(())
-    }
-
-    #[expect(
-        dead_code,
-        reason = "contract=alerting.delivery-mark-failed; owner=models/alerting; remove_when=delivery failure transitions are represented only by the persistence worker"
-    )]
-    pub fn mark_failed(
-        &mut self,
-        token: &str,
-        error_code: impl Into<String>,
-        now_ms: i64,
-    ) -> Result<(), String> {
-        self.require_claim(token)?;
-        self.status = DeliveryStatus::Failed;
-        self.error_code = Some(error_code.into());
-        self.claim_token = None;
-        self.lease_expires_at_ms = None;
-        self.updated_at_ms = now_ms;
-        Ok(())
-    }
-
-    #[expect(
-        dead_code,
-        reason = "contract=alerting.delivery-expire-claim; owner=models/alerting; remove_when=claim lease expiry is represented only by the persistence worker"
-    )]
-    pub fn expire_claim(&mut self, now_ms: i64, retry_not_before_ms: Option<i64>) -> bool {
-        if self.status != DeliveryStatus::Claimed
-            || self
-                .lease_expires_at_ms
-                .is_none_or(|expires| now_ms < expires)
-        {
-            return false;
-        }
-        self.status = DeliveryStatus::OutcomeUnknown;
-        self.outcome_unknown_at_ms = Some(now_ms);
-        self.retry_not_before_ms = retry_not_before_ms;
-        self.updated_at_ms = now_ms;
-        true
-    }
-
     pub fn suppress(&mut self, reason: SuppressionReason, now_ms: i64) -> Result<(), String> {
         if self.status != DeliveryStatus::Scheduled {
             return Err("only scheduled delivery can be suppressed".to_string());
@@ -307,13 +201,6 @@ impl NotificationDelivery {
         self.status = DeliveryStatus::Suppressed;
         self.suppressed_reason = Some(reason);
         self.updated_at_ms = now_ms;
-        Ok(())
-    }
-
-    fn require_claim(&self, token: &str) -> Result<(), String> {
-        if self.status != DeliveryStatus::Claimed || self.claim_token.as_deref() != Some(token) {
-            return Err("delivery claim token does not own this delivery".to_string());
-        }
         Ok(())
     }
 }
@@ -330,51 +217,4 @@ pub fn make_delivery_key(
         channel.as_str(),
         delivery_kind.as_str()
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn claim_requires_same_token_and_expiry_is_outcome_unknown() {
-        let mut delivery = NotificationDelivery::new(
-            "delivery-1",
-            "incident-1",
-            1,
-            1,
-            NotificationChannel::Desktop,
-            DeliveryKind::Opened,
-            10,
-            "{}".to_string(),
-        )
-        .unwrap();
-        delivery.claim("token-1", 10, 100).unwrap();
-        assert!(delivery.mark_delivered("wrong", 20).is_err());
-        assert!(delivery.expire_claim(111, Some(200)));
-        assert_eq!(delivery.status, DeliveryStatus::OutcomeUnknown);
-        delivery.claim("token-2", 201, 100).unwrap();
-        delivery.mark_delivered("token-2", 202).unwrap();
-        assert_eq!(delivery.status, DeliveryStatus::Delivered);
-    }
-
-    #[test]
-    fn claim_does_not_bypass_scheduled_or_retry_deadlines() {
-        let mut scheduled = NotificationDelivery::new(
-            "delivery-2",
-            "incident-1",
-            1,
-            1,
-            NotificationChannel::Desktop,
-            DeliveryKind::Repeated,
-            100,
-            "{}".to_string(),
-        )
-        .unwrap();
-        assert!(scheduled.claim("token", 99, 10).is_err());
-        scheduled.claim("token", 100, 10).unwrap();
-        assert!(scheduled.expire_claim(111, Some(200)));
-        assert!(scheduled.claim("retry", 199, 10).is_err());
-        scheduled.claim("retry", 200, 10).unwrap();
-    }
 }

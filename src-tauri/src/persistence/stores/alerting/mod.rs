@@ -1,8 +1,3 @@
-pub(crate) mod delivery;
-pub(crate) mod incident;
-pub(crate) mod occurrence;
-pub(crate) mod policy;
-pub(crate) mod upgrade_progress;
 pub(crate) mod workspace;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -11,10 +6,10 @@ use sqlx::Row;
 
 use crate::{
     models::alerting::{
-        AlertEventType, AlertPolicy, ConditionKey, DeliveryKind, DeliveryStatus, EventCategory,
-        Incident, IncidentObservation, LifecycleState, NotificationChannel, NotificationDelivery,
-        ObservationKind, PolicyState, QuietHoursPolicy, RecoveryMode, RepeatMode, ScopeKind,
-        Severity, StateTransition, SuppressionReason, TriggerMode,
+        AlertEventType, AlertPolicy, ConditionKey, DeliveryKind, EventCategory, Incident,
+        LifecycleState, NotificationChannel, NotificationDelivery, ObservationKind, PolicyState,
+        QuietHoursPolicy, RecoveryMode, RepeatMode, ScopeKind, Severity, SuppressionReason,
+        TriggerMode,
     },
     persistence::{error::PersistenceError, ReadSession, WriteSession},
 };
@@ -254,23 +249,6 @@ impl OccurrenceStore {
         .rows_affected();
         Ok(affected)
     }
-}
-
-#[derive(Debug, Clone)]
-#[expect(
-    dead_code,
-    reason = "contract=alerting.incident-record; owner=persistence/alerting; remove_when=diagnostic and migration reads are retired"
-)]
-pub(crate) struct IncidentRecord {
-    pub id: String,
-    pub condition_key: String,
-    pub event_type: String,
-    pub lifecycle_state: String,
-    pub severity: String,
-    pub episode_number: i64,
-    pub occurrence_count: i64,
-    pub version: i64,
-    pub updated_at_ms: i64,
 }
 
 /// Complete persisted projection used by the application projector.  The read
@@ -879,36 +857,6 @@ impl IncidentStore {
             return Err(PersistenceError::RevisionConflict(incident.id.clone()));
         }
         Ok(())
-    }
-
-    #[expect(
-        dead_code,
-        reason = "contract=alerting.incident-lookup; owner=persistence/alerting; remove_when=diagnostic and migration reads are retired"
-    )]
-    pub(crate) async fn get_by_condition_key(
-        &self,
-        session: &mut ReadSession,
-        condition_key: &str,
-    ) -> Result<Option<IncidentRecord>, PersistenceError> {
-        let row = sqlx::query(
-            "SELECT id, condition_key, event_type, lifecycle_state, severity,
-                    episode_number, occurrence_count, version, updated_at_ms
-             FROM change_incidents WHERE condition_key = ?1",
-        )
-        .bind(condition_key)
-        .fetch_optional(session.connection())
-        .await?;
-        Ok(row.map(|row| IncidentRecord {
-            id: row.get("id"),
-            condition_key: row.get("condition_key"),
-            event_type: row.get("event_type"),
-            lifecycle_state: row.get("lifecycle_state"),
-            severity: row.get("severity"),
-            episode_number: row.get("episode_number"),
-            occurrence_count: row.get("occurrence_count"),
-            version: row.get("version"),
-            updated_at_ms: row.get("updated_at_ms"),
-        }))
     }
 
     pub(crate) async fn link_occurrence(
@@ -1970,33 +1918,6 @@ impl DeliveryStore {
         .await?
         .rows_affected();
         Ok(affected)
-    }
-
-    #[expect(
-        dead_code,
-        reason = "contract=alerting.delivery-sequence; owner=persistence/alerting; remove_when=repeat delivery scheduling is retired"
-    )]
-    pub(crate) async fn next_sequence(
-        &self,
-        session: &mut ReadSession,
-        incident_id: &str,
-        episode_number: u32,
-        channel: NotificationChannel,
-        kind: DeliveryKind,
-    ) -> Result<u64, PersistenceError> {
-        let value = sqlx::query_scalar::<_, Option<i64>>(
-            "SELECT MAX(delivery_sequence) FROM notification_deliveries
-             WHERE incident_id = ?1 AND episode_number = ?2 AND channel = ?3 AND delivery_kind = ?4",
-        )
-        .bind(incident_id)
-        .bind(i64::from(episode_number))
-        .bind(channel.as_str())
-        .bind(kind.as_str())
-        .fetch_one(session.connection())
-        .await?
-        .unwrap_or(0);
-        u64::try_from(value.saturating_add(1))
-            .map_err(|_| PersistenceError::InvariantViolation("delivery sequence overflow".into()))
     }
 
     pub(crate) async fn delete_terminal_before(

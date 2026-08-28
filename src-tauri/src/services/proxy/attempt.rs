@@ -1,8 +1,3 @@
-#![allow(
-    dead_code,
-    reason = "Task 20 adds the explicit dual-terminal composition path before Task 22 production cutover"
-)]
-
 use tokio::task::JoinHandle;
 
 use super::{

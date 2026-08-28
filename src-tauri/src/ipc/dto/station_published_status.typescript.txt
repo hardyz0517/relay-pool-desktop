@@ -2,6 +2,12 @@ export type StationPublishedStatusWorkspaceInputDto = {
   stationId: string;
 };
 
+export type StationPublishedStatusOverviewInputDto = {
+  filter?: { search?: string | null; stationId?: string | null; outcome?: "available" | "degraded" | "unavailable" | "unknown" | null; sourceState?: "never_collected" | "available" | "empty" | "unsupported" | "authorization_required" | "degraded" | "failed" | null };
+  cursor?: string | null;
+  limit?: number;
+};
+
 export type StationPublishedStatusSampleDto = {
   model: string;
   checkedAtMs: number;
@@ -41,4 +47,11 @@ export type StationPublishedStatusWorkspaceDto = {
   monitorCount: number;
   stale: boolean;
   rows: StationPublishedStatusRowDto[];
+};
+
+export type StationPublishedStatusOverviewDto = {
+  readAtMs: number;
+  summary: { stationTotal: number; supportedStationCount: number; unsupportedCapabilityStationCount: number; neverCollectedStationCount: number; availableSourceCount: number; emptySourceCount: number; authorizationRequiredSourceCount: number; degradedSourceCount: number; failedSourceCount: number; unsupportedSourceCount: number; monitorTotal: number; availableMonitorCount: number; degradedMonitorCount: number; unavailableMonitorCount: number; unknownMonitorCount: number };
+  rows: Array<StationPublishedStatusRowDto & { stationId: string; stationName: string; stationType: string; stationEnabled: boolean; stationPriority: number; endpointRevision: number; sourceKind: string; sourceState: "never_collected" | "available" | "empty" | "unsupported" | "authorization_required" | "degraded" | "failed"; completeness: "complete" | "partial" | null; stale: boolean; lastAttemptAtMs: number | null; lastSuccessAtMs: number | null; lastCompleteAtMs: number | null }>;
+  page: { limit: number; returned: number; nextCursor: string | null };
 };

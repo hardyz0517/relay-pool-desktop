@@ -358,21 +358,6 @@ pub(crate) fn ordered_import_tables_v1() -> Vec<&'static str> {
     tables
 }
 
-#[cfg(test)]
-pub(crate) fn occupancy_categories_v1() -> BTreeSet<&'static str> {
-    migration_data_catalog()
-        .iter()
-        .filter(|table| table.counts_for_occupancy)
-        .map(|table| match table.category {
-            super::catalog::DataCategory::CoreData => "core_data",
-            super::catalog::DataCategory::History => "history",
-            super::catalog::DataCategory::SessionCredentials => "session_credentials",
-            super::catalog::DataCategory::DeviceRuntimeState => "device_runtime_state",
-            super::catalog::DataCategory::ProviderDrafts => "provider_drafts",
-        })
-        .collect()
-}
-
 async fn validate_schema_objects(
     connection: &mut SqliteConnection,
 ) -> PortableValidationResult<()> {

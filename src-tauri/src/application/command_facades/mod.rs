@@ -34,7 +34,8 @@ pub(crate) use request_logs::RequestLogsCommandFacade;
 pub(crate) use routing::{EndpointPingCommandError, RoutingCommandFacade};
 pub(crate) use settings_stations::SettingsStationsCommandFacade;
 pub(crate) use station_collection::{
-    StationCollectionCommandError, StationCollectionCommandFacade,
+    RechargeScanCapture, RechargeScanRequest, StationCollectionCommandError,
+    StationCollectionCommandFacade,
 };
 pub(crate) use station_key_connectivity::{
     StationKeyConnectivityCommandError, StationKeyConnectivityCommandFacade,

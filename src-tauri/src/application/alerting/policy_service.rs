@@ -129,14 +129,6 @@ impl AlertingSettings {
         Ok(())
     }
 
-    #[expect(
-        dead_code,
-        reason = "contract=alerting.settings-pause; owner=application/alerting; remove_when=scheduler no longer evaluates global pause"
-    )]
-    pub(crate) fn is_paused(&self) -> bool {
-        self.paused || self.global_pause_until_ms.is_some()
-    }
-
     pub(crate) fn is_paused_at(&self, now_ms: i64) -> bool {
         self.paused
             || self
@@ -321,23 +313,6 @@ impl PolicyService {
             })
             .await
     }
-
-    #[expect(
-        dead_code,
-        reason = "contract=alerting.settings-cas-helper; owner=application/alerting; remove_when=settings mutation adapters use explicit CAS only"
-    )]
-    pub(crate) async fn update_settings_from_current(
-        &self,
-        mutator: impl FnOnce(&mut AlertingSettings),
-        now_ms: i64,
-    ) -> Result<AlertingSettings, PersistenceError> {
-        let current = self.load_settings().await?;
-        let expected = current.revision;
-        let mut next = current;
-        mutator(&mut next);
-        next.revision = expected.saturating_add(1);
-        self.update_settings(next, expected, now_ms).await
-    }
 }
 
 #[cfg(test)]
@@ -401,8 +376,11 @@ mod tests {
 
         let initial = service.load_settings().await.expect("default settings");
         assert_eq!(initial.revision, 1);
+        let mut next = initial.clone();
+        next.desktop_enabled = true;
+        next.revision += 1;
         let saved = service
-            .update_settings_from_current(|settings| settings.desktop_enabled = true, 1_000)
+            .update_settings(next, initial.revision, 1_000)
             .await
             .expect("save settings");
         assert_eq!(saved.revision, 2);

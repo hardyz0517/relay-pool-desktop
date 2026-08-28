@@ -3,7 +3,10 @@ use tauri::State;
 
 use crate::{
     app_composition::ManagedWorkRuntime,
-    application::command_facades::{StationCollectionCommandError, StationCollectionCommandFacade},
+    application::command_facades::{
+        RechargeScanCapture, RechargeScanRequest, StationCollectionCommandError,
+        StationCollectionCommandFacade,
+    },
     commands::error,
     ipc::dto::{
         collector_facts::CollectorStationIdInputDto,
@@ -175,12 +178,98 @@ pub async fn scan_station_recharge(
         async {
             let input = CollectorStationIdInputDto::parse(input)?;
             facade
-                .scan_station_recharge(&app, input.station_id)
+                .scan_station_recharge(input.station_id, |request| {
+                    scan_station_recharge_in_browser(app.clone(), request)
+                })
                 .await
                 .map_err(public_station_collection_error)
         },
     )
     .await
+}
+
+async fn scan_station_recharge_in_browser(
+    app: tauri::AppHandle,
+    request: RechargeScanRequest,
+) -> RechargeScanCapture {
+    let session = crate::commands::browser_transport::RechargeSession {
+        cookie: request.cookie.as_deref(),
+        access_token: request.access_token.as_deref(),
+        refresh_token: request.refresh_token.as_deref(),
+        newapi_user_id: request.newapi_user_id.as_deref(),
+    };
+    match crate::commands::browser_transport::scan_recharge_page(
+        &app,
+        &request.website_url,
+        &request.station_type,
+        session,
+    )
+    .await
+    {
+        Ok(probe) => {
+            let status = match probe.status.as_str() {
+                "success" => "success",
+                "login_required" => "manual_required",
+                "not_found" | "no_match" => "partial",
+                _ => "failed",
+            };
+            let error_message = match probe.status.as_str() {
+                "login_required" => Some("站点页面要求登录，请先完成浏览器授权。".to_string()),
+                "not_found" => Some("页面明确返回 404，未生成充值入口。".to_string()),
+                "no_match" => Some(if request.session_usable {
+                    "已打开登录后的页面，但未发现可确认的充值入口。".to_string()
+                } else {
+                    "已打开站点页面，但未发现可确认的充值入口。".to_string()
+                }),
+                _ => None,
+            };
+            let entry_count = probe.entries.len();
+            RechargeScanCapture {
+                status: status.to_string(),
+                summary_json: serde_json::json!({
+                    "collector": "recharge",
+                    "status": probe.status,
+                    "currentUrl": probe.current_url,
+                    "title": probe.title,
+                    "provider": probe.provider,
+                    "paymentMethods": probe.payment_methods,
+                    "protectedCandidates": probe.protected_candidates,
+                    "candidateDiagnostics": probe.candidate_diagnostics,
+                    "evidence": probe.evidence,
+                    "scan": {
+                        "phase": "completed",
+                        "sessionMode": if request.session_usable { "authenticated" } else { "public_fallback" },
+                        "candidateCount": probe.candidates_scanned,
+                        "entryCount": entry_count
+                    }
+                }),
+                normalized_json: serde_json::json!({ "entries": probe.entries }),
+                error_message,
+                event_count: entry_count as i64,
+            }
+        }
+        Err(error) => {
+            let diagnostic = error.recharge_diagnostic();
+            let error_message = if error.is_timeout()
+                || matches!(diagnostic["kind"].as_str(), Some("cross_origin_redirect"))
+            {
+                error.recharge_message()
+            } else {
+                "充值页面采集失败，请检查站点地址和登录状态。".to_string()
+            };
+            RechargeScanCapture {
+                status: "failed".to_string(),
+                summary_json: serde_json::json!({
+                    "collector": "recharge",
+                    "status": "error",
+                    "scan": diagnostic
+                }),
+                normalized_json: serde_json::json!({ "entries": [] }),
+                error_message: Some(error_message),
+                event_count: 0,
+            }
+        }
+    }
 }
 
 #[tauri::command]

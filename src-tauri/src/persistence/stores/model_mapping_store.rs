@@ -6,7 +6,13 @@
 
 use sqlx::{Row, SqliteConnection};
 
-use crate::persistence::error::PersistenceError;
+use crate::{
+    models::model_mapping::{
+        Action, ConditionRequirement, EndpointKind, Matcher, ModelBindingSource,
+        ModelMappingDocumentV1, ModelProfileStatus, RejectionKind, TargetRef,
+    },
+    persistence::error::PersistenceError,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct StoredModelMappingPolicy {
@@ -336,6 +342,270 @@ impl ModelMappingStore {
         })
         .transpose()
     }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn replace_aggregate(
+        &self,
+        connection: &mut SqliteConnection,
+        document: &ModelMappingDocumentV1,
+        expected_revision: i64,
+        next_revision: i64,
+        document_json: &str,
+        source: &str,
+        canonical_digest: &str,
+        now_ms: i64,
+    ) -> Result<(), PersistenceError> {
+        let policy_changed = sqlx::query(
+            "UPDATE model_mapping_policies
+             SET revision = ?1, unmatched_model_behavior = ?2, updated_at_ms = ?3
+             WHERE singleton_key = 1 AND revision = ?4",
+        )
+        .bind(next_revision)
+        .bind(match document.policy.unmatched_model_behavior {
+            crate::models::model_mapping::UnmatchedModelBehavior::Preserve => "preserve",
+            crate::models::model_mapping::UnmatchedModelBehavior::Reject => "reject",
+        })
+        .bind(now_ms)
+        .bind(expected_revision)
+        .execute(&mut *connection)
+        .await?
+        .rows_affected();
+        if policy_changed != 1 {
+            return Err(PersistenceError::RevisionConflict("model_mapping".into()));
+        }
+
+        let domain_revision_changed = sqlx::query(
+            "UPDATE domain_revisions
+             SET revision = ?1, updated_at_ms = ?2, provenance = 'transactional_write'
+             WHERE scope = 'model_mapping' AND revision = ?3",
+        )
+        .bind(next_revision)
+        .bind(now_ms)
+        .bind(expected_revision)
+        .execute(&mut *connection)
+        .await?
+        .rows_affected();
+        if domain_revision_changed != 1 {
+            return Err(PersistenceError::RevisionConflict("model_mapping".into()));
+        }
+
+        sqlx::query(
+            "DELETE FROM model_mapping_rule_targets
+             WHERE rule_id IN (SELECT id FROM model_mapping_rules)",
+        )
+        .execute(&mut *connection)
+        .await?;
+        sqlx::query("DELETE FROM model_mapping_rules")
+            .execute(&mut *connection)
+            .await?;
+        sqlx::query("DELETE FROM model_offering_bindings")
+            .execute(&mut *connection)
+            .await?;
+        sqlx::query("DELETE FROM model_profiles")
+            .execute(&mut *connection)
+            .await?;
+
+        for profile in &document.profiles {
+            sqlx::query("INSERT INTO model_profiles (id, canonical_model, display_name, default_upstream_model, status, note, created_at_ms, updated_at_ms, revision) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)")
+                .bind(&profile.id)
+                .bind(&profile.canonical_model)
+                .bind(&profile.display_name)
+                .bind(&profile.default_upstream_model)
+                .bind(match profile.status {
+                    ModelProfileStatus::Active => "active",
+                    ModelProfileStatus::Archived => "archived",
+                })
+                .bind(&profile.note)
+                .bind(profile.created_at_ms)
+                .bind(profile.updated_at_ms)
+                .bind(to_sqlite_revision(profile.revision.max(1), "model profile")?)
+                .execute(&mut *connection)
+                .await?;
+        }
+
+        for binding in &document.bindings {
+            sqlx::query("INSERT INTO model_offering_bindings (id, model_profile_id, station_key_id, station_id, upstream_model, source, enabled, note, created_at_ms, updated_at_ms, revision) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)")
+                .bind(&binding.id)
+                .bind(&binding.model_profile_id)
+                .bind(&binding.station_key_id)
+                .bind(&binding.station_id)
+                .bind(&binding.upstream_model)
+                .bind(match binding.source {
+                    ModelBindingSource::Manual => "manual",
+                    ModelBindingSource::Discovered => "discovered",
+                    ModelBindingSource::Migrated => "migrated",
+                })
+                .bind(if binding.enabled { 1_i64 } else { 0_i64 })
+                .bind(&binding.note)
+                .bind(binding.created_at_ms)
+                .bind(binding.updated_at_ms)
+                .bind(to_sqlite_revision(binding.revision.max(1), "model binding")?)
+                .execute(&mut *connection)
+                .await?;
+        }
+
+        for rule in &document.rules {
+            let (matcher_kind, matcher_value) = match &rule.matcher {
+                Matcher::Exact { model } => ("exact", Some(model.as_str())),
+                Matcher::Default => ("default", None),
+                Matcher::Glob { pattern } => ("glob", Some(pattern.as_str())),
+            };
+            let endpoint_json = serde_json::to_string(
+                &rule
+                    .conditions
+                    .endpoint_kinds
+                    .clone()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|endpoint| match endpoint {
+                        EndpointKind::ChatCompletions => "chat_completions",
+                        EndpointKind::Responses => "responses",
+                        EndpointKind::Embeddings => "embeddings",
+                        EndpointKind::Models => "models",
+                        EndpointKind::Usage => "usage",
+                    })
+                    .collect::<Vec<_>>(),
+            )
+            .map_err(|error| PersistenceError::InvariantViolation(error.to_string()))?;
+            let (action_kind, fallback_trigger, targets, rejection_kind, rejection_message): (
+                &str,
+                Option<&str>,
+                Vec<&TargetRef>,
+                Option<&str>,
+                Option<&str>,
+            ) = match &rule.action {
+                Action::MapFixed { target } => ("map_fixed", None, vec![target], None, None),
+                Action::MapFallbackChain {
+                    targets,
+                    fallback_trigger,
+                } => (
+                    "map_fallback_chain",
+                    Some(match fallback_trigger {
+                        crate::models::model_mapping::FallbackTrigger::NoEligibleTarget => {
+                            "no_eligible_target"
+                        }
+                        crate::models::model_mapping::FallbackTrigger::RetryExhaustedBeforeOutput => {
+                            "retry_exhausted_before_output"
+                        }
+                    }),
+                    targets.iter().collect(),
+                    None,
+                    None,
+                ),
+                Action::Preserve => ("preserve", None, Vec::new(), None, None),
+                Action::Reject {
+                    rejection_kind,
+                    message,
+                } => (
+                    "reject",
+                    None,
+                    Vec::new(),
+                    Some(match rejection_kind {
+                        RejectionKind::UnsupportedModel => "unsupported_model",
+                        RejectionKind::PolicyDenied => "policy_denied",
+                        RejectionKind::ClientNotAllowed => "client_not_allowed",
+                    }),
+                    message.as_deref(),
+                ),
+            };
+            sqlx::query("INSERT INTO model_mapping_rules (id, priority, enabled, matcher_kind, matcher_value, endpoint_conditions_json, stream_condition, tools_condition, vision_condition, reasoning_condition, action_kind, fallback_trigger, rejection_kind, rejection_message, note, created_at_ms, updated_at_ms, revision) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?16, ?17)")
+                .bind(&rule.id)
+                .bind(i64::from(rule.priority))
+                .bind(if rule.enabled { 1_i64 } else { 0_i64 })
+                .bind(matcher_kind)
+                .bind(matcher_value)
+                .bind(endpoint_json)
+                .bind(requirement_name(rule.conditions.stream))
+                .bind(requirement_name(rule.conditions.tools))
+                .bind(requirement_name(rule.conditions.vision))
+                .bind(requirement_name(rule.conditions.reasoning))
+                .bind(action_kind)
+                .bind(fallback_trigger)
+                .bind(rejection_kind)
+                .bind(rejection_message)
+                .bind(&rule.note)
+                .bind(now_ms)
+                .bind(to_sqlite_revision(rule.revision.max(1), "model mapping rule")?)
+                .execute(&mut *connection)
+                .await?;
+            for (position, target) in targets.into_iter().enumerate() {
+                let position =
+                    i64::try_from(position).map_err(|_| PersistenceError::ConstraintViolation)?;
+                match target {
+                    TargetRef::Literal { upstream_model } => {
+                        sqlx::query("INSERT INTO model_mapping_rule_targets (id, rule_id, position, target_kind, literal_upstream_model, model_profile_id) VALUES (?1, ?2, ?3, 'literal', ?4, NULL)")
+                            .bind(format!("{}:{}", rule.id, position))
+                            .bind(&rule.id)
+                            .bind(position)
+                            .bind(upstream_model)
+                            .execute(&mut *connection)
+                            .await?;
+                    }
+                    TargetRef::ModelProfile { model_profile_id } => {
+                        sqlx::query("INSERT INTO model_mapping_rule_targets (id, rule_id, position, target_kind, literal_upstream_model, model_profile_id) VALUES (?1, ?2, ?3, 'model_profile', NULL, ?4)")
+                            .bind(format!("{}:{}", rule.id, position))
+                            .bind(&rule.id)
+                            .bind(position)
+                            .bind(model_profile_id)
+                            .execute(&mut *connection)
+                            .await?;
+                    }
+                }
+            }
+        }
+
+        sqlx::query("DELETE FROM domain_revisions WHERE scope LIKE 'model_mapping_rule:%'")
+            .execute(&mut *connection)
+            .await?;
+        for rule in &document.rules {
+            sqlx::query(
+                "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance)
+                 VALUES (?1, ?2, ?3, 'transactional_write')
+                 ON CONFLICT(scope) DO UPDATE SET
+                     revision = excluded.revision,
+                     updated_at_ms = excluded.updated_at_ms,
+                     provenance = excluded.provenance",
+            )
+            .bind(format!("model_mapping_rule:{}", rule.id))
+            .bind(next_revision)
+            .bind(now_ms)
+            .execute(&mut *connection)
+            .await?;
+        }
+        sqlx::query("INSERT INTO model_mapping_document_history (revision, document_json, source, created_at_ms) VALUES (?1, ?2, ?3, ?4)")
+            .bind(next_revision)
+            .bind(document_json)
+            .bind(source)
+            .bind(now_ms)
+            .execute(&mut *connection)
+            .await?;
+        crate::persistence::stores::document_sync_store::DocumentSyncStore
+            .upsert_desired(
+                connection,
+                crate::models::document_sync::MODEL_MAPPING_DOCUMENT_KIND,
+                u64::try_from(next_revision).map_err(|_| {
+                    PersistenceError::InvariantViolation("model mapping revision is invalid".into())
+                })?,
+                Some(canonical_digest),
+                now_ms,
+            )
+            .await?;
+        Ok(())
+    }
+}
+
+fn requirement_name(value: ConditionRequirement) -> &'static str {
+    match value {
+        ConditionRequirement::Any => "any",
+        ConditionRequirement::Required => "required",
+        ConditionRequirement::Forbidden => "forbidden",
+    }
+}
+
+fn to_sqlite_revision(revision: u64, subject: &str) -> Result<i64, PersistenceError> {
+    i64::try_from(revision).map_err(|_| {
+        PersistenceError::InvariantViolation(format!("{subject} revision exceeds SQLite range"))
+    })
 }
 
 fn rule_from_row(row: sqlx::sqlite::SqliteRow) -> Result<StoredModelMappingRule, PersistenceError> {

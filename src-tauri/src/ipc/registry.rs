@@ -18,7 +18,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "c662bcb79d9825bd3d534bcc276425f566bcd71b461440199f9bc81accb443d9";
+    "399858ad2bc8f3cda2a71ccfaa83f94d7ec8356a8aa7ae34bcf1c638111ff3b0";
 
 #[cfg_attr(
     not(test),
@@ -183,6 +183,7 @@ macro_rules! ipc_command_registry {
             list_channel_monitor_attempts => $crate::commands::channel_status::list_channel_monitor_attempts,
             list_monitoring_capabilities => $crate::commands::channel_status::list_monitoring_capabilities,
             get_station_published_status_workspace => $crate::commands::station_published_status::get_station_published_status_workspace,
+            get_station_published_status_overview => $crate::commands::station_published_status::get_station_published_status_overview,
             load_pricing_comparison_workspace => $crate::commands::pricing_workspace::load_pricing_comparison_workspace,
             load_pricing_group_monitor_status => $crate::commands::pricing_workspace::load_pricing_group_monitor_status,
             create_channel_monitor => $crate::commands::channel_monitoring::create_channel_monitor,
@@ -723,6 +724,10 @@ fn command_contract(name: &str) -> CommandContract {
         "get_station_published_status_workspace" => migrated_read(
             "StationPublishedStatusWorkspaceInputDto",
             "StationPublishedStatusWorkspaceDto",
+        ),
+        "get_station_published_status_overview" => migrated_read(
+            "StationPublishedStatusOverviewInputDto",
+            "StationPublishedStatusOverviewDto",
         ),
         "list_channel_monitor_executions" => migrated_read(
             "ChannelMonitorExecutionListInputDto",
@@ -1548,6 +1553,10 @@ export function loadChannelStatusWorkspace(input: ChannelStatusWorkspaceInputDto
 
 export function getStationPublishedStatusWorkspace(input: StationPublishedStatusWorkspaceInputDto): Promise<StationPublishedStatusWorkspaceDto> {
   return invokeCommand<StationPublishedStatusWorkspaceDto>("get_station_published_status_workspace", { input });
+}
+
+export function getStationPublishedStatusOverview(input: StationPublishedStatusOverviewInputDto = {}): Promise<StationPublishedStatusOverviewDto> {
+  return invokeCommand<StationPublishedStatusOverviewDto>("get_station_published_status_overview", { input });
 }
 
 export function listChannelMonitorExecutions(input: ChannelMonitorExecutionListInputDto = {}): Promise<ChannelMonitorExecutionPageDto> {
@@ -2750,7 +2759,6 @@ mod tests {
         assert!(source.contains(
             r#"function getRuntimeStatus(input: EmptyInputDto = {}): Promise<RuntimeStatusDto>"#
         ));
-        assert!(source.contains("export type OperationEventDto = {"));
         for wrapper in [
             "updateSettings",
             "createStation",

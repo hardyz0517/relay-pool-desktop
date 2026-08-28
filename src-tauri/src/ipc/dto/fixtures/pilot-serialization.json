@@ -2222,6 +2222,32 @@
       }
     },
     {
+      "command": "get_station_published_status_overview",
+      "input": {
+        "limit": 100
+      },
+      "output": {
+        "page": {
+          "limit": 100,
+          "nextCursor": null,
+          "returned": 0
+        },
+        "readAtMs": 1700000000000,
+        "rows": [],
+        "summary": {
+          "availableMonitorCount": 0,
+          "degradedMonitorCount": 0,
+          "monitorTotal": 0,
+          "neverCollectedStationCount": 0,
+          "stationTotal": 0,
+          "supportedStationCount": 0,
+          "unavailableMonitorCount": 0,
+          "unknownMonitorCount": 0,
+          "unsupportedCapabilityStationCount": 0
+        }
+      }
+    },
+    {
       "command": "get_station_key_capabilities",
       "input": {
         "stationKeyId": "key-1"

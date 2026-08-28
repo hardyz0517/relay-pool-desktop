@@ -50,15 +50,27 @@ use crate::{
 
 const LOCAL_ACCESS_KEY: &str = "relay-local-secret";
 
+// Model-mapping runtime state is process-wide, while each loopback harness
+// owns an isolated database. Keep a harness's persisted document and runtime
+// snapshot paired for its entire lifetime when tests run in parallel.
+static ROUTING_LOOPBACK_TEST_LOCK: std::sync::OnceLock<Arc<tokio::sync::Mutex<()>>> =
+    std::sync::OnceLock::new();
+
 pub struct RoutingLoopbackHarness {
     services: AppServices,
     runtime: PersistenceRuntime,
     proxy: Arc<ProxyRuntimeState>,
+    _test_guard: tokio::sync::OwnedMutexGuard<()>,
     _root: TempRoot,
 }
 
 impl RoutingLoopbackHarness {
     pub async fn new() -> Self {
+        let test_guard = ROUTING_LOOPBACK_TEST_LOCK
+            .get_or_init(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
+            .lock_owned()
+            .await;
         let root = TempRoot::new("relay-routing-loopback");
         let default_data_dir = root.path.join("default");
         let active_data_dir = root.path.join("active");
@@ -98,6 +110,7 @@ impl RoutingLoopbackHarness {
             services,
             runtime,
             proxy: Arc::new(ProxyRuntimeState::default()),
+            _test_guard: test_guard,
             _root: root,
         }
     }

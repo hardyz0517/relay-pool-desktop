@@ -139,7 +139,83 @@ pub(crate) struct PublishedStatusWorkspaceRows {
     pub(crate) samples: Vec<PublishedMonitorSampleRow>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct PublishedStatusOverviewRows {
+    pub(crate) sources: Vec<PublishedStatusSourceRow>,
+    pub(crate) monitors: Vec<PublishedMonitorRow>,
+    pub(crate) samples: Vec<PublishedMonitorSampleRow>,
+}
+
 impl StationPublishedStatusStore {
+    /// Loads the cross-station read model in three bounded statements.
+    pub(crate) async fn load_overview(
+        &self,
+        read: &mut ReadSession,
+        source_kinds: &[String],
+        monitor_limit: u32,
+        sample_limit: u32,
+    ) -> Result<PublishedStatusOverviewRows, PersistenceError> {
+        let mut sources = Vec::new();
+        let mut monitors = Vec::new();
+        let mut samples = Vec::new();
+        if source_kinds.is_empty() {
+            return Ok(PublishedStatusOverviewRows {
+                sources,
+                monitors,
+                samples,
+            });
+        }
+        let mut q = QueryBuilder::<Sqlite>::new(
+            "SELECT s.station_id, s.endpoint_revision, s.source_kind, s.source_state, s.last_attempt_at, s.last_success_at, s.last_complete_at, s.last_error_kind, s.monitor_count, s.created_at, s.updated_at FROM station_published_status_sources s JOIN stations st ON st.id = s.station_id AND st.endpoint_revision = s.endpoint_revision WHERE s.source_kind IN (",
+        );
+        let mut sep = q.separated(",");
+        for kind in source_kinds {
+            sep.push_bind(kind);
+        }
+        sep.push_unseparated(")");
+        for row in q.build().fetch_all(read.connection()).await? {
+            sources.push(row_to_source(row)?);
+        }
+
+        let limit = i64::from(monitor_limit.min(MAX_PUBLISHED_STATUS_MONITORS));
+        let mut mq = QueryBuilder::<Sqlite>::new(
+            "SELECT m.id, m.station_id, m.endpoint_revision, m.source_kind, m.upstream_monitor_id, m.identity_kind, m.name, m.provider, m.group_name, m.primary_model, m.extra_models_json, m.presence_status, m.current_outcome, m.source_status, m.current_latency_ms, m.current_ping_latency_ms, CAST(m.upstream_checked_at AS INTEGER) AS upstream_checked_at, m.last_seen_run_id, m.last_seen_at, m.created_at, m.updated_at FROM station_published_monitors m JOIN stations st ON st.id = m.station_id AND st.endpoint_revision = m.endpoint_revision JOIN station_published_status_sources s ON s.station_id = m.station_id AND s.endpoint_revision = m.endpoint_revision AND s.source_kind = m.source_kind WHERE m.presence_status = 'current' AND m.source_kind IN (",
+        );
+        let mut msep = mq.separated(",");
+        for kind in source_kinds {
+            msep.push_bind(kind);
+        }
+        msep.push_unseparated(") ORDER BY st.priority ASC, m.station_id ASC, m.provider COLLATE NOCASE ASC, COALESCE(m.group_name,'') COLLATE NOCASE ASC, m.name COLLATE NOCASE ASC, m.primary_model COLLATE NOCASE ASC, m.upstream_monitor_id COLLATE NOCASE ASC, m.id ASC LIMIT ");
+        mq.push_bind(limit + 1);
+        let rows = mq.build().fetch_all(read.connection()).await?;
+        for row in rows.into_iter().take(monitor_limit as usize) {
+            monitors.push(row_to_monitor(row)?);
+        }
+        if !monitors.is_empty() && sample_limit > 0 {
+            let mut sq = QueryBuilder::<Sqlite>::new(
+                "SELECT id, monitor_id, model, CAST(checked_at AS INTEGER) AS checked_at, outcome, source_status, latency_ms, ping_latency_ms, safe_message, first_seen_run_id, last_seen_run_id, created_at, updated_at FROM (SELECT sample.*, ROW_NUMBER() OVER (PARTITION BY sample.monitor_id, sample.model ORDER BY CAST(sample.checked_at AS INTEGER) DESC, sample.id DESC) AS rn FROM station_published_monitor_samples sample JOIN station_published_monitors monitor ON monitor.id = sample.monitor_id WHERE monitor.presence_status = 'current' AND monitor.primary_model = sample.model AND monitor.id IN (",
+            );
+            let mut ssep = sq.separated(",");
+            for monitor in &monitors {
+                ssep.push_bind(&monitor.id);
+            }
+            ssep.push_unseparated(") ) WHERE rn <= 60 ORDER BY checked_at DESC, id DESC");
+            for row in sq
+                .build()
+                .fetch_all(read.connection())
+                .await?
+                .into_iter()
+                .take(sample_limit as usize)
+            {
+                samples.push(row_to_sample(row)?);
+            }
+        }
+        Ok(PublishedStatusOverviewRows {
+            sources,
+            monitors,
+            samples,
+        })
+    }
     /// Upserts a source and verifies the endpoint revision once per apply transaction.
     pub(crate) async fn upsert_source(
         &self,
@@ -1008,6 +1084,19 @@ mod tests {
             .expect("narrow bounded workspace");
         assert_eq!(narrow_workspace.monitors.len(), 1);
         assert_eq!(narrow_workspace.samples.len(), 60);
+
+        let overview = store
+            .load_overview(
+                &mut read,
+                &["sub2api_channel_monitors".to_string()],
+                1,
+                1_000,
+            )
+            .await
+            .expect("bounded overview");
+        assert_eq!(overview.monitors.len(), 1);
+        assert_eq!(overview.samples.len(), 60);
+        assert_eq!(overview.samples[0].checked_at_ms, 59);
 
         drop(read);
         runtime.close().await.expect("close runtime");

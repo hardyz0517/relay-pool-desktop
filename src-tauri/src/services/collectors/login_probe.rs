@@ -10,13 +10,17 @@ use crate::{
         AsyncOutboundClient, OutboundHeaderPolicy, OutboundHeaders, OutboundRequest,
         OutboundRetryPolicy, ProxyPolicy, RequestBudget, SecretHeaderValue,
     },
-    services::{secrets::mask::redact_text, station_endpoints::build_management_url},
+    services::{
+        secrets::mask::redact_text,
+        station_endpoints::build_management_url,
+        station_sessions::{merge_set_cookie_headers, token_expires_at_from_payload},
+    },
 };
 
-const LOGIN_TIMEOUT: Duration = Duration::from_secs(20);
+const LOGIN_TIMEOUT: Duration = Duration::from_secs(30);
 // A password probe may try several compatible Sub2API contracts. The
 // per-request timeout must not multiply into an unbounded UI operation.
-const LOGIN_PROBE_TIMEOUT: Duration = Duration::from_secs(20);
+const LOGIN_PROBE_TIMEOUT: Duration = Duration::from_secs(30);
 const SUB2API_LOGIN_PATHS: [&str; 3] = ["/api/v1/auth/login", "/auth/login", "/api/login"];
 const SUB2API_LOGIN_FIELDS: [&str; 3] = ["email", "username", "user"];
 
@@ -35,6 +39,7 @@ pub(crate) struct LoginProbeSession {
     pub refresh_token: Option<String>,
     pub cookie: Option<String>,
     pub newapi_user_id: Option<String>,
+    pub token_expires_at: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -201,7 +206,7 @@ async fn probe_newapi_login(
             "NewAPI login was not accepted; complete browser authorization",
         ));
     }
-    let Some(mut cookie) = normalize_set_cookie_headers(&set_cookies) else {
+    let Some(mut cookie) = merge_set_cookie_headers(None, &set_cookies) else {
         return Ok(newapi_manual_login_attempt(
             "NewAPI login did not return a session cookie",
             "NewAPI login returned no reusable browser session",
@@ -254,7 +259,7 @@ async fn probe_newapi_login(
                 "NewAPI login cookie did not produce a verifiable user identity",
             ));
         };
-        if let Some(merged_cookie) = merge_cookie_header(&cookie, &self_set_cookies) {
+        if let Some(merged_cookie) = merge_set_cookie_headers(Some(&cookie), &self_set_cookies) {
             cookie = merged_cookie;
         }
         user_id
@@ -264,6 +269,7 @@ async fn probe_newapi_login(
         refresh_token: None,
         cookie: Some(cookie.clone()),
         newapi_user_id: Some(user_id.clone()),
+        token_expires_at: None,
     };
     Ok(LoginProbeAttempt {
         credential_present: true,
@@ -349,12 +355,13 @@ async fn probe_sub2api_login(
                     session: Some(LoginProbeSession {
                         access_token: Some(token),
                         refresh_token: extract_refresh_token(&body),
-                        cookie: normalize_set_cookie_headers(&set_cookies),
+                        cookie: merge_set_cookie_headers(None, &set_cookies),
                         // Sub2API's SPA route guard requires both auth_token
                         // and auth_user. Reuse the existing persisted user-id
                         // slot so browser scans can restore that identity
                         // without storing the full login response.
                         newapi_user_id: extract_user_id(&body),
+                        token_expires_at: token_expires_at_from_payload(&body),
                     }),
                 });
             }
@@ -504,51 +511,6 @@ fn extract_refresh_token(value: &Value) -> Option<String> {
         .or_else(|| value.get("data").and_then(extract_refresh_token))
 }
 
-fn normalize_set_cookie_headers(headers: &[String]) -> Option<String> {
-    let cookies = headers
-        .iter()
-        .filter_map(|header| header.split(';').next())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string)
-        .collect::<Vec<_>>();
-    (!cookies.is_empty()).then(|| cookies.join("; "))
-}
-
-fn merge_cookie_header(existing: &str, set_cookie_headers: &[String]) -> Option<String> {
-    let mut pairs = existing
-        .split(';')
-        .filter_map(cookie_pair)
-        .collect::<Vec<_>>();
-    for header in set_cookie_headers {
-        let Some((name, value)) = header.split(';').next().and_then(cookie_pair) else {
-            continue;
-        };
-        if let Some(existing) = pairs.iter_mut().find(|(current, _)| current == &name) {
-            existing.1 = value;
-        } else {
-            pairs.push((name, value));
-        }
-    }
-    (!pairs.is_empty()).then(|| {
-        pairs
-            .into_iter()
-            .map(|(name, value)| format!("{name}={value}"))
-            .collect::<Vec<_>>()
-            .join("; ")
-    })
-}
-
-fn cookie_pair(value: &str) -> Option<(String, String)> {
-    let (name, value) = value.trim().split_once('=')?;
-    let name = name.trim();
-    let value = value.trim();
-    if name.is_empty() || value.is_empty() {
-        return None;
-    }
-    Some((name.to_string(), value.to_string()))
-}
-
 fn newapi_user_id(value: &Value) -> Option<String> {
     value
         .pointer("/data/id")
@@ -637,7 +599,7 @@ mod tests {
     use super::*;
     use crate::{
         outbound::AsyncOutboundClientConfig,
-        services::collectors::drivers::newapi::test_support::TestHttpServer,
+        services::collectors::drivers::newapi::test_support::{json_response, TestHttpServer},
     };
 
     fn json_response_with_cookie(body: Value, cookie: &str) -> String {
@@ -656,7 +618,7 @@ mod tests {
         ];
 
         assert_eq!(
-            normalize_set_cookie_headers(&headers),
+            merge_set_cookie_headers(None, &headers),
             Some("session=abc; lang=zh".to_string())
         );
         assert_eq!(
@@ -664,8 +626,8 @@ mod tests {
             Some("42")
         );
         assert_eq!(
-            merge_cookie_header(
-                "session=old; theme=light",
+            merge_set_cookie_headers(
+                Some("session=old; theme=light"),
                 &[
                     "session=rotated; Path=/; HttpOnly".to_string(),
                     "locale=zh; Path=/".to_string(),
@@ -757,6 +719,42 @@ mod tests {
             attempt.login_message.as_deref(),
             Some("Turnstile verification failed")
         );
+        assert_eq!(server.finish().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn sub2api_password_login_preserves_the_returned_token_expiry() {
+        let server = TestHttpServer::sequence(vec![Some(json_response(
+            200,
+            json!({
+                "access_token": "fresh-access",
+                "refresh_token": "fresh-refresh",
+                "expires_in": 3600,
+                "user": {"id": 42}
+            }),
+        ))]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let before = i64::try_from(crate::services::time::now_millis_for_services()).unwrap();
+
+        let attempt = probe_sub2api_login(
+            &outbound,
+            &server.base_url,
+            "user@example.invalid",
+            "saved-password",
+            ProxyPolicy::Direct,
+            CancellationToken::new(),
+            Some("sub2api-login-expiry-test".to_string()),
+        )
+        .await
+        .expect("Sub2API login probe");
+
+        let session = attempt.session.expect("Sub2API session");
+        let expires_at = session
+            .token_expires_at
+            .and_then(|value| value.parse::<i64>().ok())
+            .expect("absolute token expiry");
+        assert!(expires_at >= before + 3_599_000);
+        assert!(expires_at <= before + 3_601_000);
         assert_eq!(server.finish().len(), 1);
     }
 

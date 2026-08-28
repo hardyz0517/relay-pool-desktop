@@ -46,14 +46,6 @@ impl LegacyUrlSanitization {
     }
 }
 
-#[allow(
-    dead_code,
-    reason = "string wrapper documents the shared sanitizer primitive while production migration reads raw SQLite bytes to handle invalid UTF-8"
-)]
-pub(crate) fn sanitize_legacy_upstream_url(input: &str) -> LegacyUrlSanitization {
-    sanitize_legacy_upstream_url_bytes(input.as_bytes())
-}
-
 pub(crate) fn sanitize_legacy_upstream_url_bytes(input: &[u8]) -> LegacyUrlSanitization {
     let Ok(input) = std::str::from_utf8(input) else {
         return LegacyUrlSanitization::RedactedUnparseable;

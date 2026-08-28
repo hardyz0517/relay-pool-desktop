@@ -1426,16 +1426,17 @@ pub(crate) async fn sync_routing_policy_file(
     let kind = crate::models::document_sync::ROUTING_POLICY_DOCUMENT_KIND;
     let coordinator = routing_document_coordinator(&runtime);
     let _operation_guard = coordinator.acquire_operation_guard().await;
-    let revision_i64 = i64::try_from(document.base_revision).map_err(|_| {
-        PersistenceError::InvariantViolation("routing policy revision exceeds SQLite range".into())
-    })?;
-    let current_revision: i64 = {
+    let current_revision = {
         let mut read = runtime.begin_read().await?;
-        sqlx::query_scalar("SELECT config_revision FROM routing_policy WHERE singleton_key = 1")
-            .fetch_one(read.connection())
+        crate::persistence::stores::routing_policy_store::RoutingPolicyStore
+            .load(read.connection())
             .await?
+            .ok_or_else(|| {
+                PersistenceError::InvariantViolation("routing policy is missing".into())
+            })?
+            .revision
     };
-    if current_revision != revision_i64 {
+    if current_revision != document.base_revision {
         return Ok(());
     }
     {

@@ -1,8 +1,3 @@
-#![allow(
-    dead_code,
-    reason = "Task 12 publishes path token infrastructure before Task 13+ wire the import/export IPC flows"
-)]
-
 use std::{
     collections::{HashMap, VecDeque},
     ffi::OsString,
@@ -78,7 +73,6 @@ impl PathTokenRegistry {
             id.clone(),
             ImportPathEntry {
                 file: Some(file),
-                canonical_path,
                 identity: identity.clone(),
                 expires_at: now + self.config.ttl,
                 consumed: false,
@@ -168,21 +162,7 @@ impl PathTokenRegistry {
         file.seek(SeekFrom::Start(0))
             .map_err(|_| PathTokenError::OpenFailed)?;
         entry.consumed = true;
-        Ok(ImportPathLease {
-            token_id: token.clone(),
-            file,
-            canonical_path: entry.canonical_path.clone(),
-            identity: entry.identity.clone(),
-        })
-    }
-
-    pub(crate) fn consume_import_value(
-        &self,
-        value: &str,
-        now: Instant,
-    ) -> Result<ImportPathLease, PathTokenError> {
-        let token = self.import_token_by_value(value, now)?;
-        self.consume_import(&token, now)
+        Ok(ImportPathLease { file })
     }
 
     pub(crate) fn consume_export(
@@ -211,10 +191,8 @@ impl PathTokenRegistry {
         verify_target_state(&entry.approved_leaf, &entry.target_state)?;
         entry.consumed = true;
         Ok(ExportPathLease {
-            token_id: token.clone(),
             _parent_guard: entry.parent_guard.take().ok_or(PathTokenError::Consumed)?,
             approved_leaf: entry.approved_leaf.clone(),
-            target_state: entry.target_state.clone(),
             mode: entry.mode,
         })
     }
@@ -258,12 +236,6 @@ impl PathTokenRegistry {
             .find(|token| token.as_str() == value)
             .cloned()
             .ok_or(PathTokenError::NotFound)
-    }
-
-    pub(crate) fn gc(&self, now: Instant) {
-        let mut inner = self.inner.lock().expect("path token registry mutex");
-        gc_bucket(&mut inner.import, now, self.config.ttl);
-        gc_bucket(&mut inner.export, now, self.config.ttl);
     }
 
     #[cfg(test)]
@@ -315,7 +287,6 @@ impl<T> Default for TokenBucket<T> {
 #[derive(Debug)]
 struct ImportPathEntry {
     file: Option<File>,
-    canonical_path: PathBuf,
     identity: FileIdentity,
     expires_at: Instant,
     consumed: bool,
@@ -347,18 +318,13 @@ pub(crate) struct ExportPathToken {
 
 #[derive(Debug)]
 pub(crate) struct ImportPathLease {
-    pub(crate) token_id: PathTokenId,
     pub(crate) file: File,
-    pub(crate) canonical_path: PathBuf,
-    pub(crate) identity: FileIdentity,
 }
 
 #[derive(Debug)]
 pub(crate) struct ExportPathLease {
-    pub(crate) token_id: PathTokenId,
     _parent_guard: File,
     pub(crate) approved_leaf: ApprovedLeaf,
-    pub(crate) target_state: ExportTargetState,
     pub(crate) mode: PublishMode,
 }
 
@@ -388,10 +354,6 @@ impl PathTokenId {
             process_nonce,
             value: uuid::Uuid::now_v7().to_string(),
         }
-    }
-
-    pub(crate) fn kind(&self) -> PathTokenKind {
-        self.kind
     }
 
     pub(crate) fn as_str(&self) -> &str {
@@ -593,7 +555,6 @@ mod tests {
             .expect("read held handle");
 
         assert_eq!(bytes, b"portable-package");
-        assert_eq!(lease.identity, token.identity);
         assert_eq!(
             registry.consume_import(&token.id, now).unwrap_err(),
             PathTokenError::Consumed

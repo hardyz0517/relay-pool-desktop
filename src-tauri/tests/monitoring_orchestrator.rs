@@ -192,7 +192,10 @@ use orchestrator::{
     MonitorClock, MonitorIdGenerator, MonitorOrchestrator, ProbeTransport, ProbeTransportRequest,
     ProbeTransportResult,
 };
-use planner::{MonitorPlanningSnapshot, ProbePlanner, ProtocolSelection, TargetCapabilitySnapshot};
+use planner::{
+    MonitorPlanningSnapshot, MonitorProxyConfig, ProbePlanner, ProtocolSelection,
+    TargetCapabilitySnapshot,
+};
 use recorder::{
     MonitorExecutionReceipt, MonitoringRecorder, RecordedAttempt, RecordedExecutionSummary,
     RecordedTargetResult,
@@ -629,6 +632,10 @@ fn snapshot(protocol_selection: ProtocolSelection) -> MonitorPlanningSnapshot {
         retry_policy: RetryPolicy::new(2, 200, 2_000).expect("retry"),
         risk_policy: RiskPolicy::new(100).expect("risk"),
         health_policy: HealthPolicy::new(HealthWritebackMode::ObserveOnly, 2, 2).expect("health"),
+        proxy: MonitorProxyConfig {
+            mode: "direct".to_string(),
+            url: None,
+        },
     }
 }
 

@@ -430,6 +430,9 @@ impl RollupAggregate {
                     | "local_internal_before_send"
             )
         }) {
+            if outcome == "skipped" {
+                self.skipped_count += 1;
+            }
             self.excluded_count += 1;
             *self
                 .exclusion_counts

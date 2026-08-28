@@ -101,14 +101,6 @@ impl HealthPolicy {
 }
 
 impl HealthWritebackMode {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Disabled => "disabled",
-            Self::ObserveOnly => "observe_only",
-            Self::Authoritative => "authoritative",
-        }
-    }
-
     pub fn from_str(value: &str) -> Option<Self> {
         match value {
             "disabled" => Some(Self::Disabled),

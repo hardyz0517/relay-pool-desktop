@@ -27,6 +27,8 @@ pub mod openai_responses;
 pub mod openai_stream;
 #[path = "../src/services/protocol_streaming/sse.rs"]
 pub mod protocol_sse;
+#[path = "../src/services/monitoring/adapters/provider_error.rs"]
+pub mod provider_error;
 pub(crate) use protocol_sse::{SseDecoder, SseEvent, SseLimits, StreamError};
 #[path = "../src/services/protocol_streaming/openai.rs"]
 pub mod protocol_openai;
@@ -48,6 +50,9 @@ mod services {
             #[allow(unused_imports)]
             pub use crate::generic_openai;
             pub use crate::http_mapping;
+            pub(crate) mod provider_error {
+                pub(crate) use crate::provider_error::*;
+            }
             pub use crate::openai_chat;
             #[allow(unused_imports)]
             pub use crate::openai_responses;
@@ -55,6 +60,16 @@ mod services {
             pub use crate::sse;
             #[allow(unused_imports)]
             pub use crate::xai_grok;
+        }
+    }
+    pub(crate) mod proxy {
+        #[path = "../../../src/services/proxy/diagnostic_memory.rs"]
+        pub(crate) mod diagnostic_memory;
+        pub(crate) mod adapters {
+            #[path = "../../../../src/services/proxy/adapters/error_envelope.rs"]
+            pub(crate) mod error_envelope;
+            #[path = "../../../../src/services/proxy/adapters/error_rules.rs"]
+            pub(crate) mod error_rules;
         }
     }
     pub(crate) mod protocol_streaming {

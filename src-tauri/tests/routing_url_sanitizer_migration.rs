@@ -90,8 +90,8 @@ use std::{fs, path::Path, time::Duration};
 
 use persistence::{
     maintenance::request_log_url_sanitizer::{
-        sanitize_legacy_upstream_url, sanitize_legacy_upstream_url_bytes,
-        sanitize_request_log_upstream_urls, LegacyUrlSanitization, RequestLogUrlSanitizerOptions,
+        sanitize_legacy_upstream_url_bytes, sanitize_request_log_upstream_urls,
+        LegacyUrlSanitization, RequestLogUrlSanitizerOptions,
     },
     runtime::PersistenceRuntime,
 };
@@ -103,25 +103,25 @@ use sqlx::{
 #[test]
 fn sanitizer_primitive_uses_url_parser_and_never_preserves_sensitive_parts() {
     assert_eq!(
-        sanitize_legacy_upstream_url(
-            "https://user:pass@example.test:8443/v1/chat?api_key=sk-secret#frag"
+        sanitize_legacy_upstream_url_bytes(
+            b"https://user:pass@example.test:8443/v1/chat?api_key=sk-secret#frag",
         ),
         LegacyUrlSanitization::SanitizedOrigin {
             origin: "https://example.test:8443".to_string(),
         }
     );
     assert_eq!(
-        sanitize_legacy_upstream_url("https://[::1]:8080/v1/%73afe?token=x"),
+        sanitize_legacy_upstream_url_bytes(b"https://[::1]:8080/v1/%73afe?token=x"),
         LegacyUrlSanitization::SanitizedOrigin {
             origin: "https://[::1]:8080".to_string(),
         }
     );
     assert_eq!(
-        sanitize_legacy_upstream_url("file:///C:/private/token.txt"),
+        sanitize_legacy_upstream_url_bytes(b"file:///C:/private/token.txt"),
         LegacyUrlSanitization::RedactedNonHttp
     );
     assert_eq!(
-        sanitize_legacy_upstream_url("not a url with sk-secret"),
+        sanitize_legacy_upstream_url_bytes(b"not a url with sk-secret"),
         LegacyUrlSanitization::RedactedUnparseable
     );
     assert_eq!(

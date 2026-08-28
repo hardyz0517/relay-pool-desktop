@@ -344,19 +344,6 @@ fn workspace(
     }
 }
 
-async fn with_context<'a, T, F>(
-    name: &'static str,
-    registry: &'a crate::ipc::dto::runtime_context::RuntimeContextRegistry,
-    runtime_context: Option<Value>,
-    action: F,
-) -> Result<T, error::CommandError>
-where
-    F: std::future::Future<Output = Result<T, error::CommandError>> + 'a,
-{
-    correlation::in_command_scope_with_runtime_context(name, registry, runtime_context, action)
-        .await
-}
-
 #[tauri::command]
 pub async fn get_model_mapping_workspace(
     input: Value,
@@ -365,7 +352,7 @@ pub async fn get_model_mapping_workspace(
     runtime_context: Option<Value>,
 ) -> Result<ModelMappingWorkspaceDto, error::CommandError> {
     let facade = facade.inner().clone();
-    with_context(
+    correlation::in_command_scope_with_runtime_context(
         "get_model_mapping_workspace",
         registry.inner(),
         runtime_context,
@@ -418,7 +405,7 @@ pub async fn get_model_mapping_document(
     registry: tauri::State<'_, crate::ipc::dto::runtime_context::RuntimeContextRegistry>,
     runtime_context: Option<Value>,
 ) -> Result<ModelMappingDocumentDto, error::CommandError> {
-    with_context(
+    correlation::in_command_scope_with_runtime_context(
         "get_model_mapping_document",
         registry.inner(),
         runtime_context,
@@ -436,7 +423,7 @@ pub async fn validate_model_mapping_document(
     registry: tauri::State<'_, crate::ipc::dto::runtime_context::RuntimeContextRegistry>,
     runtime_context: Option<Value>,
 ) -> Result<ModelMappingValidationResultDto, error::CommandError> {
-    with_context(
+    correlation::in_command_scope_with_runtime_context(
         "validate_model_mapping_document",
         registry.inner(),
         runtime_context,
@@ -468,7 +455,7 @@ pub async fn apply_model_mapping_document(
     runtime_context: Option<Value>,
 ) -> Result<ModelMappingWorkspaceDto, error::CommandError> {
     let facade = facade.inner().clone();
-    with_context(
+    correlation::in_command_scope_with_runtime_context(
         "apply_model_mapping_document",
         registry.inner(),
         runtime_context,
@@ -518,7 +505,7 @@ pub async fn restore_model_mapping_revision(
     runtime_context: Option<Value>,
 ) -> Result<ModelMappingWorkspaceDto, error::CommandError> {
     let facade = facade.inner().clone();
-    with_context(
+    correlation::in_command_scope_with_runtime_context(
         "restore_model_mapping_revision",
         registry.inner(),
         runtime_context,
@@ -566,7 +553,7 @@ pub async fn simulate_model_mapping(
     registry: tauri::State<'_, crate::ipc::dto::runtime_context::RuntimeContextRegistry>,
     runtime_context: Option<Value>,
 ) -> Result<ModelMappingSimulationResultDto, error::CommandError> {
-    with_context(
+    correlation::in_command_scope_with_runtime_context(
         "simulate_model_mapping",
         registry.inner(),
         runtime_context,
@@ -618,7 +605,7 @@ pub async fn resolve_request_mapping_trace(
     registry: tauri::State<'_, crate::ipc::dto::runtime_context::RuntimeContextRegistry>,
     runtime_context: Option<Value>,
 ) -> Result<crate::ipc::dto::model_mapping::ModelMappingTraceDto, error::CommandError> {
-    with_context(
+    correlation::in_command_scope_with_runtime_context(
         "resolve_request_mapping_trace",
         registry.inner(),
         runtime_context,

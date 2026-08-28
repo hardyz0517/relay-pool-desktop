@@ -40,13 +40,6 @@ impl SecretRekeyPolicy {
         }
     }
 
-    pub fn with_default(default: SecretRekeyRowPolicy) -> Self {
-        Self {
-            default,
-            overrides: BTreeMap::new(),
-        }
-    }
-
     pub fn set(mut self, selector: SecretRecordSelector, policy: SecretRekeyRowPolicy) -> Self {
         self.overrides.insert(selector, policy);
         self

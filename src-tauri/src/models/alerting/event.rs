@@ -67,10 +67,6 @@ impl Severity {
         }
     }
 
-    #[expect(
-        dead_code,
-        reason = "contract=alerting.event-severity-serializer; owner=models/alerting; remove_when=external domain adapters are retired"
-    )]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Info => "info",
@@ -195,10 +191,6 @@ impl AlertEventType {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-#[expect(
-    dead_code,
-    reason = "contract=alerting.recovery-owner; owner=models/alerting; remove_when=event registry no longer exposes recovery ownership"
-)]
 pub enum RecoveryOwner {
     GroupBinding,
     BalanceProjection,
@@ -211,10 +203,6 @@ pub enum RecoveryOwner {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[expect(
-    dead_code,
-    reason = "contract=alerting.event-definition; owner=models/alerting; remove_when=event registry is replaced"
-)]
 pub struct EventDefinition {
     pub event_type: AlertEventType,
     pub category: EventCategory,
@@ -226,10 +214,6 @@ pub struct EventDefinition {
 }
 
 impl EventDefinition {
-    #[expect(
-        dead_code,
-        reason = "contract=alerting.event-definition-state; owner=models/alerting; remove_when=event registry is replaced"
-    )]
     pub const fn state(
         event_type: AlertEventType,
         base_severity: Severity,
@@ -260,10 +244,6 @@ impl EventDefinition {
     }
 }
 
-#[expect(
-    dead_code,
-    reason = "contract=alerting.event-registry; owner=models/alerting; remove_when=event catalog is replaced"
-)]
 pub fn event_registry() -> &'static [EventDefinition] {
     static REGISTRY: [EventDefinition; 16] = [
         EventDefinition::audit(AlertEventType::GroupMissing, Severity::Info),
@@ -326,39 +306,10 @@ pub fn event_registry() -> &'static [EventDefinition] {
     &REGISTRY
 }
 
-#[expect(
-    dead_code,
-    reason = "contract=alerting.event-definition-lookup; owner=models/alerting; remove_when=event catalog is replaced"
-)]
 pub fn event_definition(event_type: AlertEventType) -> Option<&'static EventDefinition> {
     event_registry()
         .iter()
         .find(|definition| definition.event_type == event_type)
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[expect(
-    dead_code,
-    reason = "contract=alerting.domain-observation; owner=models/alerting; remove_when=typed producer integration is retired"
-)]
-pub struct Observation {
-    pub source_observation_key: String,
-    pub event_type: AlertEventType,
-    pub condition_key: ConditionKey,
-    pub kind: ObservationKind,
-    pub observed_at_ms: i64,
-    pub fact_fresh_until_ms: i64,
-    pub reason_code: Option<String>,
-}
-
-impl Observation {
-    #[expect(
-        dead_code,
-        reason = "contract=alerting.observation-freshness; owner=models/alerting; remove_when=reconciliation no longer evaluates freshness"
-    )]
-    pub fn is_fresh_at(&self, now_ms: i64) -> bool {
-        now_ms <= self.fact_fresh_until_ms
-    }
 }
 
 #[cfg(test)]

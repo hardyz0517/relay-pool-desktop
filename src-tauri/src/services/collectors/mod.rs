@@ -117,17 +117,22 @@ impl V2CollectorSourceAdapter {
     }
 }
 
-/// Resolve a session that can be injected into the temporary recharge WebView.
+/// Resolve a session for an interactive station operation.
 ///
-/// The normal collector can authenticate inline while it is making an API
-/// request. A browser scan needs the same session before the first document is
-/// loaded, so this helper performs the existing password login probe once,
-/// persists the redacted session metadata through the credential service, and
-/// resolves it again from the canonical store.
-pub(crate) async fn resolve_station_session_for_browser(
+/// Callers may reuse a directly usable session or explicitly request a fresh
+/// password login after an upstream authentication rejection. Successful login
+/// sessions are persisted through the credential service before being returned.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StationSessionResolveMode {
+    ReuseUsable,
+    ForcePasswordLogin,
+}
+
+pub(crate) async fn resolve_station_session_for_operation(
     source: &V2CollectorSourceAdapter,
     outbound: &AsyncOutboundClient,
     station_id: String,
+    mode: StationSessionResolveMode,
     cancellation: CancellationToken,
     correlation_id: Option<String>,
 ) -> Result<ResolvedSession, ApplicationError> {
@@ -139,15 +144,16 @@ pub(crate) async fn resolve_station_session_for_browser(
         )
         .await
         .map_err(|_| ApplicationError::Internal)?;
-    if browser_session_is_usable(&current) {
-        return Ok(current);
-    }
-
     let station = source
         .collectors
         .station_for_collection(&station_id)
         .await
         .map_err(|_| ApplicationError::Internal)?;
+    if mode == StationSessionResolveMode::ReuseUsable
+        && browser_session_is_usable(&station.station_type, &current)
+    {
+        return Ok(current);
+    }
     let credentials = source
         .credentials
         .get_station_credentials(station_id.clone())
@@ -159,7 +165,11 @@ pub(crate) async fn resolve_station_session_for_browser(
         .map(str::trim)
         .filter(|value| !value.is_empty())
     else {
-        return Ok(current);
+        return Ok(if mode == StationSessionResolveMode::ReuseUsable {
+            current
+        } else {
+            ResolvedSession::manual_required("stored login username is unavailable")
+        });
     };
     let Some(password) = source
         .credentials
@@ -172,7 +182,11 @@ pub(crate) async fn resolve_station_session_for_browser(
         .transpose()?
         .filter(|value| !value.trim().is_empty())
     else {
-        return Ok(current);
+        return Ok(if mode == StationSessionResolveMode::ReuseUsable {
+            current
+        } else {
+            ResolvedSession::manual_required("stored login password is unavailable")
+        });
     };
     let settings = source
         .settings
@@ -220,6 +234,7 @@ pub(crate) async fn resolve_station_session_for_browser(
                 .unwrap_or_else(|| "stored login did not return a usable session".to_string()),
         ));
     };
+    let token_expires_at = session.token_expires_at.clone();
     source
         .credentials
         .persist_station_session_if_revision(
@@ -229,8 +244,8 @@ pub(crate) async fn resolve_station_session_for_browser(
                 refresh_token: session.refresh_token,
                 cookie: session.cookie,
                 newapi_user_id: session.newapi_user_id,
-                token_expires_at: None,
-                session_expires_at: None,
+                token_expires_at: token_expires_at.clone(),
+                session_expires_at: token_expires_at,
                 session_source: "password_login".to_string(),
                 session_user_agent: credentials.session_user_agent,
             },
@@ -248,20 +263,24 @@ pub(crate) async fn resolve_station_session_for_browser(
         .map_err(|_| ApplicationError::Internal)
 }
 
-fn browser_session_is_usable(session: &ResolvedSession) -> bool {
-    session.message.is_none()
-        && session
+fn browser_session_is_usable(station_type: &str, session: &ResolvedSession) -> bool {
+    let has_cookie = session
+        .cookie
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty());
+    let has_access_token = session
+        .access_token
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty());
+    let provider_identity_is_usable = !station_type.eq_ignore_ascii_case("newapi")
+        || session
             .newapi_user_id
             .as_deref()
-            .is_some_and(|value| !value.trim().is_empty())
-        && (session
-            .cookie
-            .as_deref()
-            .is_some_and(|value| !value.trim().is_empty())
-            || session
-                .access_token
-                .as_deref()
-                .is_some_and(|value| !value.trim().is_empty()))
+            .is_some_and(|value| !value.trim().is_empty());
+    (station_type.eq_ignore_ascii_case("sub2api") && has_cookie && !has_access_token)
+        || (session.message.is_none()
+            && provider_identity_is_usable
+            && (has_cookie || has_access_token))
 }
 
 impl CollectorSourcePort for V2CollectorSourceAdapter {
@@ -1992,6 +2011,27 @@ fn has_login_credentials(username: &Option<String>, password_present: bool) -> b
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::credentials::SessionResolveStatus;
+
+    #[test]
+    fn browser_session_uses_provider_specific_identity_requirements() {
+        let mut session = ResolvedSession {
+            status: SessionResolveStatus::Ready,
+            access_token: Some("fixture-access".to_string()),
+            refresh_token: None,
+            cookie: None,
+            newapi_user_id: None,
+            message: None,
+        };
+        assert!(browser_session_is_usable("sub2api", &session));
+        assert!(!browser_session_is_usable("newapi", &session));
+
+        session.access_token = None;
+        session.cookie = Some("session=fixture".to_string());
+        session.message = Some("no usable station session credentials".to_string());
+        assert!(browser_session_is_usable("sub2api", &session));
+        assert!(!browser_session_is_usable("newapi", &session));
+    }
 
     #[test]
     fn full_parent_keeps_canonical_facts_empty() {

@@ -1,8 +1,3 @@
-#![allow(
-    dead_code,
-    reason = "Task 18.D publishes the runtime status DTO before frontend diagnostics surfaces consume it"
-)]
-
 use serde::Serialize;
 
 use crate::background_tasks::{RuntimeTaskStatus, RuntimeTaskSummary};

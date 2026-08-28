@@ -12,6 +12,43 @@ mod models {
     pub(crate) mod operational {
         pub(crate) use crate::operational_model::*;
     }
+    pub(crate) mod routing {
+        #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+        #[serde(rename_all = "camelCase")]
+        pub(crate) struct RuntimeRoutingBalance {
+            pub(crate) scope: String,
+            pub(crate) value: Option<f64>,
+            pub(crate) currency: String,
+            pub(crate) low_balance_threshold: Option<f64>,
+            pub(crate) status: String,
+            pub(crate) collected_at: Option<String>,
+        }
+
+        impl RuntimeRoutingBalance {
+            pub(crate) fn is_depleted(&self) -> bool {
+                self.value.is_some_and(|value| value <= 0.0)
+                    || self.value.is_none()
+                        && matches!(
+                            self.status.trim().to_ascii_lowercase().as_str(),
+                            "depleted" | "exhausted" | "empty"
+                        )
+            }
+
+            pub(crate) fn has_explicit_status(&self) -> bool {
+                matches!(
+                    self.status.trim().to_ascii_lowercase().as_str(),
+                    "normal"
+                        | "available"
+                        | "usable"
+                        | "low"
+                        | "warning"
+                        | "depleted"
+                        | "exhausted"
+                        | "empty"
+                )
+            }
+        }
+    }
 }
 
 #[path = "../src/application/operational_facts/group_projector.rs"]

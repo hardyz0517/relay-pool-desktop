@@ -7,8 +7,7 @@ pub mod policy;
 
 pub use attention::IncidentAttention;
 pub use delivery::{
-    make_delivery_key, DeliveryKind, DeliveryStatus, NotificationChannel, NotificationDelivery,
-    SuppressionReason,
+    make_delivery_key, DeliveryKind, NotificationChannel, NotificationDelivery, SuppressionReason,
 };
 pub use event::{AlertEventType, ConditionKey, EventCategory, ObservationKind, Severity};
 pub use incident::{Incident, IncidentObservation, LifecycleState, StateTransition};

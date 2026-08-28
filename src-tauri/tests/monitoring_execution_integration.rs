@@ -34,6 +34,13 @@ mod models {
     }
 }
 
+mod application {
+    pub(crate) mod health_protection {
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        pub(crate) struct HealthProtectionScope;
+    }
+}
+
 mod outbound {
     pub use relay_pool_desktop_lib::outbound::*;
 }
@@ -62,6 +69,8 @@ pub mod openai_responses;
 pub mod openai_stream;
 #[path = "../src/services/protocol_streaming/sse.rs"]
 pub mod protocol_sse;
+#[path = "../src/services/monitoring/adapters/provider_error.rs"]
+pub mod provider_error;
 pub(crate) use protocol_sse::{SseDecoder, SseEvent, SseLimits, StreamError};
 #[path = "../src/services/monitoring/profiles/mod.rs"]
 pub mod profiles;
@@ -84,6 +93,9 @@ mod services {
             }
             pub mod contract {
                 pub use crate::contract::*;
+            }
+            pub(crate) mod provider_error {
+                pub(crate) use crate::provider_error::*;
             }
             pub mod gemini_native {
                 pub use crate::gemini_native::*;
@@ -124,6 +136,16 @@ mod services {
         }
         pub mod transport {
             pub use crate::transport::*;
+        }
+    }
+    pub(crate) mod proxy {
+        #[path = "../../../src/services/proxy/diagnostic_memory.rs"]
+        pub(crate) mod diagnostic_memory;
+        pub(crate) mod adapters {
+            #[path = "../../../../src/services/proxy/adapters/error_envelope.rs"]
+            pub(crate) mod error_envelope;
+            #[path = "../../../../src/services/proxy/adapters/error_rules.rs"]
+            pub(crate) mod error_rules;
         }
     }
     pub(crate) mod protocol_streaming {
