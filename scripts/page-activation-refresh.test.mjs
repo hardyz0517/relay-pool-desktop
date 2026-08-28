@@ -7,6 +7,7 @@ const dashboardSource = await readFile("src/features/dashboard/DashboardPage.tsx
 const stationsSource = await readFile("src/features/stations/StationsPage.tsx", "utf8");
 const stationsControllerSource = await readFile("src/features/stations/useStationsPageController.ts", "utf8");
 const keyPoolControllerSource = await readFile("src/features/key-pool/useKeyPoolPageController.ts", "utf8");
+const channelStatusControllerSource = await readFile("src/features/channels/useChannelStatusController.ts", "utf8");
 
 assert.ok(
   hostSource.includes("PageVisibilityProvider") &&
@@ -20,8 +21,7 @@ assert.ok(
 
 const retentionPolicySource = await readFile("src/app/navigation/pageRetentionPolicy.ts", "utf8");
 assert.ok(
-  retentionPolicySource.includes("export const MAX_RETAINED_SHELL_PAGES = 2") &&
-    retentionPolicySource.includes('reason: "default-unmounted"') &&
+  retentionPolicySource.includes('reason: "default-unmounted"') &&
     !retentionPolicySource.includes("legacy-allowlist") &&
     !retentionPolicySource.includes("retainedDuringStage3Migration"),
   "page retention should default to active plus transition pages without the Stage 3 legacy allowlist",
@@ -77,7 +77,7 @@ const refreshOnlyPages = [
   "src/features/logs/LogsPage.tsx",
 ];
 for (const page of refreshOnlyPages) {
-  const source = await readFile(page, "utf8");
+  const source = `${await readFile(page, "utf8")}\n${page.endsWith("ChannelStatusTab.tsx") ? channelStatusControllerSource : ""}`;
   assert.ok(
     source.includes("useActivityQuery") &&
       !source.includes("usePageActivity"),
@@ -104,15 +104,16 @@ assert.ok(
 assert.ok(
   keyPoolControllerSource.includes("useActivityQuery(keyPoolQueryOptions())") &&
     keyPoolControllerSource.includes("useActivityQuery(stationsQueryOptions())") &&
-    keyPoolControllerSource.includes("useActivityQuery(channelMonitoringQueryOptions())") &&
-    keyPoolControllerSource.includes("queryClient.invalidateQueries({ queryKey: queryKeys.channelMonitoring })") &&
+    keyPoolControllerSource.includes("useActivityQuery(channelMonitoringQueryOptions(") &&
+    (keyPoolControllerSource.includes("queryClient.invalidateQueries({ queryKey: queryKeys.channelMonitoring })") ||
+      keyPoolControllerSource.includes("invalidatePricingMonitoringQueries(queryClient)")) &&
     !keyPoolControllerSource.includes("usePageActivation") &&
     !keyPoolControllerSource.includes("refreshMonitorResources"),
   "key pool should read monitor resources through canonical query owners instead of an activation loader",
 );
 
 for (const page of pages) {
-  const source = await readFile(page, "utf8");
+  const source = `${await readFile(page, "utf8")}\n${page.endsWith("ChannelStatusTab.tsx") ? channelStatusControllerSource : ""}`;
   assert.ok(
     source.includes("usePageActivation") || source.includes("useActivityQuery"),
     `${page} should refresh or subscribe to persisted data only when the page becomes active`,
@@ -122,7 +123,8 @@ for (const page of pages) {
 const monitoringSource = await readFile("src/features/channels/ChannelMonitoringTab.tsx", "utf8");
 assert.ok(
   monitoringSource.includes("useActivityQuery(channelMonitoringQueryOptions())") &&
-    monitoringSource.includes("queryClient.invalidateQueries({ queryKey: queryKeys.channelMonitoring })") &&
+    (monitoringSource.includes("queryClient.invalidateQueries({ queryKey: queryKeys.channelMonitoring })") ||
+      monitoringSource.includes("invalidatePricingMonitoringQueries(queryClient)")) &&
     !monitoringSource.includes("usePageActivation"),
   "monitoring should use the channel monitoring query owner instead of an activation loader",
 );

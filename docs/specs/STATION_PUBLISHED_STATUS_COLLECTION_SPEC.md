@@ -37,6 +37,13 @@
 
 它不是 Relay Pool Desktop 主动发起的渠道探针，也不是路由健康事实。内部领域名称统一使用 `Station Published Status / 中转站发布状态`，UI 可使用“官方渠道状态”作为用户可理解的名称。
 
+### 1.1 渠道状态官方聚合工作区
+
+渠道状态页面提供三个并列入口：`本地状态`、`官方状态`、`探针管理`。官方状态入口只读取所有已登记且当前 endpoint revision 的发布状态事实，通过
+`get_station_published_status_overview` 返回 Station、source 和 Monitor 的聚合投影；它不逐站 fan-out，也不触发网络采集。该投影固定按 Station priority、Station、Provider、Group、Monitor、Primary model 和稳定 ID 排序，支持受限搜索、Station、source state、outcome 筛选及版本化 cursor 分页。
+
+官方状态同时展示两个维度：`sourceState` 表示 Relay Pool 最近一次采集官方 API 的结果和新鲜度，`currentOutcome` 表示中转站对该 Monitor 的当前判断；采集失败或过期时保留最后一次成功 Monitor 行，禁止覆盖成单一综合状态。每行仅展示主模型最近最多 60 条 sample 和后端计算的最近可用率，不提供 24h/7d 切换、不读取 `availability_7d`，也不提供全局重新采集按钮。页面刷新只重新读取本地 read model；单站重新采集仍沿用详情页既有 task。
+
 目标链路如下：
 
 ```text

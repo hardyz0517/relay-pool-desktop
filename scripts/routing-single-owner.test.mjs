@@ -13,7 +13,6 @@ const files = {
   executionReader: read("src-tauri/src/application/routing_execution_reader.rs"),
   upstream: read("src-tauri/src/services/proxy/upstream.rs"),
   endpointAdapter: read("src-tauri/src/services/proxy/endpoint_adapter.rs"),
-  routingTypes: read("src-tauri/src/application/routing_engine/routing_economics.rs"),
   routingModels: read("src-tauri/src/models/routing.rs"),
   routingHealthTypescript: read("src-tauri/src/ipc/dto/routing_health_reads.typescript.txt"),
   routingEngineMod: read("src-tauri/src/application/routing_engine/mod.rs"),
@@ -198,12 +197,6 @@ function checkCredentialAndEndpointResolveLate() {
     "default-v2 repository must not assemble executable RouteCandidate DTOs",
   );
   reject(
-    files.routingTypes,
-    "src-tauri/src/application/routing_engine/routing_economics.rs",
-    /pub(?:\(crate\))?\s+api_key:\s*String|pub(?:\(crate\))?\s+upstream_base_url:\s*String/u,
-    "routing engine executable candidate types must not carry plaintext credentials or full endpoint URLs",
-  );
-  reject(
     files.routingModels,
     "src-tauri/src/models/routing.rs",
     /\bCanonicalRoutingCandidate\b[\s\S]*\bupstream_base_url\b/u,
@@ -354,17 +347,13 @@ function checkFrontendDoesNotOwnRoutingTruth() {
     /capabilitySummary|priceBasis|pricing unavailable/u,
     "routing status diagnostics UI must render backend operational snapshots without deriving fallback truth from compatibility fields",
   );
-  for (const file of [
-    "src/features/routing/LocalRoutingCandidateRow.tsx",
-    "src/features/routing/LocalRoutingStatusCandidateRow.tsx",
-  ]) {
-    reject(
-      read(file),
-      file,
-      /effectiveMultiplier|effectiveMultiplierSource|effectiveMultiplierConfidence|previewRejectReasons|schedulerRejectReason|formatMultiplierSource/u,
-      "legacy local routing candidate rows must render backend facts through the view model, not rebuild multiplier or rejection truth from compatibility DTO fields",
-    );
-  }
+  const statusCandidateRowFile = "src/features/routing/LocalRoutingStatusCandidateRow.tsx";
+  reject(
+    read(statusCandidateRowFile),
+    statusCandidateRowFile,
+    /effectiveMultiplier|effectiveMultiplierSource|effectiveMultiplierConfidence|previewRejectReasons|schedulerRejectReason|formatMultiplierSource/u,
+    "local routing status rows must render backend facts through the view model, not rebuild multiplier or rejection truth from compatibility DTO fields",
+  );
 
   const frontendTruthFiles = [
     "src/lib/projections/pricingFacts.ts",

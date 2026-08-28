@@ -48,10 +48,8 @@
         ],
         "persistence": [],
         "services::data_store::config": [
-            "DataDirConfigV3",
             "create_installation_marker",
-            "installation_marker_exists",
-            "read_config_v3"
+            "installation_marker_exists"
         ],
         "services::proxy::response_body": [
             "dual_terminal_buffered_lifecycle_finalizing_stream",
@@ -1426,11 +1424,6 @@
             "temporary": false
         },
         {
-            "from": "commands::model_aliases",
-            "to": "ipc::dto::routing_mutations",
-            "temporary": false
-        },
-        {
             "from": "commands::operations",
             "to": "app_composition",
             "temporary": false
@@ -1977,11 +1970,6 @@
         },
         {
             "from": "models",
-            "to": "models::pricing",
-            "temporary": false
-        },
-        {
-            "from": "models",
             "to": "models::proxy",
             "temporary": false
         },
@@ -2093,11 +2081,6 @@
         {
             "from": "persistence",
             "to": "persistence::stores::request_log_write",
-            "temporary": false
-        },
-        {
-            "from": "persistence",
-            "to": "persistence::upgrade_fault",
             "temporary": false
         },
         {
@@ -2372,11 +2355,6 @@
         },
         {
             "from": "services::data_store",
-            "to": "persistence::upgrade_journal",
-            "temporary": false
-        },
-        {
-            "from": "services::data_store",
             "to": "services::data_store::atomic_file",
             "temporary": false
         },
@@ -2413,16 +2391,6 @@
         {
             "from": "services::data_store",
             "to": "services::secrets::baseline_conversion",
-            "temporary": false
-        },
-        {
-            "from": "services::data_store",
-            "to": "services::secrets::crypto",
-            "temporary": false
-        },
-        {
-            "from": "services::data_store",
-            "to": "services::secrets::mask",
             "temporary": false
         },
         {
@@ -2543,11 +2511,6 @@
         {
             "from": "services::proxy",
             "to": "application::app_services",
-            "temporary": false
-        },
-        {
-            "from": "services::proxy",
-            "to": "application::routing",
             "temporary": false
         },
         {
@@ -2773,21 +2736,6 @@
         {
             "from": "services::secrets",
             "to": "persistence::migrations",
-            "temporary": false
-        },
-        {
-            "from": "services::secrets",
-            "to": "persistence::runtime",
-            "temporary": false
-        },
-        {
-            "from": "services::secrets",
-            "to": "persistence::schema_compatibility",
-            "temporary": false
-        },
-        {
-            "from": "services::secrets",
-            "to": "persistence::upgrade_fault",
             "temporary": false
         },
         {
@@ -3122,11 +3070,6 @@
         },
         {
             "from": "lib",
-            "to": "services::data_store::config",
-            "temporary": false
-        },
-        {
-            "from": "lib",
             "to": "services::data_store::startup_probe",
             "temporary": false
         },
@@ -3452,11 +3395,6 @@
         },
         {
             "from": "services::proxy::execution",
-            "to": "application::routing_engine::model_alias",
-            "temporary": false
-        },
-        {
-            "from": "services::proxy::execution",
             "to": "application::routing_engine::request",
             "temporary": false
         },
@@ -3667,11 +3605,6 @@
         },
         {
             "from": "application::routing",
-            "to": "application::routing_engine::model_alias",
-            "temporary": false
-        },
-        {
-            "from": "application::routing",
             "to": "application::routing_engine::request",
             "temporary": false
         },
@@ -3867,17 +3800,7 @@
         },
         {
             "from": "application::routing",
-            "to": "application::queries::request_decision_trace",
-            "temporary": false
-        },
-        {
-            "from": "application::routing",
             "to": "models::operational",
-            "temporary": false
-        },
-        {
-            "from": "application::routing",
-            "to": "persistence::stores::routing_decisions::queries",
             "temporary": false
         },
         {
@@ -4161,11 +4084,6 @@
             "temporary": false
         },
         {
-            "from": "application::alerting::condition_key",
-            "to": "models::alerting",
-            "temporary": false
-        },
-        {
             "from": "application::alerting::delivery_planner",
             "to": "models::alerting",
             "temporary": false
@@ -4397,11 +4315,6 @@
         },
         {
             "from": "application::alerting::ingress",
-            "to": "application::alerting::policy_service",
-            "temporary": false
-        },
-        {
-            "from": "application::alerting::policy_resolver",
             "to": "application::alerting::policy_service",
             "temporary": false
         },
@@ -4678,11 +4591,6 @@
         {
             "from": "application::request_finalization",
             "to": "persistence::stores::request_terminal_outbox",
-            "temporary": false
-        },
-        {
-            "from": "application::routing",
-            "to": "persistence::stores::request_outcome_store",
             "temporary": false
         },
         {
@@ -5319,15 +5227,1142 @@
             "from": "application::app_services",
             "to": "application::queries::station_published_status",
             "temporary": false
+        },
+        {
+            "from": "app_composition",
+            "to": "application::alerting",
+            "temporary": false
+        },
+        {
+            "from": "app_composition",
+            "to": "application::routing_policy_control_plane",
+            "temporary": false
+        },
+        {
+            "from": "app_composition",
+            "to": "services::model_price_sync",
+            "temporary": false
+        },
+        {
+            "from": "app_composition",
+            "to": "services::station_collection_feedback",
+            "temporary": false
+        },
+        {
+            "from": "application::app_services",
+            "to": "application::alerting",
+            "temporary": false
+        },
+        {
+            "from": "application::command_facades::capture",
+            "to": "commands::runtime_events",
+            "temporary": false
+        },
+        {
+            "from": "application::command_facades::capture",
+            "to": "observability::runtime::bootstrap",
+            "temporary": false
+        },
+        {
+            "from": "application::command_facades::local_proxy",
+            "to": "models::routing_policy",
+            "temporary": false
+        },
+        {
+            "from": "application::command_facades::local_proxy",
+            "to": "services::proxy::limits",
+            "temporary": false
+        },
+        {
+            "from": "application::command_facades::local_proxy",
+            "to": "services::proxy::transport_policy",
+            "temporary": false
+        },
+        {
+            "from": "application::command_facades::pricing",
+            "to": "services::model_price_sync",
+            "temporary": false
+        },
+        {
+            "from": "application::command_facades::routing",
+            "to": "models::document_sync",
+            "temporary": false
+        },
+        {
+            "from": "application::command_facades::routing",
+            "to": "models::model_mapping",
+            "temporary": false
+        },
+        {
+            "from": "application::command_facades::routing",
+            "to": "persistence::stores::document_sync_store",
+            "temporary": false
+        },
+        {
+            "from": "application::command_facades::routing",
+            "to": "persistence::stores::model_mapping_store",
+            "temporary": false
+        },
+        {
+            "from": "application::command_facades::station_collection",
+            "to": "models::station_redemption",
+            "temporary": false
+        },
+        {
+            "from": "application::command_facades::station_collection",
+            "to": "services::outbound",
+            "temporary": false
+        },
+        {
+            "from": "application::command_facades::station_collection",
+            "to": "services::station_collection_feedback",
+            "temporary": false
+        },
+        {
+            "from": "application::command_facades::station_collection",
+            "to": "services::station_redemption",
+            "temporary": false
+        },
+        {
+            "from": "application::command_facades::station_key_connectivity",
+            "to": "outbound",
+            "temporary": false
+        },
+        {
+            "from": "application::command_facades::station_key_connectivity",
+            "to": "services::outbound",
+            "temporary": false
+        },
+        {
+            "from": "application::error_rate_protection",
+            "to": "models::routing_observation",
+            "temporary": false
+        },
+        {
+            "from": "application::health_protection",
+            "to": "models::routing_policy",
+            "temporary": false
+        },
+        {
+            "from": "application::model_mapping",
+            "to": "models::document_sync",
+            "temporary": false
+        },
+        {
+            "from": "application::model_mapping",
+            "to": "models::model_mapping",
+            "temporary": false
+        },
+        {
+            "from": "application::model_mapping",
+            "to": "persistence::stores::document_sync_store",
+            "temporary": false
+        },
+        {
+            "from": "application::model_mapping",
+            "to": "persistence::stores::model_mapping_store",
+            "temporary": false
+        },
+        {
+            "from": "application::model_mapping",
+            "to": "services::policy_documents",
+            "temporary": false
+        },
+        {
+            "from": "application::model_mapping_service",
+            "to": "models::document_sync",
+            "temporary": false
+        },
+        {
+            "from": "application::model_mapping_service",
+            "to": "models::model_mapping",
+            "temporary": false
+        },
+        {
+            "from": "application::model_mapping_service",
+            "to": "persistence::stores::model_mapping_store",
+            "temporary": false
+        },
+        {
+            "from": "application::model_mapping::compiler",
+            "to": "models::model_mapping",
+            "temporary": false
+        },
+        {
+            "from": "application::model_mapping::resolver",
+            "to": "models::model_mapping",
+            "temporary": false
+        },
+        {
+            "from": "application::observation_ingestion",
+            "to": "persistence::stores::routing_health_verdict_store",
+            "temporary": false
+        },
+        {
+            "from": "application::observation_ingestion",
+            "to": "persistence::stores::routing_policy_store",
+            "temporary": false
+        },
+        {
+            "from": "application::operational_facts::planning_snapshot",
+            "to": "application::operational_facts::pricing_projector",
+            "temporary": false
+        },
+        {
+            "from": "application::operational_facts::planning_snapshot",
+            "to": "application::routing_policy",
+            "temporary": false
+        },
+        {
+            "from": "application::operational_facts::planning_snapshot",
+            "to": "models",
+            "temporary": false
+        },
+        {
+            "from": "application::operational_facts::planning_snapshot",
+            "to": "models::model_mapping",
+            "temporary": false
+        },
+        {
+            "from": "application::queries::routing_protection",
+            "to": "application::routing_engine::failure_domains",
+            "temporary": false
+        },
+        {
+            "from": "application::queries::routing_protection",
+            "to": "persistence::stores::routing_health_verdict_store",
+            "temporary": false
+        },
+        {
+            "from": "application::queries::routing_workspace",
+            "to": "application::quality_projection",
+            "temporary": false
+        },
+        {
+            "from": "application::queries::routing_workspace",
+            "to": "application::routing_engine::failure_domains",
+            "temporary": false
+        },
+        {
+            "from": "application::queries::routing_workspace",
+            "to": "application::routing_engine::intelligent_planner",
+            "temporary": false
+        },
+        {
+            "from": "application::request_lifecycle::attempt",
+            "to": "application::request_finalization::failure",
+            "temporary": false
+        },
+        {
+            "from": "application::routing",
+            "to": "application::quality_projection",
+            "temporary": false
+        },
+        {
+            "from": "application::routing",
+            "to": "models::document_sync",
+            "temporary": false
+        },
+        {
+            "from": "application::routing",
+            "to": "models::model_mapping",
+            "temporary": false
+        },
+        {
+            "from": "application::routing",
+            "to": "persistence::stores::document_sync_store",
+            "temporary": false
+        },
+        {
+            "from": "application::routing",
+            "to": "persistence::stores::routing_health_verdict_store",
+            "temporary": false
+        },
+        {
+            "from": "application::routing",
+            "to": "persistence::stores::routing_quality_store",
+            "temporary": false
+        },
+        {
+            "from": "application::routing",
+            "to": "services::policy_documents",
+            "temporary": false
+        },
+        {
+            "from": "application::routing_diagnostics_reader",
+            "to": "application::queries::request_decision_trace",
+            "temporary": false
+        },
+        {
+            "from": "application::routing_diagnostics_reader",
+            "to": "models::routing_policy",
+            "temporary": false
+        },
+        {
+            "from": "application::routing_diagnostics_reader",
+            "to": "persistence::stores::request_outcome_store",
+            "temporary": false
+        },
+        {
+            "from": "application::routing_diagnostics_reader",
+            "to": "persistence::stores::routing_decisions::queries",
+            "temporary": false
+        },
+        {
+            "from": "application::routing_diagnostics_reader",
+            "to": "persistence::stores::routing_error_rate_history_store",
+            "temporary": false
+        },
+        {
+            "from": "application::routing_diagnostics_reader",
+            "to": "persistence::stores::routing_policy_store",
+            "temporary": false
+        },
+        {
+            "from": "application::routing_engine::admission",
+            "to": "application::routing_policy",
+            "temporary": false
+        },
+        {
+            "from": "application::routing_engine::admission",
+            "to": "models::model_mapping",
+            "temporary": false
+        },
+        {
+            "from": "application::routing_engine::planning_snapshot",
+            "to": "application::routing_policy",
+            "temporary": false
+        },
+        {
+            "from": "application::routing_engine::planning_snapshot",
+            "to": "models::model_mapping",
+            "temporary": false
+        },
+        {
+            "from": "application::routing_engine::request",
+            "to": "models::model_mapping",
+            "temporary": false
+        },
+        {
+            "from": "application::routing_execution_reader",
+            "to": "application::operational_facts::target_resolver",
+            "temporary": false
+        },
+        {
+            "from": "application::routing_execution_reader",
+            "to": "application::routing_engine::planning_snapshot",
+            "temporary": false
+        },
+        {
+            "from": "application::routing_execution_reader",
+            "to": "application::routing_engine::request",
+            "temporary": false
+        },
+        {
+            "from": "application::routing_policy_control_plane",
+            "to": "models::document_sync",
+            "temporary": false
+        },
+        {
+            "from": "application::routing_policy_control_plane",
+            "to": "models::routing_policy",
+            "temporary": false
+        },
+        {
+            "from": "application::routing_policy_control_plane",
+            "to": "persistence::stores::routing_policy_store",
+            "temporary": false
+        },
+        {
+            "from": "application::routing_policy_control_plane",
+            "to": "services::proxy::limits",
+            "temporary": false
+        },
+        {
+            "from": "application::routing_policy_control_plane",
+            "to": "services::proxy::runtime",
+            "temporary": false
+        },
+        {
+            "from": "application::routing_policy_control_plane",
+            "to": "services::proxy::transport_policy",
+            "temporary": false
+        },
+        {
+            "from": "application::routing_policy_read",
+            "to": "models::document_sync",
+            "temporary": false
+        },
+        {
+            "from": "application::routing_policy_read",
+            "to": "persistence::stores::document_sync_store",
+            "temporary": false
+        },
+        {
+            "from": "application::routing_policy_read",
+            "to": "persistence::stores::routing_policy_store",
+            "temporary": false
+        },
+        {
+            "from": "application::stations",
+            "to": "application::alerting",
+            "temporary": false
+        },
+        {
+            "from": "background_tasks::alerting_runner",
+            "to": "application::alerting",
+            "temporary": false
+        },
+        {
+            "from": "background_tasks::policy_document_runner",
+            "to": "application::routing_policy_control_plane",
+            "temporary": false
+        },
+        {
+            "from": "background_tasks::policy_document_runner",
+            "to": "persistence::error",
+            "temporary": false
+        },
+        {
+            "from": "commands::capture",
+            "to": "commands::runtime_events",
+            "temporary": false
+        },
+        {
+            "from": "commands::capture",
+            "to": "observability::runtime::bootstrap",
+            "temporary": false
+        },
+        {
+            "from": "commands::data_recovery",
+            "to": "persistence",
+            "temporary": false
+        },
+        {
+            "from": "commands::model_mapping",
+            "to": "application::model_mapping",
+            "temporary": false
+        },
+        {
+            "from": "commands::model_mapping",
+            "to": "commands::error",
+            "temporary": false
+        },
+        {
+            "from": "commands::model_mapping",
+            "to": "ipc::dto::model_mapping",
+            "temporary": false
+        },
+        {
+            "from": "commands::model_mapping",
+            "to": "ipc::dto::runtime_context",
+            "temporary": false
+        },
+        {
+            "from": "commands::model_mapping",
+            "to": "models::document_sync",
+            "temporary": false
+        },
+        {
+            "from": "commands::model_mapping",
+            "to": "models::model_mapping",
+            "temporary": false
+        },
+        {
+            "from": "commands::model_mapping",
+            "to": "persistence::stores::document_sync_store",
+            "temporary": false
+        },
+        {
+            "from": "commands::pricing",
+            "to": "services::model_price_sync",
+            "temporary": false
+        },
+        {
+            "from": "commands::routing_health",
+            "to": "persistence::stores::document_sync_store",
+            "temporary": false
+        },
+        {
+            "from": "commands::routing_health",
+            "to": "persistence::stores::routing_policy_store",
+            "temporary": false
+        },
+        {
+            "from": "ipc::dto::channel_monitor_mutations",
+            "to": "outbound",
+            "temporary": false
+        },
+        {
+            "from": "ipc::dto::pricing_mutations",
+            "to": "services::model_price_sync",
+            "temporary": false
+        },
+        {
+            "from": "ipc::dto::routing_health_reads",
+            "to": "application::error_rate_protection",
+            "temporary": false
+        },
+        {
+            "from": "ipc::dto::routing_health_reads",
+            "to": "application::queries::routing_protection",
+            "temporary": false
+        },
+        {
+            "from": "ipc::dto::routing_mutations",
+            "to": "persistence::stores::document_sync_store",
+            "temporary": false
+        },
+        {
+            "from": "ipc::dto::station_collector_operations",
+            "to": "models::station_redemption",
+            "temporary": false
+        },
+        {
+            "from": "lib",
+            "to": "application::alerting",
+            "temporary": false
+        },
+        {
+            "from": "lib",
+            "to": "application::model_mapping",
+            "temporary": false
+        },
+        {
+            "from": "lib",
+            "to": "application::routing",
+            "temporary": false
+        },
+        {
+            "from": "lib",
+            "to": "background_tasks::policy_document_runner",
+            "temporary": false
+        },
+        {
+            "from": "lib",
+            "to": "persistence::baseline_conversion_support",
+            "temporary": false
+        },
+        {
+            "from": "lib",
+            "to": "services::model_price_sync",
+            "temporary": false
+        },
+        {
+            "from": "lib",
+            "to": "services::station_collection_feedback",
+            "temporary": false
+        },
+        {
+            "from": "models::routing_observation",
+            "to": "application::health_protection",
+            "temporary": false
+        },
+        {
+            "from": "persistence::stores::document_sync_store",
+            "to": "models::document_sync",
+            "temporary": false
+        },
+        {
+            "from": "persistence::stores::model_mapping_store",
+            "to": "models::document_sync",
+            "temporary": false
+        },
+        {
+            "from": "persistence::stores::model_mapping_store",
+            "to": "models::model_mapping",
+            "temporary": false
+        },
+        {
+            "from": "persistence::stores::monitoring_store",
+            "to": "outbound",
+            "temporary": false
+        },
+        {
+            "from": "persistence::stores::request_log_write",
+            "to": "application::health_protection",
+            "temporary": false
+        },
+        {
+            "from": "persistence::stores::routing_error_rate_history_store",
+            "to": "application::error_rate_protection",
+            "temporary": false
+        },
+        {
+            "from": "persistence::stores::routing_error_rate_history_store",
+            "to": "application::health_protection",
+            "temporary": false
+        },
+        {
+            "from": "persistence::stores::routing_health_verdict_store",
+            "to": "application::error_rate_protection",
+            "temporary": false
+        },
+        {
+            "from": "persistence::stores::routing_health_verdict_store",
+            "to": "application::health_protection",
+            "temporary": false
+        },
+        {
+            "from": "persistence::stores::routing_health_verdict_store",
+            "to": "models::routing_policy",
+            "temporary": false
+        },
+        {
+            "from": "persistence::stores::routing_observation_store",
+            "to": "application::health_protection",
+            "temporary": false
+        },
+        {
+            "from": "services::alerting::read_model_updates",
+            "to": "application::alerting",
+            "temporary": false
+        },
+        {
+            "from": "services::collectors::login_probe",
+            "to": "services::station_sessions",
+            "temporary": false
+        },
+        {
+            "from": "services::data_store::relocation",
+            "to": "persistence::baseline_conversion_support",
+            "temporary": false
+        },
+        {
+            "from": "services::data_store::startup_probe",
+            "to": "persistence::baseline_conversion_support",
+            "temporary": false
+        },
+        {
+            "from": "services::data_store::startup_upgrade_executor",
+            "to": "persistence::baseline_conversion_support",
+            "temporary": false
+        },
+        {
+            "from": "services::model_price_sync",
+            "to": "application::error",
+            "temporary": false
+        },
+        {
+            "from": "services::model_price_sync",
+            "to": "application::pagination",
+            "temporary": false
+        },
+        {
+            "from": "services::model_price_sync",
+            "to": "application::pricing",
+            "temporary": false
+        },
+        {
+            "from": "services::model_price_sync",
+            "to": "background_tasks",
+            "temporary": false
+        },
+        {
+            "from": "services::model_price_sync",
+            "to": "models",
+            "temporary": false
+        },
+        {
+            "from": "services::model_price_sync",
+            "to": "models::pricing",
+            "temporary": false
+        },
+        {
+            "from": "services::model_price_sync",
+            "to": "outbound",
+            "temporary": false
+        },
+        {
+            "from": "services::model_price_sync",
+            "to": "services::outbound",
+            "temporary": false
+        },
+        {
+            "from": "services::monitoring::adapters::anthropic_messages",
+            "to": "services::proxy::adapters::error_envelope",
+            "temporary": false
+        },
+        {
+            "from": "services::monitoring::adapters::gemini_native",
+            "to": "services::proxy::adapters::error_envelope",
+            "temporary": false
+        },
+        {
+            "from": "services::monitoring::adapters::openai_chat",
+            "to": "services::proxy::adapters::error_envelope",
+            "temporary": false
+        },
+        {
+            "from": "services::monitoring::adapters::openai_responses",
+            "to": "services::proxy::adapters::error_envelope",
+            "temporary": false
+        },
+        {
+            "from": "services::monitoring::adapters::openai_stream",
+            "to": "services::proxy::adapters::error_envelope",
+            "temporary": false
+        },
+        {
+            "from": "services::monitoring::adapters::provider_error",
+            "to": "services::proxy::adapters::error_envelope",
+            "temporary": false
+        },
+        {
+            "from": "services::monitoring::adapters::provider_error",
+            "to": "services::proxy::adapters::error_rules",
+            "temporary": false
+        },
+        {
+            "from": "services::monitoring::runner",
+            "to": "application::settings",
+            "temporary": false
+        },
+        {
+            "from": "services::monitoring::runner",
+            "to": "services::outbound",
+            "temporary": false
+        },
+        {
+            "from": "services::outbound",
+            "to": "outbound",
+            "temporary": false
+        },
+        {
+            "from": "services::policy_documents",
+            "to": "models::document_sync",
+            "temporary": false
+        },
+        {
+            "from": "services::policy_documents",
+            "to": "services::data_store::atomic_file",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::attempt",
+            "to": "application::health_protection",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::execution",
+            "to": "application::error_rate_protection",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::execution",
+            "to": "application::health_protection",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::execution",
+            "to": "application::model_mapping",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::execution",
+            "to": "application::request_lifecycle::attempt",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::execution",
+            "to": "application::routing_execution_reader",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::execution",
+            "to": "application::routing_policy",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::execution",
+            "to": "models::model_mapping",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::routing_repository",
+            "to": "application::health_protection",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::routing_repository",
+            "to": "application::routing_execution_reader",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::routing_runtime::capacity_retry",
+            "to": "application::queries::routing_protection",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::runtime",
+            "to": "application::queries::routing_protection",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::startup",
+            "to": "application::routing_execution_reader",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::startup",
+            "to": "models::routing_policy",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::transport_policy",
+            "to": "models::routing_policy",
+            "temporary": false
+        },
+        {
+            "from": "services::secrets::baseline_conversion",
+            "to": "persistence::baseline_conversion_support",
+            "temporary": false
+        },
+        {
+            "from": "services::station_collection_feedback",
+            "to": "models::collector",
+            "temporary": false
+        },
+        {
+            "from": "services::station_collectors",
+            "to": "models::collector",
+            "temporary": false
+        },
+        {
+            "from": "services::station_collectors",
+            "to": "services::station_collection_feedback",
+            "temporary": false
+        },
+        {
+            "from": "services::station_redemption",
+            "to": "models::credentials",
+            "temporary": false
+        },
+        {
+            "from": "services::station_redemption",
+            "to": "models::station_redemption",
+            "temporary": false
+        },
+        {
+            "from": "services::station_redemption",
+            "to": "models::stations",
+            "temporary": false
+        },
+        {
+            "from": "services::station_redemption",
+            "to": "outbound",
+            "temporary": false
+        },
+        {
+            "from": "services::station_redemption",
+            "to": "services::secrets::mask",
+            "temporary": false
+        },
+        {
+            "from": "services::station_redemption",
+            "to": "services::station_endpoints",
+            "temporary": false
+        },
+        {
+            "from": "services::station_redemption",
+            "to": "services::station_sessions",
+            "temporary": false
+        },
+        {
+            "from": "services::station_sessions",
+            "to": "services::time",
+            "temporary": false
+        },
+        {
+            "from": "test_support::routing_loopback",
+            "to": "application::model_mapping",
+            "temporary": false
+        },
+        {
+            "from": "test_support::routing_loopback",
+            "to": "application::routing_execution_reader",
+            "temporary": false
+        },
+        {
+            "from": "test_support::routing_loopback",
+            "to": "models::document_sync",
+            "temporary": false
+        },
+        {
+            "from": "test_support::routing_loopback",
+            "to": "models::model_mapping",
+            "temporary": false
+        },
+        {
+            "from": "test_support::routing_loopback",
+            "to": "models::routing_policy",
+            "temporary": false
+        },
+        {
+            "from": "test_support::routing_loopback",
+            "to": "models::station_capacity_domains",
+            "temporary": false
+        },
+        {
+            "from": "application::app_services",
+            "to": "application::error_rate_protection",
+            "temporary": false
+        },
+        {
+            "from": "application::command_facades::local_proxy",
+            "to": "application::routing_execution_reader",
+            "temporary": false
+        },
+        {
+            "from": "application::command_facades::routing",
+            "to": "application::error_rate_protection",
+            "temporary": false
+        },
+        {
+            "from": "application::command_facades::routing",
+            "to": "application::model_mapping",
+            "temporary": false
+        },
+        {
+            "from": "application::command_facades::routing",
+            "to": "application::queries::routing_protection",
+            "temporary": false
+        },
+        {
+            "from": "application::command_facades::routing",
+            "to": "application::routing_policy_control_plane",
+            "temporary": false
+        },
+        {
+            "from": "application::error_rate_protection",
+            "to": "application::health_protection",
+            "temporary": false
+        },
+        {
+            "from": "application::model_mapping_service",
+            "to": "application::model_mapping",
+            "temporary": false
+        },
+        {
+            "from": "application::monitoring::service",
+            "to": "application::error_rate_protection",
+            "temporary": false
+        },
+        {
+            "from": "application::monitoring::write_path",
+            "to": "application::error_rate_protection",
+            "temporary": false
+        },
+        {
+            "from": "application::observation_ingestion",
+            "to": "application::error_rate_protection",
+            "temporary": false
+        },
+        {
+            "from": "application::operational_facts::planning_snapshot",
+            "to": "application::error_rate_protection",
+            "temporary": false
+        },
+        {
+            "from": "application::operational_facts::planning_snapshot",
+            "to": "application::health_protection",
+            "temporary": false
+        },
+        {
+            "from": "application::operational_facts::planning_snapshot",
+            "to": "application::model_mapping",
+            "temporary": false
+        },
+        {
+            "from": "application::queries::routing_protection",
+            "to": "application::health_protection",
+            "temporary": false
+        },
+        {
+            "from": "application::request_finalization",
+            "to": "application::error_rate_protection",
+            "temporary": false
+        },
+        {
+            "from": "application::request_finalization",
+            "to": "application::health_protection",
+            "temporary": false
+        },
+        {
+            "from": "application::request_lifecycle::attempt",
+            "to": "application::health_protection",
+            "temporary": false
+        },
+        {
+            "from": "application::routing",
+            "to": "application::error_rate_protection",
+            "temporary": false
+        },
+        {
+            "from": "application::routing",
+            "to": "application::health_protection",
+            "temporary": false
+        },
+        {
+            "from": "application::routing",
+            "to": "application::model_mapping",
+            "temporary": false
+        },
+        {
+            "from": "application::routing",
+            "to": "application::queries::routing_protection",
+            "temporary": false
+        },
+        {
+            "from": "application::routing_diagnostics_reader",
+            "to": "application::error_rate_protection",
+            "temporary": false
+        },
+        {
+            "from": "application::routing_engine::admission",
+            "to": "application::model_mapping",
+            "temporary": false
+        },
+        {
+            "from": "application::routing_engine::candidate_plan",
+            "to": "application::model_mapping",
+            "temporary": false
+        },
+        {
+            "from": "application::routing_engine::intelligent_planner",
+            "to": "application::model_mapping",
+            "temporary": false
+        },
+        {
+            "from": "application::routing_engine::planning_snapshot",
+            "to": "application::model_mapping",
+            "temporary": false
+        },
+        {
+            "from": "application::routing_execution_reader",
+            "to": "application::health_protection",
+            "temporary": false
+        },
+        {
+            "from": "application::routing_policy",
+            "to": "application::health_protection",
+            "temporary": false
+        },
+        {
+            "from": "persistence::stores::model_mapping_store",
+            "to": "persistence::stores::document_sync_store",
+            "temporary": false
+        },
+        {
+            "from": "persistence::stores::routing_health_verdict_store",
+            "to": "persistence::stores::routing_error_rate_history_store",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::adapters::error_rules",
+            "to": "services::proxy::adapters::error_envelope",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::adapters::openai",
+            "to": "services::proxy::adapters::error_envelope",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::adapters::openai",
+            "to": "services::proxy::adapters::error_rules",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::attempt",
+            "to": "services::proxy::limits",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::execution",
+            "to": "services::proxy::adapters::error_envelope",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::execution",
+            "to": "services::proxy::adapters::error_rules",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::execution",
+            "to": "services::proxy::transport_policy",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::ingress",
+            "to": "services::proxy::limits",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::ingress",
+            "to": "services::proxy::transport_policy",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::request",
+            "to": "services::proxy::limits",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::request",
+            "to": "services::proxy::transport_policy",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::response_body",
+            "to": "services::proxy::limits",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::runtime",
+            "to": "services::proxy::limits",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::runtime",
+            "to": "services::proxy::transport_policy",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::server",
+            "to": "services::proxy::limits",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::startup",
+            "to": "services::proxy::limits",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::startup",
+            "to": "services::proxy::transport_policy",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::transport_policy",
+            "to": "services::proxy::limits",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::upstream",
+            "to": "services::proxy::adapters::error_envelope",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::upstream",
+            "to": "services::proxy::transport_policy",
+            "temporary": false
         }
     ],
     "temporary_legacy_consumers": [],
     "temporary_legacy_paths": [],
     "allowed_consumers": {},
     "fan_in_baseline": {
-        "DataDirConfigV3": {
-            "direct_consumer_modules": 2
-        },
         "LifecycleFinalizationLease": {
             "direct_consumer_modules": 2
         }
