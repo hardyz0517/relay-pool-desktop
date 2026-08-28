@@ -30,8 +30,8 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
             <BackendBootstrap
               createClient={createDesktopBackendClient}
               renderDataStoreBootstrap={(renderReady) => <DataStoreBootstrap renderReady={renderReady} />}
-              renderReady={() => (
-                <App />
+              renderReady={({ client }) => (
+                <App runtimeMode={client.mode} />
               )}
             />
           </UpdaterProvider>

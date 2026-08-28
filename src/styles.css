@@ -1,3 +1,5 @@
+@import "driver.js/dist/driver.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -169,6 +171,60 @@ input,
 select,
 textarea {
   font: inherit;
+}
+
+/* Driver.js is the rendering engine; these tokens keep its surface consistent
+   with the desktop UI and keep business dialogs (z-60) above the tour. */
+.driver-overlay {
+  z-index: 40 !important;
+  fill: hsl(var(--scrim)) !important;
+}
+
+.driver-popover {
+  z-index: 50 !important;
+  max-width: min(320px, calc(100vw - 24px));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--surface-radius);
+  background: hsl(var(--surface));
+  color: hsl(var(--foreground));
+  box-shadow: var(--popover-shadow);
+}
+
+.driver-popover-title,
+.driver-popover-description,
+.driver-popover-progress-text {
+  color: hsl(var(--foreground));
+}
+
+.driver-popover-description {
+  overflow-wrap: anywhere;
+}
+
+.driver-popover-close-btn,
+.driver-popover-footer-btn {
+  color: hsl(var(--foreground));
+}
+
+.driver-popover-footer-btn {
+  border-color: hsl(var(--border));
+  border-radius: calc(var(--surface-radius) / 2);
+  background: hsl(var(--surface));
+}
+
+.driver-popover-footer-btn:hover,
+.driver-popover-footer-btn:focus-visible {
+  background: hsl(var(--hover));
+}
+
+.driver-popover-arrow {
+  border-color: hsl(var(--surface));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .driver-fade .driver-overlay,
+  .driver-fade .driver-popover {
+    animation: none;
+  }
 }
 
 input[type="number"] {
