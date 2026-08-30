@@ -24,18 +24,23 @@ assert.ok(
 
 assert.ok(
   radarIconSource.includes('aria-hidden="true"') &&
-    radarIconSource.includes("local-proxy-radar") &&
-    radarIconSource.includes("local-proxy-radar--active") &&
-    radarIconSource.includes("local-proxy-radar__wave") &&
-    radarIconSource.includes("local-proxy-radar__core"),
-  "radar icon should expose a decorative radar mark with waves and a core point",
+    radarIconSource.includes("local-proxy-globe") &&
+    radarIconSource.includes("local-proxy-globe--active") &&
+    radarIconSource.includes("IntersectionObserver") &&
+    radarIconSource.includes("visibilitychange"),
+  "proxy status icon should expose the frozen globe sprite and pause when hidden",
 );
 
 assert.ok(
-    stylesSource.includes("@keyframes localProxyRadarBreathe") &&
-    stylesSource.includes(".local-proxy-radar--active") &&
-    stylesSource.includes("animation: localProxyRadarBreathe 2.8s ease-in-out infinite") &&
-    stylesSource.includes("transform: scale(1.04)") &&
+    stylesSource.includes("@keyframes localProxyGlobeSpin") &&
+    stylesSource.includes(".local-proxy-globe--active") &&
+    stylesSource.includes("animation: localProxyGlobeSpin 2000ms steps(16, end) infinite") &&
+    stylesSource.includes("background-image: var(--local-proxy-globe-static-light)") &&
+    stylesSource.includes("background-image: var(--local-proxy-globe-sprite-light)") &&
+    stylesSource.includes("background-image: var(--local-proxy-globe-static-dark)") &&
+    stylesSource.includes(".dark .local-proxy-globe") &&
     stylesSource.includes("@media (prefers-reduced-motion: reduce)"),
-  "active radar status should breathe slowly and respect reduced motion",
+  "active globe status should use the frozen sprite with CSS steps and respect reduced motion",
 );
+
+assert.ok(!radarIconSource.includes("<svg") && !stylesSource.includes("local-proxy-radar"), "the old radar implementation should be removed");

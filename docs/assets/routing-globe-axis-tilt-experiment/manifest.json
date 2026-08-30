@@ -1,0 +1,946 @@
+{
+  "stage": "axis-tilt-comparison",
+  "sourceExperiment": "../routing-globe-projection-experiment/manifest.json",
+  "sourceMap": "../routing-globe-map-master-experiment/preview-world-map.json",
+  "sourceMapSha256": "5c1468c489229348b054b85354fe57efa8c55114a11141903eab12aefc6f27c9",
+  "projection": "orthographic-inverse-raster",
+  "frameCount": 16,
+  "frameStepDegrees": 22.5,
+  "loopDurationMs": 2000,
+  "baseCenterLongitude": 122,
+  "centerLatitude": 12,
+  "radiusRatio": 0.4375,
+  "inspectionSize": 256,
+  "iconSizes": [
+    32,
+    24
+  ],
+  "supersample": 4,
+  "axialTiltCandidatesDegrees": [
+    18,
+    20,
+    23.5
+  ],
+  "northDirection": "left-up",
+  "variants": [
+    {
+      "axialTiltDegrees": 18,
+      "orientation": "fixed screen-space roll before inverse orthographic sampling",
+      "northAxisScreen": {
+        "x": -0.302264,
+        "y": 0.930274,
+        "z": 0.207912
+      },
+      "inspection": {
+        "light": "routing-globe-tilt-18-single-inspection-light.png",
+        "dark": "routing-globe-tilt-18-single-inspection-dark.png"
+      },
+      "frames": [
+        {
+          "index": 0,
+          "centerLongitude": 122,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-18-frame-00-24-light.png",
+              "dark": "routing-globe-tilt-18-frame-00-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-18-frame-00-32-light.png",
+              "dark": "routing-globe-tilt-18-frame-00-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 1,
+          "centerLongitude": 144.5,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-18-frame-01-24-light.png",
+              "dark": "routing-globe-tilt-18-frame-01-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-18-frame-01-32-light.png",
+              "dark": "routing-globe-tilt-18-frame-01-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 2,
+          "centerLongitude": 167,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-18-frame-02-24-light.png",
+              "dark": "routing-globe-tilt-18-frame-02-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-18-frame-02-32-light.png",
+              "dark": "routing-globe-tilt-18-frame-02-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 3,
+          "centerLongitude": -170.5,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-18-frame-03-24-light.png",
+              "dark": "routing-globe-tilt-18-frame-03-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-18-frame-03-32-light.png",
+              "dark": "routing-globe-tilt-18-frame-03-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 4,
+          "centerLongitude": -148,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-18-frame-04-24-light.png",
+              "dark": "routing-globe-tilt-18-frame-04-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-18-frame-04-32-light.png",
+              "dark": "routing-globe-tilt-18-frame-04-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 5,
+          "centerLongitude": -125.5,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-18-frame-05-24-light.png",
+              "dark": "routing-globe-tilt-18-frame-05-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-18-frame-05-32-light.png",
+              "dark": "routing-globe-tilt-18-frame-05-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 6,
+          "centerLongitude": -103,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-18-frame-06-24-light.png",
+              "dark": "routing-globe-tilt-18-frame-06-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-18-frame-06-32-light.png",
+              "dark": "routing-globe-tilt-18-frame-06-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 7,
+          "centerLongitude": -80.5,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-18-frame-07-24-light.png",
+              "dark": "routing-globe-tilt-18-frame-07-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-18-frame-07-32-light.png",
+              "dark": "routing-globe-tilt-18-frame-07-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 8,
+          "centerLongitude": -58,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-18-frame-08-24-light.png",
+              "dark": "routing-globe-tilt-18-frame-08-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-18-frame-08-32-light.png",
+              "dark": "routing-globe-tilt-18-frame-08-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 9,
+          "centerLongitude": -35.5,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-18-frame-09-24-light.png",
+              "dark": "routing-globe-tilt-18-frame-09-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-18-frame-09-32-light.png",
+              "dark": "routing-globe-tilt-18-frame-09-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 10,
+          "centerLongitude": -13,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-18-frame-10-24-light.png",
+              "dark": "routing-globe-tilt-18-frame-10-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-18-frame-10-32-light.png",
+              "dark": "routing-globe-tilt-18-frame-10-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 11,
+          "centerLongitude": 9.5,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-18-frame-11-24-light.png",
+              "dark": "routing-globe-tilt-18-frame-11-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-18-frame-11-32-light.png",
+              "dark": "routing-globe-tilt-18-frame-11-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 12,
+          "centerLongitude": 32,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-18-frame-12-24-light.png",
+              "dark": "routing-globe-tilt-18-frame-12-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-18-frame-12-32-light.png",
+              "dark": "routing-globe-tilt-18-frame-12-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 13,
+          "centerLongitude": 54.5,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-18-frame-13-24-light.png",
+              "dark": "routing-globe-tilt-18-frame-13-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-18-frame-13-32-light.png",
+              "dark": "routing-globe-tilt-18-frame-13-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 14,
+          "centerLongitude": 77,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-18-frame-14-24-light.png",
+              "dark": "routing-globe-tilt-18-frame-14-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-18-frame-14-32-light.png",
+              "dark": "routing-globe-tilt-18-frame-14-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 15,
+          "centerLongitude": 99.5,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-18-frame-15-24-light.png",
+              "dark": "routing-globe-tilt-18-frame-15-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-18-frame-15-32-light.png",
+              "dark": "routing-globe-tilt-18-frame-15-32-dark.png"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "axialTiltDegrees": 20,
+      "orientation": "fixed screen-space roll before inverse orthographic sampling",
+      "northAxisScreen": {
+        "x": -0.334546,
+        "y": 0.919158,
+        "z": 0.207912
+      },
+      "inspection": {
+        "light": "routing-globe-tilt-20-single-inspection-light.png",
+        "dark": "routing-globe-tilt-20-single-inspection-dark.png"
+      },
+      "frames": [
+        {
+          "index": 0,
+          "centerLongitude": 122,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-20-frame-00-24-light.png",
+              "dark": "routing-globe-tilt-20-frame-00-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-20-frame-00-32-light.png",
+              "dark": "routing-globe-tilt-20-frame-00-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 1,
+          "centerLongitude": 144.5,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-20-frame-01-24-light.png",
+              "dark": "routing-globe-tilt-20-frame-01-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-20-frame-01-32-light.png",
+              "dark": "routing-globe-tilt-20-frame-01-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 2,
+          "centerLongitude": 167,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-20-frame-02-24-light.png",
+              "dark": "routing-globe-tilt-20-frame-02-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-20-frame-02-32-light.png",
+              "dark": "routing-globe-tilt-20-frame-02-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 3,
+          "centerLongitude": -170.5,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-20-frame-03-24-light.png",
+              "dark": "routing-globe-tilt-20-frame-03-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-20-frame-03-32-light.png",
+              "dark": "routing-globe-tilt-20-frame-03-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 4,
+          "centerLongitude": -148,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-20-frame-04-24-light.png",
+              "dark": "routing-globe-tilt-20-frame-04-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-20-frame-04-32-light.png",
+              "dark": "routing-globe-tilt-20-frame-04-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 5,
+          "centerLongitude": -125.5,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-20-frame-05-24-light.png",
+              "dark": "routing-globe-tilt-20-frame-05-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-20-frame-05-32-light.png",
+              "dark": "routing-globe-tilt-20-frame-05-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 6,
+          "centerLongitude": -103,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-20-frame-06-24-light.png",
+              "dark": "routing-globe-tilt-20-frame-06-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-20-frame-06-32-light.png",
+              "dark": "routing-globe-tilt-20-frame-06-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 7,
+          "centerLongitude": -80.5,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-20-frame-07-24-light.png",
+              "dark": "routing-globe-tilt-20-frame-07-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-20-frame-07-32-light.png",
+              "dark": "routing-globe-tilt-20-frame-07-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 8,
+          "centerLongitude": -58,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-20-frame-08-24-light.png",
+              "dark": "routing-globe-tilt-20-frame-08-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-20-frame-08-32-light.png",
+              "dark": "routing-globe-tilt-20-frame-08-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 9,
+          "centerLongitude": -35.5,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-20-frame-09-24-light.png",
+              "dark": "routing-globe-tilt-20-frame-09-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-20-frame-09-32-light.png",
+              "dark": "routing-globe-tilt-20-frame-09-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 10,
+          "centerLongitude": -13,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-20-frame-10-24-light.png",
+              "dark": "routing-globe-tilt-20-frame-10-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-20-frame-10-32-light.png",
+              "dark": "routing-globe-tilt-20-frame-10-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 11,
+          "centerLongitude": 9.5,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-20-frame-11-24-light.png",
+              "dark": "routing-globe-tilt-20-frame-11-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-20-frame-11-32-light.png",
+              "dark": "routing-globe-tilt-20-frame-11-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 12,
+          "centerLongitude": 32,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-20-frame-12-24-light.png",
+              "dark": "routing-globe-tilt-20-frame-12-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-20-frame-12-32-light.png",
+              "dark": "routing-globe-tilt-20-frame-12-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 13,
+          "centerLongitude": 54.5,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-20-frame-13-24-light.png",
+              "dark": "routing-globe-tilt-20-frame-13-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-20-frame-13-32-light.png",
+              "dark": "routing-globe-tilt-20-frame-13-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 14,
+          "centerLongitude": 77,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-20-frame-14-24-light.png",
+              "dark": "routing-globe-tilt-20-frame-14-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-20-frame-14-32-light.png",
+              "dark": "routing-globe-tilt-20-frame-14-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 15,
+          "centerLongitude": 99.5,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-20-frame-15-24-light.png",
+              "dark": "routing-globe-tilt-20-frame-15-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-20-frame-15-32-light.png",
+              "dark": "routing-globe-tilt-20-frame-15-32-dark.png"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "axialTiltDegrees": 23.5,
+      "orientation": "fixed screen-space roll before inverse orthographic sampling",
+      "northAxisScreen": {
+        "x": -0.390035,
+        "y": 0.89702,
+        "z": 0.207912
+      },
+      "inspection": {
+        "light": "routing-globe-tilt-23-5-single-inspection-light.png",
+        "dark": "routing-globe-tilt-23-5-single-inspection-dark.png"
+      },
+      "frames": [
+        {
+          "index": 0,
+          "centerLongitude": 122,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-23-5-frame-00-24-light.png",
+              "dark": "routing-globe-tilt-23-5-frame-00-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-23-5-frame-00-32-light.png",
+              "dark": "routing-globe-tilt-23-5-frame-00-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 1,
+          "centerLongitude": 144.5,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-23-5-frame-01-24-light.png",
+              "dark": "routing-globe-tilt-23-5-frame-01-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-23-5-frame-01-32-light.png",
+              "dark": "routing-globe-tilt-23-5-frame-01-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 2,
+          "centerLongitude": 167,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-23-5-frame-02-24-light.png",
+              "dark": "routing-globe-tilt-23-5-frame-02-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-23-5-frame-02-32-light.png",
+              "dark": "routing-globe-tilt-23-5-frame-02-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 3,
+          "centerLongitude": -170.5,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-23-5-frame-03-24-light.png",
+              "dark": "routing-globe-tilt-23-5-frame-03-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-23-5-frame-03-32-light.png",
+              "dark": "routing-globe-tilt-23-5-frame-03-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 4,
+          "centerLongitude": -148,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-23-5-frame-04-24-light.png",
+              "dark": "routing-globe-tilt-23-5-frame-04-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-23-5-frame-04-32-light.png",
+              "dark": "routing-globe-tilt-23-5-frame-04-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 5,
+          "centerLongitude": -125.5,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-23-5-frame-05-24-light.png",
+              "dark": "routing-globe-tilt-23-5-frame-05-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-23-5-frame-05-32-light.png",
+              "dark": "routing-globe-tilt-23-5-frame-05-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 6,
+          "centerLongitude": -103,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-23-5-frame-06-24-light.png",
+              "dark": "routing-globe-tilt-23-5-frame-06-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-23-5-frame-06-32-light.png",
+              "dark": "routing-globe-tilt-23-5-frame-06-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 7,
+          "centerLongitude": -80.5,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-23-5-frame-07-24-light.png",
+              "dark": "routing-globe-tilt-23-5-frame-07-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-23-5-frame-07-32-light.png",
+              "dark": "routing-globe-tilt-23-5-frame-07-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 8,
+          "centerLongitude": -58,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-23-5-frame-08-24-light.png",
+              "dark": "routing-globe-tilt-23-5-frame-08-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-23-5-frame-08-32-light.png",
+              "dark": "routing-globe-tilt-23-5-frame-08-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 9,
+          "centerLongitude": -35.5,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-23-5-frame-09-24-light.png",
+              "dark": "routing-globe-tilt-23-5-frame-09-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-23-5-frame-09-32-light.png",
+              "dark": "routing-globe-tilt-23-5-frame-09-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 10,
+          "centerLongitude": -13,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-23-5-frame-10-24-light.png",
+              "dark": "routing-globe-tilt-23-5-frame-10-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-23-5-frame-10-32-light.png",
+              "dark": "routing-globe-tilt-23-5-frame-10-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 11,
+          "centerLongitude": 9.5,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-23-5-frame-11-24-light.png",
+              "dark": "routing-globe-tilt-23-5-frame-11-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-23-5-frame-11-32-light.png",
+              "dark": "routing-globe-tilt-23-5-frame-11-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 12,
+          "centerLongitude": 32,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-23-5-frame-12-24-light.png",
+              "dark": "routing-globe-tilt-23-5-frame-12-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-23-5-frame-12-32-light.png",
+              "dark": "routing-globe-tilt-23-5-frame-12-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 13,
+          "centerLongitude": 54.5,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-23-5-frame-13-24-light.png",
+              "dark": "routing-globe-tilt-23-5-frame-13-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-23-5-frame-13-32-light.png",
+              "dark": "routing-globe-tilt-23-5-frame-13-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 14,
+          "centerLongitude": 77,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-23-5-frame-14-24-light.png",
+              "dark": "routing-globe-tilt-23-5-frame-14-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-23-5-frame-14-32-light.png",
+              "dark": "routing-globe-tilt-23-5-frame-14-32-dark.png"
+            }
+          }
+        },
+        {
+          "index": 15,
+          "centerLongitude": 99.5,
+          "files": {
+            "24": {
+              "light": "routing-globe-tilt-23-5-frame-15-24-light.png",
+              "dark": "routing-globe-tilt-23-5-frame-15-24-dark.png"
+            },
+            "32": {
+              "light": "routing-globe-tilt-23-5-frame-15-32-light.png",
+              "dark": "routing-globe-tilt-23-5-frame-15-32-dark.png"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "outputs": [
+    "routing-globe-axis-tilt-preview.html",
+    "routing-globe-tilt-18-single-inspection-light.png",
+    "routing-globe-tilt-18-single-inspection-dark.png",
+    "routing-globe-tilt-18-frame-00-24-light.png",
+    "routing-globe-tilt-18-frame-00-24-dark.png",
+    "routing-globe-tilt-18-frame-00-32-light.png",
+    "routing-globe-tilt-18-frame-00-32-dark.png",
+    "routing-globe-tilt-18-frame-01-24-light.png",
+    "routing-globe-tilt-18-frame-01-24-dark.png",
+    "routing-globe-tilt-18-frame-01-32-light.png",
+    "routing-globe-tilt-18-frame-01-32-dark.png",
+    "routing-globe-tilt-18-frame-02-24-light.png",
+    "routing-globe-tilt-18-frame-02-24-dark.png",
+    "routing-globe-tilt-18-frame-02-32-light.png",
+    "routing-globe-tilt-18-frame-02-32-dark.png",
+    "routing-globe-tilt-18-frame-03-24-light.png",
+    "routing-globe-tilt-18-frame-03-24-dark.png",
+    "routing-globe-tilt-18-frame-03-32-light.png",
+    "routing-globe-tilt-18-frame-03-32-dark.png",
+    "routing-globe-tilt-18-frame-04-24-light.png",
+    "routing-globe-tilt-18-frame-04-24-dark.png",
+    "routing-globe-tilt-18-frame-04-32-light.png",
+    "routing-globe-tilt-18-frame-04-32-dark.png",
+    "routing-globe-tilt-18-frame-05-24-light.png",
+    "routing-globe-tilt-18-frame-05-24-dark.png",
+    "routing-globe-tilt-18-frame-05-32-light.png",
+    "routing-globe-tilt-18-frame-05-32-dark.png",
+    "routing-globe-tilt-18-frame-06-24-light.png",
+    "routing-globe-tilt-18-frame-06-24-dark.png",
+    "routing-globe-tilt-18-frame-06-32-light.png",
+    "routing-globe-tilt-18-frame-06-32-dark.png",
+    "routing-globe-tilt-18-frame-07-24-light.png",
+    "routing-globe-tilt-18-frame-07-24-dark.png",
+    "routing-globe-tilt-18-frame-07-32-light.png",
+    "routing-globe-tilt-18-frame-07-32-dark.png",
+    "routing-globe-tilt-18-frame-08-24-light.png",
+    "routing-globe-tilt-18-frame-08-24-dark.png",
+    "routing-globe-tilt-18-frame-08-32-light.png",
+    "routing-globe-tilt-18-frame-08-32-dark.png",
+    "routing-globe-tilt-18-frame-09-24-light.png",
+    "routing-globe-tilt-18-frame-09-24-dark.png",
+    "routing-globe-tilt-18-frame-09-32-light.png",
+    "routing-globe-tilt-18-frame-09-32-dark.png",
+    "routing-globe-tilt-18-frame-10-24-light.png",
+    "routing-globe-tilt-18-frame-10-24-dark.png",
+    "routing-globe-tilt-18-frame-10-32-light.png",
+    "routing-globe-tilt-18-frame-10-32-dark.png",
+    "routing-globe-tilt-18-frame-11-24-light.png",
+    "routing-globe-tilt-18-frame-11-24-dark.png",
+    "routing-globe-tilt-18-frame-11-32-light.png",
+    "routing-globe-tilt-18-frame-11-32-dark.png",
+    "routing-globe-tilt-18-frame-12-24-light.png",
+    "routing-globe-tilt-18-frame-12-24-dark.png",
+    "routing-globe-tilt-18-frame-12-32-light.png",
+    "routing-globe-tilt-18-frame-12-32-dark.png",
+    "routing-globe-tilt-18-frame-13-24-light.png",
+    "routing-globe-tilt-18-frame-13-24-dark.png",
+    "routing-globe-tilt-18-frame-13-32-light.png",
+    "routing-globe-tilt-18-frame-13-32-dark.png",
+    "routing-globe-tilt-18-frame-14-24-light.png",
+    "routing-globe-tilt-18-frame-14-24-dark.png",
+    "routing-globe-tilt-18-frame-14-32-light.png",
+    "routing-globe-tilt-18-frame-14-32-dark.png",
+    "routing-globe-tilt-18-frame-15-24-light.png",
+    "routing-globe-tilt-18-frame-15-24-dark.png",
+    "routing-globe-tilt-18-frame-15-32-light.png",
+    "routing-globe-tilt-18-frame-15-32-dark.png",
+    "routing-globe-tilt-20-single-inspection-light.png",
+    "routing-globe-tilt-20-single-inspection-dark.png",
+    "routing-globe-tilt-20-frame-00-24-light.png",
+    "routing-globe-tilt-20-frame-00-24-dark.png",
+    "routing-globe-tilt-20-frame-00-32-light.png",
+    "routing-globe-tilt-20-frame-00-32-dark.png",
+    "routing-globe-tilt-20-frame-01-24-light.png",
+    "routing-globe-tilt-20-frame-01-24-dark.png",
+    "routing-globe-tilt-20-frame-01-32-light.png",
+    "routing-globe-tilt-20-frame-01-32-dark.png",
+    "routing-globe-tilt-20-frame-02-24-light.png",
+    "routing-globe-tilt-20-frame-02-24-dark.png",
+    "routing-globe-tilt-20-frame-02-32-light.png",
+    "routing-globe-tilt-20-frame-02-32-dark.png",
+    "routing-globe-tilt-20-frame-03-24-light.png",
+    "routing-globe-tilt-20-frame-03-24-dark.png",
+    "routing-globe-tilt-20-frame-03-32-light.png",
+    "routing-globe-tilt-20-frame-03-32-dark.png",
+    "routing-globe-tilt-20-frame-04-24-light.png",
+    "routing-globe-tilt-20-frame-04-24-dark.png",
+    "routing-globe-tilt-20-frame-04-32-light.png",
+    "routing-globe-tilt-20-frame-04-32-dark.png",
+    "routing-globe-tilt-20-frame-05-24-light.png",
+    "routing-globe-tilt-20-frame-05-24-dark.png",
+    "routing-globe-tilt-20-frame-05-32-light.png",
+    "routing-globe-tilt-20-frame-05-32-dark.png",
+    "routing-globe-tilt-20-frame-06-24-light.png",
+    "routing-globe-tilt-20-frame-06-24-dark.png",
+    "routing-globe-tilt-20-frame-06-32-light.png",
+    "routing-globe-tilt-20-frame-06-32-dark.png",
+    "routing-globe-tilt-20-frame-07-24-light.png",
+    "routing-globe-tilt-20-frame-07-24-dark.png",
+    "routing-globe-tilt-20-frame-07-32-light.png",
+    "routing-globe-tilt-20-frame-07-32-dark.png",
+    "routing-globe-tilt-20-frame-08-24-light.png",
+    "routing-globe-tilt-20-frame-08-24-dark.png",
+    "routing-globe-tilt-20-frame-08-32-light.png",
+    "routing-globe-tilt-20-frame-08-32-dark.png",
+    "routing-globe-tilt-20-frame-09-24-light.png",
+    "routing-globe-tilt-20-frame-09-24-dark.png",
+    "routing-globe-tilt-20-frame-09-32-light.png",
+    "routing-globe-tilt-20-frame-09-32-dark.png",
+    "routing-globe-tilt-20-frame-10-24-light.png",
+    "routing-globe-tilt-20-frame-10-24-dark.png",
+    "routing-globe-tilt-20-frame-10-32-light.png",
+    "routing-globe-tilt-20-frame-10-32-dark.png",
+    "routing-globe-tilt-20-frame-11-24-light.png",
+    "routing-globe-tilt-20-frame-11-24-dark.png",
+    "routing-globe-tilt-20-frame-11-32-light.png",
+    "routing-globe-tilt-20-frame-11-32-dark.png",
+    "routing-globe-tilt-20-frame-12-24-light.png",
+    "routing-globe-tilt-20-frame-12-24-dark.png",
+    "routing-globe-tilt-20-frame-12-32-light.png",
+    "routing-globe-tilt-20-frame-12-32-dark.png",
+    "routing-globe-tilt-20-frame-13-24-light.png",
+    "routing-globe-tilt-20-frame-13-24-dark.png",
+    "routing-globe-tilt-20-frame-13-32-light.png",
+    "routing-globe-tilt-20-frame-13-32-dark.png",
+    "routing-globe-tilt-20-frame-14-24-light.png",
+    "routing-globe-tilt-20-frame-14-24-dark.png",
+    "routing-globe-tilt-20-frame-14-32-light.png",
+    "routing-globe-tilt-20-frame-14-32-dark.png",
+    "routing-globe-tilt-20-frame-15-24-light.png",
+    "routing-globe-tilt-20-frame-15-24-dark.png",
+    "routing-globe-tilt-20-frame-15-32-light.png",
+    "routing-globe-tilt-20-frame-15-32-dark.png",
+    "routing-globe-tilt-23-5-single-inspection-light.png",
+    "routing-globe-tilt-23-5-single-inspection-dark.png",
+    "routing-globe-tilt-23-5-frame-00-24-light.png",
+    "routing-globe-tilt-23-5-frame-00-24-dark.png",
+    "routing-globe-tilt-23-5-frame-00-32-light.png",
+    "routing-globe-tilt-23-5-frame-00-32-dark.png",
+    "routing-globe-tilt-23-5-frame-01-24-light.png",
+    "routing-globe-tilt-23-5-frame-01-24-dark.png",
+    "routing-globe-tilt-23-5-frame-01-32-light.png",
+    "routing-globe-tilt-23-5-frame-01-32-dark.png",
+    "routing-globe-tilt-23-5-frame-02-24-light.png",
+    "routing-globe-tilt-23-5-frame-02-24-dark.png",
+    "routing-globe-tilt-23-5-frame-02-32-light.png",
+    "routing-globe-tilt-23-5-frame-02-32-dark.png",
+    "routing-globe-tilt-23-5-frame-03-24-light.png",
+    "routing-globe-tilt-23-5-frame-03-24-dark.png",
+    "routing-globe-tilt-23-5-frame-03-32-light.png",
+    "routing-globe-tilt-23-5-frame-03-32-dark.png",
+    "routing-globe-tilt-23-5-frame-04-24-light.png",
+    "routing-globe-tilt-23-5-frame-04-24-dark.png",
+    "routing-globe-tilt-23-5-frame-04-32-light.png",
+    "routing-globe-tilt-23-5-frame-04-32-dark.png",
+    "routing-globe-tilt-23-5-frame-05-24-light.png",
+    "routing-globe-tilt-23-5-frame-05-24-dark.png",
+    "routing-globe-tilt-23-5-frame-05-32-light.png",
+    "routing-globe-tilt-23-5-frame-05-32-dark.png",
+    "routing-globe-tilt-23-5-frame-06-24-light.png",
+    "routing-globe-tilt-23-5-frame-06-24-dark.png",
+    "routing-globe-tilt-23-5-frame-06-32-light.png",
+    "routing-globe-tilt-23-5-frame-06-32-dark.png",
+    "routing-globe-tilt-23-5-frame-07-24-light.png",
+    "routing-globe-tilt-23-5-frame-07-24-dark.png",
+    "routing-globe-tilt-23-5-frame-07-32-light.png",
+    "routing-globe-tilt-23-5-frame-07-32-dark.png",
+    "routing-globe-tilt-23-5-frame-08-24-light.png",
+    "routing-globe-tilt-23-5-frame-08-24-dark.png",
+    "routing-globe-tilt-23-5-frame-08-32-light.png",
+    "routing-globe-tilt-23-5-frame-08-32-dark.png",
+    "routing-globe-tilt-23-5-frame-09-24-light.png",
+    "routing-globe-tilt-23-5-frame-09-24-dark.png",
+    "routing-globe-tilt-23-5-frame-09-32-light.png",
+    "routing-globe-tilt-23-5-frame-09-32-dark.png",
+    "routing-globe-tilt-23-5-frame-10-24-light.png",
+    "routing-globe-tilt-23-5-frame-10-24-dark.png",
+    "routing-globe-tilt-23-5-frame-10-32-light.png",
+    "routing-globe-tilt-23-5-frame-10-32-dark.png",
+    "routing-globe-tilt-23-5-frame-11-24-light.png",
+    "routing-globe-tilt-23-5-frame-11-24-dark.png",
+    "routing-globe-tilt-23-5-frame-11-32-light.png",
+    "routing-globe-tilt-23-5-frame-11-32-dark.png",
+    "routing-globe-tilt-23-5-frame-12-24-light.png",
+    "routing-globe-tilt-23-5-frame-12-24-dark.png",
+    "routing-globe-tilt-23-5-frame-12-32-light.png",
+    "routing-globe-tilt-23-5-frame-12-32-dark.png",
+    "routing-globe-tilt-23-5-frame-13-24-light.png",
+    "routing-globe-tilt-23-5-frame-13-24-dark.png",
+    "routing-globe-tilt-23-5-frame-13-32-light.png",
+    "routing-globe-tilt-23-5-frame-13-32-dark.png",
+    "routing-globe-tilt-23-5-frame-14-24-light.png",
+    "routing-globe-tilt-23-5-frame-14-24-dark.png",
+    "routing-globe-tilt-23-5-frame-14-32-light.png",
+    "routing-globe-tilt-23-5-frame-14-32-dark.png",
+    "routing-globe-tilt-23-5-frame-15-24-light.png",
+    "routing-globe-tilt-23-5-frame-15-24-dark.png",
+    "routing-globe-tilt-23-5-frame-15-32-light.png",
+    "routing-globe-tilt-23-5-frame-15-32-dark.png"
+  ],
+  "runtime": "individual-frame-preview-only"
+}

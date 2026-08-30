@@ -1,0 +1,18 @@
+{
+  "stage": "preview-master-only",
+  "source": "natural-earth-land-50m.geojson",
+  "coordinateSystem": "equirectangular / plate carree",
+  "cleanup": {
+    "simplificationToleranceDegrees": 0.045,
+    "globalMinimumAreaDegrees": 0.018,
+    "keyRegionMinimumAreaDegrees": 0.0045
+  },
+  "outputs": [
+    "routing-globe-source-outlines.svg",
+    "routing-globe-map-master-preview.svg",
+    "routing-globe-source-vs-preview-overlay.svg",
+    "routing-globe-east-asia-source-vs-preview.svg",
+    "routing-globe-map-master-preview.html",
+    "preview-world-map.json"
+  ]
+}

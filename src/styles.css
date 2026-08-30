@@ -262,59 +262,52 @@ input[type="number"]::-webkit-outer-spin-button {
   }
 }
 
-@keyframes localProxyRadarBreathe {
-  0%,
-  100% {
-    filter: drop-shadow(0 0 0 rgb(20 184 166 / 0));
-    opacity: 0.88;
-    transform: scale(1);
+@keyframes localProxyGlobeSpin {
+  from {
+    background-position-x: 0;
   }
 
-  50% {
-    filter: drop-shadow(0 0 6px rgb(20 184 166 / 0.34));
-    opacity: 1;
-    transform: scale(1.04);
+  to {
+    background-position-x: var(--local-proxy-globe-end);
   }
 }
 
-.local-proxy-radar {
+.local-proxy-globe {
+  --local-proxy-globe-size: 24px;
   display: block;
-  overflow: visible;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.8;
-  transform-box: fill-box;
-  transform-origin: center;
+  flex: 0 0 var(--local-proxy-globe-size);
+  width: var(--local-proxy-globe-size);
+  height: var(--local-proxy-globe-size);
+  background-image: var(--local-proxy-globe-static-light);
+  background-position: 0 0;
+  background-repeat: no-repeat;
+  background-size: auto 100%;
+  contain: layout paint;
 }
 
-.local-proxy-radar__pulse {
-  fill: currentColor;
-  opacity: 0.1;
-  stroke: currentColor;
+.dark .local-proxy-globe {
+  background-image: var(--local-proxy-globe-static-dark);
 }
 
-.local-proxy-radar__wave {
-  opacity: 0.82;
+.local-proxy-globe--active {
+  animation: localProxyGlobeSpin 2000ms steps(16, end) infinite;
+  background-image: var(--local-proxy-globe-sprite-light);
 }
 
-.local-proxy-radar__core {
-  fill: currentColor;
-  stroke: none;
-}
-
-.local-proxy-radar--active {
-  animation: localProxyRadarBreathe 2.8s ease-in-out infinite;
-}
-
-.local-proxy-radar--active .local-proxy-radar__pulse {
-  opacity: 0.18;
+.dark .local-proxy-globe--active {
+  background-image: var(--local-proxy-globe-sprite-dark);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .local-proxy-radar--active {
+  .local-proxy-globe--active {
     animation: none;
-    opacity: 1;
+    background-image: var(--local-proxy-globe-static-light);
+    background-size: 100% 100%;
+    background-position: 0 0;
+  }
+
+  .dark .local-proxy-globe--active {
+    background-image: var(--local-proxy-globe-static-dark);
   }
 }
 

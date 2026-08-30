@@ -1,0 +1,400 @@
+{
+  "stage": "final-routing-globe-assets",
+  "sourceExperiment": "../../../docs/assets/routing-globe-axis-tilt-experiment/manifest.json",
+  "sourceMapSha256": "5c1468c489229348b054b85354fe57efa8c55114a11141903eab12aefc6f27c9",
+  "projection": "orthographic-inverse-raster",
+  "axialTiltDegrees": 23.5,
+  "orientation": "fixed screen-space roll before inverse orthographic sampling",
+  "northDirection": "left-up",
+  "northAxisScreen": {
+    "x": -0.390035,
+    "y": 0.89702,
+    "z": 0.207912
+  },
+  "frameCount": 16,
+  "frameStepDegrees": 22.5,
+  "loopDurationMs": 2000,
+  "baseCenterLongitude": 122,
+  "centerLatitude": 12,
+  "radiusRatio": 0.4375,
+  "supersample": 4,
+  "palettes": {
+    "light": {
+      "ocean": [
+        224,
+        243,
+        244
+      ],
+      "land": [
+        49,
+        145,
+        101
+      ],
+      "rim": [
+        38,
+        128,
+        121
+      ]
+    },
+    "dark": {
+      "ocean": [
+        28,
+        67,
+        70
+      ],
+      "land": [
+        113,
+        201,
+        156
+      ],
+      "rim": [
+        104,
+        204,
+        192
+      ]
+    }
+  },
+  "staticFrameIndex": null,
+  "staticCenterLongitude": 122,
+  "sizes": [
+    24,
+    32
+  ],
+  "themes": [
+    "light",
+    "dark"
+  ],
+  "sprites": {
+    "24": {
+      "light": "routing-globe-sprite-24-light.png",
+      "dark": "routing-globe-sprite-24-dark.png"
+    },
+    "32": {
+      "light": "routing-globe-sprite-32-light.png",
+      "dark": "routing-globe-sprite-32-dark.png"
+    }
+  },
+  "statics": {
+    "24": {
+      "light": "routing-globe-static-24-light.png",
+      "dark": "routing-globe-static-24-dark.png"
+    },
+    "32": {
+      "light": "routing-globe-static-32-light.png",
+      "dark": "routing-globe-static-32-dark.png"
+    }
+  },
+  "frames": [
+    {
+      "index": 0,
+      "centerLongitude": 122,
+      "files": {
+        "24": {
+          "light": "frames/routing-globe-frame-00-24-light.png",
+          "dark": "frames/routing-globe-frame-00-24-dark.png"
+        },
+        "32": {
+          "light": "frames/routing-globe-frame-00-32-light.png",
+          "dark": "frames/routing-globe-frame-00-32-dark.png"
+        }
+      }
+    },
+    {
+      "index": 1,
+      "centerLongitude": 144.5,
+      "files": {
+        "24": {
+          "light": "frames/routing-globe-frame-01-24-light.png",
+          "dark": "frames/routing-globe-frame-01-24-dark.png"
+        },
+        "32": {
+          "light": "frames/routing-globe-frame-01-32-light.png",
+          "dark": "frames/routing-globe-frame-01-32-dark.png"
+        }
+      }
+    },
+    {
+      "index": 2,
+      "centerLongitude": 167,
+      "files": {
+        "24": {
+          "light": "frames/routing-globe-frame-02-24-light.png",
+          "dark": "frames/routing-globe-frame-02-24-dark.png"
+        },
+        "32": {
+          "light": "frames/routing-globe-frame-02-32-light.png",
+          "dark": "frames/routing-globe-frame-02-32-dark.png"
+        }
+      }
+    },
+    {
+      "index": 3,
+      "centerLongitude": -170.5,
+      "files": {
+        "24": {
+          "light": "frames/routing-globe-frame-03-24-light.png",
+          "dark": "frames/routing-globe-frame-03-24-dark.png"
+        },
+        "32": {
+          "light": "frames/routing-globe-frame-03-32-light.png",
+          "dark": "frames/routing-globe-frame-03-32-dark.png"
+        }
+      }
+    },
+    {
+      "index": 4,
+      "centerLongitude": -148,
+      "files": {
+        "24": {
+          "light": "frames/routing-globe-frame-04-24-light.png",
+          "dark": "frames/routing-globe-frame-04-24-dark.png"
+        },
+        "32": {
+          "light": "frames/routing-globe-frame-04-32-light.png",
+          "dark": "frames/routing-globe-frame-04-32-dark.png"
+        }
+      }
+    },
+    {
+      "index": 5,
+      "centerLongitude": -125.5,
+      "files": {
+        "24": {
+          "light": "frames/routing-globe-frame-05-24-light.png",
+          "dark": "frames/routing-globe-frame-05-24-dark.png"
+        },
+        "32": {
+          "light": "frames/routing-globe-frame-05-32-light.png",
+          "dark": "frames/routing-globe-frame-05-32-dark.png"
+        }
+      }
+    },
+    {
+      "index": 6,
+      "centerLongitude": -103,
+      "files": {
+        "24": {
+          "light": "frames/routing-globe-frame-06-24-light.png",
+          "dark": "frames/routing-globe-frame-06-24-dark.png"
+        },
+        "32": {
+          "light": "frames/routing-globe-frame-06-32-light.png",
+          "dark": "frames/routing-globe-frame-06-32-dark.png"
+        }
+      }
+    },
+    {
+      "index": 7,
+      "centerLongitude": -80.5,
+      "files": {
+        "24": {
+          "light": "frames/routing-globe-frame-07-24-light.png",
+          "dark": "frames/routing-globe-frame-07-24-dark.png"
+        },
+        "32": {
+          "light": "frames/routing-globe-frame-07-32-light.png",
+          "dark": "frames/routing-globe-frame-07-32-dark.png"
+        }
+      }
+    },
+    {
+      "index": 8,
+      "centerLongitude": -58,
+      "files": {
+        "24": {
+          "light": "frames/routing-globe-frame-08-24-light.png",
+          "dark": "frames/routing-globe-frame-08-24-dark.png"
+        },
+        "32": {
+          "light": "frames/routing-globe-frame-08-32-light.png",
+          "dark": "frames/routing-globe-frame-08-32-dark.png"
+        }
+      }
+    },
+    {
+      "index": 9,
+      "centerLongitude": -35.5,
+      "files": {
+        "24": {
+          "light": "frames/routing-globe-frame-09-24-light.png",
+          "dark": "frames/routing-globe-frame-09-24-dark.png"
+        },
+        "32": {
+          "light": "frames/routing-globe-frame-09-32-light.png",
+          "dark": "frames/routing-globe-frame-09-32-dark.png"
+        }
+      }
+    },
+    {
+      "index": 10,
+      "centerLongitude": -13,
+      "files": {
+        "24": {
+          "light": "frames/routing-globe-frame-10-24-light.png",
+          "dark": "frames/routing-globe-frame-10-24-dark.png"
+        },
+        "32": {
+          "light": "frames/routing-globe-frame-10-32-light.png",
+          "dark": "frames/routing-globe-frame-10-32-dark.png"
+        }
+      }
+    },
+    {
+      "index": 11,
+      "centerLongitude": 9.5,
+      "files": {
+        "24": {
+          "light": "frames/routing-globe-frame-11-24-light.png",
+          "dark": "frames/routing-globe-frame-11-24-dark.png"
+        },
+        "32": {
+          "light": "frames/routing-globe-frame-11-32-light.png",
+          "dark": "frames/routing-globe-frame-11-32-dark.png"
+        }
+      }
+    },
+    {
+      "index": 12,
+      "centerLongitude": 32,
+      "files": {
+        "24": {
+          "light": "frames/routing-globe-frame-12-24-light.png",
+          "dark": "frames/routing-globe-frame-12-24-dark.png"
+        },
+        "32": {
+          "light": "frames/routing-globe-frame-12-32-light.png",
+          "dark": "frames/routing-globe-frame-12-32-dark.png"
+        }
+      }
+    },
+    {
+      "index": 13,
+      "centerLongitude": 54.5,
+      "files": {
+        "24": {
+          "light": "frames/routing-globe-frame-13-24-light.png",
+          "dark": "frames/routing-globe-frame-13-24-dark.png"
+        },
+        "32": {
+          "light": "frames/routing-globe-frame-13-32-light.png",
+          "dark": "frames/routing-globe-frame-13-32-dark.png"
+        }
+      }
+    },
+    {
+      "index": 14,
+      "centerLongitude": 77,
+      "files": {
+        "24": {
+          "light": "frames/routing-globe-frame-14-24-light.png",
+          "dark": "frames/routing-globe-frame-14-24-dark.png"
+        },
+        "32": {
+          "light": "frames/routing-globe-frame-14-32-light.png",
+          "dark": "frames/routing-globe-frame-14-32-dark.png"
+        }
+      }
+    },
+    {
+      "index": 15,
+      "centerLongitude": 99.5,
+      "files": {
+        "24": {
+          "light": "frames/routing-globe-frame-15-24-light.png",
+          "dark": "frames/routing-globe-frame-15-24-dark.png"
+        },
+        "32": {
+          "light": "frames/routing-globe-frame-15-32-light.png",
+          "dark": "frames/routing-globe-frame-15-32-dark.png"
+        }
+      }
+    }
+  ],
+  "hashes": {
+    "routing-globe-sprite-24-light.png": "917a1ec11cb0fc25689d2594b22f55ead9ad58668a398718d3eeaf10082575b3",
+    "routing-globe-static-24-light.png": "d3454e74f8c08d0d7a285cecfa74f04717c885c12e69508d677f5e64fd678711",
+    "routing-globe-sprite-24-dark.png": "5cb953eb0cdc41be1aea4b34c493b03b179f805b345e4f809689b0789ced9932",
+    "routing-globe-static-24-dark.png": "1117d206a4f0c07995375a64c68172f039cbad9ff97a6f6dd8b2f8f54509ffba",
+    "routing-globe-sprite-32-light.png": "c0aa070a3bdf6800ae1a52c0ea0d51b77dfed234d82920c479a3f017006fa18a",
+    "routing-globe-static-32-light.png": "c35c50ac68cdd34def7bc7b8ce28a439e4c31649f20a4b353accb16078a1337b",
+    "routing-globe-sprite-32-dark.png": "696db50e784ccf68a6679b6f3e3fee15cec0bc9969be8e3ac27cdf08a18eb120",
+    "routing-globe-static-32-dark.png": "ab54a3c66117af68c1e74a22ece7d02385ab2516bfffd57bff4c2f09519a25fa",
+    "frames/routing-globe-frame-00-24-light.png": "597b39d693f68fb5bea527ee0752a54ad5017882218ef05140a8271ad17816fa",
+    "frames/routing-globe-frame-00-24-dark.png": "090e2abc6347977c5558e6b840a729e0dce7f602e437492d90824c5ded68e018",
+    "frames/routing-globe-frame-00-32-light.png": "27025e35b9954a4ba7ff00e83873cbe5291cdb77efb7537fb9ed4c55d5df49bc",
+    "frames/routing-globe-frame-00-32-dark.png": "c7aa42247d33fcdc19870afb1959bc7b8703f3c045769c42173a17bcc941545c",
+    "frames/routing-globe-frame-01-24-light.png": "a057255ff765a065e698c939396aa8f33930faa13aad0241a34dfb67e8437e4d",
+    "frames/routing-globe-frame-01-24-dark.png": "4a0d610e6a5c282bd9d39fb1af7149246a1e123ec32368a8551bdbc45be76f92",
+    "frames/routing-globe-frame-01-32-light.png": "5845e8c14844ea859ebbee7961753f19e4d79d294a542104a106363eb23a02bd",
+    "frames/routing-globe-frame-01-32-dark.png": "7b50df5f02c2ba90098ed04a1e7fd42b90bc125d18d00253b397c3bd46eea6f9",
+    "frames/routing-globe-frame-02-24-light.png": "81f6fb97489353787ab870b740c497ff6dbd646c39d81443b3f669e27e9896dc",
+    "frames/routing-globe-frame-02-24-dark.png": "eab4aab9aa7bb5da720397ebe1a1fbfadd2c4684888aa59581900947be9a6aa2",
+    "frames/routing-globe-frame-02-32-light.png": "163277d68a2181414b7c0de45b86f26ce70e444d28731ef3d817a6c1e9c4e776",
+    "frames/routing-globe-frame-02-32-dark.png": "720096643330936648454185fd8977900c26c2964a69e84e8abfdba8f985df54",
+    "frames/routing-globe-frame-03-24-light.png": "373afd4a6553d2f413d511c9314ef688206ff2bbd7d60b8ab0fa310ba20a8146",
+    "frames/routing-globe-frame-03-24-dark.png": "3105c69ada25da3323b792f224536d23aeb404ce511a7f8d1fa67c1f597006bd",
+    "frames/routing-globe-frame-03-32-light.png": "ecf1c997774abeed0e8b8d1254194297829f1f952dd23071307db212c86b3c52",
+    "frames/routing-globe-frame-03-32-dark.png": "7e3f0561971258a4b3b57df7bc42d68560ada75530f8b2f179654836e35b23aa",
+    "frames/routing-globe-frame-04-24-light.png": "b222d5b49b475225332912bdbb35c9398dd7c2cfea9c9dc5055770466b4ca10d",
+    "frames/routing-globe-frame-04-24-dark.png": "604441660d88ee2279d8f2c63440d8d80f6fae0e71ef021eb1e9d25609d559fe",
+    "frames/routing-globe-frame-04-32-light.png": "668a507d8ee2a0361826641079ab0389603f28653baa52971a8c123672bedb88",
+    "frames/routing-globe-frame-04-32-dark.png": "1d40197ca723f8bd05ef67333e4d4d18cb7e5f426668a217acaadc129718e153",
+    "frames/routing-globe-frame-05-24-light.png": "71e4109e95e41b53dc6928c25dfddbdd13ed160ebc961db165f53c12bff326d3",
+    "frames/routing-globe-frame-05-24-dark.png": "695427663b5b1caf213a391c364197f12721f04f5a2d8499ecb1006d4c74ba10",
+    "frames/routing-globe-frame-05-32-light.png": "d4f4d6c26d79beab113bc615c5837dfeea6981284b24b2ba64fae2cb3d6abf77",
+    "frames/routing-globe-frame-05-32-dark.png": "771a95b10e4ff5c172eeb53ce498c40ae76bddc7b7b40fac59bb3a8cfcb2f2f2",
+    "frames/routing-globe-frame-06-24-light.png": "166147f4cf1578eba7e6eb43d1a4dbe3a2a14fb532e07c088d81102189080bc1",
+    "frames/routing-globe-frame-06-24-dark.png": "e07d79c0ae06d973bcb3cbd805ae860b888e5b8d644cbd7e078256ee58e499d8",
+    "frames/routing-globe-frame-06-32-light.png": "7096d8edb07c70df01ce992a2622c2a28a8c4605ad03547fc3d52413c06ec5fe",
+    "frames/routing-globe-frame-06-32-dark.png": "6970005d70a9511da07a06abd4e05da3ec06742909435f90556b084de4b29d5a",
+    "frames/routing-globe-frame-07-24-light.png": "9f6c05f40d2758f10e52aa0c584d600e4feeded2c3ea78ea38866826fa135774",
+    "frames/routing-globe-frame-07-24-dark.png": "c17cbf13d047b4bfd8aec8a656ed155e0c3c797a28860edccf312a1cecab68a1",
+    "frames/routing-globe-frame-07-32-light.png": "ede067d1e84e33fa60b8654804da4798a464e103d9409472bd2c9d1925a8fa11",
+    "frames/routing-globe-frame-07-32-dark.png": "0c131b4f4c0434f5791b6636eba371abe039c56fd646c32922ac214954bc78cd",
+    "frames/routing-globe-frame-08-24-light.png": "3ed112d953095c01dd729091dacee6b87073ed293ce11fa514c5353e086b6133",
+    "frames/routing-globe-frame-08-24-dark.png": "e26b235d01754184932afb500745066e1acf202cd9d50f065a2ab627b2106f99",
+    "frames/routing-globe-frame-08-32-light.png": "85ca7880e4035835fbaee068ed0a38ecb4602a245a3815d6ea1f54048e0d6837",
+    "frames/routing-globe-frame-08-32-dark.png": "39e123baa93935e7c6f1226bec76754de9ace674d1ae9bf04baba7cb5c01a91e",
+    "frames/routing-globe-frame-09-24-light.png": "4652020e0d2a8af6e982916ddd3b64c63b0845d45de45fe628936367955f81c9",
+    "frames/routing-globe-frame-09-24-dark.png": "a65c011162c6e61e826208f37dd7a1fb5365309e5fc63670d6bf425e5e9fde66",
+    "frames/routing-globe-frame-09-32-light.png": "cfa1527f3064dd75d50cadc335f879d2e323db032e742fd5389222506ac62971",
+    "frames/routing-globe-frame-09-32-dark.png": "89167bb77eba08f2183ef9073e7e1dfc9dc98733fab1af8dc43773409cbc6876",
+    "frames/routing-globe-frame-10-24-light.png": "37ed230af4c793a046e8412c8f7599de9e822c4d55525b2ff6d9b3b4f20ab4e5",
+    "frames/routing-globe-frame-10-24-dark.png": "26cda8230112b577db8e00e131d99d578e8c1883a86e2c157f991e4d5f9a1207",
+    "frames/routing-globe-frame-10-32-light.png": "da2716075c6eda9d2682dabcbafa9e69d28e6ae7f64844889877b957d23a1ac0",
+    "frames/routing-globe-frame-10-32-dark.png": "6380126a791fa71581c235376bf1e1c0c1652ec22ea7d559d46ec76263d0be4e",
+    "frames/routing-globe-frame-11-24-light.png": "4d3935315d23f2692ef8be9dbf9a87ee6c6905f840058ce3e0d492f438a8d8d7",
+    "frames/routing-globe-frame-11-24-dark.png": "00e6ab394c80ac8d63463ff2fef2d3ee3dc3b7c38f8c99c6427959b4eefa7f1c",
+    "frames/routing-globe-frame-11-32-light.png": "f647db286b469f20908e8c6af29100f9b31b5068d1f0d19d9584aad66277b9bc",
+    "frames/routing-globe-frame-11-32-dark.png": "d988c777a2835e41195ba340bfaa8515c64eeb2e06f0991815bf95b75b52b9fe",
+    "frames/routing-globe-frame-12-24-light.png": "f354a74fbe7b86975ea337d187c3df23898bac0113d36b5cd9435bc6a86e5d0c",
+    "frames/routing-globe-frame-12-24-dark.png": "d7786c85cc025bff95cfa98fa076b5acc6d614bf0db96bf21c1f1c038b18f0f0",
+    "frames/routing-globe-frame-12-32-light.png": "3c32e42a0cdc615871536fe8b8d008df0059bc1f10ca22ceec61702d9d67b0f3",
+    "frames/routing-globe-frame-12-32-dark.png": "4640750012e3faeb964ee0c0f2fe41fa27f76e29c977766a3014bc5385d5a670",
+    "frames/routing-globe-frame-13-24-light.png": "1da1602b9bdfa2579be6eb938632d69f478ce6d1bb74b55b6589ae68ed6eafcf",
+    "frames/routing-globe-frame-13-24-dark.png": "d2836a0d41668e26b454ff35445c822a256787c2ce768b5fda77c7188e9dd177",
+    "frames/routing-globe-frame-13-32-light.png": "f5045ba39a0c8a54c8d209c024d4bec0aca34a73adbd38d50ec5c725552bfe27",
+    "frames/routing-globe-frame-13-32-dark.png": "2dbbf221454dd2398dd3092b4552d6edef1c540ee0003f011d61fa24ad74eb8f",
+    "frames/routing-globe-frame-14-24-light.png": "38b7dee6b8942d2570aecc4c5009ce63cf2bfeaccb65e34b3fbc3292e7a9798a",
+    "frames/routing-globe-frame-14-24-dark.png": "c58d816ae2d0a55d3185d39a63fb3282fdca6848776caaceaf8d7cb7f10478aa",
+    "frames/routing-globe-frame-14-32-light.png": "dfef2a6a2590d3c9d1d9444f8a2be54abf15c611a89fd400f9fe36a41a5500da",
+    "frames/routing-globe-frame-14-32-dark.png": "56e08fbe73099025f41afb2061de9020dde032bdc99afd844dc535e44db3e8c6",
+    "frames/routing-globe-frame-15-24-light.png": "0d348c940af5ed97b9bd146ac70a8ff2f4e25660865091327009a76ffef58356",
+    "frames/routing-globe-frame-15-24-dark.png": "6c908a0e9fd00078164e2a2735d88d199fa0c5e785d97ac02d625898e78e68b7",
+    "frames/routing-globe-frame-15-32-light.png": "04d428e6515d8c0bff299fc78d571b7c03a0e3d08cfb4bb6a357de03caa1be00",
+    "frames/routing-globe-frame-15-32-dark.png": "d3f7296661a6e56b1113856293643234cf2329422b4754d44c3be6bb552aa616"
+  },
+  "runtime": "css-steps-only",
+  "staticAxialTiltDegrees": 0,
+  "staticOrientation": "front-facing orthographic frame with no axial tilt",
+  "staticInspection": {
+    "light": "routing-globe-static-inspection-light.png",
+    "dark": "routing-globe-static-inspection-dark.png"
+  },
+  "staticHashes": {
+    "routing-globe-static-24-light.png": "d3454e74f8c08d0d7a285cecfa74f04717c885c12e69508d677f5e64fd678711",
+    "routing-globe-static-32-light.png": "c35c50ac68cdd34def7bc7b8ce28a439e4c31649f20a4b353accb16078a1337b",
+    "routing-globe-static-24-dark.png": "1117d206a4f0c07995375a64c68172f039cbad9ff97a6f6dd8b2f8f54509ffba",
+    "routing-globe-static-32-dark.png": "ab54a3c66117af68c1e74a22ece7d02385ab2516bfffd57bff4c2f09519a25fa"
+  }
+}

@@ -1,0 +1,411 @@
+{
+  "stage": "rotation-animation-validation",
+  "sourceMap": "../routing-globe-map-master-experiment/preview-world-map.json",
+  "sourceMapSha256": "5c1468c489229348b054b85354fe57efa8c55114a11141903eab12aefc6f27c9",
+  "projection": "orthographic-inverse-raster",
+  "frameCount": 16,
+  "frameStepDegrees": 22.5,
+  "loopDurationMs": 2000,
+  "baseCenterLongitude": 122,
+  "centerLatitude": 12,
+  "radiusRatio": 0.4375,
+  "inspectionSize": 256,
+  "iconSizes": [
+    32,
+    24
+  ],
+  "supersample": 4,
+  "frames": [
+    {
+      "index": 0,
+      "centerLongitude": 122,
+      "files": {
+        "24": {
+          "light": "routing-globe-frame-00-24-light.png",
+          "dark": "routing-globe-frame-00-24-dark.png"
+        },
+        "32": {
+          "light": "routing-globe-frame-00-32-light.png",
+          "dark": "routing-globe-frame-00-32-dark.png"
+        },
+        "256": {
+          "light": "routing-globe-frame-00-inspection-light.png",
+          "dark": "routing-globe-frame-00-inspection-dark.png"
+        }
+      }
+    },
+    {
+      "index": 1,
+      "centerLongitude": 144.5,
+      "files": {
+        "24": {
+          "light": "routing-globe-frame-01-24-light.png",
+          "dark": "routing-globe-frame-01-24-dark.png"
+        },
+        "32": {
+          "light": "routing-globe-frame-01-32-light.png",
+          "dark": "routing-globe-frame-01-32-dark.png"
+        },
+        "256": {
+          "light": "routing-globe-frame-01-inspection-light.png",
+          "dark": "routing-globe-frame-01-inspection-dark.png"
+        }
+      }
+    },
+    {
+      "index": 2,
+      "centerLongitude": 167,
+      "files": {
+        "24": {
+          "light": "routing-globe-frame-02-24-light.png",
+          "dark": "routing-globe-frame-02-24-dark.png"
+        },
+        "32": {
+          "light": "routing-globe-frame-02-32-light.png",
+          "dark": "routing-globe-frame-02-32-dark.png"
+        },
+        "256": {
+          "light": "routing-globe-frame-02-inspection-light.png",
+          "dark": "routing-globe-frame-02-inspection-dark.png"
+        }
+      }
+    },
+    {
+      "index": 3,
+      "centerLongitude": -170.5,
+      "files": {
+        "24": {
+          "light": "routing-globe-frame-03-24-light.png",
+          "dark": "routing-globe-frame-03-24-dark.png"
+        },
+        "32": {
+          "light": "routing-globe-frame-03-32-light.png",
+          "dark": "routing-globe-frame-03-32-dark.png"
+        },
+        "256": {
+          "light": "routing-globe-frame-03-inspection-light.png",
+          "dark": "routing-globe-frame-03-inspection-dark.png"
+        }
+      }
+    },
+    {
+      "index": 4,
+      "centerLongitude": -148,
+      "files": {
+        "24": {
+          "light": "routing-globe-frame-04-24-light.png",
+          "dark": "routing-globe-frame-04-24-dark.png"
+        },
+        "32": {
+          "light": "routing-globe-frame-04-32-light.png",
+          "dark": "routing-globe-frame-04-32-dark.png"
+        },
+        "256": {
+          "light": "routing-globe-frame-04-inspection-light.png",
+          "dark": "routing-globe-frame-04-inspection-dark.png"
+        }
+      }
+    },
+    {
+      "index": 5,
+      "centerLongitude": -125.5,
+      "files": {
+        "24": {
+          "light": "routing-globe-frame-05-24-light.png",
+          "dark": "routing-globe-frame-05-24-dark.png"
+        },
+        "32": {
+          "light": "routing-globe-frame-05-32-light.png",
+          "dark": "routing-globe-frame-05-32-dark.png"
+        },
+        "256": {
+          "light": "routing-globe-frame-05-inspection-light.png",
+          "dark": "routing-globe-frame-05-inspection-dark.png"
+        }
+      }
+    },
+    {
+      "index": 6,
+      "centerLongitude": -103,
+      "files": {
+        "24": {
+          "light": "routing-globe-frame-06-24-light.png",
+          "dark": "routing-globe-frame-06-24-dark.png"
+        },
+        "32": {
+          "light": "routing-globe-frame-06-32-light.png",
+          "dark": "routing-globe-frame-06-32-dark.png"
+        },
+        "256": {
+          "light": "routing-globe-frame-06-inspection-light.png",
+          "dark": "routing-globe-frame-06-inspection-dark.png"
+        }
+      }
+    },
+    {
+      "index": 7,
+      "centerLongitude": -80.5,
+      "files": {
+        "24": {
+          "light": "routing-globe-frame-07-24-light.png",
+          "dark": "routing-globe-frame-07-24-dark.png"
+        },
+        "32": {
+          "light": "routing-globe-frame-07-32-light.png",
+          "dark": "routing-globe-frame-07-32-dark.png"
+        },
+        "256": {
+          "light": "routing-globe-frame-07-inspection-light.png",
+          "dark": "routing-globe-frame-07-inspection-dark.png"
+        }
+      }
+    },
+    {
+      "index": 8,
+      "centerLongitude": -58,
+      "files": {
+        "24": {
+          "light": "routing-globe-frame-08-24-light.png",
+          "dark": "routing-globe-frame-08-24-dark.png"
+        },
+        "32": {
+          "light": "routing-globe-frame-08-32-light.png",
+          "dark": "routing-globe-frame-08-32-dark.png"
+        },
+        "256": {
+          "light": "routing-globe-frame-08-inspection-light.png",
+          "dark": "routing-globe-frame-08-inspection-dark.png"
+        }
+      }
+    },
+    {
+      "index": 9,
+      "centerLongitude": -35.5,
+      "files": {
+        "24": {
+          "light": "routing-globe-frame-09-24-light.png",
+          "dark": "routing-globe-frame-09-24-dark.png"
+        },
+        "32": {
+          "light": "routing-globe-frame-09-32-light.png",
+          "dark": "routing-globe-frame-09-32-dark.png"
+        },
+        "256": {
+          "light": "routing-globe-frame-09-inspection-light.png",
+          "dark": "routing-globe-frame-09-inspection-dark.png"
+        }
+      }
+    },
+    {
+      "index": 10,
+      "centerLongitude": -13,
+      "files": {
+        "24": {
+          "light": "routing-globe-frame-10-24-light.png",
+          "dark": "routing-globe-frame-10-24-dark.png"
+        },
+        "32": {
+          "light": "routing-globe-frame-10-32-light.png",
+          "dark": "routing-globe-frame-10-32-dark.png"
+        },
+        "256": {
+          "light": "routing-globe-frame-10-inspection-light.png",
+          "dark": "routing-globe-frame-10-inspection-dark.png"
+        }
+      }
+    },
+    {
+      "index": 11,
+      "centerLongitude": 9.5,
+      "files": {
+        "24": {
+          "light": "routing-globe-frame-11-24-light.png",
+          "dark": "routing-globe-frame-11-24-dark.png"
+        },
+        "32": {
+          "light": "routing-globe-frame-11-32-light.png",
+          "dark": "routing-globe-frame-11-32-dark.png"
+        },
+        "256": {
+          "light": "routing-globe-frame-11-inspection-light.png",
+          "dark": "routing-globe-frame-11-inspection-dark.png"
+        }
+      }
+    },
+    {
+      "index": 12,
+      "centerLongitude": 32,
+      "files": {
+        "24": {
+          "light": "routing-globe-frame-12-24-light.png",
+          "dark": "routing-globe-frame-12-24-dark.png"
+        },
+        "32": {
+          "light": "routing-globe-frame-12-32-light.png",
+          "dark": "routing-globe-frame-12-32-dark.png"
+        },
+        "256": {
+          "light": "routing-globe-frame-12-inspection-light.png",
+          "dark": "routing-globe-frame-12-inspection-dark.png"
+        }
+      }
+    },
+    {
+      "index": 13,
+      "centerLongitude": 54.5,
+      "files": {
+        "24": {
+          "light": "routing-globe-frame-13-24-light.png",
+          "dark": "routing-globe-frame-13-24-dark.png"
+        },
+        "32": {
+          "light": "routing-globe-frame-13-32-light.png",
+          "dark": "routing-globe-frame-13-32-dark.png"
+        },
+        "256": {
+          "light": "routing-globe-frame-13-inspection-light.png",
+          "dark": "routing-globe-frame-13-inspection-dark.png"
+        }
+      }
+    },
+    {
+      "index": 14,
+      "centerLongitude": 77,
+      "files": {
+        "24": {
+          "light": "routing-globe-frame-14-24-light.png",
+          "dark": "routing-globe-frame-14-24-dark.png"
+        },
+        "32": {
+          "light": "routing-globe-frame-14-32-light.png",
+          "dark": "routing-globe-frame-14-32-dark.png"
+        },
+        "256": {
+          "light": "routing-globe-frame-14-inspection-light.png",
+          "dark": "routing-globe-frame-14-inspection-dark.png"
+        }
+      }
+    },
+    {
+      "index": 15,
+      "centerLongitude": 99.5,
+      "files": {
+        "24": {
+          "light": "routing-globe-frame-15-24-light.png",
+          "dark": "routing-globe-frame-15-24-dark.png"
+        },
+        "32": {
+          "light": "routing-globe-frame-15-32-light.png",
+          "dark": "routing-globe-frame-15-32-dark.png"
+        },
+        "256": {
+          "light": "routing-globe-frame-15-inspection-light.png",
+          "dark": "routing-globe-frame-15-inspection-dark.png"
+        }
+      }
+    }
+  ],
+  "outputs": [
+    "routing-globe-contact-sheet-inspection.svg",
+    "routing-globe-contact-sheet-32.svg",
+    "routing-globe-contact-sheet-24.svg",
+    "routing-globe-preview.html",
+    "routing-globe-frame-00-24-light.png",
+    "routing-globe-frame-00-24-dark.png",
+    "routing-globe-frame-00-32-light.png",
+    "routing-globe-frame-00-32-dark.png",
+    "routing-globe-frame-00-inspection-light.png",
+    "routing-globe-frame-00-inspection-dark.png",
+    "routing-globe-frame-01-24-light.png",
+    "routing-globe-frame-01-24-dark.png",
+    "routing-globe-frame-01-32-light.png",
+    "routing-globe-frame-01-32-dark.png",
+    "routing-globe-frame-01-inspection-light.png",
+    "routing-globe-frame-01-inspection-dark.png",
+    "routing-globe-frame-02-24-light.png",
+    "routing-globe-frame-02-24-dark.png",
+    "routing-globe-frame-02-32-light.png",
+    "routing-globe-frame-02-32-dark.png",
+    "routing-globe-frame-02-inspection-light.png",
+    "routing-globe-frame-02-inspection-dark.png",
+    "routing-globe-frame-03-24-light.png",
+    "routing-globe-frame-03-24-dark.png",
+    "routing-globe-frame-03-32-light.png",
+    "routing-globe-frame-03-32-dark.png",
+    "routing-globe-frame-03-inspection-light.png",
+    "routing-globe-frame-03-inspection-dark.png",
+    "routing-globe-frame-04-24-light.png",
+    "routing-globe-frame-04-24-dark.png",
+    "routing-globe-frame-04-32-light.png",
+    "routing-globe-frame-04-32-dark.png",
+    "routing-globe-frame-04-inspection-light.png",
+    "routing-globe-frame-04-inspection-dark.png",
+    "routing-globe-frame-05-24-light.png",
+    "routing-globe-frame-05-24-dark.png",
+    "routing-globe-frame-05-32-light.png",
+    "routing-globe-frame-05-32-dark.png",
+    "routing-globe-frame-05-inspection-light.png",
+    "routing-globe-frame-05-inspection-dark.png",
+    "routing-globe-frame-06-24-light.png",
+    "routing-globe-frame-06-24-dark.png",
+    "routing-globe-frame-06-32-light.png",
+    "routing-globe-frame-06-32-dark.png",
+    "routing-globe-frame-06-inspection-light.png",
+    "routing-globe-frame-06-inspection-dark.png",
+    "routing-globe-frame-07-24-light.png",
+    "routing-globe-frame-07-24-dark.png",
+    "routing-globe-frame-07-32-light.png",
+    "routing-globe-frame-07-32-dark.png",
+    "routing-globe-frame-07-inspection-light.png",
+    "routing-globe-frame-07-inspection-dark.png",
+    "routing-globe-frame-08-24-light.png",
+    "routing-globe-frame-08-24-dark.png",
+    "routing-globe-frame-08-32-light.png",
+    "routing-globe-frame-08-32-dark.png",
+    "routing-globe-frame-08-inspection-light.png",
+    "routing-globe-frame-08-inspection-dark.png",
+    "routing-globe-frame-09-24-light.png",
+    "routing-globe-frame-09-24-dark.png",
+    "routing-globe-frame-09-32-light.png",
+    "routing-globe-frame-09-32-dark.png",
+    "routing-globe-frame-09-inspection-light.png",
+    "routing-globe-frame-09-inspection-dark.png",
+    "routing-globe-frame-10-24-light.png",
+    "routing-globe-frame-10-24-dark.png",
+    "routing-globe-frame-10-32-light.png",
+    "routing-globe-frame-10-32-dark.png",
+    "routing-globe-frame-10-inspection-light.png",
+    "routing-globe-frame-10-inspection-dark.png",
+    "routing-globe-frame-11-24-light.png",
+    "routing-globe-frame-11-24-dark.png",
+    "routing-globe-frame-11-32-light.png",
+    "routing-globe-frame-11-32-dark.png",
+    "routing-globe-frame-11-inspection-light.png",
+    "routing-globe-frame-11-inspection-dark.png",
+    "routing-globe-frame-12-24-light.png",
+    "routing-globe-frame-12-24-dark.png",
+    "routing-globe-frame-12-32-light.png",
+    "routing-globe-frame-12-32-dark.png",
+    "routing-globe-frame-12-inspection-light.png",
+    "routing-globe-frame-12-inspection-dark.png",
+    "routing-globe-frame-13-24-light.png",
+    "routing-globe-frame-13-24-dark.png",
+    "routing-globe-frame-13-32-light.png",
+    "routing-globe-frame-13-32-dark.png",
+    "routing-globe-frame-13-inspection-light.png",
+    "routing-globe-frame-13-inspection-dark.png",
+    "routing-globe-frame-14-24-light.png",
+    "routing-globe-frame-14-24-dark.png",
+    "routing-globe-frame-14-32-light.png",
+    "routing-globe-frame-14-32-dark.png",
+    "routing-globe-frame-14-inspection-light.png",
+    "routing-globe-frame-14-inspection-dark.png",
+    "routing-globe-frame-15-24-light.png",
+    "routing-globe-frame-15-24-dark.png",
+    "routing-globe-frame-15-32-light.png",
+    "routing-globe-frame-15-32-dark.png",
+    "routing-globe-frame-15-inspection-light.png",
+    "routing-globe-frame-15-inspection-dark.png"
+  ],
+  "runtime": "individual-frame-preview-only"
+}
