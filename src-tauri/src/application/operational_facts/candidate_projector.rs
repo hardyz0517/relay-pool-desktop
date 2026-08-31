@@ -348,7 +348,7 @@ pub(crate) fn project_route_candidate(
         .iter()
         .any(|scope| !scope.available)
     {
-        hard_rejection_codes.push("capacity_unavailable");
+        hard_rejection_codes.push("capacity_state_unavailable");
     }
 
     RouteCandidateProjection {

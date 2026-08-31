@@ -237,16 +237,8 @@ pub fn routing_failure_semantics() {
         },
         CapabilityApplicabilitySet::ConfirmedModelCatalog,
     );
-    assert_eq!(
-        rate_limited.retry,
-        CanonicalRetryDisposition::WaitThenReplan
-    );
-    assert!(matches!(
-        rate_limited.health,
-        HealthEffect::Cooldown {
-            retry_after_ms: Some(30_000)
-        }
-    ));
+    assert_eq!(rate_limited.retry, CanonicalRetryDisposition::TryNextKey);
+    assert_eq!(rate_limited.health, HealthEffect::ObserveFailure);
 
     let rejected = failure_from_provider_signal(
         ProviderErrorSemanticSignal::BadRequest,
@@ -335,6 +327,7 @@ fn attempt_context(request_id: &str, ordinal: u16) -> AttemptContext {
         group_binding_id: None,
         group_revision: None,
         resolved_upstream_model: None,
+        comparability_key: None,
         model_alias_revision: 1,
         started_at_ms: 2,
         probe_scope: None,

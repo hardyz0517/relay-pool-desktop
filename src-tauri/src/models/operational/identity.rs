@@ -262,6 +262,13 @@ impl SanitizedOrigin {
         Ok(Self(origin))
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=operational-sanitized-origin; owner=models/operational/identity; remove_when=all presentation callers use the typed origin value"
+        )
+    )]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -291,6 +298,13 @@ impl EndpointFacts {
         &self.endpoint_ref
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=operational-endpoint-facts-origin; owner=models/operational/identity; remove_when=all presentation callers use the typed endpoint projection"
+        )
+    )]
     pub fn sanitized_origin(&self) -> &SanitizedOrigin {
         &self.sanitized_origin
     }

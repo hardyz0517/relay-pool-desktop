@@ -35,7 +35,10 @@ use super::{
     request::ByteStream,
 };
 
-use crate::{observability::correlation, services::time::now_millis_for_services};
+use crate::{
+    application::routing_engine::capacity::CapacityLease, observability::correlation,
+    services::time::now_millis_for_services,
+};
 
 const DEFAULT_STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
 
@@ -70,13 +73,35 @@ impl FinalizationTarget {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn dual_terminal_buffered_lifecycle_finalizing_stream(
+    body: Bytes,
+    record: PendingFinalRequestRecord,
+    request_terminal: RequestTerminalReservation,
+    selected_attempt: Option<(AttemptWriteReservation, AttemptContext)>,
+    costs: Option<CostFinalizationReservations>,
+    request_lease: RequestLease,
+) -> ByteStream {
+    dual_terminal_buffered_lifecycle_finalizing_stream_with_capacity_lease(
+        body,
+        record,
+        request_terminal,
+        selected_attempt,
+        costs,
+        request_lease,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn dual_terminal_buffered_lifecycle_finalizing_stream_with_capacity_lease(
     body: Bytes,
     mut record: PendingFinalRequestRecord,
     request_terminal: RequestTerminalReservation,
     selected_attempt: Option<(AttemptWriteReservation, AttemptContext)>,
     costs: Option<CostFinalizationReservations>,
     request_lease: RequestLease,
+    capacity_lease: Option<CapacityLease>,
 ) -> ByteStream {
     if let Ok(value) = serde_json::from_slice(&body) {
         if let Some(usage) = ObservedUsage::from_json(&value) {
@@ -90,6 +115,7 @@ pub(crate) fn dual_terminal_buffered_lifecycle_finalizing_stream(
         selected_attempt,
         costs,
         request_lease,
+        capacity_lease,
         DEFAULT_STREAM_IDLE_TIMEOUT,
         None,
         false,
@@ -118,6 +144,7 @@ pub(crate) fn dual_terminal_lifecycle_finalizing_stream_with_idle_timeout(
     )
 }
 
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn dual_terminal_lifecycle_finalizing_stream_with_idle_timeout_and_diagnostic_memory(
     stream: ByteStream,
@@ -129,6 +156,31 @@ pub(crate) fn dual_terminal_lifecycle_finalizing_stream_with_idle_timeout_and_di
     idle_timeout: Duration,
     diagnostic_memory: Option<DiagnosticMemoryPermit>,
 ) -> ByteStream {
+    dual_terminal_lifecycle_finalizing_stream_with_idle_timeout_and_diagnostic_memory_and_capacity_lease(
+        stream,
+        record,
+        request_terminal,
+        selected_attempt,
+        costs,
+        request_lease,
+        None,
+        idle_timeout,
+        diagnostic_memory,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn dual_terminal_lifecycle_finalizing_stream_with_idle_timeout_and_diagnostic_memory_and_capacity_lease(
+    stream: ByteStream,
+    record: PendingFinalRequestRecord,
+    request_terminal: RequestTerminalReservation,
+    selected_attempt: Option<(AttemptWriteReservation, AttemptContext)>,
+    costs: Option<CostFinalizationReservations>,
+    request_lease: RequestLease,
+    capacity_lease: Option<CapacityLease>,
+    idle_timeout: Duration,
+    diagnostic_memory: Option<DiagnosticMemoryPermit>,
+) -> ByteStream {
     dual_terminal_finalizing_stream(
         stream,
         record,
@@ -136,6 +188,7 @@ pub(crate) fn dual_terminal_lifecycle_finalizing_stream_with_idle_timeout_and_di
         selected_attempt,
         costs,
         request_lease,
+        capacity_lease,
         idle_timeout,
         diagnostic_memory,
         true,
@@ -150,6 +203,7 @@ fn dual_terminal_finalizing_stream(
     selected_attempt: Option<(AttemptWriteReservation, AttemptContext)>,
     costs: Option<CostFinalizationReservations>,
     request_lease: RequestLease,
+    capacity_lease: Option<CapacityLease>,
     idle_timeout: Duration,
     diagnostic_memory: Option<DiagnosticMemoryPermit>,
     enforce_stream_protocol: bool,
@@ -174,6 +228,7 @@ fn dual_terminal_finalizing_stream(
             costs,
         )),
         None,
+        capacity_lease,
         idle_timeout,
         diagnostic_memory,
         correlation::current(),
@@ -186,6 +241,7 @@ fn finalizing_stream_with_target(
     state: FinalizationState,
     target: FinalizationTarget,
     request_lease: Option<RequestLease>,
+    capacity_lease: Option<CapacityLease>,
     idle_timeout: Duration,
     mut diagnostic_memory: Option<DiagnosticMemoryPermit>,
     correlation_id: Option<correlation::CorrelationId>,
@@ -203,6 +259,7 @@ fn finalizing_stream_with_target(
         state: Some(state),
         target: Some(target),
         request_lease,
+        capacity_lease,
         observer: SseUsageObserver::default(),
         protocol,
         pending_terminal: None,
@@ -222,6 +279,7 @@ struct LifecycleBody {
     state: Option<FinalizationState>,
     target: Option<FinalizationTarget>,
     request_lease: Option<RequestLease>,
+    capacity_lease: Option<CapacityLease>,
     observer: SseUsageObserver,
     protocol: Option<Box<dyn ProtocolMachine>>,
     pending_terminal: Option<ProtocolTerminal>,
@@ -341,6 +399,7 @@ impl LifecycleBody {
             target.finalize(state, delivery, outcome, attempt_terminal, output_committed);
         }
         self.request_lease.take();
+        self.capacity_lease.take();
     }
 
     fn finalize_failure(&mut self, failure: &ProxyFailure, completion_source: &str) {
@@ -1993,6 +2052,7 @@ data: [DONE]
                     group_binding_id: None,
                     group_revision: None,
                     resolved_upstream_model: None,
+                    comparability_key: None,
                     model_alias_revision: 1,
                     started_at_ms: received_at_ms,
                     probe_scope: None,
@@ -2057,6 +2117,7 @@ data: [DONE]
             group_binding_id: None,
             group_revision: None,
             resolved_upstream_model: None,
+            comparability_key: None,
             model_alias_revision: 1,
             started_at_ms,
             probe_scope: None,

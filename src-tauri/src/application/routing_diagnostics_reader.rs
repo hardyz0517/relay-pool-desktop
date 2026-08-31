@@ -8,7 +8,7 @@
 use crate::{
     application::{
         error::ApplicationError,
-        error_rate_protection::{ErrorRateHistoryPageV1, ErrorRateProtectionService},
+        error_rate_protection::{ErrorRateHistoryPageV1, ErrorRateProtectionConfigV1},
         queries::request_decision_trace::{
             append_durable_attempt_trace, append_durable_decision_events, decision_cursor,
             decision_trace_from_decision, decision_trace_from_durable_outcome,
@@ -35,22 +35,19 @@ use crate::{
 /// Read-only application owner for durable routing diagnostics.
 ///
 /// `RoutingStore` remains the persistence adapter for station, endpoint, and
-/// balance facts. `ErrorRateProtectionService` is retained only to project the
-/// current policy switch into the history query configuration; it is not a
-/// second protection state machine.
+/// balance facts. Legacy error-rate history is read with an immutable query
+/// config and never owns production admission state.
 #[derive(Clone)]
 pub(crate) struct RoutingDiagnosticsReader {
     runtime: PersistenceHandle,
     store: RoutingStore,
-    error_rate: ErrorRateProtectionService,
 }
 
 impl RoutingDiagnosticsReader {
-    pub(crate) fn new(runtime: PersistenceHandle, error_rate: ErrorRateProtectionService) -> Self {
+    pub(crate) fn new(runtime: PersistenceHandle) -> Self {
         Self {
             runtime,
             store: RoutingStore,
-            error_rate,
         }
     }
 
@@ -108,6 +105,13 @@ impl RoutingDiagnosticsReader {
         Ok(decision_trace_from_decision(summary, candidates))
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=legacy-error-rate-diagnostics-reference; owner=application/routing_diagnostics_reader; remove_when=legacy error-rate diagnostics are deleted"
+        )
+    )]
     pub(crate) async fn list_error_rate_history(
         &self,
         before_ms: Option<i64>,
@@ -116,7 +120,8 @@ impl RoutingDiagnosticsReader {
         let now_ms = chrono::Utc::now().timestamp_millis().max(0);
         let mut read = self.runtime.begin_read().await?;
         let policy_enabled = self.load_protection_enabled(&mut read).await?;
-        let config = self.error_rate.config_for_policy(policy_enabled);
+        let mut config = ErrorRateProtectionConfigV1::default();
+        config.enabled = policy_enabled;
         RoutingErrorRateHistoryStore
             .list_page(read.connection(), before_ms, limit, &config, now_ms)
             .await
@@ -184,6 +189,13 @@ impl RoutingDiagnosticsReader {
             .map_err(ApplicationError::from)
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=legacy-error-rate-diagnostics-reference; owner=application/routing_diagnostics_reader; remove_when=legacy error-rate diagnostics are deleted"
+        )
+    )]
     async fn load_protection_enabled(
         &self,
         read: &mut crate::persistence::ReadSession,

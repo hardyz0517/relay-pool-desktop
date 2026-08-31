@@ -55,6 +55,7 @@ pub struct RoutingRuntimeCandidateFact {
 pub(crate) struct RoutingMonitoringTargetSnapshot {
     pub(crate) station_id: String,
     pub(crate) station_key_id: String,
+    pub(crate) station_key_lifecycle_revision: u64,
     pub(crate) endpoint_revision: i64,
     pub(crate) api_base_url: String,
     pub(crate) upstream_api_format: UpstreamApiFormat,
@@ -66,6 +67,7 @@ pub(crate) struct RoutingMonitoringTargetSnapshot {
 pub(crate) struct RoutingMonitoringTargetFacts {
     pub(crate) station_id: String,
     pub(crate) station_key_id: String,
+    pub(crate) station_key_lifecycle_revision: u64,
     pub(crate) endpoint_revision: i64,
     pub(crate) api_base_url: String,
     pub(crate) upstream_api_format: UpstreamApiFormat,
@@ -108,6 +110,7 @@ pub(crate) fn monitoring_target_snapshots_from_facts(
         .map(|facts| RoutingMonitoringTargetSnapshot {
             station_id: facts.station_id,
             station_key_id: facts.station_key_id,
+            station_key_lifecycle_revision: facts.station_key_lifecycle_revision,
             endpoint_revision: facts.endpoint_revision,
             api_base_url: facts.api_base_url,
             upstream_api_format: facts.upstream_api_format,
@@ -127,6 +130,7 @@ mod tests {
             monitoring_target_snapshots_from_facts(vec![RoutingMonitoringTargetFacts {
                 station_key_id: "key-1".to_string(),
                 station_id: "station-1".to_string(),
+                station_key_lifecycle_revision: 3,
                 endpoint_revision: 7,
                 api_base_url: "https://station.example/v1".to_string(),
                 upstream_api_format: UpstreamApiFormat::OpenAiResponses,
@@ -139,6 +143,7 @@ mod tests {
             vec![RoutingMonitoringTargetSnapshot {
                 station_id: "station-1".to_string(),
                 station_key_id: "key-1".to_string(),
+                station_key_lifecycle_revision: 3,
                 endpoint_revision: 7,
                 api_base_url: "https://station.example/v1".to_string(),
                 upstream_api_format: UpstreamApiFormat::OpenAiResponses,

@@ -17,6 +17,7 @@ pub mod provider_drafts;
 pub mod proxy;
 pub mod remote_keys;
 pub mod routing;
+pub(crate) mod routing_generation;
 pub(crate) mod routing_observation;
 pub(crate) mod routing_policy;
 pub(crate) mod routing_read_models;

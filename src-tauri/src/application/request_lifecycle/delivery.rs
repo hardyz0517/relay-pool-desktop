@@ -13,3 +13,15 @@ pub(crate) enum DeliveryTerminal {
     DownstreamWriteFailed,
     NotStarted,
 }
+
+impl DeliveryTerminal {
+    pub(crate) const fn code(self) -> &'static str {
+        match self {
+            Self::BodyCompleted => "body_completed",
+            Self::DownstreamDropped => "downstream_dropped",
+            #[cfg(test)]
+            Self::DownstreamWriteFailed => "downstream_write_failed",
+            Self::NotStarted => "not_started",
+        }
+    }
+}

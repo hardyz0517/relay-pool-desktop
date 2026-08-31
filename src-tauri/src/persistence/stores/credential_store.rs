@@ -629,9 +629,47 @@ impl CredentialStore {
         &self,
         write: &mut WriteSession,
         station_key_id: &str,
+        now_ms: i64,
     ) -> Result<(), PersistenceError> {
+        if now_ms < 0 {
+            return Err(PersistenceError::ConstraintViolation);
+        }
         let station_id = station_id_for_key(write.connection(), station_key_id).await?;
         let secret_id = station_key_secret_id(write.connection(), station_key_id).await?;
+        let lifecycle_scope = format!("station_key:{station_key_id}");
+        let current_lifecycle_revision =
+            sqlx::query_scalar::<_, i64>("SELECT revision FROM domain_revisions WHERE scope = ?1")
+                .bind(&lifecycle_scope)
+                .fetch_optional(write.connection())
+                .await?
+                .ok_or_else(|| PersistenceError::RevisionUnavailable(lifecycle_scope.clone()))?;
+        if current_lifecycle_revision <= 0 {
+            return Err(PersistenceError::InvariantViolation(
+                "station key lifecycle revision is invalid".into(),
+            ));
+        }
+        let next_lifecycle_revision =
+            current_lifecycle_revision.checked_add(1).ok_or_else(|| {
+                PersistenceError::InvariantViolation(
+                    "station key lifecycle revision overflow".into(),
+                )
+            })?;
+        let revision_advanced = sqlx::query(
+            "UPDATE domain_revisions
+             SET revision = ?1, updated_at_ms = ?2,
+                 provenance = 'transactional_write'
+             WHERE scope = ?3 AND revision = ?4",
+        )
+        .bind(next_lifecycle_revision)
+        .bind(now_ms)
+        .bind(&lifecycle_scope)
+        .bind(current_lifecycle_revision)
+        .execute(write.connection())
+        .await?
+        .rows_affected();
+        if revision_advanced != 1 {
+            return Err(PersistenceError::RevisionConflict(lifecycle_scope));
+        }
         sqlx::query(
             r#"
             UPDATE remote_station_keys
@@ -2477,6 +2515,7 @@ fn is_complete_key_pool_order(submitted_ids: &[String], expected_ids: &[String])
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::persistence::runtime::PersistenceRuntime;
 
     #[test]
     fn missing_local_key_cannot_remain_matched() {
@@ -2525,5 +2564,83 @@ mod tests {
             &["key-a".to_string(), "key-b".to_string()],
             &expected,
         ));
+    }
+
+    fn station_key_row(now: &str) -> NewStationKeyRow {
+        NewStationKeyRow {
+            id: "reused-key-id".to_string(),
+            station_id: "revision-station".to_string(),
+            name: "Revision test key".to_string(),
+            encrypted_secret: None,
+            enabled: true,
+            priority: None,
+            max_concurrency: Some(3),
+            load_factor: None,
+            schedulable: Some(true),
+            group_name: None,
+            tier_label: None,
+            group_binding_id: None,
+            group_id_hash: None,
+            rate_multiplier: None,
+            manual_rate_multiplier: None,
+            manual_rate_updated_at: None,
+            rate_source: None,
+            balance_scope: None,
+            note: None,
+            now: now.to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn deleting_and_recreating_the_same_key_id_advances_lifecycle_revision() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let runtime = PersistenceRuntime::initialize_new(&root.path().join("key-revision.sqlite3"))
+            .await
+            .expect("initialize runtime");
+        let handle = runtime.handle();
+        let store = CredentialStore;
+
+        let mut write = handle.begin_write().await.expect("begin station seed");
+        sqlx::query(
+            "INSERT INTO stations (
+                 id, name, station_type, website_url, api_base_url,
+                 enabled, created_at, updated_at
+             ) VALUES (
+                 'revision-station', 'Revision station', 'openai-compatible',
+                 'https://revision.test', 'https://revision.test/v1', 1, '1', '1'
+             )",
+        )
+        .execute(write.connection())
+        .await
+        .expect("insert station");
+        store
+            .insert_station_key(&mut write, station_key_row("1"))
+            .await
+            .expect("insert original key");
+        write.commit().await.expect("commit original key");
+
+        let mut write = handle.begin_write().await.expect("begin key deletion");
+        store
+            .delete_station_key(&mut write, "reused-key-id", 2)
+            .await
+            .expect("delete original key");
+        write.commit().await.expect("commit key deletion");
+
+        let mut write = handle.begin_write().await.expect("begin key recreation");
+        store
+            .insert_station_key(&mut write, station_key_row("3"))
+            .await
+            .expect("recreate key with same id");
+        write.commit().await.expect("commit recreated key");
+
+        let mut read = handle.begin_read().await.expect("begin lifecycle read");
+        let revision: i64 = sqlx::query_scalar(
+            "SELECT revision FROM domain_revisions
+             WHERE scope = 'station_key:reused-key-id'",
+        )
+        .fetch_one(read.connection())
+        .await
+        .expect("load recreated lifecycle revision");
+        assert_eq!(revision, 2);
     }
 }

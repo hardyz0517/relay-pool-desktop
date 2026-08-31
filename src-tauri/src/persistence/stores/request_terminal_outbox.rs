@@ -109,7 +109,7 @@ impl RequestTerminalOutboxStore {
             if claimed == 0 {
                 continue;
             }
-            let record: RequestTerminalWrite =
+            let mut record: RequestTerminalWrite =
                 serde_json::from_str(&payload_json).map_err(|_| {
                     PersistenceError::InvariantViolation(
                         "request terminal outbox contains invalid canonical payload".to_string(),
@@ -128,6 +128,7 @@ impl RequestTerminalOutboxStore {
                     "request terminal outbox request identity mismatch".to_string(),
                 ));
             }
+            normalize_legacy_terminal_codes(&mut record);
             records.push(record);
         }
         let claimed = records.len() as u64;
@@ -157,6 +158,26 @@ impl RequestTerminalOutboxStore {
     }
 }
 
+fn normalize_legacy_terminal_codes(record: &mut RequestTerminalWrite) {
+    record.terminal_code = record
+        .terminal_code
+        .take()
+        .map(|code| stable_terminal_code(&code));
+    record.routing_outcome.terminal_code =
+        stable_terminal_code(&record.routing_outcome.terminal_code);
+}
+
+fn stable_terminal_code(code: &str) -> String {
+    match code {
+        "BodyCompleted" => "body_completed",
+        "DownstreamDropped" => "downstream_dropped",
+        "DownstreamWriteFailed" => "downstream_write_failed",
+        "NotStarted" => "not_started",
+        _ => code,
+    }
+    .to_string()
+}
+
 fn terminal_semantics_sha256(record: &RequestTerminalWrite) -> Result<String, PersistenceError> {
     let mut canonical = record.clone();
     canonical.terminal_at_ms = 0;
@@ -167,4 +188,76 @@ fn terminal_semantics_sha256(record: &RequestTerminalWrite) -> Result<String, Pe
         ))
     })?;
     Ok(format!("{:x}", Sha256::digest(payload_json.as_bytes())))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::persistence::stores::request_log_write::{
+        RequestLogAnnotationsWrite, RequestRoutingOutcomeSummaryWrite,
+    };
+
+    fn legacy_record(terminal_code: &str) -> RequestTerminalWrite {
+        RequestTerminalWrite {
+            request_id: "request-legacy-terminal".to_string(),
+            received_at_ms: 1,
+            status: "interrupted".to_string(),
+            lifecycle_status: "interrupted".to_string(),
+            usage_status: "available".to_string(),
+            terminal_kind: "interrupted".to_string(),
+            terminal_code: Some(terminal_code.to_string()),
+            terminal_detail: None,
+            protocol_completed: true,
+            delivery_terminal: "BodyCompleted".to_string(),
+            selected_attempt_ordinal: Some(0),
+            attempt_count: 1,
+            fallback_count: 0,
+            terminal_at_ms: 2,
+            routing_outcome: RequestRoutingOutcomeSummaryWrite {
+                terminal_kind: "interrupted".to_string(),
+                terminal_code: terminal_code.to_string(),
+                classification: "generic".to_string(),
+                confidence: "not_applicable".to_string(),
+                evidence_source: "none".to_string(),
+                request_accepted: "unknown".to_string(),
+                send_phase: "unknown".to_string(),
+                replay_disposition: "stopped_uncertain".to_string(),
+                billing_state: "possibly_billed".to_string(),
+                retry_disposition: "none".to_string(),
+                effect_summary: "neutral".to_string(),
+                failure_domain_commitment_version: None,
+                failure_domain_commitment_digest: None,
+                attempt_count: 1,
+                fallback_count: 0,
+                terminal_at_ms: 2,
+            },
+            annotations: RequestLogAnnotationsWrite::default(),
+        }
+    }
+
+    #[test]
+    fn stable_terminal_code_normalizes_legacy_delivery_variants() {
+        assert_eq!(stable_terminal_code("BodyCompleted"), "body_completed");
+        assert_eq!(
+            stable_terminal_code("DownstreamDropped"),
+            "downstream_dropped"
+        );
+        assert_eq!(
+            stable_terminal_code("DownstreamWriteFailed"),
+            "downstream_write_failed"
+        );
+        assert_eq!(stable_terminal_code("NotStarted"), "not_started");
+        assert_eq!(stable_terminal_code("already_stable"), "already_stable");
+    }
+
+    #[test]
+    fn legacy_terminal_normalization_updates_both_terminal_code_projections() {
+        let mut record = legacy_record("BodyCompleted");
+
+        normalize_legacy_terminal_codes(&mut record);
+
+        assert_eq!(record.terminal_code.as_deref(), Some("body_completed"));
+        assert_eq!(record.routing_outcome.terminal_code, "body_completed");
+        assert_eq!(record.delivery_terminal, "BodyCompleted");
+    }
 }

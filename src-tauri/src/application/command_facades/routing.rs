@@ -141,23 +141,27 @@ impl RoutingCommandFacade {
             .await
     }
 
+    pub(crate) async fn load_routing_policy_publication(
+        &self,
+        revision: u64,
+        policy_generation_id: Option<&str>,
+    ) -> Result<crate::application::routing_policy_read::RoutingPolicyPublication, ApplicationError>
+    {
+        self.routing_policy_read
+            .load_routing_policy_publication(revision, policy_generation_id)
+            .await
+    }
+
     pub(crate) async fn get_routing_protection_status(
         &self,
-        requested_model: Option<&str>,
     ) -> Result<
         crate::application::queries::routing_protection::RoutingProtectionStatus,
         ApplicationError,
     > {
         let now_ms = now_millis_for_services().min(i64::MAX as u128) as i64;
-        let capacity = self.proxy.capacity_protection_facts(now_ms).await;
         let mut status = self
             .routing
-            .get_routing_protection_status(
-                now_ms,
-                capacity.as_deref().unwrap_or(&[]),
-                capacity.is_some(),
-                requested_model,
-            )
+            .get_routing_protection_status(now_ms, &[], true)
             .await?;
         let transport_policy = self.proxy.transport_policy_snapshot();
         status.timeouts = Some(
@@ -175,9 +179,9 @@ impl RoutingCommandFacade {
         Ok(status)
     }
 
-    pub(crate) async fn apply_routing_policy_document_v2(
+    pub(crate) async fn apply_routing_policy_document_v3(
         &self,
-        document: crate::models::routing_policy::RoutingPolicyDocumentV2,
+        document: crate::models::routing_policy::RoutingPolicyDocumentV3,
     ) -> Result<
         crate::persistence::stores::routing_policy_store::StoredRoutingPolicy,
         ApplicationError,
@@ -222,6 +226,13 @@ impl RoutingCommandFacade {
             .await
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=legacy-error-rate-command-reference; owner=application/command_facades; remove_when=legacy error-rate diagnostics are deleted"
+        )
+    )]
     pub(crate) async fn list_error_rate_history(
         &self,
         before_ms: Option<i64>,

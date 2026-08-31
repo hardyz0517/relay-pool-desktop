@@ -4,7 +4,6 @@ mod capacity;
 use capacity::{
     CapacityConstraintKey, CapacityMissObservation, CapacityWaitMiss, CompositeCapacityRegistry,
     CompositeCapacityRequest, PlanningRoundCapacityState, ProviderAccountConstraint,
-    RetryBudgetMiss, RetryBudgetRegistry, RetryPermitDecision,
 };
 
 fn request(station_id: &str, station_key_id: &str) -> CompositeCapacityRequest {
@@ -113,36 +112,6 @@ fn runtime_and_provider_account_faults_report_the_enforced_scope() {
         gap_lease.evidence_gaps()[0].reason,
         "provider_scope_untrusted"
     );
-}
-
-#[test]
-fn retry_budget_is_global_twenty_percent_with_minimum_one_and_raii_release() {
-    let budget = RetryBudgetRegistry::new(10);
-    assert_eq!(budget.max_active(), 2);
-    assert!(matches!(
-        budget.acquire_for_round(0).expect("initial"),
-        RetryPermitDecision::NotRequired
-    ));
-    let first = match budget.acquire_for_round(1).expect("first retry") {
-        RetryPermitDecision::Acquired(permit) => permit,
-        RetryPermitDecision::NotRequired => panic!("fallback round must require permit"),
-    };
-    let _second = match budget.acquire_for_round(2).expect("second retry") {
-        RetryPermitDecision::Acquired(permit) => permit,
-        RetryPermitDecision::NotRequired => panic!("fallback round must require permit"),
-    };
-    assert!(matches!(
-        budget.acquire_for_round(3),
-        Err(RetryBudgetMiss::Exhausted {
-            active: 2,
-            max_active: 2
-        })
-    ));
-    drop(first);
-    assert_eq!(budget.active(), 1);
-
-    let tiny = RetryBudgetRegistry::new(1);
-    assert_eq!(tiny.max_active(), 1);
 }
 
 #[test]

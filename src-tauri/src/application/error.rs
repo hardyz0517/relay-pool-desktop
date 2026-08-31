@@ -8,6 +8,8 @@ pub(crate) enum ApplicationError {
     StaleRevision,
     #[error("constraint violation")]
     ConstraintViolation,
+    #[error("routing candidate count {actual} exceeds system limit {limit}")]
+    CandidateLimitExceeded { actual: usize, limit: usize },
     #[error("migration failed")]
     MigrationFailed,
     #[error("integrity failed")]

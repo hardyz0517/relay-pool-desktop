@@ -14,7 +14,6 @@ static SNAPSHOT_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum OperationalFactAssemblyError {
-    CandidateLimitExceeded { actual: usize, limit: usize },
     InvalidJson { field: &'static str },
     InvalidFact(OperationalValidationError),
 }
@@ -22,12 +21,6 @@ pub(crate) enum OperationalFactAssemblyError {
 impl fmt::Display for OperationalFactAssemblyError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::CandidateLimitExceeded { actual, limit } => {
-                write!(
-                    formatter,
-                    "operational candidate count {actual} exceeds limit {limit}"
-                )
-            }
             Self::InvalidJson { field } => {
                 write!(formatter, "operational fact JSON is invalid for {field}")
             }
@@ -125,10 +118,8 @@ impl CredentialAvailabilityFact {
 pub(crate) struct OperationalCandidateFact {
     station_key_id: StationKeyId,
     station_id: StationId,
-    capacity_provider_family: Option<String>,
-    capacity_deployment_identity: Option<String>,
-    capacity_region_identity: Option<String>,
-    capacity_domain_revision: Option<RecordRevision>,
+    key_enabled: bool,
+    station_enabled: bool,
     endpoint: EndpointFacts,
     credential: CredentialAvailabilityFact,
     schedulable: bool,
@@ -171,20 +162,12 @@ impl OperationalCandidateFact {
         &self.station_id
     }
 
-    pub(crate) fn capacity_provider_family(&self) -> Option<&str> {
-        self.capacity_provider_family.as_deref()
+    pub(crate) fn key_enabled(&self) -> bool {
+        self.key_enabled
     }
 
-    pub(crate) fn capacity_deployment_identity(&self) -> Option<&str> {
-        self.capacity_deployment_identity.as_deref()
-    }
-
-    pub(crate) fn capacity_region_identity(&self) -> Option<&str> {
-        self.capacity_region_identity.as_deref()
-    }
-
-    pub(crate) fn capacity_domain_revision(&self) -> Option<RecordRevision> {
-        self.capacity_domain_revision
+    pub(crate) fn station_enabled(&self) -> bool {
+        self.station_enabled
     }
 
     pub(crate) fn endpoint(&self) -> &EndpointFacts {
@@ -256,12 +239,33 @@ impl OperationalCandidateFact {
     pub(crate) fn routing_tags(&self) -> &[String] {
         &self.routing_tags
     }
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=legacy-operational-health-count; owner=application/operational_facts; remove_when=legacy health count accessors are removed from compatibility projections"
+        )
+    )]
     pub(crate) fn success_count(&self) -> i64 {
         self.success_count
     }
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=legacy-operational-health-count; owner=application/operational_facts; remove_when=legacy health count accessors are removed from compatibility projections"
+        )
+    )]
     pub(crate) fn failure_count(&self) -> i64 {
         self.failure_count
     }
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=legacy-operational-health-latency; owner=application/operational_facts; remove_when=legacy health count accessors are removed from compatibility projections"
+        )
+    )]
     pub(crate) fn avg_latency_ms(&self) -> Option<i64> {
         self.avg_latency_ms
     }
@@ -282,10 +286,8 @@ impl OperationalCandidateFact {
         Self {
             station_key_id: StationKeyId::new("key-a").expect("valid test key"),
             station_id: station_id.clone(),
-            capacity_provider_family: None,
-            capacity_deployment_identity: None,
-            capacity_region_identity: None,
-            capacity_domain_revision: None,
+            key_enabled: true,
+            station_enabled: true,
             endpoint: EndpointFacts::new(
                 EndpointRef::new(
                     station_id,
@@ -360,6 +362,16 @@ impl OperationalCandidateFact {
     ) {
         self.balance_value = balance_value;
         self.balance_status = balance_status.map(ToString::to_string);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_protocol_capabilities_for_planning_test(
+        &mut self,
+        supports_chat_completions: bool,
+        supports_responses: bool,
+    ) {
+        self.supports_chat_completions = supports_chat_completions;
+        self.supports_responses = supports_responses;
     }
 }
 
@@ -439,15 +451,8 @@ impl OperationalFactBundle {
 
 pub(crate) fn assemble_operational_fact_bundle(
     raw: RawOperationalFactRows,
-    options: &OperationalFactReadOptions,
+    _options: &OperationalFactReadOptions,
 ) -> Result<OperationalFactBundle, OperationalFactAssemblyError> {
-    if raw.candidates.len() > options.candidate_limit() {
-        return Err(OperationalFactAssemblyError::CandidateLimitExceeded {
-            actual: raw.candidates.len(),
-            limit: options.candidate_limit(),
-        });
-    }
-
     let mut max_station_revision = 0;
     let mut max_key_revision = 0;
     let candidates = raw
@@ -472,13 +477,8 @@ pub(crate) fn assemble_operational_fact_bundle(
             Ok(OperationalCandidateFact {
                 station_key_id,
                 station_id,
-                capacity_provider_family: row.capacity_provider_family,
-                capacity_deployment_identity: row.capacity_deployment_identity,
-                capacity_region_identity: row.capacity_region_identity,
-                capacity_domain_revision: row
-                    .capacity_domain_revision
-                    .map(RecordRevision::new)
-                    .transpose()?,
+                key_enabled: row.key_enabled,
+                station_enabled: row.station_enabled,
                 endpoint,
                 credential: CredentialAvailabilityFact::new(
                     row.credential_available,

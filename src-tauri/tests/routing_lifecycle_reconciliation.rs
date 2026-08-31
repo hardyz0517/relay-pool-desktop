@@ -12,6 +12,74 @@ mod persistence {
             }
         }
     }
+
+    pub(crate) mod stores {
+        pub(crate) mod routing_generation_store {
+            use sqlx::SqliteConnection;
+
+            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+            pub(crate) enum RoutingGenerationEligibility {
+                Active,
+            }
+
+            impl RoutingGenerationEligibility {
+                pub(crate) const fn as_str(self) -> &'static str {
+                    match self {
+                        Self::Active => "active",
+                    }
+                }
+            }
+
+            #[derive(Debug, Clone, PartialEq, Eq)]
+            pub(crate) struct RoutingIngestionFence {
+                pub(crate) eligibility: RoutingGenerationEligibility,
+            }
+
+            #[derive(Debug, Clone, Copy, Default)]
+            pub(crate) struct RoutingGenerationStore;
+
+            impl RoutingGenerationStore {
+                pub(crate) async fn load_ingestion_fence(
+                    &self,
+                    _connection: &mut SqliteConnection,
+                ) -> Result<RoutingIngestionFence, crate::persistence::error::PersistenceError>
+                {
+                    Ok(RoutingIngestionFence {
+                        eligibility: RoutingGenerationEligibility::Active,
+                    })
+                }
+            }
+        }
+
+        pub(crate) mod routing_attempt_store {
+            use sqlx::SqliteConnection;
+
+            #[derive(Debug, Clone, PartialEq, Eq)]
+            pub(crate) struct FinalizedRoutingAttemptSample;
+
+            #[derive(Debug, Clone, Copy, Default)]
+            pub(crate) struct RoutingAttemptStore;
+
+            impl RoutingAttemptStore {
+                pub(crate) async fn recover_startup_interrupted(
+                    _connection: &mut SqliteConnection,
+                    _request_id: &str,
+                    _now_ms: i64,
+                ) -> Result<(), super::super::error::PersistenceError> {
+                    Ok(())
+                }
+
+                pub(crate) async fn finalize_request_clusters(
+                    _connection: &mut SqliteConnection,
+                    _request_id: &str,
+                    _now_ms: i64,
+                ) -> Result<Vec<FinalizedRoutingAttemptSample>, super::super::error::PersistenceError>
+                {
+                    Ok(Vec::new())
+                }
+            }
+        }
+    }
 }
 
 #[path = "../src/persistence/stores/request_lifecycle_reconciliation.rs"]

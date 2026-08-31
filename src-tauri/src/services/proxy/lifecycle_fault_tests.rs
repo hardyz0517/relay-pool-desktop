@@ -420,6 +420,7 @@ fn attempt_context() -> AttemptContext {
         group_binding_id: None,
         group_revision: None,
         resolved_upstream_model: None,
+        comparability_key: None,
         model_alias_revision: 1,
         started_at_ms: 2,
         probe_scope: None,

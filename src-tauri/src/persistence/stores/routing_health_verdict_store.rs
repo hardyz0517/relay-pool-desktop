@@ -192,6 +192,13 @@ impl ScopedHealthSubject {
         )
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=legacy-health-model-scope; owner=persistence/stores/routing_health_verdict_store; remove_when=model-on-key health scope is removed from compatibility history"
+        )
+    )]
     pub(crate) fn model_on_key(
         station_id: impl Into<String>,
         station_key_id: impl Into<String>,
@@ -724,6 +731,13 @@ impl RoutingHealthVerdictStore {
     /// The existing scoped verdict tables remain the owner for explicit
     /// credential/account/endpoint verdicts; this path only owns the reducer
     /// window and its bounded history.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=legacy-error-rate-reducer-reference; owner=persistence/stores/routing_health_verdict_store; remove_when=v3 station-key circuit migration no longer needs legacy reducer replay"
+        )
+    )]
     pub(crate) async fn apply_error_rate_observation(
         &self,
         connection: &mut SqliteConnection,
@@ -864,6 +878,13 @@ impl RoutingHealthVerdictStore {
     /// Atomically reserves the single Half-Open probe for a durable scope.
     /// The returned fence is caller-owned and must be attached to the next
     /// real, replay-safe observation; this method never performs network I/O.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=legacy-health-probe-store; owner=persistence/stores/routing_health_verdict_store; remove_when=v3 station-key circuit store owns all Half-Open leases"
+        )
+    )]
     pub(crate) async fn begin_health_protection_probe(
         &self,
         connection: &mut SqliteConnection,
@@ -1150,6 +1171,13 @@ impl RoutingHealthVerdictStore {
 
     /// One SQL statement for any bounded candidate set. JSON input consumes a
     /// single SQLite bind and therefore cannot cross the variable limit.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=legacy-health-batch-read; owner=persistence/stores/routing_health_verdict_store; remove_when=v3 station-key circuit projections replace legacy scoped health reads"
+        )
+    )]
     pub(crate) async fn load_active_batch(
         &self,
         connection: &mut SqliteConnection,

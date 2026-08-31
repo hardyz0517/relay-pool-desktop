@@ -20,13 +20,23 @@ fn planner_error_code_for(error: &ApplicationError) -> String {
     }
 }
 
+fn circuit_persistence_failure(error: &PersistenceError) -> bool {
+    matches!(
+        error,
+        PersistenceError::RuntimeUnavailable
+            | PersistenceError::SessionClosed
+            | PersistenceError::CommitOutcomeUnknown
+            | PersistenceError::IoFailed { .. }
+            | PersistenceError::DatabaseFailed
+            | PersistenceError::DatabaseBusy
+    )
+}
+
 use crate::{
     application::routing_engine::{
         algorithm_profile::DispatchAlgorithmProfile,
         candidate_plan::RoutePlanPricingSnapshot,
-        intelligent_planner::{
-            candidate_score_breakdown_with_cost_basis, plan_snapshot_with_budget,
-        },
+        intelligent_planner::{candidate_score_breakdown_with_cost_basis, plan_snapshot},
         planning_snapshot::{PlanningSnapshot, RuntimeOverlaySnapshot},
         request::{
             CanonicalRouteRequest, PlanningRequestContext, RouteKind, RouteRequestClassifier,
@@ -35,7 +45,6 @@ use crate::{
     application::{
         credentials::SecretRef,
         error::ApplicationError,
-        error_rate_protection::ErrorRateProtectionService,
         health_transitions::HealthTransitionService,
         operational_facts::{
             candidate_projection::{
@@ -54,8 +63,8 @@ use crate::{
                 StationKeyOperationalDetail,
             },
             routing_protection::{
-                project_routing_protection_status_with_reducer_and_domains, CapacityProtectionFact,
-                FailureDomainCandidateFact, RoutingProtectionStatus,
+                project_routing_protection_status_with_reducer, CapacityProtectionFact,
+                RoutingProtectionStatus,
             },
             routing_runtime::{
                 monitoring_target_snapshots_from_facts, runtime_overlay_from_candidates,
@@ -63,11 +72,14 @@ use crate::{
                 RoutingRuntimeActivity, RoutingRuntimeCandidateFact, RoutingRuntimeOverlay,
             },
             routing_workspace::{
-                workspace_snapshot_from_canonical_candidates, RoutingPlannerEvaluationStatus,
-                RoutingScoreStatus, RoutingWorkspaceSnapshot, RoutingWorkspaceSnapshotInput,
+                workspace_snapshot_from_canonical_candidates, RoutingCandidatePlanDiagnostics,
+                RoutingPlannerEvaluationStatus, RoutingScoreStatus,
+                RoutingWorkspaceRevisionSnapshot, RoutingWorkspaceSnapshot,
+                RoutingWorkspaceSnapshotInput,
             },
         },
         routing_policy::RoutingPolicyAggregate,
+        station_key_circuit::CircuitPersistenceGate,
     },
     models::{
         document_sync::TrustedDocumentSource,
@@ -87,7 +99,6 @@ use crate::{
         error::PersistenceError,
         runtime::PersistenceHandle,
         stores::pricing_store::PricingStore,
-        stores::routing_policy_store::RoutingPolicyStore,
         stores::routing_quality_store::RoutingQualityStore,
         stores::routing_store::{RoutingStore, StationEndpointProbeTarget},
     },
@@ -105,7 +116,7 @@ pub struct CanonicalRoutingCandidateWithPricing {
 pub(crate) struct RoutingService {
     runtime: PersistenceHandle,
     store: RoutingStore,
-    error_rate: ErrorRateProtectionService,
+    circuit_persistence_gate: Arc<CircuitPersistenceGate>,
 }
 
 impl RoutingService {
@@ -140,20 +151,91 @@ impl RoutingService {
             .map_err(Into::into)
     }
 
-    #[cfg(test)]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=routing-service-compat-constructor; owner=application/routing; remove_when=all compositions inject the shared circuit persistence gate"
+        )
+    )]
     pub(crate) fn new(runtime: PersistenceHandle) -> Self {
-        Self::new_with_error_rate(runtime, ErrorRateProtectionService::disabled())
+        Self::new_with_circuit_persistence_gate(runtime, CircuitPersistenceGate::shared())
     }
 
-    pub(crate) fn new_with_error_rate(
+    pub(crate) fn new_with_circuit_persistence_gate(
         runtime: PersistenceHandle,
-        error_rate: ErrorRateProtectionService,
+        circuit_persistence_gate: Arc<CircuitPersistenceGate>,
     ) -> Self {
         Self {
             runtime,
             store: RoutingStore,
-            error_rate,
+            circuit_persistence_gate,
         }
+    }
+
+    fn circuit_persistence_gate_active(
+        &self,
+        station_key_id: &str,
+        lifecycle_revision: u64,
+    ) -> bool {
+        self.circuit_persistence_gate
+            .is_active(station_key_id, lifecycle_revision)
+    }
+
+    fn mark_circuit_persistence_gate(&self, station_key_id: &str, lifecycle_revision: u64) {
+        self.circuit_persistence_gate
+            .mark_station_key(station_key_id, lifecycle_revision);
+    }
+
+    async fn persist_circuit_persistence_gate(
+        &self,
+        station_key_id: String,
+        lifecycle_revision: u64,
+        now_ms: u64,
+    ) {
+        let store = crate::persistence::stores::station_key_circuit_store::StationKeyCircuitStore;
+        let _ = self
+            .runtime
+            .write(|write| {
+                Box::pin(async move {
+                    store
+                        .mark_persistence_unavailable(
+                            write.connection(),
+                            &station_key_id,
+                            lifecycle_revision,
+                            now_ms,
+                        )
+                        .await
+                })
+            })
+            .await;
+    }
+
+    /// Ordinary request traffic can open this gate but cannot clear it.
+    pub(crate) async fn health_check_station_key_circuit_persistence(
+        &self,
+        now_ms: u64,
+    ) -> Result<u64, ApplicationError> {
+        let expected_gate_revision = self.circuit_persistence_gate.revision();
+        let store = crate::persistence::stores::station_key_circuit_store::StationKeyCircuitStore;
+        let cleared = self
+            .runtime
+            .write(|write| {
+                Box::pin(async move {
+                    store
+                        .health_check_and_clear_persistence_gates(write.connection(), now_ms)
+                        .await
+                })
+            })
+            .await
+            .map_err(ApplicationError::from)?;
+        if !self
+            .circuit_persistence_gate
+            .clear_if_unchanged(expected_gate_revision)
+        {
+            return Err(ApplicationError::Unavailable);
+        }
+        Ok(cleared)
     }
 
     pub(crate) async fn load_routing_policy(
@@ -162,22 +244,12 @@ impl RoutingService {
         crate::persistence::stores::routing_policy_store::StoredRoutingPolicy,
         ApplicationError,
     > {
-        let mut read = self.runtime.begin_read().await?;
-        RoutingPolicyStore
-            .load(read.connection())
-            .await
-            .map_err(ApplicationError::from)?
-            .ok_or(ApplicationError::NotFound)
-    }
-
-    pub(crate) async fn refresh_protection_configuration(&self) -> Result<(), ApplicationError> {
-        let stored = self.load_routing_policy().await?;
-        let policy =
-            crate::models::routing_policy::RoutingPolicyConfigV2::from_stored_value(&stored.config)
-                .map_err(|_| ApplicationError::ConstraintViolation)?;
-        self.error_rate
-            .set_enabled(policy.protection_profile.enabled);
-        Ok(())
+        crate::persistence::stores::routing_policy_v3_stage_upgrade::load_effective_active(
+            &self.runtime,
+        )
+        .await
+        .map_err(ApplicationError::from)?
+        .ok_or(ApplicationError::NotFound)
     }
 
     pub(crate) async fn get_routing_protection_status(
@@ -185,7 +257,6 @@ impl RoutingService {
         generated_at_ms: i64,
         capacity: &[CapacityProtectionFact],
         runtime_capacity_available: bool,
-        requested_model: Option<&str>,
     ) -> Result<RoutingProtectionStatus, ApplicationError> {
         let mut read = self.runtime.begin_read().await?;
         let durable =
@@ -207,97 +278,111 @@ impl RoutingService {
             .list_station_key_health(&mut read)
             .await
             .map_err(ApplicationError::from)?;
-        let domain_facts = self
-            .store
-            .load_runtime_candidates(&mut read)
-            .await
-            .map_err(ApplicationError::from)?
-            .into_iter()
-            .map(|candidate| FailureDomainCandidateFact {
-                provider_family: candidate.capacity_provider_family,
-                deployment_identity: candidate.capacity_deployment_identity,
-                region_identity: candidate.capacity_region_identity,
-                revision: candidate.capacity_domain_revision,
-                schedulable: candidate.schedulable,
-            })
-            .collect::<Vec<_>>();
-        Ok(project_routing_protection_status_with_reducer_and_domains(
+        Ok(project_routing_protection_status_with_reducer(
             generated_at_ms.max(0),
             &durable,
             &legacy,
             capacity,
             runtime_capacity_available,
             &reducer_statuses,
-            &domain_facts,
-            requested_model,
         ))
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=legacy-health-read-port; owner=application/routing; remove_when=v3 station-key circuit query is the sole production health read"
+        )
+    )]
     pub(crate) async fn load_health_protection_statuses(
         &self,
-        now_ms: i64,
+        _now_ms: i64,
     ) -> Result<Vec<crate::application::health_protection::HealthProtectionStatus>, ApplicationError>
     {
-        let mut read = self.runtime.begin_read().await?;
-        let enabled = self.load_protection_enabled(&mut read).await?;
-        if !enabled {
-            return Ok(Vec::new());
-        }
-        crate::persistence::stores::routing_health_verdict_store::RoutingHealthVerdictStore
-            .load_health_protection_statuses(read.connection(), now_ms.max(0))
-            .await
-            .map_err(ApplicationError::from)
+        Ok(Vec::new())
     }
 
     async fn load_protection_enabled(
         &self,
         read: &mut crate::persistence::ReadSession,
     ) -> Result<bool, ApplicationError> {
-        let stored = RoutingPolicyStore
-            .load(read.connection())
-            .await
-            .map_err(ApplicationError::from)?
-            .ok_or(ApplicationError::NotFound)?;
-        let policy =
-            crate::models::routing_policy::RoutingPolicyConfigV2::from_stored_value(&stored.config)
-                .map_err(|_| ApplicationError::ConstraintViolation)?;
-        Ok(policy.protection_profile.enabled)
+        let _ = read;
+        Ok(false)
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=legacy-health-probe-api; owner=application/routing; remove_when=v3 station-key circuit store owns all Half-Open leases"
+        )
+    )]
     pub(crate) async fn begin_health_protection_probe(
         &self,
-        scope: crate::application::health_protection::HealthProtectionScope,
-        now_ms: i64,
+        _scope: crate::application::health_protection::HealthProtectionScope,
+        _now_ms: i64,
     ) -> Result<
         Option<crate::application::health_protection::HealthProtectionProbe>,
         ApplicationError,
     > {
-        let store =
-            crate::persistence::stores::routing_health_verdict_store::RoutingHealthVerdictStore;
-        self.runtime
-            .write(|write| {
-                Box::pin(async move {
-                    store
-                        .begin_health_protection_probe(write.connection(), &scope, now_ms.max(0))
-                        .await
-                })
-            })
-            .await
-            .map_err(ApplicationError::from)
+        Ok(None)
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=legacy-health-probe-api; owner=application/routing; remove_when=v3 station-key circuit store owns all Half-Open leases"
+        )
+    )]
     pub(crate) async fn cancel_health_protection_probe(
         &self,
-        probe: crate::application::health_protection::HealthProtectionProbe,
-        now_ms: i64,
+        _probe: crate::application::health_protection::HealthProtectionProbe,
+        _now_ms: i64,
     ) -> Result<bool, ApplicationError> {
-        let store =
-            crate::persistence::stores::routing_health_verdict_store::RoutingHealthVerdictStore;
+        Ok(false)
+    }
+
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=v3-circuit-compat-api; owner=application/routing; remove_when=proxy execution calls the durable circuit store through its narrow port"
+        )
+    )]
+    pub(crate) async fn admit_station_key_circuit(
+        &self,
+        station_key_id: String,
+        lifecycle_revision: u64,
+        policy_revision: u64,
+        now_ms: u64,
+        deadline_at_ms: u64,
+        score_gate_passed: bool,
+        attempt_id: String,
+        consecutive_failure_threshold: u16,
+        recovery_success_threshold: u16,
+        recovery_wait_ms: u64,
+    ) -> Result<crate::application::station_key_circuit::CircuitAdmissionResult, ApplicationError>
+    {
+        let store = crate::persistence::stores::station_key_circuit_store::StationKeyCircuitStore;
         self.runtime
             .write(|write| {
                 Box::pin(async move {
                     store
-                        .cancel_health_protection_probe(write.connection(), &probe, now_ms.max(0))
+                        .admit(
+                            write.connection(),
+                            &station_key_id,
+                            lifecycle_revision,
+                            policy_revision,
+                            now_ms,
+                            deadline_at_ms,
+                            score_gate_passed,
+                            &attempt_id,
+                            consecutive_failure_threshold,
+                            recovery_success_threshold,
+                            recovery_wait_ms,
+                        )
                         .await
                 })
             })
@@ -305,10 +390,307 @@ impl RoutingService {
             .map_err(ApplicationError::from)
     }
 
-    pub(crate) async fn apply_routing_policy_document_v2(
+    /// Atomically commits the durable Key-circuit admission and the v3
+    /// attempt slot. The caller may cross the outbound boundary only after
+    /// this transaction returns an allowed result.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn admit_station_key_circuit_with_attempt(
         &self,
-        document: crate::models::routing_policy::RoutingPolicyDocumentV2,
-        _source: TrustedDocumentSource,
+        expected_runtime_generation_id: Option<String>,
+        expected_fence_revision: u64,
+        station_key_id: String,
+        lifecycle_revision: u64,
+        policy_revision: u64,
+        now_ms: u64,
+        deadline_at_ms: u64,
+        score_gate_passed: bool,
+        attempt_id: String,
+        correlation_id: String,
+        attempt_index: u16,
+        capacity_lease_id: String,
+        consecutive_failure_threshold: u16,
+        recovery_success_threshold: u16,
+        recovery_wait_ms: u64,
+    ) -> Result<crate::application::station_key_circuit::CircuitAdmissionResult, ApplicationError>
+    {
+        use crate::application::station_key_circuit::CircuitAdmissionResult;
+        use crate::persistence::stores::routing_attempt_store::{
+            RoutingAttemptAdmission, RoutingAttemptStore,
+        };
+
+        if self.circuit_persistence_gate_active(&station_key_id, lifecycle_revision) {
+            return Ok(CircuitAdmissionResult::DeniedPersistenceUnavailable);
+        }
+        let circuit = crate::persistence::stores::station_key_circuit_store::StationKeyCircuitStore;
+        let gate_station_key_id = station_key_id.clone();
+        let outcome = self.runtime
+            .write(|write| {
+                Box::pin(async move {
+                    if circuit
+                        .persistence_gate_active(
+                            write.connection(),
+                            &station_key_id,
+                            lifecycle_revision,
+                        )
+                        .await?
+                    {
+                        return Ok(CircuitAdmissionResult::DeniedPersistenceUnavailable);
+                    }
+                    let generation_guard = crate::persistence::stores::routing_generation_store::RoutingGenerationStore
+                        .load_admission_guard(write.connection())
+                        .await?;
+                    if generation_guard.fencing {
+                        return Ok(CircuitAdmissionResult::DeniedGenerationFence);
+                    }
+                    if generation_guard.active_runtime_generation_id
+                        != expected_runtime_generation_id
+                        || generation_guard.fence_revision != expected_fence_revision
+                    {
+                        return Ok(CircuitAdmissionResult::DeniedStaleGeneration);
+                    }
+                    let generation_eligibility =
+                        RoutingAttemptStore::resolve_generation_eligibility(write.connection())
+                            .await?;
+                    let attempt_admission = RoutingAttemptAdmission {
+                        attempt_id: &attempt_id,
+                        correlation_id: &correlation_id,
+                        station_key_id: &station_key_id,
+                        station_key_lifecycle_revision: lifecycle_revision,
+                        attempt_index,
+                        capacity_lease_id: &capacity_lease_id,
+                        half_open_lease_id: None,
+                        lease_revision: None,
+                        deadline_at_ms,
+                        admitted_at_ms: now_ms,
+                        generation_eligibility,
+                    };
+                    if RoutingAttemptStore::audit_late_admission_if_finalized(
+                        write.connection(),
+                        &attempt_admission,
+                    )
+                    .await?
+                    {
+                        return Ok(CircuitAdmissionResult::DeniedLateAfterFinalization);
+                    }
+                    let result = circuit
+                        .admit(
+                            write.connection(),
+                            &station_key_id,
+                            lifecycle_revision,
+                            policy_revision,
+                            now_ms,
+                            deadline_at_ms,
+                            score_gate_passed,
+                            &attempt_id,
+                            consecutive_failure_threshold,
+                            recovery_success_threshold,
+                            recovery_wait_ms,
+                        )
+                        .await?;
+                    let (half_open_lease_id, lease_revision) = match result {
+                        CircuitAdmissionResult::AllowedHalfOpen { lease_revision, .. } => {
+                            (Some(attempt_id.as_str()), Some(lease_revision))
+                        }
+                        CircuitAdmissionResult::AllowedClosed { .. } => (None, None),
+                        _ => return Ok(result),
+                    };
+                    RoutingAttemptStore::admit(
+                        write.connection(),
+                        &RoutingAttemptAdmission {
+                            attempt_id: &attempt_id,
+                            correlation_id: &correlation_id,
+                            station_key_id: &station_key_id,
+                            station_key_lifecycle_revision: lifecycle_revision,
+                            attempt_index,
+                            capacity_lease_id: &capacity_lease_id,
+                            half_open_lease_id,
+                            lease_revision,
+                            deadline_at_ms,
+                            admitted_at_ms: now_ms,
+                            generation_eligibility,
+                        },
+                    )
+                    .await?;
+                    Ok(result)
+                })
+            })
+            .await;
+        match outcome {
+            Ok(result) => Ok(result),
+            Err(error) if circuit_persistence_failure(&error) => {
+                self.mark_circuit_persistence_gate(&gate_station_key_id, lifecycle_revision);
+                self.persist_circuit_persistence_gate(
+                    gate_station_key_id,
+                    lifecycle_revision,
+                    now_ms,
+                )
+                .await;
+                Ok(CircuitAdmissionResult::DeniedPersistenceUnavailable)
+            }
+            Err(error) => Err(ApplicationError::from(error)),
+        }
+    }
+
+    pub(crate) async fn load_station_key_circuit_statuses(
+        &self,
+    ) -> Result<
+        Vec<crate::application::station_key_circuit::StationKeyCircuitStatus>,
+        ApplicationError,
+    > {
+        use crate::persistence::stores::station_key_circuit_store::{
+            StationKeyCircuitStore, SHARED_CIRCUIT_PERSISTENCE_GATE_KEY,
+            SHARED_CIRCUIT_PERSISTENCE_GATE_REVISION,
+        };
+
+        if self.circuit_persistence_gate.is_active(
+            SHARED_CIRCUIT_PERSISTENCE_GATE_KEY,
+            SHARED_CIRCUIT_PERSISTENCE_GATE_REVISION,
+        ) {
+            return Err(ApplicationError::Unavailable);
+        }
+        let result = async {
+            let mut read = self.runtime.begin_read().await?;
+            StationKeyCircuitStore
+                .list_statuses(read.connection())
+                .await
+                .map_err(ApplicationError::from)
+        }
+        .await;
+        match result {
+            Ok(statuses) => Ok(statuses),
+            Err(error) => {
+                self.circuit_persistence_gate.mark_global_unavailable();
+                self.persist_circuit_persistence_gate(
+                    SHARED_CIRCUIT_PERSISTENCE_GATE_KEY.to_string(),
+                    SHARED_CIRCUIT_PERSISTENCE_GATE_REVISION,
+                    chrono::Utc::now().timestamp_millis().max(0) as u64,
+                )
+                .await;
+                Err(error)
+            }
+        }
+    }
+
+    pub(crate) async fn load_routing_generation_admission_guard(
+        &self,
+    ) -> Result<crate::models::routing_generation::RoutingGenerationAdmissionGuard, ApplicationError>
+    {
+        let mut read = self.runtime.begin_read().await?;
+        crate::persistence::stores::routing_generation_store::RoutingGenerationStore
+            .load_admission_guard(read.connection())
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=v3-circuit-compat-api; owner=application/routing; remove_when=proxy execution calls the durable circuit store through its narrow port"
+        )
+    )]
+    pub(crate) async fn mark_station_key_circuit_boundary(
+        &self,
+        station_key_id: String,
+        lifecycle_revision: u64,
+        attempt_id: String,
+        lease_revision: u64,
+        now_ms: u64,
+    ) -> Result<bool, ApplicationError> {
+        let store = crate::persistence::stores::station_key_circuit_store::StationKeyCircuitStore;
+        self.runtime
+            .write(|write| {
+                Box::pin(async move {
+                    store
+                        .mark_boundary_crossed(
+                            write.connection(),
+                            &station_key_id,
+                            lifecycle_revision,
+                            &attempt_id,
+                            lease_revision,
+                            now_ms,
+                        )
+                        .await
+                })
+            })
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    /// Marks every admitted attempt at the durable outbound boundary. Closed
+    /// attempts update only the ledger; Half-Open attempts additionally CAS
+    /// the circuit lease in the same SQLite transaction.
+    pub(crate) async fn mark_station_key_attempt_boundary(
+        &self,
+        station_key_id: String,
+        lifecycle_revision: u64,
+        attempt_id: String,
+        lease_revision: Option<u64>,
+        now_ms: u64,
+    ) -> Result<bool, ApplicationError> {
+        use crate::persistence::stores::routing_attempt_store::RoutingAttemptStore;
+
+        let circuit = crate::persistence::stores::station_key_circuit_store::StationKeyCircuitStore;
+        let gate_station_key_id = station_key_id.clone();
+        let outcome = self
+            .runtime
+            .write(|write| {
+                Box::pin(async move {
+                    let ledger_marked = RoutingAttemptStore::mark_boundary_crossed(
+                        write.connection(),
+                        &attempt_id,
+                        &station_key_id,
+                        lifecycle_revision,
+                        now_ms,
+                    )
+                    .await?;
+                    if !ledger_marked {
+                        return Ok(false);
+                    }
+                    let Some(lease_revision) = lease_revision else {
+                        return Ok(true);
+                    };
+                    let circuit_marked = circuit
+                        .mark_boundary_crossed(
+                            write.connection(),
+                            &station_key_id,
+                            lifecycle_revision,
+                            &attempt_id,
+                            lease_revision,
+                            now_ms,
+                        )
+                        .await?;
+                    if !circuit_marked {
+                        return Err(
+                            crate::persistence::error::PersistenceError::RevisionConflict(
+                                "station_key_attempt_boundary".to_string(),
+                            ),
+                        );
+                    }
+                    Ok(true)
+                })
+            })
+            .await;
+        match outcome {
+            Ok(marked) => Ok(marked),
+            Err(error) if circuit_persistence_failure(&error) => {
+                self.mark_circuit_persistence_gate(&gate_station_key_id, lifecycle_revision);
+                self.persist_circuit_persistence_gate(
+                    gate_station_key_id,
+                    lifecycle_revision,
+                    now_ms,
+                )
+                .await;
+                Err(ApplicationError::Unavailable)
+            }
+            Err(error) => Err(ApplicationError::from(error)),
+        }
+    }
+
+    pub(crate) async fn apply_routing_policy_document_v3(
+        &self,
+        document: crate::models::routing_policy::RoutingPolicyDocumentV3,
+        source: TrustedDocumentSource,
     ) -> Result<
         crate::persistence::stores::routing_policy_store::StoredRoutingPolicy,
         ApplicationError,
@@ -316,41 +698,16 @@ impl RoutingService {
         document
             .validate()
             .map_err(|_| ApplicationError::ConstraintViolation)?;
-        let value = serde_json::to_value(&document.policy)
-            .map_err(|_| ApplicationError::ConstraintViolation)?;
         let now_ms = chrono::Utc::now().timestamp_millis();
-        let mut write = self.runtime.begin_write().await?;
-        let stored = RoutingPolicyStore
-            .save_compare_and_swap(
-                write.connection(),
-                Some(document.base_revision),
-                &value,
-                "routing-policy-v2",
-                "routing-system-v1",
-                "active",
-                now_ms,
-            )
-            .await
-            .map_err(ApplicationError::from)?;
-        write.commit().await?;
-        // SQLite remains the active truth. The managed JSON mirror is updated
-        // only after the transaction commits, and a failed materialization is
-        // recorded in document-sync state without rolling back the policy.
-        sync_routing_policy_file(self.runtime.clone(), &stored, true).await?;
-        self.error_rate
-            .set_enabled(document.policy.protection_profile.enabled);
-        // A no-op CAS returns the current revision and must not emit a false
-        // invalidation. Every changed revision publishes only after commit.
-        if stored.revision != document.base_revision {
-            crate::application::queries::read_model_revision::publish_domain_revision_notice(
-                crate::application::queries::read_model_revision::DomainRevisionNotice::for_scope(
-                    "routing_policy",
-                    i64::try_from(stored.revision)
-                        .map_err(|_| ApplicationError::ConstraintViolation)?,
-                ),
-            );
-        }
-        Ok(stored)
+        crate::persistence::stores::routing_policy_v3_stage_upgrade::stage_user_policy(
+            &self.runtime,
+            document.base_revision,
+            &document.policy,
+            source.history_label(),
+            now_ms,
+        )
+        .await
+        .map_err(ApplicationError::from)
     }
 
     pub(crate) async fn reconcile_external_routing_policy_document(
@@ -444,11 +801,13 @@ impl RoutingService {
         read: &mut crate::persistence::ReadSession,
         request: &crate::application::routing_engine::request::RouteRequestFacts,
         runtime: RuntimeOverlaySnapshot,
-        health_probe: Option<crate::application::health_protection::HealthProtectionProbe>,
-        health_probe_mode: crate::application::health_protection::HealthProbeAdmissionMode,
+        _health_probe: Option<crate::application::health_protection::HealthProtectionProbe>,
+        _health_probe_mode: crate::application::health_protection::HealthProbeAdmissionMode,
     ) -> Result<Option<PlanningBuildResult>, ApplicationError> {
-        let stored = RoutingPolicyStore
-            .load(read.connection())
+        let stored =
+            crate::persistence::stores::routing_policy_v3_stage_upgrade::load_effective_active_in(
+                read.connection(),
+            )
             .await
             .map_err(ApplicationError::from)?;
         let Some(stored) = stored else {
@@ -460,6 +819,35 @@ impl RoutingService {
         let compiled = aggregate
             .compile_v2()
             .map_err(|_| ApplicationError::ConstraintViolation)?;
+        let compiled_v3 = aggregate
+            .compile_v3()
+            .map_err(|_| ApplicationError::ConstraintViolation)?;
+        let attempt_budget = compiled_v3
+            .attempt_budget
+            .into_execution_profile(&compiled_v3.circuit_breaker)
+            .map_err(|_| ApplicationError::ConstraintViolation)?;
+        let quality_config = crate::application::quality_projection::QualityProjectionConfig {
+            quality_policy_revision: routing_policy_revision,
+            recent_minimum_samples: u64::from(
+                compiled_v3.reliability_sampling.recent_minimum_samples,
+            ),
+            historical_minimum_samples: u64::from(
+                compiled_v3.reliability_sampling.historical_minimum_samples,
+            ),
+            optimistic_reliability_basis_points: compiled_v3
+                .reliability_sampling
+                .optimistic_reliability_basis_points(),
+            optimistic_latency_ms: compiled_v3.reliability_sampling.optimistic_latency_ms,
+            real_traffic_weight_basis_points: compiled_v3
+                .reliability_source_weights
+                .real_traffic_basis_points(),
+            monitoring_weight_basis_points: compiled_v3
+                .reliability_source_weights
+                .monitoring_basis_points(),
+            real_source_eligible: true,
+            monitoring_source_eligible: true,
+            current_lifecycle_revision: None,
+        };
         let options = request
             .requested_model()
             .map(crate::models::operational::OperationalFactReadOptions::for_request_model)
@@ -470,35 +858,17 @@ impl RoutingService {
             });
         let policy = aggregate.policy.clone();
         let builder = PlanningSnapshotBuilder;
-        // Protection activation is part of the immutable policy snapshot;
-        // the service only supplies the typed adapter and bounded history
-        // settings. This keeps a stale process-local default from overriding
-        // the policy revision selected for this request.
-        let error_rate_admission = self
-            .error_rate
-            .admission_config_for_policy(compiled.protection_enabled);
-        let error_rate_statuses = if error_rate_admission.enabled {
-            crate::persistence::stores::routing_health_verdict_store::RoutingHealthVerdictStore
-                .load_health_protection_statuses(read.connection(), request.admitted_at_ms().max(0))
-                .await
-                .map_err(ApplicationError::from)?
-        } else {
-            Vec::new()
-        };
         let mut result = builder
             .build_with_assessments(
                 read,
                 &options,
                 policy,
                 routing_policy_revision,
-                compiled.attempt_budget,
+                attempt_budget,
+                quality_config,
                 DispatchAlgorithmProfile::default(),
                 runtime,
                 request,
-                error_rate_admission,
-                &error_rate_statuses,
-                health_probe.as_ref(),
-                health_probe_mode,
             )
             .await
             .map_err(|error| {
@@ -506,8 +876,13 @@ impl RoutingService {
                 crate::observability::runtime::bootstrap::emit(
                     crate::services::proxy::runtime_events::planning_snapshot_failed(),
                 );
-                let _ = error;
-                ApplicationError::ConstraintViolation
+                match error {
+                    crate::application::operational_facts::planning_snapshot::PlanningSnapshotBuildError::CandidateLimitExceeded {
+                        actual,
+                        limit,
+                    } => ApplicationError::CandidateLimitExceeded { actual, limit },
+                    _ => ApplicationError::ConstraintViolation,
+                }
             })?;
         if let Some(model) = request.requested_model() {
             let ids = result
@@ -578,6 +953,7 @@ impl RoutingService {
             .map(|row| RoutingMonitoringTargetFacts {
                 station_id: row.station_id,
                 station_key_id: row.station_key_id,
+                station_key_lifecycle_revision: row.station_key_lifecycle_revision,
                 endpoint_revision: row.endpoint_revision,
                 api_base_url: row.api_base_url,
                 upstream_api_format: row.upstream_api_format,
@@ -684,10 +1060,6 @@ impl RoutingService {
                     station_key_id: row.station_key_id,
                     station_id: row.station_id,
                     station_type: row.station_type,
-                    capacity_provider_family: row.capacity_provider_family,
-                    capacity_deployment_identity: row.capacity_deployment_identity,
-                    capacity_region_identity: row.capacity_region_identity,
-                    capacity_domain_revision: row.capacity_domain_revision,
                     group_binding_id: row.group_binding_id,
                     endpoint_revision: row.endpoint_revision,
                     credential_revision: row.credential_revision,
@@ -717,17 +1089,41 @@ impl RoutingService {
         let planning_context = PlanningRequestContext::from_now(NON_PROXY_PLANNING_DEADLINE);
         let now_ms = chrono::Utc::now().timestamp_millis();
         let mut planner_error_code: Option<String> = None;
-        let (settings, policy_config, request, candidates, planning_result, quality_summaries) = {
+        let (
+            settings,
+            planner_policy_config,
+            active_policy_config,
+            request,
+            candidates,
+            planning_result,
+            quality_summaries,
+            attempt_diagnostics,
+            circuit_statuses,
+        ) = {
             let mut read = self.runtime.begin_read().await?;
             let settings = self.store.load_execution_settings(&mut read).await?;
-            let stored_policy = RoutingPolicyStore
-                .load(read.connection())
+            let stored_policy = crate::persistence::stores::routing_policy_v3_stage_upgrade::load_effective_active_in(
+                read.connection(),
+            )
                 .await
                 .map_err(ApplicationError::from)?
                 .ok_or(ApplicationError::NotFound)?;
             let aggregate = RoutingPolicyAggregate::from_stored(stored_policy)
                 .map_err(|_| ApplicationError::ConstraintViolation)?;
-            let policy_config = aggregate.policy.clone();
+            let planner_policy_config = aggregate.policy.clone();
+            let active_policy_config = aggregate
+                .policy_v3
+                .clone()
+                .map_or_else(
+                    || {
+                        crate::models::routing_policy::RoutingPolicyConfigV3::from_v2(
+                            &planner_policy_config,
+                        )
+                        .map(|upgrade| upgrade.policy)
+                    },
+                    Ok,
+                )
+                .map_err(|_| ApplicationError::ConstraintViolation)?;
             let request = route_request_facts_for_read_model(&settings, now_ms);
             let candidates = self
                 .load_workspace_candidates_with_request_pricing_in_read(&mut read, &request)
@@ -782,13 +1178,23 @@ impl RoutingService {
                     .map(|summary| (scope, summary))
                 })
                 .collect::<BTreeMap<_, _>>();
+            let attempt_diagnostics = RoutingQualityStore
+                .load_attempt_count_diagnostics(read.connection(), &scopes)
+                .await?;
+            let circuit_statuses =
+                crate::persistence::stores::station_key_circuit_store::StationKeyCircuitStore
+                    .list_statuses(read.connection())
+                    .await?;
             (
                 settings,
-                policy_config,
+                planner_policy_config,
+                active_policy_config,
                 request,
                 candidates,
                 planning_result,
                 quality_summaries,
+                attempt_diagnostics,
+                circuit_statuses,
             )
         };
         // Use the immutable planner snapshot as the score source so this
@@ -812,8 +1218,30 @@ impl RoutingService {
         let mut score_statuses = BTreeMap::new();
         let mut planner_exclusion_codes = BTreeMap::new();
         let mut assessment_provenance = BTreeMap::new();
-        let (score_by_key, planner_evaluation, planner_evaluation_code) = planning_result
+        let (
+            score_by_key,
+            plan_diagnostics,
+            planner_evaluation,
+            planner_evaluation_code,
+            workspace_revisions,
+        ) = planning_result
             .map(|result| {
+                let workspace_revisions = RoutingWorkspaceRevisionSnapshot {
+                    runtime_generation_id: result
+                        .snapshot
+                        .routing_runtime_generation_id
+                        .clone(),
+                    policy_revision: Some(result.snapshot.routing_policy_revision),
+                    quality_revision: Some(result.snapshot.routing_quality_revision),
+                    health_revision: Some(result.snapshot.routing_health_revision),
+                    quality_projection_backlog: Some(
+                        result.snapshot.quality_projection_backlog,
+                    ),
+                    quality_projection_lag_seconds: Some(
+                        result.snapshot.quality_projection_lag_seconds,
+                    ),
+                    quality_stale: Some(result.snapshot.quality_stale),
+                };
                 // The planner assesses every enabled key, including keys
                 // without a credential. The legacy Workspace source omits
                 // those non-executable rows, so integrity is directional:
@@ -839,8 +1267,10 @@ impl RoutingService {
                 if !assessment_integrity_ok {
                     return (
                         BTreeMap::new(),
+                        BTreeMap::new(),
                         RoutingPlannerEvaluationStatus::Unavailable,
                         Some("planner_assessment_source_mismatch".to_string()),
+                        workspace_revisions,
                     );
                 }
                 for assessment in &result.assessments {
@@ -849,10 +1279,6 @@ impl RoutingService {
                             crate::application::operational_facts::planning_snapshot::PlanningCandidateEligibility::ProbeDiscoveryOnly,
                             _,
                         ) => RoutingScoreStatus::ProbeDiscovery,
-                        (
-                            crate::application::operational_facts::planning_snapshot::PlanningCandidateEligibility::AdmittedForScoring,
-                            crate::application::operational_facts::planning_snapshot::PlanningCandidateSet::CappedByCandidateLimit,
-                        ) => RoutingScoreStatus::CandidateLimit,
                         (
                             crate::application::operational_facts::planning_snapshot::PlanningCandidateEligibility::AdmittedForScoring,
                             crate::application::operational_facts::planning_snapshot::PlanningCandidateSet::WithinLimit,
@@ -896,21 +1322,44 @@ impl RoutingService {
                             );
                         candidate_score_breakdown_with_cost_basis(
                             candidate,
-                            &policy_config,
-                            None,
+                            &planner_policy_config,
                             multiplier_cost_basis,
                         )
                         .map(|breakdown| (candidate.station_key_id.clone(), breakdown.into()))
                     })
                     .collect::<BTreeMap<_, _>>();
+                let plan_diagnostics = plan_snapshot(&result.snapshot, b"routing-workspace", 0)
+                    .map(|plan| {
+                        plan.candidates
+                            .into_iter()
+                            .fold(BTreeMap::new(), |mut diagnostics, candidate| {
+                                diagnostics.entry(candidate.station_key_id).or_insert(
+                                    RoutingCandidatePlanDiagnostics {
+                                        effective_score: candidate.utility.value().get(),
+                                        base_score: candidate.base_utility.value().get(),
+                                        target_rank: candidate.target_rank,
+                                        tier: candidate.tier,
+                                        lifecycle_revision: u64::try_from(
+                                            candidate.lifecycle_revision.max(1),
+                                        )
+                                        .unwrap_or(1),
+                                    },
+                                );
+                                diagnostics
+                            })
+                    })
+                    .unwrap_or_default();
                 (
                     score_by_key,
+                    plan_diagnostics,
                     RoutingPlannerEvaluationStatus::Available,
                     None,
+                    workspace_revisions,
                 )
             })
             .unwrap_or_else(|| {
                 (
+                    BTreeMap::new(),
                     BTreeMap::new(),
                     RoutingPlannerEvaluationStatus::Unavailable,
                     Some(
@@ -918,10 +1367,11 @@ impl RoutingService {
                             .take()
                             .unwrap_or_else(|| "planner_build_unavailable".to_string()),
                     ),
+                    RoutingWorkspaceRevisionSnapshot::default(),
                 )
             });
         Ok(workspace_snapshot_from_canonical_candidates(
-            policy_config,
+            active_policy_config,
             settings.max_rate_multiplier,
             settings.routing_group_scope,
             candidates,
@@ -932,6 +1382,10 @@ impl RoutingService {
             planner_evaluation,
             planner_evaluation_code,
             &quality_summaries,
+            &plan_diagnostics,
+            &attempt_diagnostics,
+            &circuit_statuses,
+            workspace_revisions,
             &request,
             input,
             now_ms,
@@ -1246,8 +1700,7 @@ impl RoutingService {
                 },
             })
             .collect::<Vec<_>>();
-        let canonical_plan =
-            plan_snapshot_with_budget(&planning_snapshot, b"simulation", 1, None).ok();
+        let canonical_plan = plan_snapshot(&planning_snapshot, b"simulation", 1).ok();
         let explanations = canonical_plan
             .as_ref()
             .map(|plan| {
@@ -1330,22 +1783,51 @@ fn routing_document_coordinator(runtime: &PersistenceHandle) -> PolicyDocumentCo
 
 fn routing_document_from_stored(
     stored: &crate::persistence::stores::routing_policy_store::StoredRoutingPolicy,
-) -> Result<crate::models::routing_policy::RoutingPolicyDocumentV2, PersistenceError> {
-    let policy =
-        crate::models::routing_policy::RoutingPolicyConfigV2::from_stored_value(&stored.config)
-            .map_err(|error| {
-                PersistenceError::InvariantViolation(format!(
-                    "routing policy config is invalid: {error:?}"
-                ))
-            })?;
+) -> Result<crate::models::routing_policy::RoutingPolicyDocumentV3, PersistenceError> {
+    let policy = routing_policy_v3_from_stored(&stored.config)?;
     let revision = u64::try_from(stored.revision).map_err(|_| {
         PersistenceError::InvariantViolation("routing policy revision is invalid".into())
     })?;
-    Ok(crate::models::routing_policy::RoutingPolicyDocumentV2 {
+    Ok(crate::models::routing_policy::RoutingPolicyDocumentV3 {
         format_version: crate::models::routing_policy::ROUTING_POLICY_DOCUMENT_FORMAT_VERSION,
         base_revision: revision,
         policy,
     })
+}
+
+pub(crate) fn routing_policy_v3_from_stored(
+    value: &serde_json::Value,
+) -> Result<crate::models::routing_policy::RoutingPolicyConfigV3, PersistenceError> {
+    match value.get("version").and_then(serde_json::Value::as_u64) {
+        Some(3) => crate::models::routing_policy::RoutingPolicyConfigV3::from_stored_value(value)
+            .map_err(|error| {
+                PersistenceError::InvariantViolation(format!(
+                    "routing policy config is invalid: {error:?}"
+                ))
+            }),
+        Some(1 | 2) => {
+            let legacy =
+                crate::models::routing_policy::RoutingPolicyConfigV2::from_stored_value(value)
+                    .map_err(|error| {
+                        PersistenceError::InvariantViolation(format!(
+                            "routing policy config is invalid: {error:?}"
+                        ))
+                    })?;
+            crate::models::routing_policy::RoutingPolicyConfigV3::from_v2(&legacy)
+                .map(|upgrade| upgrade.policy)
+                .map_err(|error| {
+                    PersistenceError::InvariantViolation(format!(
+                        "routing policy upgrade is invalid: {error:?}"
+                    ))
+                })
+        }
+        Some(version) => Err(PersistenceError::InvariantViolation(format!(
+            "routing policy version {version} is unsupported"
+        ))),
+        None => Err(PersistenceError::InvariantViolation(
+            "routing policy version is missing".into(),
+        )),
+    }
 }
 
 fn routing_document_digest(bytes: &[u8]) -> String {
@@ -1370,16 +1852,26 @@ async fn mark_routing_sync_error(
 }
 
 /// Decode historical and active managed-document shapes at the file
-/// boundary, then normalize the result to the active V2 document shape.
+/// boundary, then normalize the result to the active V3 document shape.
 fn decode_routing_document(
     bytes: &[u8],
-) -> Result<crate::models::routing_policy::RoutingPolicyDocumentV2, PolicyDocumentError> {
+) -> Result<crate::models::routing_policy::RoutingPolicyDocumentV3, PolicyDocumentError> {
     let value = decode_strict_json::<serde_json::Value>(bytes)?;
     let policy_version = value
         .get("policy")
         .and_then(|policy| policy.get("version"))
         .and_then(serde_json::Value::as_u64);
     match policy_version {
+        Some(3) => {
+            let document = serde_json::from_value::<
+                crate::models::routing_policy::RoutingPolicyDocumentV3,
+            >(value)
+            .map_err(|error| PolicyDocumentError::InvalidJson(error.to_string()))?;
+            document
+                .validate()
+                .map_err(|error| PolicyDocumentError::InvalidJson(format!("{error:?}")))?;
+            Ok(document)
+        }
         Some(2) => {
             let document = serde_json::from_value::<
                 crate::models::routing_policy::RoutingPolicyDocumentV2,
@@ -1388,14 +1880,19 @@ fn decode_routing_document(
             document
                 .validate()
                 .map_err(|error| PolicyDocumentError::InvalidJson(format!("{error:?}")))?;
-            Ok(document)
+            crate::models::routing_policy::RoutingPolicyDocumentV3::from_v2(&document)
+                .map(|(document, _)| document)
+                .map_err(|error| PolicyDocumentError::InvalidJson(format!("{error:?}")))
         }
         Some(1) => {
             let legacy = serde_json::from_value::<
                 crate::models::routing_policy::RoutingPolicyDocumentV1,
             >(value)
             .map_err(|error| PolicyDocumentError::InvalidJson(error.to_string()))?;
-            crate::models::routing_policy::RoutingPolicyDocumentV2::from_v1(&legacy)
+            let v2 = crate::models::routing_policy::RoutingPolicyDocumentV2::from_v1(&legacy)
+                .map_err(|error| PolicyDocumentError::InvalidJson(format!("{error:?}")))?;
+            crate::models::routing_policy::RoutingPolicyDocumentV3::from_v2(&v2)
+                .map(|(document, _)| document)
                 .map_err(|error| PolicyDocumentError::InvalidJson(format!("{error:?}")))
         }
         Some(version) => Err(PolicyDocumentError::InvalidJson(format!(
@@ -1428,13 +1925,12 @@ pub(crate) async fn sync_routing_policy_file(
     let _operation_guard = coordinator.acquire_operation_guard().await;
     let current_revision = {
         let mut read = runtime.begin_read().await?;
-        crate::persistence::stores::routing_policy_store::RoutingPolicyStore
-            .load(read.connection())
-            .await?
-            .ok_or_else(|| {
-                PersistenceError::InvariantViolation("routing policy is missing".into())
-            })?
-            .revision
+        crate::persistence::stores::routing_policy_v3_stage_upgrade::load_effective_active_in(
+            read.connection(),
+        )
+        .await?
+        .ok_or_else(|| PersistenceError::InvariantViolation("routing policy is missing".into()))?
+        .revision
     };
     if current_revision != document.base_revision {
         return Ok(());
@@ -1520,10 +2016,11 @@ pub(crate) async fn sync_routing_policy_file(
     // so a stale mirror does not survive until the periodic reconciliation.
     let latest = {
         let mut read = runtime.begin_read().await?;
-        RoutingPolicyStore
-            .load(read.connection())
-            .await?
-            .ok_or(PersistenceError::NotFound)?
+        crate::persistence::stores::routing_policy_v3_stage_upgrade::load_effective_active_in(
+            read.connection(),
+        )
+        .await?
+        .ok_or(PersistenceError::NotFound)?
     };
     if latest.revision != document.base_revision {
         drop(_operation_guard);
@@ -1549,13 +2046,12 @@ pub(crate) async fn sync_routing_policy_file(
 pub(crate) async fn initialize_routing_policy_document_sync(
     runtime: PersistenceHandle,
 ) -> Result<(), PersistenceError> {
-    let stored = {
-        let mut read = runtime.begin_read().await?;
-        RoutingPolicyStore
-            .load(read.connection())
-            .await?
-            .ok_or(PersistenceError::NotFound)?
-    };
+    let stored =
+        crate::persistence::stores::routing_policy_v3_stage_upgrade::load_effective_active(
+            &runtime,
+        )
+        .await?
+        .ok_or(PersistenceError::NotFound)?;
     sync_routing_policy_file(runtime, &stored, false).await
 }
 
@@ -1578,8 +2074,10 @@ pub(crate) async fn reconcile_external_routing_policy_document(
         let sync = crate::persistence::stores::document_sync_store::DocumentSyncStore
             .load(read.connection(), ROUTING_POLICY_DOCUMENT_KIND)
             .await?;
-        let policy = RoutingPolicyStore
-            .load(read.connection())
+        let policy =
+            crate::persistence::stores::routing_policy_v3_stage_upgrade::load_effective_active_in(
+                read.connection(),
+            )
             .await?
             .ok_or(PersistenceError::NotFound)?;
         (sync, policy)
@@ -1630,7 +2128,7 @@ pub(crate) async fn reconcile_external_routing_policy_document(
     };
     if document.base_revision != current_revision
         || document.validate().is_err()
-        || crate::application::routing_policy::compile_config_v2(
+        || crate::application::routing_policy::compile_config_v3(
             &document.policy,
             document.base_revision,
             &current_policy.policy_version,
@@ -1652,7 +2150,7 @@ pub(crate) async fn reconcile_external_routing_policy_document(
         return Ok(None);
     }
     let stored = match service
-        .apply_routing_policy_document_v2(document, TrustedDocumentSource::file_watch())
+        .apply_routing_policy_document_v3(document, TrustedDocumentSource::file_watch())
         .await
     {
         Ok(stored) => Some(stored),
@@ -1991,7 +2489,7 @@ mod tests {
         pricing::{PricingStatus, RequestKind},
         proxy::UpstreamApiFormat,
         routing::{RoutingPolicy, StationKeyCapabilities},
-        routing_policy::{RoutingPolicyConfigV1, RoutingPolicyDocumentV2},
+        routing_policy::RoutingPolicyDocumentV3,
     };
 
     #[tokio::test]
@@ -2051,47 +2549,55 @@ mod tests {
         .expect("runtime");
         let service = RoutingService::new(runtime.handle());
         let baseline = service.load_routing_policy().await.expect("baseline");
+        let baseline_v3 = routing_policy_v3_from_stored(&baseline.config)
+            .expect("baseline policy upgrades to v3");
+        sync_routing_policy_file(runtime.handle(), &baseline, false)
+            .await
+            .expect("baseline materialization");
 
-        let mut first_config = RoutingPolicyConfigV1::default();
-        first_config.max_candidates = 63;
+        let mut first_config = baseline_v3.clone();
+        first_config.affinity_ttl_seconds = 301;
         let first = service
-            .apply_routing_policy_document_v2(
-                RoutingPolicyDocumentV2 {
+            .apply_routing_policy_document_v3(
+                RoutingPolicyDocumentV3 {
                     format_version:
                         crate::models::routing_policy::ROUTING_POLICY_DOCUMENT_FORMAT_VERSION,
                     base_revision: baseline.revision,
-                    policy: first_config.into(),
+                    policy: first_config,
                 },
                 TrustedDocumentSource::ui(),
             )
             .await
             .expect("first policy apply");
 
-        let mut second_config = RoutingPolicyConfigV1::default();
-        second_config.max_candidates = 62;
+        let mut second_config =
+            routing_policy_v3_from_stored(&first.config).expect("first policy is v3");
+        second_config.affinity_ttl_seconds = 302;
         let second = service
-            .apply_routing_policy_document_v2(
-                RoutingPolicyDocumentV2 {
+            .apply_routing_policy_document_v3(
+                RoutingPolicyDocumentV3 {
                     format_version:
                         crate::models::routing_policy::ROUTING_POLICY_DOCUMENT_FORMAT_VERSION,
                     base_revision: first.revision,
-                    policy: second_config.into(),
+                    policy: second_config,
                 },
                 TrustedDocumentSource::ui(),
             )
             .await
             .expect("second policy apply");
 
-        // Simulate a delayed file-side continuation from the first commit.
+        // A delayed staged continuation must not publish over the active
+        // mirror. Staged policy becomes materializable only after generation
+        // activation, so the active baseline remains on disk here.
         sync_routing_policy_file(runtime.handle(), &first, true)
             .await
             .expect("stale materialization is ignored");
         let bytes = std::fs::read(temp.path().join("config").join("routing-policy.json"))
             .expect("managed routing document");
-        let materialized: RoutingPolicyDocumentV2 =
+        let materialized: RoutingPolicyDocumentV3 =
             serde_json::from_slice(&bytes).expect("managed routing document decodes");
-        assert_eq!(materialized.base_revision, second.revision);
-        assert_eq!(materialized.policy.max_candidates, 62);
+        assert_eq!(materialized.base_revision, baseline.revision);
+        assert_eq!(materialized.policy, baseline_v3);
         runtime.close().await.expect("close persistence runtime");
     }
 
@@ -2259,10 +2765,6 @@ mod tests {
             station_key_id: station_key_id.to_string(),
             station_id: station_id.to_string(),
             station_type: "newapi".to_string(),
-            capacity_provider_family: None,
-            capacity_deployment_identity: None,
-            capacity_region_identity: None,
-            capacity_domain_revision: None,
             station_account_concurrency_limit: None,
             station_endpoint_revision: priority,
             sanitized_origin: format!("https://{station_key_id}.example.test"),

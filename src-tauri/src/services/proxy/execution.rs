@@ -2,7 +2,10 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fmt,
     future::Future,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering as AtomicOrdering},
+        Arc, Mutex,
+    },
     time::{Duration, Instant},
 };
 
@@ -26,7 +29,7 @@ use super::{
             ClassifiedAttemptFailure, FailureBlame, HealthEffect, RetryDisposition,
         },
         ports::LifecycleWriteError,
-        request::{AttemptId, RequestLogAnnotations},
+        request::{AttemptId, RequestLogAnnotations, RequestRouteSelectionRecord},
         writer::{LifecycleWriter, WriterAdmissionError},
     },
     protocol::{
@@ -45,7 +48,6 @@ use super::{
 use crate::{
     application::{
         credentials::ExecutionCredentialResolver,
-        health_protection::HealthProbeAdmissionMode,
         model_mapping,
         operational_facts::target_resolver::{
             ExecutionTargetHandle, ExecutionTargetRef, ExecutionTargetResolver,
@@ -53,21 +55,20 @@ use crate::{
         },
         request_finalization::effect_planner::classified_attempt_failure_from_canonical,
         request_finalization::failure::{
-            failure_from_provider_signal, planning_failure, CapabilityApplicabilitySet,
-            FailureClass, FailureTarget, ProviderErrorSemanticSignal,
+            failure_from_provider_signal, planning_failure, public_error_for_class,
+            CapabilityApplicabilitySet, FailureClass, FailureTarget, ProviderErrorSemanticSignal,
             RetryDisposition as CanonicalRetryDisposition,
         },
-        request_lifecycle::attempt::project_retry_disposition,
         routing_engine::{
             admission::{
-                ActualAttemptTerminal, AdmissionDecision, AdmissionEvidence, AdmissionFailure,
-                AdmissionFailureKind, AdmissionPlanningInput, AdmissionSettings, FallbackPolicy,
-                RouteAdmissionCoordinator, SelectedRoute,
+                assess_routing_generation_admission, ActualAttemptTerminal, AdmissionDecision,
+                AdmissionEvidence, AdmissionFailure, AdmissionFailureKind, AdmissionPlanningInput,
+                AdmissionSettings, FallbackPolicy, RouteAdmissionCoordinator,
+                RoutingGenerationAdmissionDecision, SelectedRoute,
             },
             affinity::{AffinityKind, AffinityLookup, AffinityRegistry},
             candidate_plan::{RoutePlanCandidate, RoutePlanPricingSnapshot},
-            capacity::CompositeCapacityRegistry,
-            failure_domains::CapacityDomainCommitment,
+            capacity::{CapacityLease, CompositeCapacityRegistry},
             request::{
                 CanonicalRouteRequest, GroupFilterMode, OrderingProfile, PlanningRequestContext,
                 RouteKind, RouteRequestClassifier, RouteRequestFacts, ValidatedLocalRouteSettings,
@@ -88,6 +89,8 @@ use crate::{
     services::time::now_millis_for_services,
 };
 
+use crate::application::station_key_circuit::CircuitAdmissionResult;
+
 #[derive(Clone)]
 pub(crate) struct ExecutionEngine {
     repository: Arc<dyn RoutingRepository>,
@@ -100,19 +103,13 @@ pub(crate) struct ExecutionEngine {
     routing_runtime: Arc<RoutingRuntimeState>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum HealthProbeAcquireOutcome {
-    None,
-    Lease(crate::application::health_protection::HealthProtectionProbe),
-    LeaseRace,
-}
-
 pub(crate) trait AttemptExecutor: Send + Sync {
     fn attempt<'a>(
         &'a self,
         request: &'a CanonicalProxyRequest,
         target: &'a ExecutionTargetHandle,
         mapped_model: Option<&'a str>,
+        outbound_boundary: BoxFuture<'a, Result<(), ProxyFailure>>,
     ) -> BoxFuture<'a, Result<PreparedAttempt, ProxyFailure>>;
 }
 
@@ -139,6 +136,7 @@ pub(crate) struct ProxyExecutionResponse {
     selected_station_key_id: Option<String>,
     selected_station_id: Option<String>,
     fallback_count: i64,
+    pub capacity_lease: Option<CapacityLease>,
     pub lifecycle: ExecutionLifecycleEvidence,
 }
 
@@ -184,9 +182,7 @@ impl ModelsRetryAdapter {
     fn disposition(action: &RetryAction) -> ModelsAggregationDisposition {
         match action.kind {
             RetryActionKind::StopRequest => ModelsAggregationDisposition::StopAggregation,
-            RetryActionKind::RetrySameTarget
-            | RetryActionKind::WaitThenReplan
-            | RetryActionKind::TryDifferentFailureDomain => {
+            RetryActionKind::RetryCurrentKey | RetryActionKind::TryNextKey => {
                 ModelsAggregationDisposition::ContinueCandidate
             }
         }
@@ -206,36 +202,21 @@ impl ModelsRetryAdapter {
 /// evidence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RetryActionKind {
-    RetrySameTarget,
-    WaitThenReplan,
-    TryDifferentFailureDomain,
+    /// The error is replay-safe and the current key has not yet reached its
+    /// consecutive-failure threshold.
+    RetryCurrentKey,
+    /// The current key has reached its circuit threshold; the caller may move
+    /// to the next score-ordered key if the distinct-key budget allows it.
+    TryNextKey,
     StopRequest,
 }
 
 impl RetryActionKind {
     fn as_trace_label(self) -> &'static str {
         match self {
-            Self::RetrySameTarget => "retry_same_target",
-            Self::WaitThenReplan => "wait_then_replan",
-            Self::TryDifferentFailureDomain => "try_different_failure_domain",
+            Self::RetryCurrentKey => "retry_current_key",
+            Self::TryNextKey => "try_next_key",
             Self::StopRequest => "stop_request",
-        }
-    }
-
-    fn allows_replan(self) -> bool {
-        !matches!(self, Self::StopRequest)
-    }
-
-    fn retries_same_target(self) -> bool {
-        matches!(self, Self::RetrySameTarget)
-    }
-
-    fn canonical_retry(self) -> CanonicalRetryDisposition {
-        match self {
-            Self::RetrySameTarget => CanonicalRetryDisposition::RetrySameTarget,
-            Self::WaitThenReplan => CanonicalRetryDisposition::WaitThenReplan,
-            Self::TryDifferentFailureDomain => CanonicalRetryDisposition::TryDifferentFailureDomain,
-            Self::StopRequest => CanonicalRetryDisposition::StopRequest,
         }
     }
 }
@@ -254,8 +235,11 @@ pub(crate) struct RetryActionContext {
     pub(crate) attempt_ordinal: u16,
     pub(crate) policy_revision: u64,
     pub(crate) remaining_attempt_budget: u32,
+    /// Failures still available before the current key reaches the configured
+    /// circuit threshold. This does not consume the distinct-key failover
+    /// budget represented by `remaining_attempt_budget`.
+    pub(crate) remaining_same_key_failure_budget: u32,
     pub(crate) remaining_precommit_budget_ms: Option<u64>,
-    pub(crate) excluded_failure_domain_count: u16,
 }
 
 #[cfg(test)]
@@ -265,8 +249,8 @@ impl Default for RetryActionContext {
             attempt_ordinal: 0,
             policy_revision: 1,
             remaining_attempt_budget: 4,
+            remaining_same_key_failure_budget: 3,
             remaining_precommit_budget_ms: None,
-            excluded_failure_domain_count: 0,
         }
     }
 }
@@ -285,21 +269,23 @@ pub(crate) struct RetryAction {
     pub(crate) policy_revision: u64,
     pub(crate) remaining_attempt_budget: u32,
     pub(crate) remaining_precommit_budget_ms: Option<u64>,
-    pub(crate) excluded_failure_domain_count: u16,
-    pub(crate) wait_delay_ms: Option<u64>,
 }
 
 impl RetryAction {
     fn allows_replan(&self) -> bool {
-        self.kind.allows_replan() && self.remaining_attempt_budget > 0
-    }
-
-    fn retries_same_target(&self) -> bool {
-        self.kind.retries_same_target() && self.remaining_attempt_budget > 0
+        match self.kind {
+            RetryActionKind::RetryCurrentKey => true,
+            RetryActionKind::TryNextKey => self.remaining_attempt_budget > 0,
+            RetryActionKind::StopRequest => false,
+        }
     }
 
     fn lifecycle_retry(&self) -> RetryDisposition {
-        project_retry_disposition(self.kind.canonical_retry())
+        match self.kind {
+            RetryActionKind::RetryCurrentKey => RetryDisposition::RetrySameTarget,
+            RetryActionKind::TryNextKey => RetryDisposition::TryNextCandidate,
+            RetryActionKind::StopRequest => RetryDisposition::StopRequest,
+        }
     }
 
     fn stop(
@@ -322,8 +308,6 @@ impl RetryAction {
             policy_revision: context.policy_revision,
             remaining_attempt_budget: context.remaining_attempt_budget,
             remaining_precommit_budget_ms: context.remaining_precommit_budget_ms,
-            excluded_failure_domain_count: context.excluded_failure_domain_count,
-            wait_delay_ms: None,
         }
     }
 }
@@ -333,6 +317,11 @@ impl RetryAction {
 /// existing classifier boundary, so callers cannot bypass the gate by looking
 /// at an HTTP status or `RetryClass` projection.
 pub(crate) struct RetryActionPlanner;
+
+/// A request must remain bounded even when the user-configured retry count is
+/// applied independently to several score-ordered keys.  This is an internal
+/// safety cap, not another user-facing retry setting.
+const MAX_EXECUTION_ATTEMPTS_HARD_CAP: u32 = 40;
 
 impl RetryActionPlanner {
     /// Compatibility helper for focused planner tests. Production callers use
@@ -413,11 +402,12 @@ impl RetryActionPlanner {
         }
 
         let kind = match canonical.retry {
-            CanonicalRetryDisposition::RetrySameTarget => RetryActionKind::RetrySameTarget,
-            CanonicalRetryDisposition::TryDifferentFailureDomain => {
-                RetryActionKind::TryDifferentFailureDomain
+            CanonicalRetryDisposition::TryNextKey
+                if context.remaining_same_key_failure_budget > 0 =>
+            {
+                RetryActionKind::RetryCurrentKey
             }
-            CanonicalRetryDisposition::WaitThenReplan => RetryActionKind::WaitThenReplan,
+            CanonicalRetryDisposition::TryNextKey => RetryActionKind::TryNextKey,
             CanonicalRetryDisposition::StopRequest => RetryActionKind::StopRequest,
         };
         if matches!(kind, RetryActionKind::StopRequest) {
@@ -429,7 +419,7 @@ impl RetryActionPlanner {
                 "routing.retry.classifierStop",
             );
         }
-        if context.remaining_attempt_budget == 0 {
+        if matches!(kind, RetryActionKind::TryNextKey) && context.remaining_attempt_budget == 0 {
             return RetryAction::stop(
                 failure,
                 context,
@@ -439,47 +429,11 @@ impl RetryActionPlanner {
             );
         }
 
-        let requested_delay_ms = if matches!(
-            kind,
-            RetryActionKind::RetrySameTarget | RetryActionKind::WaitThenReplan
-        ) {
-            failure
-                .retry_after_ms
-                .and_then(|value| u64::try_from(value).ok())
-        } else {
-            None
-        };
-        let wait_delay_ms = requested_delay_ms.and_then(|delay| {
-            context
-                .remaining_precommit_budget_ms
-                .map_or(Some(delay), |remaining| {
-                    (delay < remaining).then_some(delay)
-                })
-        });
-        if matches!(
-            kind,
-            RetryActionKind::RetrySameTarget | RetryActionKind::WaitThenReplan
-        ) && requested_delay_ms.is_some()
-            && wait_delay_ms.is_none()
-        {
-            return RetryAction::stop(
-                failure,
-                context,
-                ReplayGateResult::Allowed,
-                "deadline_budget_exhausted",
-                "routing.retry.deadlineBudgetExhausted",
-            );
-        }
-
         let (reason_key, explanation_key) = match kind {
-            RetryActionKind::RetrySameTarget => {
-                ("capacity_transient", "routing.retry.sameTargetCapacity")
+            RetryActionKind::RetryCurrentKey => {
+                ("retry_current_key", "routing.retry.retryCurrentKey")
             }
-            RetryActionKind::WaitThenReplan => ("rate_limit_wait", "routing.retry.waitThenReplan"),
-            RetryActionKind::TryDifferentFailureDomain => (
-                "failure_domain_unavailable",
-                "routing.retry.tryDifferentFailureDomain",
-            ),
+            RetryActionKind::TryNextKey => ("key_attempt_failed", "routing.retry.tryNextKey"),
             RetryActionKind::StopRequest => unreachable!("stop handled above"),
         };
         RetryAction {
@@ -492,8 +446,6 @@ impl RetryActionPlanner {
             policy_revision: context.policy_revision,
             remaining_attempt_budget: context.remaining_attempt_budget,
             remaining_precommit_budget_ms: context.remaining_precommit_budget_ms,
-            excluded_failure_domain_count: context.excluded_failure_domain_count,
-            wait_delay_ms,
         }
     }
 }
@@ -583,8 +535,6 @@ impl ExecutionEngine {
                     route_facts.clone(),
                     None,
                     planning_context,
-                    None,
-                    HealthProbeAdmissionMode::Normal,
                 ),
                 |failure| failure,
             )
@@ -681,81 +631,41 @@ impl ExecutionEngine {
                 route_facts.clone(),
                 mapped_model.as_deref(),
                 planning_context,
-                None,
-                HealthProbeAdmissionMode::Normal,
             ),
             |failure| failure,
         )
         .await?;
-        // A durable Half-Open lease is acquired only after the immutable
-        // candidate snapshot is known. The lease is then fed back into one
-        // planning pass so admission can admit exactly that candidate.
-        let health_probe_acquisition = await_request_deadline(
-            transport_policy.request_deadline,
-            precommit_started,
-            self.acquire_health_probe(&planning_snapshot),
-            |failure| failure,
-        )
-        .await?;
-        let mut health_probe = match health_probe_acquisition {
-            HealthProbeAcquireOutcome::Lease(probe) => Some(probe),
-            HealthProbeAcquireOutcome::None => None,
-            HealthProbeAcquireOutcome::LeaseRace => {
-                // The discovery snapshot may contain an expired Open scope
-                // only to give this request a chance to reserve a lease. If
-                // another request won that race, rebuild strictly so that
-                // the stale candidate cannot be sent as an ordinary request.
-                let refreshed = await_request_deadline(
-                    transport_policy.request_deadline,
-                    precommit_started,
-                    self.load_route_snapshots(
-                        &request,
-                        &execution_settings,
-                        route_facts.clone(),
-                        mapped_model.as_deref(),
-                        planning_context,
-                        None,
-                        HealthProbeAdmissionMode::StrictAfterLeaseRace,
-                    ),
-                    |failure| failure,
-                )
-                .await?;
-                (planning_snapshot, snapshot) = refreshed;
-                None
-            }
-        };
-        if let Some(probe) = health_probe.as_ref() {
-            let refreshed = await_request_deadline(
-                transport_policy.request_deadline,
-                precommit_started,
-                self.load_route_snapshots(
-                    &request,
-                    &execution_settings,
-                    route_facts.clone(),
-                    mapped_model.as_deref(),
-                    planning_context,
-                    Some(probe.clone()),
-                    HealthProbeAdmissionMode::Normal,
-                ),
-                |failure| failure,
-            )
-            .await;
-            match refreshed {
-                Ok(value) => (planning_snapshot, snapshot) = value,
-                Err(failure) => {
-                    if let Some(probe) = health_probe.take() {
-                        self.cancel_health_protection_probe(probe).await?;
-                    }
-                    return Err(failure);
-                }
-            }
-        }
         // Freeze the compiled request budget before any replan. A refreshed
         // planning snapshot may change candidates, but never the in-flight
         // request's attempt or capacity retry allowance.
         let attempt_budget = planning_snapshot.attempt_budget;
+        let execution_attempt_limit =
+            execution_attempt_limit(attempt_budget, snapshot.candidates.len());
         // Per-request DecisionTraceProfileV1 record; in-memory ring only.
         let mut decision_trace = DecisionTraceBuilder::new(&request.request_id).ok();
+        let mut circuit_statuses = match await_request_deadline(
+            transport_policy.request_deadline,
+            precommit_started,
+            self.repository.load_station_key_circuit_statuses(),
+            |_error| circuit_persistence_unavailable_failure(),
+        )
+        .await
+        {
+            Ok(statuses) => statuses,
+            Err(failure) => {
+                if failure.code == ProxyFailureCode::RouteNoAvailableKey {
+                    record_trace_event(
+                        &mut decision_trace,
+                        DecisionTraceEventKind::FailClosed,
+                        "circuit_persistence_unavailable",
+                        0,
+                        None,
+                    );
+                    finish_decision_trace(decision_trace, &self.routing_runtime);
+                }
+                return Err(failure);
+            }
+        };
         // Keep the effective immutable profile visible in the bounded trace.
         // This is deliberately coarse and contains no request/provider data.
         let profile_trace_detail = attempt_budget_trace_detail(attempt_budget);
@@ -763,7 +673,7 @@ impl ExecutionEngine {
         let idempotent = request.idempotency_key.is_some();
         let mut last_failure = None;
         let mut attempted_count = 0_i64;
-        let mut controller = RouteAdmissionCoordinator::new_with_retry_budget(
+        let mut controller = RouteAdmissionCoordinator::new(
             route_facts.clone(),
             AdmissionSettings {
                 deadline_ms: precommit_deadline_ms(
@@ -779,30 +689,26 @@ impl ExecutionEngine {
                 },
                 attempt_budget,
             },
-            self.routing_runtime.retry_budget(),
         );
         let root_seed = self.routing_runtime.root_seed();
-        let exploration_budget = self.routing_runtime.exploration_budget();
 
         let mut attempt_index = 0_usize;
-        let mut capacity_sleep_ms = 0_u64;
+        let mut current_key_id: Option<String> = None;
+        let mut current_key_retry_count = 0_u32;
+        let mut current_key_had_outbound_attempt = false;
         let mut replan_count = 0_usize;
-        'attempts: while attempt_index < attempt_budget.max_total_attempts as usize {
+        'attempts: while attempt_index < execution_attempt_limit as usize {
             if self
                 .transport_policy
                 .remaining_request_deadline(precommit_started)
                 .is_none()
             {
-                if let Some(probe) = health_probe.take() {
-                    self.cancel_health_protection_probe(probe).await?;
-                }
                 return Err(precommit_timeout_failure());
             }
             let admission_input = AdmissionPlanningInput {
                 execution_candidates: &snapshot.candidates,
                 planning_snapshot: Some(&planning_snapshot),
                 root_seed: &root_seed,
-                exploration_budget: Some(&exploration_budget),
                 #[cfg(test)]
                 affinity_station_key_id: planning_snapshot
                     .runtime
@@ -813,32 +719,16 @@ impl ExecutionEngine {
                 current_runtime_overlay_revision: self.routing_runtime.snapshot().runtime_revision,
                 now_ms: controller_now_ms(request_started_at_ms, precommit_started),
                 max_waiters_per_constraint: 0,
+                circuit_statuses: &circuit_statuses,
                 #[cfg(test)]
                 candidates: &snapshot.legacy_candidates,
             };
             let decision = match controller.next(admission_input) {
                 Ok(decision) => decision,
                 Err(failure) if last_failure.is_some() && catalog_planning_exhausted(&failure) => {
-                    if last_failure
-                        .as_ref()
-                        .and_then(ProxyFailure::canonical)
-                        .and_then(capacity_domain_from_failure)
-                        .is_some()
-                    {
-                        record_trace_event(
-                            &mut decision_trace,
-                            DecisionTraceEventKind::SameDomainFallbackSuppressed,
-                            "capacity_same_domain_fallback_suppressed",
-                            attempt_index as u32,
-                            None,
-                        );
-                    }
                     break;
                 }
                 Err(failure) => {
-                    if let Some(probe) = health_probe.take() {
-                        self.cancel_health_protection_probe(probe).await?;
-                    }
                     return Err(controller_failure(failure, &execution_settings.policy));
                 }
             };
@@ -846,9 +736,6 @@ impl ExecutionEngine {
                 AdmissionDecision::Selected(selected) => selected,
                 AdmissionDecision::Replan { .. } => {
                     if replan_count >= MAX_EXECUTION_REPLANS {
-                        if let Some(probe) = health_probe.take() {
-                            self.cancel_health_protection_probe(probe).await?;
-                        }
                         return Err(controller_failure(
                             AdmissionFailure {
                                 kind: AdmissionFailureKind::ConfigUnstable,
@@ -871,38 +758,128 @@ impl ExecutionEngine {
                             route_facts.clone(),
                             mapped_model.as_deref(),
                             planning_context,
-                            // The first admission replan happens before an
-                            // outbound attempt. Preserve the durable probe
-                            // fence so the next immutable snapshot still
-                            // admits exactly the reserved Half-Open scope.
-                            health_probe.clone(),
-                            HealthProbeAdmissionMode::Normal,
                         ),
                         |failure| failure,
                     )
                     .await;
                     match refreshed {
                         Ok(value) => (planning_snapshot, snapshot) = value,
-                        Err(failure) => {
-                            if let Some(probe) = health_probe.take() {
-                                self.cancel_health_protection_probe(probe).await?;
-                            }
-                            return Err(failure);
-                        }
+                        Err(failure) => return Err(failure),
                     }
                     continue;
                 }
                 other => match selected_route_or_failure(other) {
                     Ok(selected) => selected,
                     Err(failure) => {
-                        if let Some(probe) = health_probe.take() {
-                            self.cancel_health_protection_probe(probe).await?;
-                        }
                         return Err(controller_failure(failure, &execution_settings.policy));
                     }
                 },
             };
-            attempted_count = attempted_count.max(attempt_index as i64 + 1);
+            let candidate = selected.candidate.clone();
+            if current_key_id.as_deref() != Some(candidate.station_key_id.as_str()) {
+                current_key_id = Some(candidate.station_key_id.clone());
+                current_key_retry_count = 0;
+                current_key_had_outbound_attempt = false;
+            }
+            let durable_attempt_id = format!("{}:{}", request.request_id, attempt_index);
+            let circuit_admission = self
+                .repository
+                .admit_station_key_circuit_with_attempt(
+                    planning_snapshot.routing_runtime_generation_id.clone(),
+                    planning_snapshot.routing_generation_fence_revision,
+                    candidate.station_key_id.clone(),
+                    u64::try_from(candidate.credential_revision.max(1)).unwrap_or(1),
+                    attempt_budget.policy_revision,
+                    u64::try_from(
+                        controller_now_ms(request_started_at_ms, precommit_started).max(0),
+                    )
+                    .unwrap_or(0),
+                    u64::try_from(
+                        controller
+                            .deadline_ms()
+                            .max(controller_now_ms(request_started_at_ms, precommit_started)),
+                    )
+                    .unwrap_or(0),
+                    selected.score_gate_passed,
+                    durable_attempt_id.clone(),
+                    request.request_id.clone(),
+                    attempt_index as u16,
+                    format!("{durable_attempt_id}:capacity"),
+                    u16::try_from(attempt_budget.consecutive_failure_threshold).unwrap_or(u16::MAX),
+                    attempt_budget.circuit_recovery_success_threshold,
+                    attempt_budget.circuit_recovery_wait_ms,
+                )
+                .await
+                .map_err(|error| planning_snapshot_repository_failure(error, false))?;
+            if matches!(
+                circuit_admission,
+                CircuitAdmissionResult::DeniedGenerationFence
+                    | CircuitAdmissionResult::DeniedStaleGeneration
+            ) {
+                self.await_routing_generation_transition(&planning_snapshot, planning_context)
+                    .await?;
+                (planning_snapshot, snapshot) = self
+                    .load_route_snapshots(
+                        &request,
+                        &execution_settings,
+                        route_facts.clone(),
+                        mapped_model.as_deref(),
+                        planning_context,
+                    )
+                    .await?;
+                circuit_statuses = match self.repository.load_station_key_circuit_statuses().await {
+                    Ok(statuses) => statuses,
+                    Err(_) => {
+                        record_trace_event(
+                            &mut decision_trace,
+                            DecisionTraceEventKind::FailClosed,
+                            "circuit_persistence_unavailable",
+                            attempt_index as u32,
+                            None,
+                        );
+                        finish_decision_trace(decision_trace, &self.routing_runtime);
+                        return Err(circuit_persistence_unavailable_failure());
+                    }
+                };
+                continue;
+            }
+            let circuit_lease_revision = match circuit_admission {
+                CircuitAdmissionResult::AllowedHalfOpen { lease_revision, .. } => {
+                    Some(lease_revision)
+                }
+                CircuitAdmissionResult::AllowedClosed { .. } => None,
+                _ => None,
+            };
+            if !matches!(
+                circuit_admission,
+                CircuitAdmissionResult::AllowedClosed { .. }
+                    | CircuitAdmissionResult::AllowedHalfOpen { .. }
+            ) {
+                if circuit_admission == CircuitAdmissionResult::DeniedPersistenceUnavailable {
+                    record_trace_event(
+                        &mut decision_trace,
+                        DecisionTraceEventKind::FailClosed,
+                        "circuit_persistence_unavailable",
+                        attempt_index as u32,
+                        None,
+                    );
+                }
+                if current_key_id.as_deref() == Some(candidate.station_key_id.as_str())
+                    && current_key_had_outbound_attempt
+                {
+                    controller.exclude_attempted_key(candidate.station_key_id.clone());
+                    current_key_id = None;
+                    current_key_retry_count = 0;
+                    current_key_had_outbound_attempt = false;
+                } else {
+                    controller.exclude_station_key(candidate.station_key_id.clone());
+                    current_key_id = None;
+                    current_key_retry_count = 0;
+                    current_key_had_outbound_attempt = false;
+                }
+                self.routing_runtime.mark_runtime_changed();
+                continue;
+            }
             record_trace_event(
                 &mut decision_trace,
                 DecisionTraceEventKind::AttemptStart,
@@ -910,43 +887,27 @@ impl ExecutionEngine {
                 attempt_index as u32,
                 Some(&profile_trace_detail),
             );
-            let candidate = selected.candidate.clone();
-            // A probe lease is scoped to one of the candidate's exact
-            // commitments. The second planning pass may choose a healthy
-            // candidate ahead of the probed one; never attach that lease to
-            // a candidate that does not own the scope.
-            let candidate_scopes =
-                crate::application::error_rate_protection::candidate_health_scopes(
-                    &candidate.station_id,
-                    &candidate.station_key_id,
-                    candidate.endpoint_revision,
-                );
-            if health_probe.as_ref().is_some_and(|probe| {
-                candidate_scopes
-                    .as_ref()
-                    .is_none_or(|scopes| !scopes.contains(&probe.scope))
-            }) {
-                if let Some(probe) = health_probe.take() {
-                    self.cancel_health_protection_probe(probe).await?;
-                }
-            }
             let candidate_model = candidate
                 .resolved_upstream_model
                 .as_deref()
                 .or(mapped_model.as_deref());
-            let is_capacity_cross_domain_fallback = selected.is_capacity_cross_domain_fallback;
             let attempt_started_at_ms = now_millis_for_services() as i64;
             let attempt_started = Instant::now();
             let Some(remaining) = self
                 .transport_policy
                 .remaining_request_deadline(precommit_started)
             else {
-                if let Some(probe) = health_probe.take() {
-                    self.cancel_health_protection_probe(probe).await?;
-                }
+                self.finish_attempt(abandoned_attempt_record(
+                    &request.request_id,
+                    attempt_index as u16,
+                    &candidate,
+                    attempt_started_at_ms,
+                    "request_deadline_exhausted_before_outbound",
+                ))
+                .await?;
                 return Err(precommit_timeout_failure());
             };
-            let target = tokio::time::timeout(
+            let target = match tokio::time::timeout(
                 remaining,
                 self.resolve_selected_target(
                     selected,
@@ -957,485 +918,248 @@ impl ExecutionEngine {
                 ),
             )
             .await
-            .unwrap_or_else(|_| Err(precommit_timeout_failure()));
-            let original_commitment = target.as_ref().ok().map(|target| target.commitment.clone());
-            // Selection alone is not a fallback: target validation must also
-            // succeed before this route can enter the outbound attempt branch.
-            if is_capacity_cross_domain_fallback && target.is_ok() {
-                record_trace_event(
-                    &mut decision_trace,
-                    DecisionTraceEventKind::CrossDomainFallback,
-                    "capacity_cross_domain_fallback",
-                    attempt_index as u32,
-                    None,
-                );
-            }
-            let attempt_remaining = self
-                .transport_policy
-                .remaining_request_deadline(precommit_started);
-            let attempt_probe = if target.is_ok() && attempt_remaining.is_some() {
-                health_probe.take()
-            } else {
-                if let Some(probe) = health_probe.take() {
-                    self.cancel_health_protection_probe(probe).await?;
+            {
+                Err(_) => {
+                    self.finish_attempt(abandoned_attempt_record(
+                        &request.request_id,
+                        attempt_index as u16,
+                        &candidate,
+                        attempt_started_at_ms,
+                        "target_resolution_deadline_exhausted",
+                    ))
+                    .await?;
+                    return Err(precommit_timeout_failure());
                 }
-                None
+                Ok(Ok(target)) => target,
+                Ok(Err(mut failure)) => {
+                    attach_failure_candidate(&mut failure, &candidate);
+                    self.finish_attempt(abandoned_attempt_record(
+                        &request.request_id,
+                        attempt_index as u16,
+                        &candidate,
+                        attempt_started_at_ms,
+                        "local_target_resolution_failed",
+                    ))
+                    .await?;
+                    return Err(failure);
+                }
             };
-            let attempt_probe_scope = attempt_probe.as_ref().map(|probe| probe.scope.clone());
-            let attempt_probe_state_revision =
-                attempt_probe.as_ref().map(|probe| probe.state_revision);
-            let mut attempt_result = match attempt_remaining {
-                Some(remaining) => tokio::time::timeout(remaining, async {
-                    let target = target?;
-                    let prepared = self
-                        .attempts
-                        .attempt(&request, &target, candidate_model)
-                        .await?;
-                    let upstream_headers_ms = attempt_started.elapsed().as_millis() as i64;
-                    let prepared = self
-                        .bootstrap_stream(prepared, &request, &target, candidate_model)
-                        .await?;
-                    Ok((prepared, upstream_headers_ms))
-                })
-                .await
-                .unwrap_or_else(|_| Err(precommit_timeout_failure())),
-                None => Err(precommit_timeout_failure()),
+            let comparability_key =
+                real_request_comparability_key(&request, &target, candidate_model);
+            let Some(attempt_remaining) = self
+                .transport_policy
+                .remaining_request_deadline(precommit_started)
+            else {
+                self.finish_attempt(abandoned_attempt_record(
+                    &request.request_id,
+                    attempt_index as u16,
+                    &candidate,
+                    attempt_started_at_ms,
+                    "request_deadline_exhausted_before_outbound",
+                ))
+                .await?;
+                return Err(precommit_timeout_failure());
             };
-            let mut same_target_retry_ordinal = 0_u8;
-            loop {
-                match attempt_result {
-                    Ok((prepared, upstream_headers_ms)) => {
-                        controller
-                            .record_actual_terminal_for_station_key(
-                                candidate.routing_identity(),
-                                ActualAttemptTerminal::Succeeded,
-                            )
-                            .map_err(|failure| {
-                                controller_failure(failure, &execution_settings.policy)
-                            })?;
-                        let first_token_ms = precommit_started.elapsed().as_millis() as i64;
-                        self.bind_success_affinity(
-                            &request,
-                            &execution_settings,
-                            candidate_model,
-                            &candidate,
-                            &planning_snapshot.policy,
-                            now_millis_for_services() as i64,
-                        );
-                        record_trace_event(
-                            &mut decision_trace,
-                            DecisionTraceEventKind::RequestTerminal,
-                            "request_completed",
-                            attempt_index as u32,
-                            None,
-                        );
-                        finish_decision_trace(decision_trace, &self.routing_runtime);
-                        return Ok(ProxyExecutionResponse::from_prepared(
-                            prepared,
-                            &candidate,
-                            attempt_index as i64,
-                            &request,
-                            &execution_settings.policy,
-                            AttemptTimings {
-                                request_started_at_ms,
-                                upstream_headers_ms,
-                                first_token_ms,
-                            },
-                            attempt_probe_scope.clone(),
-                            attempt_probe_state_revision,
-                        ));
-                    }
-                    Err(mut failure) => {
-                        attach_failure_candidate(&mut failure, &candidate);
-                        let action = RetryActionPlanner::plan_with_context(
-                            &failure,
-                            idempotent,
-                            false,
-                            RetryActionContext {
-                                attempt_ordinal: attempt_index as u16,
-                                policy_revision: attempt_budget.policy_revision,
-                                remaining_attempt_budget: attempt_budget
-                                    .max_total_attempts
-                                    .saturating_sub(attempt_index as u32 + 1),
-                                remaining_precommit_budget_ms: self
-                                    .transport_policy
-                                    .remaining_request_deadline(precommit_started)
-                                    .map(duration_millis_u64),
-                                excluded_failure_domain_count: controller
-                                    .excluded_failure_domain_count(),
-                            },
-                        );
-                        let action_detail = retry_action_trace_detail(&action);
-                        if failure.canonical().is_some() {
-                            record_trace_event(
-                                &mut decision_trace,
-                                DecisionTraceEventKind::CanonicalFailure,
-                                action.failure_code,
-                                attempt_index as u32,
-                                Some(&action_detail),
-                            );
+            let outbound_boundary_crossed = Arc::new(AtomicBool::new(false));
+            let outbound_boundary_marker = Arc::clone(&outbound_boundary_crossed);
+            let success_comparability_key = comparability_key.clone();
+            let attempt_result = tokio::time::timeout(attempt_remaining, async {
+                self.enqueue_route_selection(
+                    &request,
+                    &candidate,
+                    attempt_index as u16,
+                    &execution_settings.policy,
+                );
+                let outbound_boundary = Box::pin(async {
+                    self.mark_attempt_boundary(
+                        &candidate,
+                        &request.request_id,
+                        attempt_index,
+                        circuit_lease_revision,
+                    )
+                    .await?;
+                    outbound_boundary_marker.store(true, AtomicOrdering::Release);
+                    Ok(())
+                });
+                let prepared = self
+                    .attempts
+                    .attempt(&request, &target, candidate_model, outbound_boundary)
+                    .await?;
+                let upstream_headers_ms = attempt_started.elapsed().as_millis() as i64;
+                let prepared = self
+                    .bootstrap_stream(prepared, &request, &target, candidate_model)
+                    .await?;
+                Ok((
+                    prepared,
+                    upstream_headers_ms,
+                    success_comparability_key,
+                    target.into_capacity_lease(),
+                ))
+            })
+            .await
+            .unwrap_or_else(|_| Err(precommit_timeout_failure()));
+            if outbound_boundary_crossed.load(AtomicOrdering::Acquire) {
+                attempted_count = attempted_count.max(attempt_index as i64 + 1);
+                current_key_had_outbound_attempt = true;
+            }
+            match attempt_result {
+                Ok((prepared, upstream_headers_ms, comparability_key, capacity_lease)) => {
+                    controller
+                        .record_actual_terminal_for_station_key(
+                            candidate.station_key_id.clone(),
+                            candidate.routing_identity(),
+                            ActualAttemptTerminal::Succeeded,
+                        )
+                        .map_err(|failure| {
+                            controller_failure(failure, &execution_settings.policy)
+                        })?;
+                    let first_token_ms = precommit_started.elapsed().as_millis() as i64;
+                    self.bind_success_affinity(
+                        &request,
+                        &execution_settings,
+                        candidate_model,
+                        &candidate,
+                        &planning_snapshot.policy,
+                        now_millis_for_services() as i64,
+                    );
+                    record_trace_event(
+                        &mut decision_trace,
+                        DecisionTraceEventKind::RequestTerminal,
+                        "request_completed",
+                        attempt_index as u32,
+                        None,
+                    );
+                    finish_decision_trace(decision_trace, &self.routing_runtime);
+                    return Ok(ProxyExecutionResponse::from_prepared(
+                        prepared,
+                        &candidate,
+                        attempt_index as i64,
+                        &request,
+                        &execution_settings.policy,
+                        AttemptTimings {
+                            request_started_at_ms,
+                            upstream_headers_ms,
+                            first_token_ms,
+                        },
+                        comparability_key,
+                        None,
+                        None,
+                        capacity_lease,
+                    ));
+                }
+                Err(mut failure) => {
+                    attach_failure_candidate(&mut failure, &candidate);
+                    if !outbound_boundary_crossed.load(AtomicOrdering::Acquire) {
+                        let reason = if failure.code == ProxyFailureCode::RouteDeadlineExceeded {
+                            "request_deadline_exhausted_before_outbound"
                         } else {
-                            record_trace_event(
-                                &mut decision_trace,
-                                DecisionTraceEventKind::FailClosed,
-                                "fail_closed_no_canonical",
-                                attempt_index as u32,
-                                Some(&action_detail),
-                            );
-                        }
-                        self.finish_attempt(failed_attempt_record_with_probe(
+                            "local_attempt_failed_before_outbound"
+                        };
+                        self.finish_attempt(abandoned_attempt_record(
                             &request.request_id,
                             attempt_index as u16,
                             &candidate,
-                            &failure,
-                            action,
                             attempt_started_at_ms,
-                            false,
-                            attempt_probe_scope.clone(),
-                            attempt_probe_state_revision,
+                            reason,
                         ))
                         .await?;
-                        // Keep the canonical distinction visible at the
-                        // execution boundary. Waiting is bounded by the same
-                        // precommit budget as admission; a replan never
-                        // recreates or resets the request-local budget.
-                        if matches!(action.kind, RetryActionKind::WaitThenReplan) {
-                            if let Some(delay_ms) = action.wait_delay_ms {
-                                let Some(remaining) = self
-                                    .transport_policy
-                                    .remaining_request_deadline(precommit_started)
-                                else {
-                                    last_failure = Some(failure);
-                                    break 'attempts;
-                                };
-                                if Duration::from_millis(delay_ms) >= remaining {
-                                    last_failure = Some(failure);
-                                    break 'attempts;
-                                }
-                                if delay_ms > 0 {
-                                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
-                                }
-                            }
-                        }
-                        if matches!(
-                            action.kind,
-                            RetryActionKind::WaitThenReplan
-                                | RetryActionKind::TryDifferentFailureDomain
-                        ) {
-                            // Preserve the failed candidate's full domain set
-                            // before the next planning snapshot is loaded. A
-                            // replan may add/remove candidates, but it cannot
-                            // resurrect a domain ruled out by this request.
-                            if let Some(domains) = planning_snapshot
-                                .candidates
-                                .iter()
-                                .find(|raw| raw.station_key_id == candidate.station_key_id)
-                                .map(|raw| raw.failure_domains.clone())
-                            {
-                                for domain in domains {
-                                    controller.exclude_failure_domain(domain);
-                                }
-                            }
-                        }
-                        let capacity_domain =
-                            failure.canonical().and_then(capacity_domain_from_failure);
-                        let capacity_retry_registry =
-                            self.routing_runtime.capacity_retry_registry();
-                        if action.retries_same_target()
-                            && u32::from(same_target_retry_ordinal)
-                                < attempt_budget.max_same_target_capacity_retries
-                            && attempt_index + 1 < attempt_budget.max_total_attempts as usize
-                        {
-                            let Some(domain) = capacity_domain.clone() else {
-                                last_failure = Some(failure);
-                                break 'attempts;
-                            };
-                            controller
-                                .record_actual_terminal_for_station_key(
-                                    candidate.routing_identity(),
-                                    ActualAttemptTerminal::RetrySameTargetCapacity,
-                                )
-                                .map_err(|failure| {
-                                    controller_failure(failure, &execution_settings.policy)
-                                })?;
-                            same_target_retry_ordinal += 1;
-                            record_trace_event(
-                                &mut decision_trace,
-                                DecisionTraceEventKind::SameTargetRetry,
-                                "capacity_same_target_retry",
-                                attempt_index as u32,
-                                Some(&format!("retry_{}", same_target_retry_ordinal)),
-                            );
-                            let delay_ms = action.wait_delay_ms.unwrap_or_else(|| {
-                                capacity_retry_registry
-                                    .deterministic_equal_jitter_ms(
-                                        request.request_id.as_bytes(),
-                                        same_target_retry_ordinal,
-                                    )
-                                    .unwrap_or_default()
-                            });
-                            let Some(remaining) = self
+                        return Err(failure);
+                    }
+                    let action = RetryActionPlanner::plan_with_context(
+                        &failure,
+                        idempotent,
+                        false,
+                        RetryActionContext {
+                            attempt_ordinal: attempt_index as u16,
+                            policy_revision: attempt_budget.policy_revision,
+                            remaining_attempt_budget: controller.remaining_additional_key_budget(),
+                            remaining_same_key_failure_budget: if circuit_lease_revision.is_some() {
+                                0
+                            } else {
+                                attempt_budget
+                                    .consecutive_failure_threshold
+                                    .saturating_sub(current_key_retry_count + 1)
+                            },
+                            remaining_precommit_budget_ms: self
                                 .transport_policy
                                 .remaining_request_deadline(precommit_started)
-                            else {
-                                last_failure = Some(failure);
-                                break;
-                            };
-                            let wait_budget_exhausted = capacity_sleep_ms.saturating_add(delay_ms)
-                                > attempt_budget.capacity_retry_wait_budget_ms;
-                            let deadline_suppressed = Duration::from_millis(delay_ms) >= remaining;
-                            if wait_budget_exhausted || deadline_suppressed {
-                                let (code, detail) = if wait_budget_exhausted {
-                                    (
-                                        "capacity_retry_wait_budget_exhausted",
-                                        format!(
-                                            "budget_{}_used_{}_delay_{}",
-                                            attempt_budget.capacity_retry_wait_budget_ms,
-                                            capacity_sleep_ms,
-                                            delay_ms
-                                        ),
-                                    )
-                                } else {
-                                    (
-                                        "capacity_retry_deadline_suppressed",
-                                        format!(
-                                            "remaining_{}_delay_{}",
-                                            duration_millis_u64(remaining),
-                                            delay_ms
-                                        ),
-                                    )
-                                };
-                                record_trace_event(
-                                    &mut decision_trace,
-                                    DecisionTraceEventKind::CanonicalFailure,
-                                    code,
-                                    attempt_index as u32,
-                                    Some(&detail),
-                                );
-                                // Exhausting the wait budget suppresses only
-                                // another wait on this capacity domain. Keep
-                                // the failure flowing to the capacity-domain
-                                // fallback below so a distinct domain can be
-                                // tried in the same request. A fully consumed
-                                // request deadline is handled by the `None`
-                                // branch above and remains terminal.
-                            } else {
-                                // Queue admission happens before sleeping so waiters are
-                                // bounded and cancellation releases their ticket by RAII.
-                                // Sleeping must not consume an active retry permit.
-                                let mut retry_waiter =
-                                    match capacity_retry_registry.register_waiter(domain) {
-                                        Ok(waiter) => waiter,
-                                        Err(_) => {
-                                            last_failure = Some(failure);
-                                            break 'attempts;
-                                        }
-                                    };
-                                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
-                                capacity_sleep_ms = capacity_sleep_ms.saturating_add(delay_ms);
-                                let Some(remaining_after_wait) = self
-                                    .transport_policy
-                                    .remaining_request_deadline(precommit_started)
-                                else {
-                                    last_failure = Some(failure);
-                                    break 'attempts;
-                                };
-                                let retry_admission = match retry_waiter.try_promote(
-                                    controller_now_ms(request_started_at_ms, precommit_started),
-                                ) {
-                                    Ok(permit) => permit,
-                                    Err(_) => {
-                                        last_failure = Some(failure);
-                                        break 'attempts;
-                                    }
-                                };
-                                let Some(profile) =
-                                    snapshot.profiles.get(&candidate.station_key_id)
-                                else {
-                                    drop(retry_admission);
-                                    last_failure = Some(failure);
-                                    break 'attempts;
-                                };
-                                let lease = match self
-                                    .capacity
-                                    .try_acquire(profile.capacity_request(&candidate))
-                                {
-                                    Ok(lease) => lease,
-                                    Err(_) => {
-                                        drop(retry_admission);
-                                        last_failure = Some(failure);
-                                        break 'attempts;
-                                    }
-                                };
-                                let selected_retry = SelectedRoute {
-                                    candidate: candidate.clone(),
-                                    lease,
-                                    retry_permit: None,
-                                    evidence: vec![AdmissionEvidence {
-                                        code: "capacity_same_target_retry",
-                                        detail: same_target_retry_ordinal.to_string(),
-                                    }],
-                                    is_capacity_cross_domain_fallback: false,
-                                };
-                                let retry_started = Instant::now();
-                                let retry_target = tokio::time::timeout(
-                                    remaining_after_wait,
-                                    async {
-                                        let current_target = self
-                                            .repository
-                                            .load_current_execution_target(
-                                                candidate.station_key_id.clone(),
-                                            )
-                                            .await
-                                            .map_err(|error| {
-                                                internal_failure(format!(
-                                                    "reload retry execution target failed: {error}"
-                                                ))
-                                            })?;
-                                        let Some(current_target) = current_target else {
-                                            return Err(execution_target_failure(
-                                                crate::application::operational_facts::target_resolver::ExecutionTargetError::TargetUnavailable {
-                                                    station_key_id: candidate.station_key_id.clone(),
-                                                    reason: "target_removed_before_retry",
-                                                },
-                                            ));
-                                        };
-                                        let current_targets = BTreeMap::from([(
-                                            candidate.station_key_id.clone(),
-                                            current_target,
-                                        )]);
-                                        self.resolve_selected_target(
-                                            selected_retry,
-                                            &current_targets,
-                                            &planning_snapshot,
-                                            &request,
-                                            candidate_model,
-                                        )
-                                        .await
-                                    },
-                                )
-                                .await
-                                .unwrap_or_else(|_| Err(precommit_timeout_failure()));
-                                attempt_result = match self
-                                    .transport_policy
-                                    .remaining_request_deadline(precommit_started)
-                                {
-                                    Some(remaining) => tokio::time::timeout(remaining, async {
-                                        let target = retry_target?;
-                                        let Some(original_commitment) = original_commitment.as_ref()
-                                        else {
-                                            return Err(internal_failure(
-                                                "original execution commitment unavailable for retry",
-                                            ));
-                                        };
-                                        ExecutionTargetResolver::revalidate_commitment(
-                                            original_commitment,
-                                            &target.commitment,
-                                        )
-                                        .map_err(execution_target_failure)?;
-                                        let prepared = self
-                                            .attempts
-                                            .attempt(&request, &target, candidate_model)
-                                            .await?;
-                                        let headers_ms = retry_started.elapsed().as_millis() as i64;
-                                        let prepared = self
-                                            .bootstrap_stream(
-                                                prepared,
-                                                &request,
-                                                &target,
-                                                candidate_model,
-                                            )
-                                            .await?;
-                                        Ok((prepared, headers_ms))
-                                    })
-                                    .await
-                                    .unwrap_or_else(|_| Err(precommit_timeout_failure())),
-                                    None => Err(precommit_timeout_failure()),
-                                };
-                                attempt_index += 1;
-                                attempted_count = attempted_count.max(attempt_index as i64 + 1);
-                                match &attempt_result {
-                                    Ok(_) => retry_admission.complete_success(),
-                                    Err(next)
-                                        if matches!(
-                                            next.canonical().map(|v| v.retry),
-                                            Some(CanonicalRetryDisposition::RetrySameTarget)
-                                        ) =>
-                                    {
-                                        retry_admission.complete_capacity_failure(
-                                            controller_now_ms(
-                                                request_started_at_ms,
-                                                precommit_started,
-                                            ),
-                                        )
-                                    }
-                                    Err(_) => drop(retry_admission),
-                                }
-                                continue;
-                            }
-                        }
-                        if let Some(domain) = capacity_domain {
-                            capacity_retry_registry.record_capacity_exhausted(
-                                domain.clone(),
-                                controller_now_ms(request_started_at_ms, precommit_started),
-                            );
-                            controller
-                                .record_actual_terminal_for_station_key(
-                                    candidate.routing_identity(),
-                                    ActualAttemptTerminal::RetrySameTargetCapacity,
-                                )
-                                .map_err(|failure| {
-                                    controller_failure(failure, &execution_settings.policy)
-                                })?;
-                            if attempt_budget.allow_cross_capacity_domain_fallback
-                                && controller.exclude_exhausted_capacity_domain(domain)
-                            {
-                                last_failure = Some(failure);
-                                self.routing_runtime.mark_runtime_changed();
-                                attempt_index += 1;
-                                continue 'attempts;
-                            }
-                            record_trace_event(
-                                &mut decision_trace,
-                                DecisionTraceEventKind::SameDomainFallbackSuppressed,
-                                "capacity_same_domain_fallback_suppressed",
-                                attempt_index as u32,
-                                None,
-                            );
-                            last_failure = Some(failure);
-                            break 'attempts;
-                        }
-                        let terminal_result = controller.record_actual_terminal_for_station_key(
-                            candidate.routing_identity(),
-                            actual_terminal_for_action(&failure, action),
+                                .map(duration_millis_u64),
+                        },
+                    );
+                    let action_detail = retry_action_trace_detail(&action);
+                    if failure.canonical().is_some() {
+                        record_trace_event(
+                            &mut decision_trace,
+                            DecisionTraceEventKind::CanonicalFailure,
+                            action.failure_code,
+                            attempt_index as u32,
+                            Some(&action_detail),
                         );
-                        if action.allows_replan() {
-                            terminal_result.map_err(|failure| {
-                                controller_failure(failure, &execution_settings.policy)
-                            })?;
-                        }
-                        last_failure = Some(failure);
-                        if !action.allows_replan() {
-                            break 'attempts;
-                        }
-                        self.routing_runtime.mark_runtime_changed();
-                        attempt_index += 1;
+                    } else {
+                        record_trace_event(
+                            &mut decision_trace,
+                            DecisionTraceEventKind::FailClosed,
+                            "fail_closed_no_canonical",
+                            attempt_index as u32,
+                            Some(&action_detail),
+                        );
                     }
+                    self.finish_attempt(failed_attempt_record(
+                        &request.request_id,
+                        attempt_index as u16,
+                        &candidate,
+                        &failure,
+                        action,
+                        attempt_started_at_ms,
+                        false,
+                        comparability_key,
+                        None,
+                    ))
+                    .await?;
+                    let terminal_result = match action.kind {
+                        RetryActionKind::RetryCurrentKey => {
+                            current_key_retry_count = current_key_retry_count.saturating_add(1);
+                            controller.record_retry_attempt();
+                            Ok(())
+                        }
+                        RetryActionKind::TryNextKey => {
+                            current_key_retry_count = 0;
+                            current_key_id = None;
+                            current_key_had_outbound_attempt = false;
+                            controller.record_actual_terminal_for_station_key(
+                                candidate.station_key_id.clone(),
+                                candidate.routing_identity(),
+                                actual_terminal_for_action(&failure, action),
+                            )
+                        }
+                        RetryActionKind::StopRequest => Ok(()),
+                    };
+                    if action.allows_replan() {
+                        terminal_result.map_err(|failure| {
+                            controller_failure(failure, &execution_settings.policy)
+                        })?;
+                    }
+                    last_failure = Some(failure);
+                    if !action.allows_replan() {
+                        break 'attempts;
+                    }
+                    // Request-local retry progress already keeps the current
+                    // key eligible or excludes it after the threshold. A
+                    // failed attempt is not a global routing-config change;
+                    // forcing an overlay replan here would consume the replan
+                    // guard before later keys receive their own threshold.
+                    attempt_index += 1;
                 }
-                break;
             }
         }
 
-        if let Some(probe) = health_probe.take() {
-            self.cancel_health_protection_probe(probe).await?;
-        }
         let mut failure = last_failure.unwrap_or_else(|| {
             ProxyFailure::new(
-                ProxyFailureCode::RouteNoCandidate,
+                ProxyFailureCode::RouteNoAvailableKey,
                 FailureSource::Routing,
                 RetryClass::Never,
-                StatusCode::BAD_GATEWAY,
-                "all route candidates failed",
+                StatusCode::SERVICE_UNAVAILABLE,
+                "no available key",
             )
         });
         failure.context_mut().attempt_count = Some(attempted_count);
@@ -1501,8 +1225,6 @@ impl ExecutionEngine {
                     .map(ToString::to_string)
                     .or_else(|| candidate_commitment.resolved_upstream_model.clone()),
                 model_alias_revision: candidate_commitment.model_alias_revision,
-                expected_capacity_domain: candidate_commitment.capacity_domain.clone(),
-                expected_capacity_domain_revision: candidate_commitment.capacity_domain_revision,
                 policy_revision: planning_snapshot.routing_policy_revision,
                 request_body_identity: RequestBodyIdentity::from_bytes(&request.body),
                 protocol_profile: TargetProtocolProfile {
@@ -1513,7 +1235,6 @@ impl ExecutionEngine {
                     uses_reasoning: request.requirements.uses_reasoning,
                 },
                 lease: selected.lease,
-                retry_permit: selected.retry_permit,
             },
             current,
             self.credentials.as_ref(),
@@ -1659,7 +1380,16 @@ impl ExecutionEngine {
         let mut last_failure = None;
         let mut headers = HeaderMap::new();
         let attempt_budget = planning_snapshot.attempt_budget;
-        let mut controller = RouteAdmissionCoordinator::new_with_retry_budget(
+        let execution_attempt_limit =
+            execution_attempt_limit(attempt_budget, snapshot.candidates.len());
+        let mut circuit_statuses = await_request_deadline(
+            transport_policy.request_deadline,
+            precommit_started,
+            self.repository.load_station_key_circuit_statuses(),
+            |_error| circuit_persistence_unavailable_failure(),
+        )
+        .await?;
+        let mut controller = RouteAdmissionCoordinator::new(
             route_facts.clone(),
             AdmissionSettings {
                 deadline_ms: precommit_deadline_ms(
@@ -1675,14 +1405,12 @@ impl ExecutionEngine {
                 },
                 attempt_budget,
             },
-            self.routing_runtime.retry_budget(),
         );
         let root_seed = self.routing_runtime.root_seed();
-        let exploration_budget = self.routing_runtime.exploration_budget();
 
         let mut attempt_index = 0_usize;
         let mut replan_count = 0_usize;
-        while attempt_index < attempt_budget.max_total_attempts as usize {
+        while attempt_index < execution_attempt_limit as usize {
             if self
                 .transport_policy
                 .remaining_request_deadline(precommit_started)
@@ -1694,7 +1422,6 @@ impl ExecutionEngine {
                 execution_candidates: &snapshot.candidates,
                 planning_snapshot: Some(&planning_snapshot),
                 root_seed: &root_seed,
-                exploration_budget: Some(&exploration_budget),
                 #[cfg(test)]
                 affinity_station_key_id: None,
                 profiles: &snapshot.profiles,
@@ -1702,6 +1429,7 @@ impl ExecutionEngine {
                 current_runtime_overlay_revision: self.routing_runtime.snapshot().runtime_revision,
                 now_ms: controller_now_ms(request_started_at_ms, precommit_started),
                 max_waiters_per_constraint: 0,
+                circuit_statuses: &circuit_statuses,
                 #[cfg(test)]
                 candidates: &snapshot.legacy_candidates,
             };
@@ -1743,8 +1471,6 @@ impl ExecutionEngine {
                             route_facts.clone(),
                             mapped_model.as_deref(),
                             planning_context,
-                            None,
-                            HealthProbeAdmissionMode::Normal,
                         ),
                         |failure| failure,
                     )
@@ -1765,12 +1491,88 @@ impl ExecutionEngine {
                 },
             };
             let candidate = selected.candidate.clone();
-            attempted_count = attempted_count.max(attempt_index as i64 + 1);
+            let durable_attempt_id = format!("{}:{}", request.request_id, attempt_index);
+            let circuit_admission = self
+                .repository
+                .admit_station_key_circuit_with_attempt(
+                    planning_snapshot.routing_runtime_generation_id.clone(),
+                    planning_snapshot.routing_generation_fence_revision,
+                    candidate.station_key_id.clone(),
+                    u64::try_from(candidate.credential_revision.max(1)).unwrap_or(1),
+                    attempt_budget.policy_revision,
+                    u64::try_from(
+                        controller_now_ms(request_started_at_ms, precommit_started).max(0),
+                    )
+                    .unwrap_or(0),
+                    u64::try_from(
+                        controller
+                            .deadline_ms()
+                            .max(controller_now_ms(request_started_at_ms, precommit_started)),
+                    )
+                    .unwrap_or(0),
+                    selected.score_gate_passed,
+                    durable_attempt_id.clone(),
+                    request.request_id.clone(),
+                    attempt_index as u16,
+                    format!("{durable_attempt_id}:capacity"),
+                    u16::try_from(attempt_budget.consecutive_failure_threshold).unwrap_or(u16::MAX),
+                    attempt_budget.circuit_recovery_success_threshold,
+                    attempt_budget.circuit_recovery_wait_ms,
+                )
+                .await
+                .map_err(|error| planning_snapshot_repository_failure(error, false))?;
+            if matches!(
+                circuit_admission,
+                CircuitAdmissionResult::DeniedGenerationFence
+                    | CircuitAdmissionResult::DeniedStaleGeneration
+            ) {
+                self.await_routing_generation_transition(&planning_snapshot, planning_context)
+                    .await?;
+                (planning_snapshot, snapshot) = self
+                    .load_route_snapshots(
+                        &request,
+                        execution_settings,
+                        route_facts.clone(),
+                        mapped_model.as_deref(),
+                        planning_context,
+                    )
+                    .await?;
+                circuit_statuses = self
+                    .repository
+                    .load_station_key_circuit_statuses()
+                    .await
+                    .map_err(|_| circuit_persistence_unavailable_failure())?;
+                continue;
+            }
+            let circuit_lease_revision = match circuit_admission {
+                CircuitAdmissionResult::AllowedHalfOpen { lease_revision, .. } => {
+                    Some(lease_revision)
+                }
+                CircuitAdmissionResult::AllowedClosed { .. } => None,
+                _ => None,
+            };
+            if !matches!(
+                circuit_admission,
+                CircuitAdmissionResult::AllowedClosed { .. }
+                    | CircuitAdmissionResult::AllowedHalfOpen { .. }
+            ) {
+                controller.exclude_station_key(candidate.station_key_id.clone());
+                self.routing_runtime.mark_runtime_changed();
+                continue;
+            }
             let attempt_started_at_ms = now_millis_for_services() as i64;
             let Some(remaining) = self
                 .transport_policy
                 .remaining_request_deadline(precommit_started)
             else {
+                self.finish_attempt(abandoned_attempt_record(
+                    &request.request_id,
+                    attempt_index as u16,
+                    &candidate,
+                    attempt_started_at_ms,
+                    "request_deadline_exhausted_before_outbound",
+                ))
+                .await?;
                 return Err(precommit_timeout_failure());
             };
             let target = match tokio::time::timeout(
@@ -1785,39 +1587,114 @@ impl ExecutionEngine {
             )
             .await
             {
-                Err(_) => return Err(precommit_timeout_failure()),
+                Err(_) => {
+                    self.finish_attempt(abandoned_attempt_record(
+                        &request.request_id,
+                        attempt_index as u16,
+                        &candidate,
+                        attempt_started_at_ms,
+                        "target_resolution_deadline_exhausted",
+                    ))
+                    .await?;
+                    return Err(precommit_timeout_failure());
+                }
                 Ok(Ok(target)) => target,
                 Ok(Err(mut failure)) => {
                     attach_failure_candidate(&mut failure, &candidate);
-                    failed_count += 1;
-                    last_failure = Some(failure);
-                    controller
-                        .record_actual_terminal_for_station_key(
-                            candidate.routing_identity(),
-                            ActualAttemptTerminal::FailedBeforeCommit,
-                        )
-                        .map_err(|failure| {
-                            controller_failure(failure, &RoutingPolicy::PriorityFallback)
-                        })?;
-                    self.routing_runtime.mark_runtime_changed();
-                    attempt_index += 1;
-                    continue;
+                    self.finish_attempt(abandoned_attempt_record(
+                        &request.request_id,
+                        attempt_index as u16,
+                        &candidate,
+                        attempt_started_at_ms,
+                        "local_target_resolution_failed",
+                    ))
+                    .await?;
+                    return Err(failure);
                 }
             };
             let Some(remaining) = self
                 .transport_policy
                 .remaining_request_deadline(precommit_started)
             else {
+                self.finish_attempt(abandoned_attempt_record(
+                    &request.request_id,
+                    attempt_index as u16,
+                    &candidate,
+                    attempt_started_at_ms,
+                    "request_deadline_exhausted_before_outbound",
+                ))
+                .await?;
                 return Err(precommit_timeout_failure());
             };
-            match tokio::time::timeout(
+            let outbound_boundary_crossed = Arc::new(AtomicBool::new(false));
+            let outbound_boundary_marker = Arc::clone(&outbound_boundary_crossed);
+            let outbound_boundary = Box::pin(async {
+                self.mark_attempt_boundary(
+                    &candidate,
+                    &request.request_id,
+                    attempt_index,
+                    circuit_lease_revision,
+                )
+                .await?;
+                outbound_boundary_marker.store(true, AtomicOrdering::Release);
+                Ok(())
+            });
+            let attempt_result = tokio::time::timeout(
                 remaining,
-                self.attempts
-                    .attempt(&request, &target, mapped_model.as_deref()),
+                self.attempts.attempt(
+                    &request,
+                    &target,
+                    mapped_model.as_deref(),
+                    outbound_boundary,
+                ),
             )
-            .await
-            {
-                Err(_) => return Err(precommit_timeout_failure()),
+            .await;
+            if outbound_boundary_crossed.load(AtomicOrdering::Acquire) {
+                attempted_count = attempted_count.max(attempt_index as i64 + 1);
+            }
+            match attempt_result {
+                Err(_) => {
+                    let failure = precommit_timeout_failure();
+                    if !outbound_boundary_crossed.load(AtomicOrdering::Acquire) {
+                        self.finish_attempt(abandoned_attempt_record(
+                            &request.request_id,
+                            attempt_index as u16,
+                            &candidate,
+                            attempt_started_at_ms,
+                            "request_deadline_exhausted_before_outbound",
+                        ))
+                        .await?;
+                        return Err(failure);
+                    }
+                    let action = RetryAction::stop(
+                        &failure,
+                        RetryActionContext {
+                            attempt_ordinal: attempt_index as u16,
+                            policy_revision: attempt_budget.policy_revision,
+                            remaining_attempt_budget: controller.remaining_additional_key_budget(),
+                            remaining_same_key_failure_budget: 0,
+                            remaining_precommit_budget_ms: Some(0),
+                        },
+                        ReplayGateResult::Rejected {
+                            reason_key: "request_deadline_exhausted",
+                        },
+                        "request_deadline_exhausted",
+                        "routing.retry.requestDeadlineExhausted",
+                    );
+                    self.finish_attempt(failed_attempt_record(
+                        &request.request_id,
+                        attempt_index as u16,
+                        &candidate,
+                        &failure,
+                        action,
+                        attempt_started_at_ms,
+                        false,
+                        None,
+                        None,
+                    ))
+                    .await?;
+                    return Err(failure);
+                }
                 Ok(Ok(prepared)) => {
                     let (_, attempt_headers, body) = prepared.into_parts();
                     headers = attempt_headers;
@@ -1843,6 +1720,7 @@ impl ExecutionEngine {
                                 .await?;
                                 controller
                                     .record_actual_terminal_for_station_key(
+                                        candidate.station_key_id.clone(),
                                         candidate.routing_identity(),
                                         ActualAttemptTerminal::Succeeded,
                                     )
@@ -1860,14 +1738,13 @@ impl ExecutionEngine {
                                     RetryActionContext {
                                         attempt_ordinal: attempt_index as u16,
                                         policy_revision: attempt_budget.policy_revision,
-                                        remaining_attempt_budget: attempt_budget
-                                            .max_total_attempts
-                                            .saturating_sub(attempt_index as u32 + 1),
+                                        remaining_attempt_budget: controller
+                                            .remaining_additional_key_budget(),
+                                        remaining_same_key_failure_budget: 0,
                                         remaining_precommit_budget_ms: self
                                             .transport_policy
                                             .remaining_request_deadline(precommit_started)
                                             .map(duration_millis_u64),
-                                        excluded_failure_domain_count: 0,
                                     },
                                     ReplayGateResult::Rejected {
                                         reason_key: "models_response_parse_failed",
@@ -1884,12 +1761,14 @@ impl ExecutionEngine {
                                     attempt_started_at_ms,
                                     true,
                                     None,
+                                    None,
                                 ))
                                 .await?;
                                 failed_count += 1;
                                 last_failure = Some(failure);
                                 controller
                                     .record_actual_terminal_for_station_key(
+                                        candidate.station_key_id.clone(),
                                         candidate.routing_identity(),
                                         ActualAttemptTerminal::FailedBeforeCommit,
                                     )
@@ -1912,14 +1791,13 @@ impl ExecutionEngine {
                                 RetryActionContext {
                                     attempt_ordinal: attempt_index as u16,
                                     policy_revision: attempt_budget.policy_revision,
-                                    remaining_attempt_budget: attempt_budget
-                                        .max_total_attempts
-                                        .saturating_sub(attempt_index as u32 + 1),
+                                    remaining_attempt_budget: controller
+                                        .remaining_additional_key_budget(),
+                                    remaining_same_key_failure_budget: 0,
                                     remaining_precommit_budget_ms: self
                                         .transport_policy
                                         .remaining_request_deadline(precommit_started)
                                         .map(duration_millis_u64),
-                                    excluded_failure_domain_count: 0,
                                 },
                                 ReplayGateResult::Rejected {
                                     reason_key: "models_stream_response",
@@ -1936,12 +1814,14 @@ impl ExecutionEngine {
                                 attempt_started_at_ms,
                                 false,
                                 None,
+                                None,
                             ))
                             .await?;
                             failed_count += 1;
                             last_failure = Some(failure);
                             controller
                                 .record_actual_terminal_for_station_key(
+                                    candidate.station_key_id.clone(),
                                     candidate.routing_identity(),
                                     ActualAttemptTerminal::FailedBeforeCommit,
                                 )
@@ -1956,6 +1836,17 @@ impl ExecutionEngine {
                 }
                 Ok(Err(mut failure)) => {
                     attach_failure_candidate(&mut failure, &candidate);
+                    if !outbound_boundary_crossed.load(AtomicOrdering::Acquire) {
+                        self.finish_attempt(abandoned_attempt_record(
+                            &request.request_id,
+                            attempt_index as u16,
+                            &candidate,
+                            attempt_started_at_ms,
+                            "local_attempt_failed_before_outbound",
+                        ))
+                        .await?;
+                        return Err(failure);
+                    }
                     let action = RetryActionPlanner::plan_with_context(
                         &failure,
                         true,
@@ -1963,15 +1854,12 @@ impl ExecutionEngine {
                         RetryActionContext {
                             attempt_ordinal: attempt_index as u16,
                             policy_revision: attempt_budget.policy_revision,
-                            remaining_attempt_budget: attempt_budget
-                                .max_total_attempts
-                                .saturating_sub(attempt_index as u32 + 1),
+                            remaining_attempt_budget: controller.remaining_additional_key_budget(),
+                            remaining_same_key_failure_budget: 0,
                             remaining_precommit_budget_ms: self
                                 .transport_policy
                                 .remaining_request_deadline(precommit_started)
                                 .map(duration_millis_u64),
-                            excluded_failure_domain_count: controller
-                                .excluded_failure_domain_count(),
                         },
                     );
                     self.finish_attempt(failed_attempt_record(
@@ -1983,12 +1871,14 @@ impl ExecutionEngine {
                         attempt_started_at_ms,
                         false,
                         None,
+                        None,
                     ))
                     .await?;
                     failed_count += 1;
                     last_failure = Some(failure);
                     controller
                         .record_actual_terminal_for_station_key(
+                            candidate.station_key_id.clone(),
                             candidate.routing_identity(),
                             ActualAttemptTerminal::FailedBeforeCommit,
                         )
@@ -2038,8 +1928,6 @@ impl ExecutionEngine {
         route_facts: RouteRequestFacts,
         model: Option<&str>,
         planning_context: PlanningRequestContext,
-        health_probe: Option<crate::application::health_protection::HealthProtectionProbe>,
-        health_probe_mode: HealthProbeAdmissionMode,
     ) -> Result<
         (
             crate::application::routing_engine::planning_snapshot::PlanningSnapshot,
@@ -2048,13 +1936,8 @@ impl ExecutionEngine {
         ProxyFailure,
     > {
         let load_planning_snapshot = |runtime| {
-            self.repository.load_planning_snapshot_with_probe(
-                route_facts.clone(),
-                runtime,
-                planning_context,
-                health_probe.clone(),
-                health_probe_mode,
-            )
+            self.repository
+                .load_planning_snapshot(route_facts.clone(), runtime, planning_context)
         };
         let mut planning_snapshot = load_planning_snapshot(self.routing_runtime.snapshot())
             .await
@@ -2086,67 +1969,45 @@ impl ExecutionEngine {
         Ok((planning_snapshot, snapshot))
     }
 
-    async fn acquire_health_probe(
+    async fn await_routing_generation_transition(
         &self,
         planning_snapshot: &crate::application::routing_engine::planning_snapshot::PlanningSnapshot,
-    ) -> Result<HealthProbeAcquireOutcome, ProxyFailure> {
-        if !planning_snapshot.policy.protection_profile.enabled {
-            return Ok(HealthProbeAcquireOutcome::None);
-        }
-        let statuses = self
-            .repository
-            .load_health_protection_statuses(now_millis_for_services().max(0) as i64)
-            .await
-            .map_err(|error| {
-                internal_failure(format!("load health protection statuses failed: {error}"))
-            })?;
-        let mut eligible_scope_seen = false;
-        for candidate in &planning_snapshot.candidates {
-            let Some(scopes) = crate::application::error_rate_protection::candidate_health_scopes(
-                &candidate.station_id,
-                &candidate.station_key_id,
-                candidate.endpoint_revision,
-            ) else {
-                continue;
+        planning_context: PlanningRequestContext,
+    ) -> Result<(), ProxyFailure> {
+        loop {
+            let now = Instant::now();
+            let Some(remaining) = planning_context.deadline().checked_duration_since(now) else {
+                return Err(routing_generation_transition_timeout_failure());
             };
+            let guard = tokio::time::timeout(
+                remaining,
+                self.repository.load_routing_generation_admission_guard(),
+            )
+            .await
+            .map_err(|_| routing_generation_transition_timeout_failure())?
+            .map_err(|error| {
+                internal_failure(format!(
+                    "load routing generation admission guard failed: {error}"
+                ))
+            })?;
             let now_ms = now_millis_for_services().min(i64::MAX as u128) as i64;
-            for scope in scopes.iter() {
-                let eligible = statuses.iter().any(|status| {
-                    status.scope == *scope && match status.state {
-                        crate::application::health_protection::HealthProtectionState::Open => {
-                            status
-                                .cooldown_until_ms
-                                .is_some_and(|until| until <= now_ms)
-                        }
-                        crate::application::health_protection::HealthProtectionState::HalfOpen => {
-                            !status.half_open_probe_in_flight
-                        }
-                        crate::application::health_protection::HealthProtectionState::Closed => {
-                            false
-                        }
-                    }
-                });
-                if !eligible {
-                    continue;
+            let deadline_ms = now_ms.saturating_add(duration_millis_i64(remaining));
+            match assess_routing_generation_admission(
+                planning_snapshot,
+                &guard,
+                now_ms,
+                deadline_ms,
+            ) {
+                RoutingGenerationAdmissionDecision::Proceed
+                | RoutingGenerationAdmissionDecision::RebuildSnapshot => return Ok(()),
+                RoutingGenerationAdmissionDecision::Deadline => {
+                    return Err(routing_generation_transition_timeout_failure())
                 }
-                eligible_scope_seen = true;
-                if let Some(probe) = self
-                    .repository
-                    .begin_health_protection_probe(scope.clone(), now_ms)
-                    .await
-                    .map_err(|error| {
-                        internal_failure(format!("begin health protection probe failed: {error}"))
-                    })?
-                {
-                    return Ok(HealthProbeAcquireOutcome::Lease(probe));
+                RoutingGenerationAdmissionDecision::WaitForFence { .. } => {
+                    tokio::time::sleep(remaining.min(Duration::from_millis(10))).await;
                 }
             }
         }
-        Ok(if eligible_scope_seen {
-            HealthProbeAcquireOutcome::LeaseRace
-        } else {
-            HealthProbeAcquireOutcome::None
-        })
     }
 
     fn affinity_station_key_id(
@@ -2209,17 +2070,61 @@ impl ExecutionEngine {
         Ok(())
     }
 
-    async fn cancel_health_protection_probe(
+    async fn mark_attempt_boundary(
         &self,
-        probe: crate::application::health_protection::HealthProtectionProbe,
+        candidate: &RoutePlanCandidate,
+        request_id: &str,
+        attempt_index: usize,
+        lease_revision: Option<u64>,
     ) -> Result<(), ProxyFailure> {
-        self.repository
-            .cancel_health_protection_probe(probe, now_millis_for_services() as i64)
+        let marked = self
+            .repository
+            .mark_station_key_attempt_boundary(
+                candidate.station_key_id.clone(),
+                u64::try_from(candidate.credential_revision.max(1)).unwrap_or(1),
+                format!("{}:{}", request_id, attempt_index),
+                lease_revision,
+                u64::try_from(now_millis_for_services().max(0)).unwrap_or(0),
+            )
             .await
-            .map(|_| ())
-            .map_err(|error| {
-                internal_failure(format!("cancel health protection probe failed: {error}"))
+            .map_err(|error| planning_snapshot_repository_failure(error, false))?;
+        if !marked {
+            return Err(internal_failure(
+                "durable attempt admission was lost before outbound boundary",
+            ));
+        }
+        Ok(())
+    }
+
+    fn enqueue_route_selection(
+        &self,
+        request: &CanonicalProxyRequest,
+        candidate: &RoutePlanCandidate,
+        attempt_ordinal: u16,
+        policy: &RoutingPolicy,
+    ) {
+        let Some(writer) = self.lifecycle_writer.as_ref() else {
+            return;
+        };
+        if let Ok(acknowledgement) =
+            writer.try_record_route_selection(RequestRouteSelectionRecord {
+                request_id: request.request_id.clone(),
+                attempt_ordinal,
+                station_key_id: candidate.station_key_id.clone(),
+                station_id: candidate.station_id.clone(),
+                route_policy: routing_policy_label(policy).to_string(),
+                route_reason: format!(
+                    "selected {} for {}",
+                    candidate.station_key_id,
+                    endpoint_path(&request.endpoint)
+                ),
+                selected_at_ms: now_millis_for_services() as i64,
             })
+        {
+            // The bounded writer owns the command after admission. Route
+            // projection is observational and must not delay upstream I/O.
+            drop(acknowledgement);
+        }
     }
 }
 
@@ -2227,8 +2132,18 @@ fn planning_snapshot_repository_failure(
     error: RoutingExecutionReadError,
     affinity_reload: bool,
 ) -> ProxyFailure {
-    if matches!(error, RoutingExecutionReadError::DeadlineExceeded) {
-        return precommit_timeout_failure();
+    match error {
+        RoutingExecutionReadError::DeadlineExceeded => return precommit_timeout_failure(),
+        RoutingExecutionReadError::CandidateLimitExceeded { .. } => {
+            return ProxyFailure::new(
+                ProxyFailureCode::RouteCandidateLimitExceeded,
+                FailureSource::Routing,
+                RetryClass::Never,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "routing candidate limit is exceeded",
+            );
+        }
+        _ => {}
     }
     if affinity_reload {
         internal_failure(format!("reload affinity planning snapshot failed: {error}"))
@@ -2273,6 +2188,7 @@ fn success_attempt_record_with_probe(
             ordinal,
             candidate,
             started_at_ms,
+            None,
             probe_scope.clone(),
             probe_state_revision,
         ),
@@ -2292,6 +2208,7 @@ fn failed_attempt_record(
     action: RetryAction,
     started_at_ms: i64,
     output_committed: bool,
+    comparability_key: Option<String>,
     probe_state_revision: Option<u64>,
 ) -> AttemptTerminalRecord {
     failed_attempt_record_with_probe(
@@ -2302,9 +2219,37 @@ fn failed_attempt_record(
         action,
         started_at_ms,
         output_committed,
+        comparability_key,
         None,
         probe_state_revision,
     )
+}
+
+fn abandoned_attempt_record(
+    request_id: &str,
+    ordinal: u16,
+    candidate: &RoutePlanCandidate,
+    started_at_ms: i64,
+    reason: impl Into<String>,
+) -> AttemptTerminalRecord {
+    AttemptTerminalRecord {
+        context: attempt_context(
+            request_id,
+            ordinal,
+            candidate,
+            started_at_ms,
+            None,
+            None,
+            None,
+        ),
+        terminal: AttemptTerminal::Abandoned {
+            reason: reason.into(),
+        },
+        output_committed: false,
+        terminal_at_ms: now_millis_for_services() as i64,
+        probe_scope: None,
+        probe_state_revision: None,
+    }
 }
 
 fn failed_attempt_record_with_probe(
@@ -2315,6 +2260,7 @@ fn failed_attempt_record_with_probe(
     action: RetryAction,
     started_at_ms: i64,
     output_committed: bool,
+    comparability_key: Option<String>,
     probe_scope: Option<crate::application::health_protection::HealthProtectionScope>,
     probe_state_revision: Option<u64>,
 ) -> AttemptTerminalRecord {
@@ -2324,6 +2270,7 @@ fn failed_attempt_record_with_probe(
             ordinal,
             candidate,
             started_at_ms,
+            comparability_key,
             probe_scope.clone(),
             probe_state_revision,
         ),
@@ -2340,6 +2287,7 @@ fn attempt_context(
     ordinal: u16,
     candidate: &RoutePlanCandidate,
     started_at_ms: i64,
+    comparability_key: Option<String>,
     probe_scope: Option<crate::application::health_protection::HealthProtectionScope>,
     probe_state_revision: Option<u64>,
 ) -> AttemptContext {
@@ -2353,11 +2301,45 @@ fn attempt_context(
         group_binding_id: candidate.group_binding_id.clone(),
         group_revision: candidate.group_revision,
         resolved_upstream_model: candidate.resolved_upstream_model.clone(),
+        comparability_key,
         model_alias_revision: candidate.model_alias_revision,
         started_at_ms,
         probe_scope,
         probe_state_revision,
     }
+}
+
+fn real_request_comparability_key(
+    request: &CanonicalProxyRequest,
+    target: &ExecutionTargetHandle,
+    effective_model: Option<&str>,
+) -> Option<String> {
+    use crate::{
+        models::monitoring::{ClientProfileId, ProtocolKind},
+        services::monitoring::profiles::registry::BuiltinProfileRegistry,
+    };
+
+    let protocol = match (&request.endpoint, &target.upstream_api_format) {
+        (RouteEndpointKind::ChatCompletions, UpstreamApiFormat::CustomOpenAiCompatible) => {
+            ProtocolKind::GenericOpenAi
+        }
+        (RouteEndpointKind::ChatCompletions, _) => ProtocolKind::OpenAiChat,
+        (RouteEndpointKind::Responses, UpstreamApiFormat::OpenAiChatCompletions) => {
+            ProtocolKind::OpenAiChat
+        }
+        (RouteEndpointKind::Responses, _) => ProtocolKind::OpenAiResponses,
+        (RouteEndpointKind::Models | RouteEndpointKind::Embeddings, _) => return None,
+    };
+    let profile = BuiltinProfileRegistry::default()
+        .get(ClientProfileId::StandardApi)?
+        .clone();
+    crate::models::routing_observation::routing_comparability_key_v1(
+        protocol.as_str(),
+        ClientProfileId::StandardApi.as_str(),
+        profile.version,
+        effective_model?,
+        &profile.profile_hash(),
+    )
 }
 
 fn classified_attempt_failure(
@@ -2455,8 +2437,10 @@ impl ProxyExecutionResponse {
         request: &CanonicalProxyRequest,
         routing_policy: &RoutingPolicy,
         timings: AttemptTimings,
+        comparability_key: Option<String>,
         probe_scope: Option<crate::application::health_protection::HealthProtectionScope>,
         probe_state_revision: Option<u64>,
+        capacity_lease: CapacityLease,
     ) -> Self {
         let (status, headers, body) = prepared.into_parts();
         let body_bytes = match &body {
@@ -2473,6 +2457,7 @@ impl ProxyExecutionResponse {
             group_binding_id: candidate.group_binding_id.clone(),
             group_revision: candidate.group_revision,
             resolved_upstream_model: candidate.resolved_upstream_model.clone(),
+            comparability_key,
             model_alias_revision: candidate.model_alias_revision,
             started_at_ms: timings.request_started_at_ms,
             probe_scope,
@@ -2485,6 +2470,7 @@ impl ProxyExecutionResponse {
             selected_station_key_id: Some(candidate.station_key_id.clone()),
             selected_station_id: Some(candidate.station_id.clone()),
             fallback_count,
+            capacity_lease: Some(capacity_lease),
             lifecycle: ExecutionLifecycleEvidence {
                 annotations: RequestLogAnnotations {
                     model: request.model.clone(),
@@ -2573,6 +2559,7 @@ impl ProxyExecutionResponse {
             selected_station_key_id: None,
             selected_station_id: None,
             fallback_count,
+            capacity_lease: None,
             lifecycle: ExecutionLifecycleEvidence {
                 annotations: RequestLogAnnotations {
                     model: request.model.clone(),
@@ -2624,6 +2611,7 @@ impl AttemptExecutor for UpstreamAttemptExecutor {
         request: &'a CanonicalProxyRequest,
         target: &'a ExecutionTargetHandle,
         mapped_model: Option<&'a str>,
+        outbound_boundary: BoxFuture<'a, Result<(), ProxyFailure>>,
     ) -> BoxFuture<'a, Result<PreparedAttempt, ProxyFailure>> {
         Box::pin(async move {
             let adapter = EndpointAdapter::for_endpoint(&request.endpoint);
@@ -2633,6 +2621,7 @@ impl AttemptExecutor for UpstreamAttemptExecutor {
                 mapped_model,
             )?;
             let response_plan = prepared.response_plan;
+            outbound_boundary.await?;
             let attempt = self
                 .pool
                 .send_resolved_with_policy(prepared, target, request.transport_policy())
@@ -2765,18 +2754,6 @@ impl TransportPolicySnapshot {
     }
 }
 
-fn capacity_domain_from_failure(
-    failure: &crate::application::request_finalization::failure::CanonicalFailure,
-) -> Option<CapacityDomainCommitment> {
-    let crate::application::request_finalization::failure::FailureTarget::ProviderCapacity {
-        domain_commitment,
-    } = &failure.target
-    else {
-        return None;
-    };
-    CapacityDomainCommitment::from_canonical(domain_commitment)
-}
-
 impl fmt::Debug for ProxyExecutionResponse {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -2822,28 +2799,34 @@ fn retry_action_trace_detail(action: &RetryAction) -> String {
     // DecisionTraceProfileV1 validates the detail alphabet and length. Keep
     // this compact and deterministic; no endpoint, request body or secret is
     // ever included.
-    let delay = action.wait_delay_ms.unwrap_or(0);
     format!(
-        "action_{}_failure_{}_attempt_{}_remaining_{}_budget_{}_policy_{}_excluded_{}_delay_{}",
+        "action_{}_failure_{}_attempt_{}_remaining_{}_budget_{}_policy_{}",
         action.kind.as_trace_label(),
         action.failure_code,
         action.attempt_ordinal,
         action.remaining_attempt_budget,
         action.remaining_precommit_budget_ms.unwrap_or(0),
         action.policy_revision,
-        action.excluded_failure_domain_count,
-        delay
     )
 }
 
 fn attempt_budget_trace_detail(profile: AttemptBudgetProfileV1) -> String {
     format!(
-        "profile_total_{}_same_{}_wait_{}_cross_{}",
+        "profile_keys_{}_fail_{}_recover_{}_wait_ms_{}",
         profile.max_total_attempts,
-        profile.max_same_target_capacity_retries,
-        profile.capacity_retry_wait_budget_ms,
-        u8::from(profile.allow_cross_capacity_domain_fallback),
+        profile.consecutive_failure_threshold,
+        profile.circuit_recovery_success_threshold,
+        profile.circuit_recovery_wait_ms,
     )
+}
+
+fn execution_attempt_limit(profile: AttemptBudgetProfileV1, candidate_count: usize) -> u32 {
+    let candidates =
+        u32::try_from(candidate_count.max(1)).unwrap_or(MAX_EXECUTION_ATTEMPTS_HARD_CAP);
+    let provider_slots = profile.max_total_attempts.min(candidates);
+    provider_slots
+        .saturating_mul(profile.consecutive_failure_threshold)
+        .clamp(1, MAX_EXECUTION_ATTEMPTS_HARD_CAP)
 }
 
 fn finish_decision_trace(
@@ -2955,6 +2938,19 @@ fn precommit_timeout_failure() -> ProxyFailure {
         FailureTarget::Request,
         CanonicalRetryDisposition::StopRequest,
     ))
+}
+
+fn circuit_persistence_unavailable_failure() -> ProxyFailure {
+    let mut failure =
+        ProxyFailure::from_public_error(public_error_for_class(FailureClass::NoAvailableKey));
+    failure.internal_detail = Some("circuit_persistence_unavailable".to_string());
+    failure
+}
+
+fn routing_generation_transition_timeout_failure() -> ProxyFailure {
+    let mut failure = precommit_timeout_failure();
+    failure.internal_detail = Some("routing_generation_transition".to_string());
+    failure
 }
 
 fn actual_terminal_for_action(
@@ -3215,7 +3211,9 @@ fn controller_failure(failure: AdmissionFailure, policy: &RoutingPolicy) -> Prox
         let stable_code = planning_failure.stable_code();
         let mut proxy_failure =
             ProxyFailure::from_public_error(planning_failure.into_canonical().public);
-        proxy_failure.internal_detail = Some(stable_code.to_string());
+        if proxy_failure.code != ProxyFailureCode::RouteNoAvailableKey {
+            proxy_failure.internal_detail = Some(stable_code.to_string());
+        }
         proxy_failure.context_mut().route_policy = Some(routing_policy_label(policy).to_string());
         return proxy_failure;
     }
@@ -3224,7 +3222,7 @@ fn controller_failure(failure: AdmissionFailure, policy: &RoutingPolicy) -> Prox
         AdmissionFailureKind::NoEligible => (
             ProxyFailureCode::RouteNoCandidate,
             StatusCode::SERVICE_UNAVAILABLE,
-            "no eligible route candidate",
+            "no available key",
         ),
         AdmissionFailureKind::TemporaryHealth => (
             ProxyFailureCode::RouteHealthUnavailable,
@@ -3248,8 +3246,8 @@ fn controller_failure(failure: AdmissionFailure, policy: &RoutingPolicy) -> Prox
         ),
         AdmissionFailureKind::AttemptLimit => (
             ProxyFailureCode::RouteNoCandidate,
-            StatusCode::BAD_GATEWAY,
-            "all route candidates failed",
+            StatusCode::SERVICE_UNAVAILABLE,
+            "no available key",
         ),
         AdmissionFailureKind::CommitUncertain => (
             ProxyFailureCode::RouteInvariantViolation,
@@ -3270,6 +3268,14 @@ fn controller_failure(failure: AdmissionFailure, policy: &RoutingPolicy) -> Prox
 
 fn route_planning_failure(failure: &AdmissionFailure) -> Option<RoutePlanningFailure> {
     match failure.kind {
+        AdmissionFailureKind::NoEligible => match admission_failure_detail(failure) {
+            Some("no_configured_key" | "static_candidate_unavailable" | "no_available_key") => {
+                Some(RoutePlanningFailure::NoAvailableKey)
+            }
+            Some("capability_mismatch") => Some(RoutePlanningFailure::CapabilityMismatch),
+            _ => None,
+        },
+        AdmissionFailureKind::AttemptLimit => Some(RoutePlanningFailure::NoAvailableKey),
         AdmissionFailureKind::TemporaryHealth => Some(RoutePlanningFailure::HealthUnavailable),
         AdmissionFailureKind::CapacityExhausted => Some(RoutePlanningFailure::CapacityExhausted),
         AdmissionFailureKind::Deadline => Some(RoutePlanningFailure::DeadlineExceeded),
@@ -3277,8 +3283,15 @@ fn route_planning_failure(failure: &AdmissionFailure) -> Option<RoutePlanningFai
         AdmissionFailureKind::CommitUncertain => Some(RoutePlanningFailure::InvariantViolation {
             code: "route_commit_uncertain",
         }),
-        AdmissionFailureKind::NoEligible | AdmissionFailureKind::AttemptLimit => None,
     }
+}
+
+fn admission_failure_detail(failure: &AdmissionFailure) -> Option<&str> {
+    failure
+        .evidence
+        .iter()
+        .find(|evidence| evidence.code == "failure")
+        .map(|evidence| evidence.detail.as_str())
 }
 
 fn pricing_basis_label(
@@ -3517,7 +3530,6 @@ fn upstream_http_failure(
             target.endpoint_revision,
             request.model.as_deref(),
             applicability,
-            trusted_capacity_domain_commitment(target, mapped_model).as_deref(),
             provider_rule_profile(target),
             target.group_binding_id.as_deref(),
         )
@@ -3569,7 +3581,6 @@ fn detect_buffered_semantic_error(
         target.endpoint_revision,
         request.model.as_deref(),
         applicability,
-        trusted_capacity_domain_commitment(target, mapped_model).as_deref(),
         target.group_binding_id.as_deref(),
     );
     let canonical = failure_from_provider_signal(signal, applicability);
@@ -3579,25 +3590,6 @@ fn detect_buffered_semantic_error(
         status.as_u16()
     ));
     Some(failure.with_request_send_phase(RequestSendPhase::ResponseStarted))
-}
-
-fn trusted_capacity_domain_commitment(
-    target: &ExecutionTargetHandle,
-    mapped_model: Option<&str>,
-) -> Option<String> {
-    let explicit_openai_protocol = matches!(
-        target.upstream_api_format,
-        UpstreamApiFormat::OpenAiChatCompletions | UpstreamApiFormat::OpenAiResponses
-    );
-    if !explicit_openai_protocol {
-        return None;
-    }
-    let _ = mapped_model;
-    target
-        .commitment
-        .capacity_domain
-        .as_ref()
-        .map(|commitment| format!("v{}:{}", commitment.schema_version, commitment.digest_hex))
 }
 
 fn provider_rule_profile(
@@ -3716,7 +3708,6 @@ fn precommit_protocol_terminal_failure(
                 target.endpoint_revision,
                 request.model.as_deref(),
                 applicability,
-                trusted_capacity_domain_commitment(target, mapped_model).as_deref(),
                 provider_rule_profile(target),
                 target.group_binding_id.as_deref(),
             );
@@ -3806,19 +3797,29 @@ mod tests {
         },
         services::proxy::{
             error::{FailureSource, ProxyFailure, ProxyFailureCode, RetryClass},
+            lifecycle::{
+                attempt::{AttemptTerminal, AttemptTerminalRecord},
+                ports::{
+                    AttemptCommitAck, LifecycleWriteError, RequestCommitAck, RequestLifecycleStore,
+                    RequestRouteSelectionAck, RequestStartAck,
+                },
+                request::{FinalRequestRecord, RequestRouteSelectionRecord, RequestStartRecord},
+                writer::LifecycleWriter,
+            },
             limits::{BodyBudget, RequestLease},
             request::{CanonicalProxyRequest, RequestRequirements},
             routing_repository::{
                 admission_profile_from_candidate, route_projection_from_runtime,
                 OperationalRouteSnapshot, RoutingExecutionSettings, RoutingRepository,
             },
+            routing_runtime::RoutingRuntimeState,
         },
     };
 
     use super::{
-        actual_terminal_for_action, await_request_deadline, internal_failure,
-        transform_stream_body, validate_buffered_body, ActualAttemptTerminal, AffinityKind,
-        AffinityLookup, AttemptExecutor, ExecutionEngine, HealthProbeAdmissionMode,
+        actual_terminal_for_action, await_request_deadline, execution_attempt_limit,
+        internal_failure, transform_stream_body, validate_buffered_body, ActualAttemptTerminal,
+        AffinityKind, AffinityLookup, AttemptBudgetProfileV1, AttemptExecutor, ExecutionEngine,
         ModelsAggregationDisposition, ModelsRetryAdapter, PreparedAttempt, ReplayGateResult,
         RetryActionContext, RetryActionKind, RetryActionPlanner, TransportPolicySnapshot,
     };
@@ -3871,11 +3872,11 @@ mod tests {
         for (phase, expected) in [
             (
                 RequestSendPhase::NotConnected,
-                RetryActionKind::TryDifferentFailureDomain,
+                RetryActionKind::RetryCurrentKey,
             ),
             (
                 RequestSendPhase::ConnectedNoHeaders,
-                RetryActionKind::TryDifferentFailureDomain,
+                RetryActionKind::RetryCurrentKey,
             ),
             (RequestSendPhase::HeadersSent, RetryActionKind::StopRequest),
             (
@@ -3903,7 +3904,7 @@ mod tests {
         let idempotent = failure(500).with_request_send_phase(RequestSendPhase::Unknown);
         assert_eq!(
             RetryActionPlanner::plan(&idempotent, true, false).kind,
-            RetryActionKind::TryDifferentFailureDomain
+            RetryActionKind::RetryCurrentKey
         );
     }
 
@@ -3911,11 +3912,11 @@ mod tests {
     fn retry_action_planner_preserves_canonical_intent() {
         assert_eq!(
             RetryActionPlanner::plan(&failure(429), true, false).kind,
-            RetryActionKind::WaitThenReplan
+            RetryActionKind::RetryCurrentKey
         );
         assert_eq!(
             RetryActionPlanner::plan(&failure(500), true, false).kind,
-            RetryActionKind::TryDifferentFailureDomain
+            RetryActionKind::RetryCurrentKey
         );
         let capacity = ProxyFailure::from_canonical(super::failure_from_provider_signal(
             crate::application::request_finalization::failure::ProviderErrorSemanticSignal::ProviderCapacity {
@@ -3926,10 +3927,27 @@ mod tests {
         ));
         assert_eq!(
             RetryActionPlanner::plan(&capacity, true, false).kind,
-            RetryActionKind::RetrySameTarget
+            RetryActionKind::RetryCurrentKey
         );
         assert_eq!(
             RetryActionPlanner::plan(&failure(400), true, false).kind,
+            RetryActionKind::RetryCurrentKey
+        );
+
+        let insufficient_balance = failure(402);
+        assert_eq!(
+            RetryActionPlanner::plan(&insufficient_balance, true, false).kind,
+            RetryActionKind::StopRequest
+        );
+        let unsupported_model = ProxyFailure::from_canonical(super::failure_from_provider_signal(
+            crate::application::request_finalization::failure::ProviderErrorSemanticSignal::ConfirmedModelNotFound {
+                station_key_id: "fixture-key".to_string(),
+                model: "fixture-model".to_string(),
+            },
+            super::CapabilityApplicabilitySet::ConfirmedModelCatalog,
+        ));
+        assert_eq!(
+            RetryActionPlanner::plan(&unsupported_model, true, false).kind,
             RetryActionKind::StopRequest
         );
     }
@@ -3945,7 +3963,7 @@ mod tests {
                 failure(500),
                 ModelsAggregationDisposition::ContinueCandidate,
             ),
-            (failure(400), ModelsAggregationDisposition::StopAggregation),
+            (failure(402), ModelsAggregationDisposition::StopAggregation),
         ] {
             let action = RetryActionPlanner::plan(&failure, true, false);
             assert_eq!(ModelsRetryAdapter::disposition(&action), expected);
@@ -3983,6 +4001,20 @@ mod tests {
     }
 
     #[test]
+    fn typed_candidate_limit_maps_to_public_non_retryable_failure() {
+        let failure = super::planning_snapshot_repository_failure(
+            RoutingExecutionReadError::CandidateLimitExceeded {
+                actual: 1_025,
+                limit: 1_024,
+            },
+            false,
+        );
+        assert_eq!(failure.code, ProxyFailureCode::RouteCandidateLimitExceeded);
+        assert_eq!(failure.http_status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(failure.retry_class, RetryClass::Never);
+    }
+
+    #[test]
     fn retry_action_carries_bounded_execution_evidence() {
         let action = RetryActionPlanner::plan_with_context(
             &failure(429),
@@ -3992,20 +4024,59 @@ mod tests {
                 attempt_ordinal: 2,
                 policy_revision: 17,
                 remaining_attempt_budget: 1,
+                remaining_same_key_failure_budget: 1,
                 remaining_precommit_budget_ms: Some(900),
-                excluded_failure_domain_count: 0,
             },
         );
-        assert_eq!(action.kind, RetryActionKind::WaitThenReplan);
-        assert_eq!(action.reason_key, "rate_limit_wait");
-        assert_eq!(action.explanation_key, "routing.retry.waitThenReplan");
+        assert_eq!(action.kind, RetryActionKind::RetryCurrentKey);
+        assert_eq!(action.reason_key, "retry_current_key");
+        assert_eq!(action.explanation_key, "routing.retry.retryCurrentKey");
         assert_eq!(action.failure_code, "upstream_rate_limited");
         assert_eq!(action.replay, ReplayGateResult::Allowed);
         assert_eq!(action.attempt_ordinal, 2);
         assert_eq!(action.policy_revision, 17);
         assert_eq!(action.remaining_attempt_budget, 1);
         assert_eq!(action.remaining_precommit_budget_ms, Some(900));
-        assert_eq!(action.wait_delay_ms, None);
+    }
+
+    #[test]
+    fn key_budget_and_same_key_failure_threshold_are_independent() {
+        let profile = AttemptBudgetProfileV1 {
+            policy_revision: 1,
+            max_total_attempts: 4,
+            max_same_target_capacity_retries: 0,
+            capacity_retry_wait_budget_ms: 0,
+            allow_cross_capacity_domain_fallback: false,
+            consecutive_failure_threshold: 3,
+            circuit_recovery_success_threshold: 2,
+            circuit_recovery_wait_ms: 30_000,
+        };
+        assert_eq!(execution_attempt_limit(profile, 10), 12);
+        assert_eq!(execution_attempt_limit(profile, 2), 6);
+
+        let switch = RetryActionPlanner::plan_with_context(
+            &failure(429),
+            true,
+            false,
+            RetryActionContext {
+                remaining_attempt_budget: 1,
+                remaining_same_key_failure_budget: 0,
+                ..RetryActionContext::default()
+            },
+        );
+        assert_eq!(switch.kind, RetryActionKind::TryNextKey);
+
+        let exhausted = RetryActionPlanner::plan_with_context(
+            &failure(429),
+            true,
+            false,
+            RetryActionContext {
+                remaining_attempt_budget: 0,
+                remaining_same_key_failure_budget: 0,
+                ..RetryActionContext::default()
+            },
+        );
+        assert_eq!(exhausted.kind, RetryActionKind::StopRequest);
     }
 
     #[test]
@@ -4019,8 +4090,8 @@ mod tests {
                 attempt_ordinal: 1,
                 policy_revision: 9,
                 remaining_attempt_budget: 0,
+                remaining_same_key_failure_budget: 0,
                 remaining_precommit_budget_ms: Some(0),
-                excluded_failure_domain_count: 0,
             },
         );
         assert_eq!(action.kind, RetryActionKind::StopRequest);
@@ -4031,7 +4102,7 @@ mod tests {
     }
 
     #[test]
-    fn capacity_action_carries_retry_after_delay_when_it_is_safe_to_wait() {
+    fn provider_capacity_is_an_ordinary_next_key_failure_without_wait() {
         let failure = ProxyFailure::from_canonical(super::failure_from_provider_signal(
             crate::application::request_finalization::failure::ProviderErrorSemanticSignal::ProviderCapacity {
                 domain_commitment: format!("v1:{}", "a".repeat(64)),
@@ -4047,17 +4118,16 @@ mod tests {
                 attempt_ordinal: 0,
                 policy_revision: 4,
                 remaining_attempt_budget: 2,
+                remaining_same_key_failure_budget: 1,
                 remaining_precommit_budget_ms: Some(500),
-                excluded_failure_domain_count: 0,
             },
         );
-        assert_eq!(action.kind, RetryActionKind::RetrySameTarget);
-        assert_eq!(action.wait_delay_ms, Some(120));
+        assert_eq!(action.kind, RetryActionKind::RetryCurrentKey);
         assert_eq!(action.failure_code, "upstream_overloaded");
     }
 
     #[test]
-    fn wait_action_fails_closed_when_delay_consumes_remaining_deadline() {
+    fn rate_limit_retry_after_does_not_create_a_routing_wait() {
         let failure = ProxyFailure::from_canonical(super::failure_from_provider_signal(
             crate::application::request_finalization::failure::ProviderErrorSemanticSignal::RateLimited {
                 station_id: "fixture-station".to_string(),
@@ -4073,20 +4143,19 @@ mod tests {
                 attempt_ordinal: 0,
                 policy_revision: 3,
                 remaining_attempt_budget: 2,
+                remaining_same_key_failure_budget: 1,
                 remaining_precommit_budget_ms: Some(500),
-                excluded_failure_domain_count: 0,
             },
         );
-        assert_eq!(action.kind, RetryActionKind::StopRequest);
-        assert_eq!(action.reason_key, "deadline_budget_exhausted");
+        assert_eq!(action.kind, RetryActionKind::RetryCurrentKey);
+        assert_eq!(action.reason_key, "retry_current_key");
         assert_eq!(
             action.replay,
             ReplayGateResult::Allowed,
-            "the replay gate allowed the action; the deadline suppressed it"
+            "the replay gate allows trying the next score-ordered key"
         );
         assert_eq!(action.remaining_attempt_budget, 2);
         assert_eq!(action.remaining_precommit_budget_ms, Some(500));
-        assert_eq!(action.wait_delay_ms, None);
     }
 
     #[test]
@@ -4107,8 +4176,8 @@ mod tests {
     #[tokio::test]
     async fn fake_transport_boundaries_drive_the_production_replay_path() {
         for (phase, expected_ids) in [
-            (RequestSendPhase::NotConnected, vec!["a", "b"]),
-            (RequestSendPhase::ConnectedNoHeaders, vec!["a", "b"]),
+            (RequestSendPhase::NotConnected, vec!["a", "a"]),
+            (RequestSendPhase::ConnectedNoHeaders, vec!["a", "a"]),
             (RequestSendPhase::HeadersSent, vec!["a"]),
             (RequestSendPhase::BodyPartiallySent, vec!["a"]),
             (RequestSendPhase::BodyFullySent, vec!["a"]),
@@ -4137,7 +4206,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn execution_engine_preserves_route_order_and_finalizes_one_candidate() {
+    async fn execution_engine_retries_the_current_key_before_failover() {
         let repository = Arc::new(FakeRepository::with_candidates(vec![
             rich_candidate("a"),
             rich_candidate("b"),
@@ -4153,58 +4222,167 @@ mod tests {
             .await
             .expect("response");
 
-        assert_eq!(attempts.seen_ids(), ["a", "b"]);
-        assert_eq!(response.selected_station_key_id(), Some("b"));
+        assert_eq!(attempts.seen_ids(), ["a", "a"]);
+        assert_eq!(response.selected_station_key_id(), Some("a"));
         assert_eq!(response.fallback_count(), 1);
+        let admissions = repository.attempt_admissions();
+        assert_eq!(
+            admissions
+                .iter()
+                .map(|(station_key_id, _, attempt_index, _)| {
+                    (station_key_id.as_str(), *attempt_index)
+                })
+                .collect::<Vec<_>>(),
+            [("a", 0), ("a", 1)]
+        );
+        assert!(admissions
+            .iter()
+            .all(|(_, attempt_id, _, capacity_lease_id)| capacity_lease_id
+                == &format!("{attempt_id}:capacity")));
+        assert_eq!(
+            repository
+                .attempt_boundaries()
+                .iter()
+                .map(|(station_key_id, _, lease_revision)| {
+                    (station_key_id.as_str(), *lease_revision)
+                })
+                .collect::<Vec<_>>(),
+            [("a", None), ("a", None)]
+        );
     }
 
     #[tokio::test]
-    async fn probe_lease_race_forces_strict_snapshot_refresh() {
-        let repository = Arc::new(FakeRepository::with_probe_race(
-            vec![rich_candidate("a"), rich_candidate("b")],
-            "a",
-            crate::application::health_protection::HealthProtectionStatus {
-                version: crate::application::health_protection::HEALTH_PROTECTION_VERSION
-                    .to_string(),
-                scope: crate::application::error_rate_protection::admission_scope(
-                    crate::application::health_protection::HealthProtectionScopeKind::Credential,
-                    "a",
-                ),
-                state: crate::application::health_protection::HealthProtectionState::Open,
-                persistence_kind:
-                    crate::application::health_protection::HealthProtectionPersistenceKind::Durable,
-                state_revision: 7,
-                opened_at_ms: Some(1),
-                cooldown_until_ms: Some(1),
-                cooldown_remaining_ms: Some(0),
-                half_open_probe_in_flight: false,
-                recent_failure_code: Some(
-                    crate::application::health_protection::HealthProtectionFailureCode::ConnectFailure,
-                ),
-                sample_count: 5,
-                failure_rate_percent: 100,
-                updated_at_ms: 1,
-                detail_available: true,
-            },
+    async fn local_target_resolution_failure_abandons_chat_attempt_without_key_failover() {
+        assert_local_target_resolution_failure_is_abandoned(canonical_chat_request().await).await;
+    }
+
+    #[tokio::test]
+    async fn local_target_resolution_failure_abandons_models_attempt_without_key_failover() {
+        assert_local_target_resolution_failure_is_abandoned(canonical_models_request().await).await;
+    }
+
+    async fn assert_local_target_resolution_failure_is_abandoned(request: CanonicalProxyRequest) {
+        let repository = Arc::new(FakeRepository::with_candidates(vec![
+            rich_candidate("a"),
+            rich_candidate("b"),
+        ]));
+        let attempts = Arc::new(FakeAttemptExecutor::responses(vec![Ok(buffered_success(
+            b"{\"unexpected\":true}",
+        ))]));
+        let terminal_records = Arc::new(Mutex::new(Vec::new()));
+        let store = Arc::new(CapturingLifecycleStore {
+            terminal_records: Arc::clone(&terminal_records),
+        });
+        let (writer, worker) = LifecycleWriter::start(8, store).expect("lifecycle writer");
+        let engine = ExecutionEngine::new_with_transport_policy_and_lifecycle(
+            repository.clone(),
+            Arc::new(FailingCredentialResolver),
+            attempts.clone(),
+            TransportPolicySnapshot::default(),
+            writer.clone(),
+            Arc::new(RoutingRuntimeState::new(64, 1)),
+        );
+
+        let failure = engine
+            .execute(request)
+            .await
+            .expect_err("local credential resolution must stop the request");
+
+        assert_eq!(failure.code, ProxyFailureCode::RouteFactsUnavailable);
+        assert!(attempts.seen_ids().is_empty());
+        assert_eq!(
+            repository
+                .attempt_admissions()
+                .iter()
+                .map(|(station_key_id, _, attempt_index, _)| {
+                    (station_key_id.as_str(), *attempt_index)
+                })
+                .collect::<Vec<_>>(),
+            [("a", 0)]
+        );
+        assert!(repository.attempt_boundaries().is_empty());
+        let terminals = terminal_records.lock().expect("terminal record lock");
+        assert_eq!(terminals.len(), 1);
+        assert_eq!(terminals[0].context.station_key_id, "a");
+        assert!(matches!(
+            terminals[0].terminal,
+            AttemptTerminal::Abandoned { ref reason }
+                if reason == "local_target_resolution_failed"
         ));
+        drop(terminals);
+
+        drop(engine);
+        drop(writer);
+        tokio::time::timeout(Duration::from_secs(2), worker.join())
+            .await
+            .expect("lifecycle writer drain timeout")
+            .expect("lifecycle writer join");
+    }
+
+    #[tokio::test]
+    async fn route_selection_persistence_delay_and_failure_do_not_block_upstream_attempt() {
+        let route_calls = Arc::new(AtomicUsize::new(0));
+        let first_route_started = Arc::new(tokio::sync::Notify::new());
+        let release_first_route = Arc::new(tokio::sync::Notify::new());
+        let store = Arc::new(GatedFailingRouteStore {
+            route_calls: Arc::clone(&route_calls),
+            first_route_started: Arc::clone(&first_route_started),
+            release_first_route: Arc::clone(&release_first_route),
+        });
+        let (writer, worker) = LifecycleWriter::start(8, store).expect("lifecycle writer");
+
+        let priming_ack = writer
+            .try_record_route_selection(route_selection_record("req-blocking-writer"))
+            .expect("priming route selection admission");
+        drop(priming_ack);
+        tokio::time::timeout(Duration::from_secs(1), first_route_started.notified())
+            .await
+            .expect("priming route selection should enter the store");
+
+        let repository = Arc::new(FakeRepository::with_candidates(vec![rich_candidate("a")]));
         let attempts = Arc::new(FakeAttemptExecutor::responses(vec![Ok(buffered_success(
             b"{\"ok\":true}",
         ))]));
-        let engine = test_engine(repository.clone(), attempts.clone());
-
-        let response = engine
-            .execute(canonical_chat_request().await)
-            .await
-            .expect("healthy candidate should remain available after lease race");
-
-        assert_eq!(attempts.seen_ids(), ["b"]);
-        assert_eq!(
-            repository.planning_probe_modes(),
-            [
-                HealthProbeAdmissionMode::Normal,
-                HealthProbeAdmissionMode::StrictAfterLeaseRace
-            ]
+        let engine = ExecutionEngine::new_with_transport_policy_and_lifecycle(
+            repository,
+            Arc::new(FakeCredentialResolver),
+            attempts.clone(),
+            TransportPolicySnapshot::default(),
+            writer.clone(),
+            Arc::new(RoutingRuntimeState::new(64, 1)),
         );
+
+        let response = tokio::time::timeout(
+            Duration::from_secs(1),
+            engine.execute(canonical_chat_request().await),
+        )
+        .await
+        .expect("route selection persistence must not delay upstream execution")
+        .expect("upstream response");
+        assert_eq!(attempts.seen_ids(), ["a"]);
+        assert_eq!(response.selected_station_key_id(), Some("a"));
+
+        drop(response);
+        release_first_route.notify_one();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while writer.snapshot().current_outstanding != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("route selection commands should drain");
+        assert!(
+            writer.health().is_healthy(),
+            "an uncertain route projection must not poison terminal admission"
+        );
+        assert_eq!(route_calls.load(Ordering::Relaxed), 2);
+
+        drop(engine);
+        drop(writer);
+        tokio::time::timeout(Duration::from_secs(2), worker.join())
+            .await
+            .expect("lifecycle writer drain timeout")
+            .expect("lifecycle writer join");
     }
 
     #[tokio::test]
@@ -4262,13 +4440,13 @@ mod tests {
             .await
             .expect("response after replan");
 
-        assert_eq!(attempts.seen_ids(), ["a", "b"]);
-        assert_eq!(response.selected_station_key_id(), Some("b"));
+        assert_eq!(attempts.seen_ids(), ["a", "a"]);
+        assert_eq!(response.selected_station_key_id(), Some("a"));
         assert!(repository.planning_loads() >= 2);
     }
 
     #[tokio::test]
-    async fn execution_try_different_failure_domain_excludes_shared_domain_on_replan() {
+    async fn retry_excludes_only_the_failed_key_even_when_stations_match() {
         let mut first = rich_candidate("a");
         first.station_id = "shared-station".to_string();
         let mut sibling = rich_candidate("b");
@@ -4279,6 +4457,8 @@ mod tests {
         ]));
         let attempts = Arc::new(FakeAttemptExecutor::responses(vec![
             Err(failure(500)),
+            Err(failure(500)),
+            Err(failure(500)),
             Ok(buffered_success(b"{\"ok\":true}")),
         ]));
         let engine = test_engine(repository.clone(), attempts.clone());
@@ -4288,14 +4468,13 @@ mod tests {
         let response = engine
             .execute(request)
             .await
-            .expect("distinct failure domain should be selected");
+            .expect("the next score-ordered key should be selected");
 
-        assert_eq!(attempts.seen_ids(), ["a", "c"]);
-        assert_eq!(response.selected_station_key_id(), Some("c"));
-        assert!(repository.planning_loads() >= 2);
+        assert_eq!(attempts.seen_ids(), ["a", "a", "a", "b"]);
+        assert_eq!(response.selected_station_key_id(), Some("b"));
+        assert_eq!(repository.planning_loads(), 1);
         let deadlines = repository.planning_deadlines();
-        assert!(deadlines.len() >= 2);
-        assert!(deadlines.windows(2).all(|pair| pair[0] == pair[1]));
+        assert_eq!(deadlines.len(), 1);
     }
 
     #[tokio::test]
@@ -4316,8 +4495,6 @@ mod tests {
             resolved_upstream_model: None,
             model_alias_revision: 1,
             model_variant: None,
-            capacity_domain: None,
-            capacity_domain_revision: None,
             priority: 0,
             tier: crate::application::routing_engine::candidate_plan::AvailabilityTier::Primary,
             pricing: crate::application::routing_engine::candidate_plan::RoutePlanPricingSnapshot {
@@ -4403,7 +4580,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn models_aggregation_stop_action_does_not_probe_later_candidates() {
+    async fn models_aggregation_retries_ordinary_provider_rejections_on_later_candidates() {
         let repository = Arc::new(FakeRepository::with_candidates(vec![
             rich_candidate("a"),
             rich_candidate("b"),
@@ -4412,13 +4589,13 @@ mod tests {
             Err(failure(400)),
             Ok(buffered_success(br#"{"data":[{"id":"gpt-test"}]}"#)),
         ]));
-        let failure = test_engine(repository, attempts.clone())
+        let response = test_engine(repository, attempts.clone())
             .execute(canonical_models_request().await)
             .await
-            .expect_err("authentication is a terminal aggregation action");
+            .expect("ordinary provider rejection must not stop models aggregation");
 
-        assert_eq!(failure.code, ProxyFailureCode::UpstreamRequestRejected);
-        assert_eq!(attempts.seen_ids(), ["a"]);
+        assert_eq!(response.lifecycle.attempt_count, 2);
+        assert_eq!(attempts.seen_ids(), ["a", "b"]);
     }
 
     #[tokio::test]
@@ -4459,12 +4636,22 @@ mod tests {
             ],
             Duration::from_millis(100),
         ));
-        let engine = test_engine(repository, attempts.clone()).with_transport_policy(
+        let terminal_records = Arc::new(Mutex::new(Vec::new()));
+        let store = Arc::new(CapturingLifecycleStore {
+            terminal_records: Arc::clone(&terminal_records),
+        });
+        let (writer, worker) = LifecycleWriter::start(8, store).expect("lifecycle writer");
+        let engine = ExecutionEngine::new_with_transport_policy_and_lifecycle(
+            repository.clone(),
+            Arc::new(FakeCredentialResolver),
+            attempts.clone(),
             TransportPolicySnapshot::for_tests(
                 Duration::from_millis(50),
                 Duration::from_secs(120),
                 Duration::from_secs(300),
             ),
+            writer.clone(),
+            Arc::new(RoutingRuntimeState::new(64, 1)),
         );
 
         let failure = engine
@@ -4473,7 +4660,33 @@ mod tests {
             .expect_err("precommit budget exhausted");
 
         assert_eq!(failure.code, ProxyFailureCode::RouteDeadlineExceeded);
-        assert_eq!(attempts.seen_ids(), ["a"]);
+        assert!(attempts.seen_ids().is_empty());
+        assert_eq!(
+            repository
+                .attempt_admissions()
+                .iter()
+                .map(|(station_key_id, _, attempt_index, _)| {
+                    (station_key_id.as_str(), *attempt_index)
+                })
+                .collect::<Vec<_>>(),
+            [("a", 0)]
+        );
+        assert!(repository.attempt_boundaries().is_empty());
+        let terminals = terminal_records.lock().expect("terminal record lock");
+        assert_eq!(terminals.len(), 1);
+        assert!(matches!(
+            terminals[0].terminal,
+            AttemptTerminal::Abandoned { ref reason }
+                if reason == "request_deadline_exhausted_before_outbound"
+        ));
+        drop(terminals);
+
+        drop(engine);
+        drop(writer);
+        tokio::time::timeout(Duration::from_secs(2), worker.join())
+            .await
+            .expect("lifecycle writer drain timeout")
+            .expect("lifecycle writer join");
     }
 
     #[tokio::test]
@@ -4624,28 +4837,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn precommit_chat_capacity_event_enters_same_target_retry_path() {
-        let mut candidate = rich_candidate("a");
-        candidate.station_type = "openai".to_string();
-        candidate.upstream_api_format = UpstreamApiFormat::OpenAiChatCompletions;
-        let repository = Arc::new(FakeRepository::with_candidates(vec![candidate]));
+    async fn precommit_chat_capacity_event_retries_the_current_key() {
+        let mut first = rich_candidate("a");
+        first.station_type = "openai".to_string();
+        first.upstream_api_format = UpstreamApiFormat::OpenAiChatCompletions;
+        let mut second = rich_candidate("b");
+        second.station_type = "openai".to_string();
+        second.upstream_api_format = UpstreamApiFormat::OpenAiChatCompletions;
+        let repository = Arc::new(FakeRepository::with_candidates(vec![first, second]));
         let attempts = Arc::new(FakeAttemptExecutor::responses(vec![
             Ok(chat_capacity_event()),
             Ok(stream_success(
                 b"data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n",
             )),
         ]));
-        let engine = test_engine(repository, attempts);
+        let engine = test_engine(repository, attempts.clone());
 
         let response = engine
             .execute(streaming_chat_request().await)
             .await
-            .expect("capacity event must retry the same target");
+            .expect("capacity event must retry the current key before failover");
+        assert_eq!(attempts.seen_ids(), ["a", "a"]);
+        assert_eq!(response.selected_station_key_id(), Some("a"));
         assert_eq!(response.lifecycle.attempt_count, 2);
     }
 
     #[tokio::test]
-    async fn trusted_distinct_capacity_domain_receives_one_terminal_fallback() {
+    async fn distinct_capacity_domains_do_not_change_next_key_retry() {
         let mut first = rich_candidate("a");
         first.station_type = "openai".to_string();
         first.upstream_api_format = UpstreamApiFormat::OpenAiChatCompletions;
@@ -4658,26 +4876,32 @@ mod tests {
             Ok(chat_capacity_event()),
             Ok(chat_capacity_event()),
             Ok(chat_capacity_event()),
+            Ok(chat_capacity_event()),
+            Ok(chat_capacity_event()),
         ]));
         let engine = test_engine(repository, attempts.clone());
 
         let failure = engine
             .execute(streaming_chat_request().await)
             .await
-            .expect_err("cross-domain fallback remains terminal after one outbound attempt");
+            .expect_err("both keys failed");
 
-        assert_eq!(attempts.seen_ids(), ["a", "a", "a", "b"]);
+        assert_eq!(attempts.seen_ids(), ["a", "a", "a", "b", "b", "b"]);
         assert_eq!(failure.code, ProxyFailureCode::UpstreamOverloaded);
-        let traces = engine.routing_runtime.decision_trace_snapshot();
-        let trace = traces.last().expect("completed request trace");
-        assert!(trace.events.iter().any(|event| {
-            event.kind == DecisionTraceEventKind::CrossDomainFallback
-                && event.code == "capacity_cross_domain_fallback"
-        }));
+        assert!(!engine
+            .routing_runtime
+            .decision_trace_snapshot()
+            .iter()
+            .flat_map(|trace| &trace.events)
+            .any(|event| matches!(
+                event.kind,
+                DecisionTraceEventKind::CrossDomainFallback
+                    | DecisionTraceEventKind::SameDomainFallbackSuppressed
+            )));
     }
 
     #[tokio::test]
-    async fn trusted_same_capacity_domain_never_rotates_to_a_sibling_key() {
+    async fn shared_capacity_domain_does_not_suppress_the_next_key() {
         let mut first = rich_candidate("same-a");
         first.station_type = "openai".to_string();
         first.upstream_api_format = UpstreamApiFormat::OpenAiChatCompletions;
@@ -4689,32 +4913,32 @@ mod tests {
             Ok(chat_capacity_event()),
             Ok(chat_capacity_event()),
             Ok(chat_capacity_event()),
+            Ok(chat_capacity_event()),
+            Ok(chat_capacity_event()),
+            Ok(chat_capacity_event()),
         ]));
         let engine = test_engine(repository, attempts.clone());
 
         let failure = engine
             .execute(streaming_chat_request().await)
             .await
-            .expect_err("same capacity domain must not rotate to sibling key");
+            .expect_err("both keys failed");
 
-        assert_eq!(attempts.seen_ids(), ["same-a", "same-a", "same-a"]);
+        assert_eq!(
+            attempts.seen_ids(),
+            ["same-a", "same-a", "same-a", "same-b", "same-b", "same-b"]
+        );
         assert_eq!(failure.code, ProxyFailureCode::UpstreamOverloaded);
-        let trace = engine
+        assert!(!engine
             .routing_runtime
             .decision_trace_snapshot()
-            .pop()
-            .expect("completed request trace");
-        assert!(
-            !trace.events.iter().any(|event| {
-                event.kind == DecisionTraceEventKind::CrossDomainFallback
-                    && event.code == "capacity_cross_domain_fallback"
-            }),
-            "an exhausted domain without a selected trusted alternative is not a fallback"
-        );
-        assert!(trace.events.iter().any(|event| {
-            event.kind == DecisionTraceEventKind::SameDomainFallbackSuppressed
-                && event.code == "capacity_same_domain_fallback_suppressed"
-        }));
+            .iter()
+            .flat_map(|trace| &trace.events)
+            .any(|event| matches!(
+                event.kind,
+                DecisionTraceEventKind::CrossDomainFallback
+                    | DecisionTraceEventKind::SameDomainFallbackSuppressed
+            )));
     }
 
     #[tokio::test]
@@ -4722,9 +4946,11 @@ mod tests {
         let mut candidate = rich_candidate("a");
         candidate.upstream_api_format = UpstreamApiFormat::OpenAiResponses;
         let repository = Arc::new(FakeRepository::with_candidates(vec![candidate]));
-        let attempts = Arc::new(FakeAttemptExecutor::responses(vec![Ok(
-            responses_rate_limit_event(),
-        )]));
+        let attempts = Arc::new(FakeAttemptExecutor::responses(vec![
+            Ok(responses_rate_limit_event()),
+            Ok(responses_rate_limit_event()),
+            Ok(responses_rate_limit_event()),
+        ]));
         let engine = test_engine(repository, attempts);
 
         let failure = engine
@@ -4733,45 +4959,66 @@ mod tests {
             .expect_err("response.failed must remain precommit");
 
         assert_eq!(failure.code, ProxyFailureCode::UpstreamRateLimited);
-        assert_eq!(failure.retry_after_ms, Some(3_000));
+        assert_eq!(failure.retry_after_ms, None);
         assert_eq!(
             failure.canonical().expect("canonical SSE failure").class,
             crate::application::request_finalization::failure::FailureClass::RateLimited
         );
     }
 
+    #[tokio::test]
+    async fn circuit_status_read_failure_returns_no_available_key_with_fail_closed_trace() {
+        let repository = Arc::new(
+            FakeRepository::with_candidates(vec![rich_candidate("circuit-store-key")])
+                .with_circuit_status_error(),
+        );
+        let attempts = Arc::new(FakeAttemptExecutor::responses(Vec::new()));
+        let engine = test_engine(repository.clone(), attempts.clone());
+
+        let failure = engine
+            .execute(canonical_chat_request().await)
+            .await
+            .expect_err("untrusted circuit state must fail closed");
+
+        assert_eq!(failure.code, ProxyFailureCode::RouteNoAvailableKey);
+        assert_eq!(
+            failure.internal_detail.as_deref(),
+            Some("circuit_persistence_unavailable")
+        );
+        assert!(attempts.seen_ids().is_empty());
+        assert!(repository.attempt_admissions().is_empty());
+        assert!(engine
+            .routing_runtime
+            .decision_trace_snapshot()
+            .iter()
+            .flat_map(|trace| &trace.events)
+            .any(|event| {
+                event.kind == DecisionTraceEventKind::FailClosed
+                    && event.code == "circuit_persistence_unavailable"
+            }));
+    }
+
     struct FakeRepository {
         candidates: Vec<CanonicalRoutingCandidate>,
+        circuit_status_error: bool,
         planning_loads: AtomicUsize,
         planning_delay: Option<Duration>,
         planning_deadlines: Arc<Mutex<Vec<Instant>>>,
-        planning_probe_modes: Arc<Mutex<Vec<HealthProbeAdmissionMode>>>,
-        health_statuses: Arc<Vec<crate::application::health_protection::HealthProtectionStatus>>,
-        probe_race_station_key: Option<String>,
+        attempt_admissions: Arc<Mutex<Vec<(String, String, u16, String)>>>,
+        attempt_boundaries: Arc<Mutex<Vec<(String, String, Option<u64>)>>>,
     }
 
     impl FakeRepository {
         fn with_candidates(candidates: Vec<CanonicalRoutingCandidate>) -> Self {
             Self {
                 candidates,
+                circuit_status_error: false,
                 planning_loads: AtomicUsize::new(0),
                 planning_delay: None,
                 planning_deadlines: Arc::new(Mutex::new(Vec::new())),
-                planning_probe_modes: Arc::new(Mutex::new(Vec::new())),
-                health_statuses: Arc::new(Vec::new()),
-                probe_race_station_key: None,
+                attempt_admissions: Arc::new(Mutex::new(Vec::new())),
+                attempt_boundaries: Arc::new(Mutex::new(Vec::new())),
             }
-        }
-
-        fn with_probe_race(
-            candidates: Vec<CanonicalRoutingCandidate>,
-            race_station_key: impl Into<String>,
-            status: crate::application::health_protection::HealthProtectionStatus,
-        ) -> Self {
-            let mut repository = Self::with_candidates(candidates);
-            repository.health_statuses = Arc::new(vec![status]);
-            repository.probe_race_station_key = Some(race_station_key.into());
-            repository
         }
 
         fn with_candidates_and_planning_delay(
@@ -4780,17 +5027,22 @@ mod tests {
         ) -> Self {
             Self {
                 candidates,
+                circuit_status_error: false,
                 planning_loads: AtomicUsize::new(0),
                 planning_delay: Some(planning_delay),
                 planning_deadlines: Arc::new(Mutex::new(Vec::new())),
-                planning_probe_modes: Arc::new(Mutex::new(Vec::new())),
-                health_statuses: Arc::new(Vec::new()),
-                probe_race_station_key: None,
+                attempt_admissions: Arc::new(Mutex::new(Vec::new())),
+                attempt_boundaries: Arc::new(Mutex::new(Vec::new())),
             }
         }
 
         fn planning_loads(&self) -> usize {
             self.planning_loads.load(Ordering::Acquire)
+        }
+
+        fn with_circuit_status_error(mut self) -> Self {
+            self.circuit_status_error = true;
+            self
         }
 
         fn planning_deadlines(&self) -> Vec<Instant> {
@@ -4800,10 +5052,17 @@ mod tests {
                 .clone()
         }
 
-        fn planning_probe_modes(&self) -> Vec<HealthProbeAdmissionMode> {
-            self.planning_probe_modes
+        fn attempt_admissions(&self) -> Vec<(String, String, u16, String)> {
+            self.attempt_admissions
                 .lock()
-                .expect("planning probe mode lock")
+                .expect("attempt admission lock")
+                .clone()
+        }
+
+        fn attempt_boundaries(&self) -> Vec<(String, String, Option<u64>)> {
+            self.attempt_boundaries
+                .lock()
+                .expect("attempt boundary lock")
                 .clone()
         }
     }
@@ -4822,83 +5081,75 @@ mod tests {
             Box::pin(async { Ok(Vec::new()) })
         }
 
-        fn load_planning_snapshot_with_probe(
+        fn load_station_key_circuit_statuses(
             &self,
-            request: RouteRequestFacts,
-            runtime: crate::application::routing_engine::planning_snapshot::RuntimeOverlaySnapshot,
-            context: crate::application::routing_engine::request::PlanningRequestContext,
-            _probe: Option<crate::application::health_protection::HealthProtectionProbe>,
-            probe_mode: HealthProbeAdmissionMode,
         ) -> BoxFuture<
             'static,
             Result<
-                Option<crate::application::routing_engine::planning_snapshot::PlanningSnapshot>,
+                Vec<crate::application::station_key_circuit::StationKeyCircuitStatus>,
                 RoutingExecutionReadError,
             >,
         > {
-            self.planning_probe_modes
-                .lock()
-                .expect("planning probe mode lock")
-                .push(probe_mode);
-            let race_station_key = self.probe_race_station_key.clone();
-            let planning = self.load_planning_snapshot(request, runtime, context);
+            let circuit_status_error = self.circuit_status_error;
             Box::pin(async move {
-                let mut snapshot = planning.await?;
-                if probe_mode == HealthProbeAdmissionMode::StrictAfterLeaseRace {
-                    if let (Some(snapshot), Some(race_station_key)) =
-                        (snapshot.as_mut(), race_station_key.as_deref())
-                    {
-                        for candidate in &mut snapshot.candidates {
-                            if candidate.station_key_id == race_station_key {
-                                candidate.hard_eligible = false;
-                            }
-                        }
-                    }
+                if circuit_status_error {
+                    Err(RoutingExecutionReadError::Unavailable(
+                        "fixture circuit store unavailable".to_string(),
+                    ))
+                } else {
+                    Ok(Vec::new())
                 }
-                Ok(snapshot)
             })
         }
 
-        fn load_health_protection_statuses(
+        fn admit_station_key_circuit_with_attempt(
             &self,
-            _now_ms: i64,
+            _expected_runtime_generation_id: Option<String>,
+            _expected_fence_revision: u64,
+            station_key_id: String,
+            _lifecycle_revision: u64,
+            _policy_revision: u64,
+            _now_ms: u64,
+            _deadline_at_ms: u64,
+            _score_gate_passed: bool,
+            attempt_id: String,
+            _correlation_id: String,
+            attempt_index: u16,
+            capacity_lease_id: String,
+            _consecutive_failure_threshold: u16,
+            _recovery_success_threshold: u16,
+            _recovery_wait_ms: u64,
         ) -> BoxFuture<
             'static,
             Result<
-                Vec<crate::application::health_protection::HealthProtectionStatus>,
+                crate::application::station_key_circuit::CircuitAdmissionResult,
                 RoutingExecutionReadError,
             >,
         > {
-            let statuses = self.health_statuses.clone();
-            Box::pin(async move { Ok(statuses.as_ref().clone()) })
+            self.attempt_admissions
+                .lock()
+                .expect("attempt admission lock")
+                .push((station_key_id, attempt_id, attempt_index, capacity_lease_id));
+            Box::pin(async {
+                Ok(crate::application::station_key_circuit::CircuitAdmissionResult::AllowedClosed {
+                    state_revision: 1,
+                })
+            })
         }
 
-        fn begin_health_protection_probe(
+        fn mark_station_key_attempt_boundary(
             &self,
-            _scope: crate::application::health_protection::HealthProtectionScope,
-            _now_ms: i64,
-        ) -> BoxFuture<
-            'static,
-            Result<
-                Option<crate::application::health_protection::HealthProtectionProbe>,
-                RoutingExecutionReadError,
-            >,
-        > {
-            // The race fixture models another request atomically winning the
-            // lease between status read and reservation.
-            if self.probe_race_station_key.is_some() {
-                Box::pin(async { Ok(None) })
-            } else {
-                Box::pin(async { Ok(None) })
-            }
-        }
-
-        fn cancel_health_protection_probe(
-            &self,
-            _probe: crate::application::health_protection::HealthProtectionProbe,
-            _now_ms: i64,
+            station_key_id: String,
+            _lifecycle_revision: u64,
+            attempt_id: String,
+            lease_revision: Option<u64>,
+            _now_ms: u64,
         ) -> BoxFuture<'static, Result<bool, RoutingExecutionReadError>> {
-            Box::pin(async { Ok(false) })
+            self.attempt_boundaries
+                .lock()
+                .expect("attempt boundary lock")
+                .push((station_key_id, attempt_id, lease_revision));
+            Box::pin(async { Ok(true) })
         }
 
         fn load_planning_snapshot(
@@ -4918,7 +5169,9 @@ mod tests {
                 .lock()
                 .expect("planning deadline lock")
                 .push(context.deadline());
-            let candidates = self
+            let candidates: Vec<
+                crate::application::routing_engine::planning_snapshot::CandidateSnapshot,
+            > = self
                 .candidates
                 .iter()
                 .enumerate()
@@ -4933,16 +5186,13 @@ mod tests {
                     resolved_upstream_model: Some("gpt-test".to_string()),
                     model_alias_revision: 1,
                     model_variants: Vec::new(),
-                    capacity_domain: fixture_capacity_domain(&candidate.station_key_id),
-                    capacity_domain_revision: fixture_capacity_domain(&candidate.station_key_id)
-                        .as_ref()
-                        .map(|_| 1),
                     credential_available: candidate.api_key.is_some()
                         || candidate.api_key_secret.is_some(),
                     hard_eligible: candidate.schedulable,
                     backup_only: candidate.capabilities.only_use_as_backup,
                     depleted: false,
                     capability_basis_points: 10_000,
+                    quality_available: true,
                     reliability_basis_points: 8_000,
                     responsiveness_basis_points: 8_000,
                     cost_basis_points: Some(5_000),
@@ -4960,7 +5210,17 @@ mod tests {
                 Ok(Some(PlanningSnapshot {
                     snapshot_id: "test-planning-snapshot".to_string(),
                     durable_revision: 1,
+                    configured_key_count: candidates.len(),
+                    capability_match_count: candidates.len(),
+                    candidate_cap_count: candidates.len(),
+                    routing_runtime_generation_id: None,
+                    routing_generation_fence_revision: 0,
                     routing_policy_revision: 1,
+                    routing_quality_revision: 0,
+                    routing_health_revision: 0,
+                    quality_projection_backlog: 0,
+                    quality_projection_lag_seconds: 0,
+                    quality_stale: false,
                     policy: {
                         let mut policy =
                             crate::models::routing_policy::RoutingPolicyConfigV1::default();
@@ -4977,8 +5237,7 @@ mod tests {
                         )
                         .expect("attempt budget"),
                     profile: {
-                        let mut profile = DispatchAlgorithmProfile::default();
-                        profile.exploit_band_basis_points = 0;
+                        let profile = DispatchAlgorithmProfile::default();
                         profile
                     },
                     candidates,
@@ -5022,8 +5281,6 @@ mod tests {
                         resolved_upstream_model: candidate.resolved_upstream_model.clone(),
                         model_alias_revision: candidate.model_alias_revision,
                         model_variant: candidate.model_variants.first().cloned(),
-                        capacity_domain: candidate.capacity_domain.clone(),
-                        capacity_domain_revision: candidate.capacity_domain_revision,
                         priority: 0,
                         tier: crate::application::routing_engine::candidate_plan::AvailabilityTier::Primary,
                         pricing: crate::application::routing_engine::candidate_plan::RoutePlanPricingSnapshot {
@@ -5045,19 +5302,6 @@ mod tests {
                 })
             })
         }
-
-        fn load_current_execution_target(
-            &self,
-            station_key_id: String,
-        ) -> BoxFuture<'static, Result<Option<ExecutionTargetRef>, RoutingExecutionReadError>>
-        {
-            let target = self
-                .candidates
-                .iter()
-                .find(|candidate| candidate.station_key_id == station_key_id)
-                .map(target_ref);
-            Box::pin(async move { Ok(target) })
-        }
     }
 
     struct FakeAttemptExecutor {
@@ -5065,6 +5309,113 @@ mod tests {
         seen_ids: Mutex<Vec<String>>,
         delay: Option<Duration>,
         runtime_to_bump: Mutex<Option<Arc<super::RoutingRuntimeState>>>,
+    }
+
+    struct CapturingLifecycleStore {
+        terminal_records: Arc<Mutex<Vec<AttemptTerminalRecord>>>,
+    }
+
+    impl RequestLifecycleStore for CapturingLifecycleStore {
+        fn start_request(
+            &self,
+            _record: RequestStartRecord,
+        ) -> BoxFuture<'static, Result<RequestStartAck, LifecycleWriteError>> {
+            Box::pin(async { Ok(RequestStartAck { inserted: true }) })
+        }
+
+        fn record_route_selection(
+            &self,
+            _record: RequestRouteSelectionRecord,
+        ) -> BoxFuture<'static, Result<RequestRouteSelectionAck, LifecycleWriteError>> {
+            Box::pin(async { Ok(RequestRouteSelectionAck { updated: true }) })
+        }
+
+        fn finish_attempt(
+            &self,
+            record: AttemptTerminalRecord,
+        ) -> BoxFuture<'static, Result<AttemptCommitAck, LifecycleWriteError>> {
+            self.terminal_records
+                .lock()
+                .expect("terminal record lock")
+                .push(record);
+            Box::pin(async {
+                Ok(AttemptCommitAck {
+                    inserted: true,
+                    health_applied: false,
+                })
+            })
+        }
+
+        fn finish_request(
+            &self,
+            _record: FinalRequestRecord,
+        ) -> BoxFuture<'static, Result<RequestCommitAck, LifecycleWriteError>> {
+            Box::pin(async { Ok(RequestCommitAck { finalized: true }) })
+        }
+    }
+
+    struct GatedFailingRouteStore {
+        route_calls: Arc<AtomicUsize>,
+        first_route_started: Arc<tokio::sync::Notify>,
+        release_first_route: Arc<tokio::sync::Notify>,
+    }
+
+    impl RequestLifecycleStore for GatedFailingRouteStore {
+        fn start_request(
+            &self,
+            _record: RequestStartRecord,
+        ) -> BoxFuture<'static, Result<RequestStartAck, LifecycleWriteError>> {
+            Box::pin(async { Ok(RequestStartAck { inserted: true }) })
+        }
+
+        fn record_route_selection(
+            &self,
+            _record: RequestRouteSelectionRecord,
+        ) -> BoxFuture<'static, Result<RequestRouteSelectionAck, LifecycleWriteError>> {
+            let call = self.route_calls.fetch_add(1, Ordering::Relaxed);
+            let first_route_started = Arc::clone(&self.first_route_started);
+            let release_first_route = Arc::clone(&self.release_first_route);
+            Box::pin(async move {
+                if call == 0 {
+                    first_route_started.notify_one();
+                    release_first_route.notified().await;
+                }
+                Err(LifecycleWriteError::CommitOutcomeUnknown(
+                    "injected uncertain route selection commit".to_string(),
+                ))
+            })
+        }
+
+        fn finish_attempt(
+            &self,
+            _record: AttemptTerminalRecord,
+        ) -> BoxFuture<'static, Result<AttemptCommitAck, LifecycleWriteError>> {
+            Box::pin(async {
+                Ok(AttemptCommitAck {
+                    inserted: true,
+                    health_applied: true,
+                })
+            })
+        }
+
+        fn finish_request(
+            &self,
+            _record: FinalRequestRecord,
+        ) -> BoxFuture<'static, Result<RequestCommitAck, LifecycleWriteError>> {
+            Box::pin(async { Ok(RequestCommitAck { finalized: true }) })
+        }
+    }
+
+    fn route_selection_record(request_id: &str) -> RequestRouteSelectionRecord {
+        RequestRouteSelectionRecord {
+            request_id: request_id.to_string(),
+            attempt_ordinal: 0,
+            station_key_id: "key-blocking-writer".to_string(),
+            station_id: "station-blocking-writer".to_string(),
+            route_policy: "stable_first".to_string(),
+            route_reason: "test route selection".to_string(),
+            selected_at_ms: 1,
+        }
     }
 
     impl FakeAttemptExecutor {
@@ -5104,11 +5455,8 @@ mod tests {
             _request: &'a CanonicalProxyRequest,
             target: &'a ExecutionTargetHandle,
             _mapped_model: Option<&'a str>,
+            outbound_boundary: BoxFuture<'a, Result<(), ProxyFailure>>,
         ) -> BoxFuture<'a, Result<PreparedAttempt, ProxyFailure>> {
-            self.seen_ids
-                .lock()
-                .expect("seen lock")
-                .push(target.station_key_id.clone());
             if let Some(runtime) = self
                 .runtime_to_bump
                 .lock()
@@ -5121,6 +5469,11 @@ mod tests {
                 if let Some(delay) = self.delay {
                     tokio::time::sleep(delay).await;
                 }
+                outbound_boundary.await?;
+                self.seen_ids
+                    .lock()
+                    .expect("seen lock")
+                    .push(target.station_key_id.clone());
                 self.responses.lock().expect("responses lock").remove(0)
             })
         }
@@ -5135,6 +5488,18 @@ mod tests {
             _secret_ref: SecretRef,
         ) -> BoxFuture<'static, Result<SecretBytes, ExecutionCredentialError>> {
             Box::pin(async { Ok("test-api-key".to_string().into()) })
+        }
+    }
+
+    struct FailingCredentialResolver;
+
+    impl ExecutionCredentialResolver for FailingCredentialResolver {
+        fn resolve_station_key_secret_ref(
+            &self,
+            station_key_id: String,
+            _secret_ref: SecretRef,
+        ) -> BoxFuture<'static, Result<SecretBytes, ExecutionCredentialError>> {
+            Box::pin(async move { Err(ExecutionCredentialError { station_key_id }) })
         }
     }
 
@@ -5365,12 +5730,6 @@ mod tests {
             station_key_id: candidate.station_key_id.clone(),
             station_id: candidate.station_id.clone(),
             station_type: candidate.station_type.clone(),
-            capacity_provider_family: Some("fixture-provider".to_string()),
-            capacity_deployment_identity: Some(fixture_deployment_identity(
-                &candidate.station_key_id,
-            )),
-            capacity_region_identity: None,
-            capacity_domain_revision: Some(1),
             group_binding_id: candidate
                 .economic_snapshot
                 .as_ref()
@@ -5396,35 +5755,11 @@ mod tests {
         }
     }
 
-    fn fixture_capacity_domain(
-        station_key_id: &str,
-    ) -> Option<crate::application::routing_engine::failure_domains::CapacityDomainCommitment> {
-        crate::application::routing_engine::failure_domains::ProviderCapacityDomain::from_trusted_identity(
-            "fixture-provider",
-            "gpt-test",
-            Some(&fixture_deployment_identity(station_key_id)),
-            None,
-        )
-        .map(|domain| domain.commitment())
-    }
-
-    fn fixture_deployment_identity(station_key_id: &str) -> String {
-        if station_key_id.starts_with("same-") {
-            "fixture-deployment-shared".to_string()
-        } else {
-            format!("fixture-deployment-{station_key_id}")
-        }
-    }
-
     fn rich_candidate(id: &str) -> CanonicalRoutingCandidate {
         CanonicalRoutingCandidate {
             station_key_id: id.to_string(),
             station_id: format!("station-{id}"),
             station_type: "newapi".to_string(),
-            capacity_provider_family: None,
-            capacity_deployment_identity: None,
-            capacity_region_identity: None,
-            capacity_domain_revision: None,
             station_account_concurrency_limit: None,
             station_endpoint_revision: 1,
             sanitized_origin: "https://upstream.example.test".to_string(),

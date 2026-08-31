@@ -46,6 +46,17 @@ const LEGACY_MIGRATION_57_CHECKSUM: [u8; 48] = [
     0x85, 0x52, 0x1E, 0xA2, 0x43, 0xF0, 0x0B, 0x76, 0xCC, 0xA4, 0x76, 0x95, 0x38, 0x69, 0x50, 0x83,
 ];
 
+// Databases created by the 2026-08-29 development build contain this
+// checksum for migration 59. The canonical file subsequently added explicit
+// schema and timeout postcondition guards without changing the intended data
+// transition. Reconcile only this exact checksum after completing and
+// verifying the canonical postcondition.
+const LEGACY_MIGRATION_59_CHECKSUM: [u8; 48] = [
+    0x4C, 0xCF, 0x11, 0xA9, 0xAC, 0xFE, 0x64, 0x34, 0x65, 0xFB, 0x47, 0x3F, 0xE9, 0xE6, 0x88, 0x71,
+    0x43, 0x4E, 0xB0, 0x7A, 0x11, 0x5A, 0xCB, 0x01, 0x66, 0xBC, 0xB9, 0xC7, 0xBF, 0xA2, 0x6B, 0xBD,
+    0xB2, 0xF4, 0x81, 0x80, 0xF8, 0xA0, 0xD1, 0x8A, 0x8B, 0x7B, 0x5E, 0x29, 0xED, 0xE3, 0xC2, 0x1D,
+];
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SchemaUpgradeBackupManifest {
@@ -319,6 +330,19 @@ async fn reconcile_historical_migration_checksums(
             continue;
         }
 
+        if version == 59 && actual.as_slice() == LEGACY_MIGRATION_59_CHECKSUM {
+            complete_legacy_migration_59_timeout_default(pool).await?;
+            verify_legacy_migration_59_postcondition(pool).await?;
+            sqlx::query(
+                "UPDATE _sqlx_migrations SET checksum = ?1 WHERE version = ?2 AND success = 1",
+            )
+            .bind(expected)
+            .bind(version)
+            .execute(pool)
+            .await?;
+            continue;
+        }
+
         return Err(PersistenceError::MigrationChecksumMismatch {
             version,
             expected: hex_checksum(expected),
@@ -481,6 +505,53 @@ async fn verify_legacy_migration_57_postcondition(
     {
         return Err(PersistenceError::InvariantViolation(
             "legacy migration 57 checksum matched but pricing cleanup postcondition is not satisfied"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
+async fn complete_legacy_migration_59_timeout_default(
+    pool: &sqlx::SqlitePool,
+) -> Result<(), PersistenceError> {
+    let schema_version: i64 = sqlx::query_scalar(
+        "SELECT schema_version FROM persistence_schema_compatibility WHERE singleton_key = 1",
+    )
+    .fetch_one(pool)
+    .await?;
+    if schema_version != 59 {
+        return Err(PersistenceError::InvariantViolation(
+            "legacy migration 59 checksum matched but schema metadata is not 59".to_string(),
+        ));
+    }
+
+    sqlx::query(
+        "UPDATE settings
+         SET value = '60', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+         WHERE key = 'collector_timeout_seconds' AND trim(value) = '30'",
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+async fn verify_legacy_migration_59_postcondition(
+    pool: &sqlx::SqlitePool,
+) -> Result<(), PersistenceError> {
+    let schema_version: i64 = sqlx::query_scalar(
+        "SELECT schema_version FROM persistence_schema_compatibility WHERE singleton_key = 1",
+    )
+    .fetch_one(pool)
+    .await?;
+    let previous_default_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM settings
+         WHERE key = 'collector_timeout_seconds' AND trim(value) = '30'",
+    )
+    .fetch_one(pool)
+    .await?;
+    if schema_version != 59 || previous_default_count != 0 {
+        return Err(PersistenceError::InvariantViolation(
+            "legacy migration 59 checksum matched but collector timeout postcondition is not satisfied"
                 .to_string(),
         ));
     }
@@ -1144,6 +1215,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn known_legacy_schema_59_checksum_reaches_latest_schema() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join("relay-pool-v2.sqlite3");
+        initialize_database_through(&path, 59).await;
+        let pool = migration_pool_existing(&path).await.expect("open database");
+        sqlx::query("UPDATE settings SET value = '30' WHERE key = 'collector_timeout_seconds'")
+            .execute(&pool)
+            .await
+            .expect("restore previous timeout default");
+        sqlx::query("UPDATE _sqlx_migrations SET checksum = ?1 WHERE version = 59")
+            .bind(LEGACY_MIGRATION_59_CHECKSUM.as_slice())
+            .execute(&pool)
+            .await
+            .expect("install legacy checksum");
+        pool.close().await;
+
+        let backup = upgrade_existing_v2_database(&path)
+            .await
+            .expect("legacy schema 59 reaches the latest schema")
+            .expect("verified pre-upgrade backup");
+        assert_eq!(
+            database_schema_version(&path).await,
+            current_schema_version()
+        );
+
+        let pool = migration_pool_existing(&path)
+            .await
+            .expect("upgraded database");
+        let timeout: String = sqlx::query_scalar(
+            "SELECT value FROM settings WHERE key = 'collector_timeout_seconds'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("upgraded timeout default");
+        let installed_checksum: Vec<u8> =
+            sqlx::query_scalar("SELECT checksum FROM _sqlx_migrations WHERE version = 59")
+                .fetch_one(&pool)
+                .await
+                .expect("canonical migration checksum");
+        let canonical_checksum = migrator()
+            .iter()
+            .find(|migration| migration.version == 59)
+            .expect("migration 59")
+            .checksum
+            .as_ref();
+        assert_eq!(timeout, "60");
+        assert_eq!(installed_checksum.as_slice(), canonical_checksum);
+        pool.close().await;
+
+        let backup_pool = migration_pool_existing(&backup)
+            .await
+            .expect("pre-upgrade backup");
+        let backed_up_timeout: String = sqlx::query_scalar(
+            "SELECT value FROM settings WHERE key = 'collector_timeout_seconds'",
+        )
+        .fetch_one(&backup_pool)
+        .await
+        .expect("backed up timeout");
+        assert_eq!(backed_up_timeout, "30");
+        backup_pool.close().await;
+    }
+
+    #[tokio::test]
     async fn legacy_schema_57_completion_runs_after_backup_and_removes_leftover_prices() {
         let root = tempfile::tempdir().expect("tempdir");
         let path = root.path().join("relay-pool-v2.sqlite3");
@@ -1708,6 +1842,104 @@ mod tests {
         .expect("schema compatibility");
         assert_eq!(after, "60");
         assert_eq!(compatibility, 59);
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn schema_60_creates_v3_policy_staging_contract_without_materializing_data() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join("relay-pool-v2.sqlite3");
+        initialize_database_through(&path, 59).await;
+        let pool = migration_pool_existing(&path)
+            .await
+            .expect("migration pool");
+
+        let before: String =
+            sqlx::query_scalar("SELECT config_json FROM routing_policy WHERE singleton_key = 1")
+                .fetch_one(&pool)
+                .await
+                .expect("V2 policy");
+        let before_value: serde_json::Value = serde_json::from_str(&before).expect("V2 JSON");
+        assert_eq!(before_value["version"], 2);
+
+        migrator_through(60)
+            .expect("schema 60 migrator")
+            .run(&pool)
+            .await
+            .expect("schema 60 migration");
+
+        let active_after: String =
+            sqlx::query_scalar("SELECT config_json FROM routing_policy WHERE singleton_key = 1")
+                .fetch_one(&pool)
+                .await
+                .expect("active policy");
+        assert_eq!(
+            active_after, before,
+            "schema migration must not rewrite active V2"
+        );
+
+        for table in [
+            "routing_policy_v3_staged",
+            "routing_policy_v3_migration_audit",
+        ] {
+            let row_count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+                .fetch_one(&pool)
+                .await
+                .expect("v3 staging table row count");
+            assert_eq!(
+                row_count, 0,
+                "{table} must remain empty after structural migration"
+            );
+        }
+
+        for column in [
+            "source_config_revision",
+            "target_policy_revision",
+            "config_revision",
+            "policy_generation_id",
+            "canonical_policy_hash",
+            "policy_algorithm_version",
+            "target_policy_version",
+            "status",
+            "updated_at_ms",
+        ] {
+            let column_count: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM pragma_table_info('routing_policy_v3_staged')
+                 WHERE name = ?1",
+            )
+            .bind(column)
+            .fetch_one(&pool)
+            .await
+            .expect("staged policy column");
+            assert_eq!(column_count, 1, "missing staged policy column {column}");
+        }
+
+        for trigger in [
+            "routing_policy_v3_staged_immutable_payload",
+            "routing_policy_v3_staged_legal_status_transition",
+            "routing_policy_v3_migration_audit_no_update",
+            "routing_policy_v3_migration_audit_no_delete",
+        ] {
+            let trigger_count: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name = ?1",
+            )
+            .bind(trigger)
+            .fetch_one(&pool)
+            .await
+            .expect("routing policy v3 trigger");
+            assert_eq!(
+                trigger_count, 1,
+                "missing routing policy v3 trigger {trigger}"
+            );
+        }
+
+        let schema_version: i64 = sqlx::query_scalar(
+            "SELECT schema_version FROM persistence_schema_compatibility WHERE singleton_key = 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("schema compatibility");
+        assert_eq!(schema_version, 60);
         pool.close().await;
     }
 

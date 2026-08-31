@@ -4,8 +4,7 @@ mod capacity;
 use capacity::{
     effective_load_denominator, CapacityAcquireFailure, CapacityConstraintKey,
     CapacityMissObservation, CapacityWaitMiss, CompositeCapacityRegistry, CompositeCapacityRequest,
-    PlanningRoundCapacityState, ProviderAccountConstraint, RetryBudgetMiss, RetryBudgetRegistry,
-    RetryPermitDecision,
+    PlanningRoundCapacityState, ProviderAccountConstraint,
 };
 
 fn request(station_id: &str, station_key_id: &str) -> CompositeCapacityRequest {
@@ -244,42 +243,4 @@ fn planning_round_builds_wait_plan_from_waitable_miss() {
     round.clear();
     assert!(round.unavailable_this_pass.is_empty());
     assert!(round.wait_observations.is_empty());
-}
-
-#[test]
-fn retry_budget_caps_retry_permits_and_releases_on_drop() {
-    let registry = RetryBudgetRegistry::new(5);
-    assert_eq!(registry.max_active(), 1);
-    assert!(matches!(
-        registry.acquire_for_round(0),
-        Ok(RetryPermitDecision::NotRequired)
-    ));
-
-    let permit = match registry
-        .acquire_for_round(1)
-        .expect("first retry permit should fit 20 percent budget")
-    {
-        RetryPermitDecision::Acquired(permit) => permit,
-        RetryPermitDecision::NotRequired => panic!("retry round requires a permit"),
-    };
-    assert_eq!(registry.active(), 1);
-    assert!(matches!(
-        registry.acquire_for_round(2),
-        Err(RetryBudgetMiss::Exhausted {
-            active: 1,
-            max_active: 1,
-        })
-    ));
-
-    drop(permit);
-    assert_eq!(registry.active(), 0);
-    let mut next_permit = match registry
-        .acquire_for_round(2)
-        .expect("released budget should be reusable")
-    {
-        RetryPermitDecision::Acquired(permit) => permit,
-        RetryPermitDecision::NotRequired => panic!("retry round requires a permit"),
-    };
-    next_permit.release();
-    assert_eq!(registry.active(), 0);
 }

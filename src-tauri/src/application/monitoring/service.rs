@@ -1,10 +1,12 @@
 use std::sync::Arc;
 
+#[cfg(test)]
+use crate::application::error_rate_protection::ErrorRateProtectionService;
+
 use crate::{
     application::{
         clock::Clock,
         error::ApplicationError,
-        error_rate_protection::ErrorRateProtectionService,
         ids::IdGenerator,
         monitoring::{
             definition_bridge::planning_snapshot_from_config, planner::ProbePlan,
@@ -43,22 +45,29 @@ pub(crate) struct MonitoringService {
     store: MonitoringStore,
     definition_store: MonitoringDefinitionRepository,
     budget_store: MonitoringBudgetRepository,
+    #[cfg(test)]
     error_rate: ErrorRateProtectionService,
 }
 
 impl MonitoringService {
-    #[expect(
-        dead_code,
-        reason = "contract=monitoring.test-constructor; owner=application/monitoring; remove_when=all test fixtures compose the explicit error-rate adapter"
-    )]
     pub(crate) fn new(
         runtime: PersistenceHandle,
         clock: Arc<dyn Clock>,
         ids: Arc<dyn IdGenerator>,
     ) -> Self {
-        Self::new_with_error_rate(runtime, clock, ids, ErrorRateProtectionService::disabled())
+        Self {
+            runtime,
+            clock,
+            ids,
+            store: MonitoringStore,
+            definition_store: MonitoringDefinitionRepository,
+            budget_store: MonitoringBudgetRepository,
+            #[cfg(test)]
+            error_rate: ErrorRateProtectionService::disabled(),
+        }
     }
 
+    #[cfg(test)]
     pub(crate) fn new_with_error_rate(
         runtime: PersistenceHandle,
         clock: Arc<dyn Clock>,
@@ -382,6 +391,9 @@ impl MonitoringService {
         &self,
         execution: BufferedExecution,
     ) -> Result<ExecutionSummaryRow, ApplicationError> {
+        #[cfg(not(test))]
+        let committer = MonitoringExecutionCommitter::new();
+        #[cfg(test)]
         let committer = MonitoringExecutionCommitter::new_with_error_rate(self.error_rate.clone());
         self.runtime
             .write(|write| Box::pin(async move { committer.commit(write, &execution).await }))

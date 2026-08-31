@@ -23,6 +23,13 @@ pub struct UpsertStationCapacityDomainInput {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=legacy-capacity-domain-model-reference; owner=models/station_capacity_domains; remove_when=capacity-domain reference DTOs are deleted"
+    )
+)]
 pub struct ClearStationCapacityDomainInput {
     pub station_id: String,
     pub expected_revision: i64,

@@ -6,7 +6,6 @@ use super::{
     collectors::CollectorService,
     credentials::{CredentialService, CredentialVault},
     data_directory::{DataDirectoryPort, DataDirectoryService},
-    error_rate_protection::ErrorRateProtectionService,
     ids::{IdGenerator, UuidV7Generator},
     model_mapping_service::ModelMappingService,
     monitoring::MonitoringService,
@@ -87,7 +86,18 @@ impl AppServices {
             clock.clone(),
             ids.clone(),
         ));
-        let error_rate_protection = ErrorRateProtectionService::disabled();
+        let circuit_persistence_gate =
+            crate::application::station_key_circuit::CircuitPersistenceGate::shared();
+        let routing = Arc::new(RoutingService::new_with_circuit_persistence_gate(
+            runtime.clone(),
+            Arc::clone(&circuit_persistence_gate),
+        ));
+        let request_finalization = Arc::new(
+            RequestFinalizationService::new_with_circuit_persistence_gate(
+                runtime.clone(),
+                circuit_persistence_gate,
+            ),
+        );
         Self::new(
             Arc::new(StationService::new_with_alerting_read_model_updates(
                 runtime.clone(),
@@ -112,26 +122,16 @@ impl AppServices {
                 ids.clone(),
                 alerting_updates,
             )),
-            Arc::new(RoutingService::new_with_error_rate(
-                runtime.clone(),
-                error_rate_protection.clone(),
-            )),
+            routing,
             Arc::new(RoutingPolicyReadService::new(runtime.clone())),
             Arc::new(ModelMappingService::new(runtime.clone())),
-            Arc::new(RoutingDiagnosticsReader::new(
-                runtime.clone(),
-                error_rate_protection.clone(),
-            )),
-            Arc::new(RequestFinalizationService::new_with_error_rate(
-                runtime.clone(),
-                error_rate_protection.clone(),
-            )),
+            Arc::new(RoutingDiagnosticsReader::new(runtime.clone())),
+            request_finalization,
             Arc::new(RequestLogService::new(runtime.clone())),
-            Arc::new(MonitoringService::new_with_error_rate(
+            Arc::new(MonitoringService::new(
                 runtime.clone(),
                 clock.clone(),
                 ids.clone(),
-                error_rate_protection.clone(),
             )),
             Arc::new(PricingService::new(
                 runtime.clone(),

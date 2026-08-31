@@ -9,7 +9,6 @@ use crate::application::operational_facts::{
 };
 #[cfg(test)]
 use crate::application::routing_engine::eligibility::RouteRejection;
-use crate::application::routing_engine::failure_domains::CapacityDomainCommitment;
 #[cfg(test)]
 use crate::application::routing_engine::request::{OrderingProfile, PlanningRoundContext};
 
@@ -22,7 +21,6 @@ pub const MAX_ROUTE_PLAN_CANDIDATES: usize = 1024;
 pub enum AvailabilityTier {
     Primary,
     ConfiguredBackup,
-    #[cfg(test)]
     DepletedEmergency,
 }
 
@@ -46,8 +44,6 @@ pub struct RoutePlanCandidate {
     pub resolved_upstream_model: Option<String>,
     pub model_alias_revision: i64,
     pub model_variant: Option<CandidateModelVariant>,
-    pub capacity_domain: Option<CapacityDomainCommitment>,
-    pub capacity_domain_revision: Option<i64>,
     pub priority: i64,
     pub tier: AvailabilityTier,
     pub pricing: RoutePlanPricingSnapshot,
@@ -374,8 +370,6 @@ fn plan_candidate(
         resolved_upstream_model: None,
         model_alias_revision: 1,
         model_variant: None,
-        capacity_domain: None,
-        capacity_domain_revision: None,
         priority: candidate.priority,
         tier,
         pricing: RoutePlanPricingSnapshot {

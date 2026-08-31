@@ -3,40 +3,25 @@ use std::sync::Arc;
 use crate::{
     application::{
         error::ApplicationError,
-        health_protection::{
-            HealthProbeAdmissionMode, HealthProtectionProbe, HealthProtectionScope,
-            HealthProtectionStatus,
-        },
         operational_facts::target_resolver::ExecutionTargetRef,
         routing::RoutingService,
         routing_engine::planning_snapshot::{PlanningSnapshot, RuntimeOverlaySnapshot},
         routing_engine::request::{PlanningRequestContext, RouteRequestFacts},
+        station_key_circuit::{CircuitAdmissionResult, StationKeyCircuitStatus},
     },
     models::{pricing::BalanceSnapshot, routing::RuntimeRoutingSettings},
 };
 
 /// Stable capabilities exposed from the application layer to the proxy
 /// execution boundary. This intentionally contains reads needed while a
-/// request is running, plus the small health-probe mutation used by admission.
+/// request is running. Legacy scoped-health reads and probes are deliberately
+/// absent: v3 station-key circuit state is the sole production admission path.
 pub(crate) trait RoutingExecutionReadPort: Send + Sync {
-    #[cfg(test)]
     fn load_planning_snapshot(
         &self,
         request: RouteRequestFacts,
         runtime: RuntimeOverlaySnapshot,
         context: PlanningRequestContext,
-    ) -> futures_util::future::BoxFuture<
-        'static,
-        Result<Option<PlanningSnapshot>, RoutingExecutionReadError>,
-    >;
-
-    fn load_planning_snapshot_with_probe(
-        &self,
-        request: RouteRequestFacts,
-        runtime: RuntimeOverlaySnapshot,
-        context: PlanningRequestContext,
-        probe: Option<HealthProtectionProbe>,
-        probe_mode: HealthProbeAdmissionMode,
     ) -> futures_util::future::BoxFuture<
         'static,
         Result<Option<PlanningSnapshot>, RoutingExecutionReadError>,
@@ -64,34 +49,70 @@ pub(crate) trait RoutingExecutionReadPort: Send + Sync {
         Result<Vec<ExecutionTargetRef>, RoutingExecutionReadError>,
     >;
 
-    fn load_health_protection_statuses(
+    fn admit_station_key_circuit_with_attempt(
         &self,
-        now_ms: i64,
+        _expected_runtime_generation_id: Option<String>,
+        _expected_fence_revision: u64,
+        _station_key_id: String,
+        _lifecycle_revision: u64,
+        _policy_revision: u64,
+        _now_ms: u64,
+        _deadline_at_ms: u64,
+        _score_gate_passed: bool,
+        _attempt_id: String,
+        _correlation_id: String,
+        _attempt_index: u16,
+        _capacity_lease_id: String,
+        _consecutive_failure_threshold: u16,
+        _recovery_success_threshold: u16,
+        _recovery_wait_ms: u64,
     ) -> futures_util::future::BoxFuture<
         'static,
-        Result<Vec<HealthProtectionStatus>, RoutingExecutionReadError>,
-    >;
+        Result<CircuitAdmissionResult, RoutingExecutionReadError>,
+    > {
+        Box::pin(async { Ok(CircuitAdmissionResult::AllowedClosed { state_revision: 1 }) })
+    }
 
-    fn begin_health_protection_probe(
+    fn load_station_key_circuit_statuses(
         &self,
-        scope: HealthProtectionScope,
-        now_ms: i64,
     ) -> futures_util::future::BoxFuture<
         'static,
-        Result<Option<HealthProtectionProbe>, RoutingExecutionReadError>,
+        Result<Vec<StationKeyCircuitStatus>, RoutingExecutionReadError>,
+    > {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+
+    fn load_routing_generation_admission_guard(
+        &self,
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        Result<
+            crate::models::routing_generation::RoutingGenerationAdmissionGuard,
+            RoutingExecutionReadError,
+        >,
     >;
 
-    fn cancel_health_protection_probe(
+    /// Marks every durable attempt at the outbound boundary. Half-Open
+    /// attempts also advance their circuit lease in the same transaction.
+    /// Test ports default to a no-op because they do not persist attempts.
+    fn mark_station_key_attempt_boundary(
         &self,
-        probe: HealthProtectionProbe,
-        now_ms: i64,
-    ) -> futures_util::future::BoxFuture<'static, Result<bool, RoutingExecutionReadError>>;
+        _station_key_id: String,
+        _lifecycle_revision: u64,
+        _attempt_id: String,
+        _lease_revision: Option<u64>,
+        _now_ms: u64,
+    ) -> futures_util::future::BoxFuture<'static, Result<bool, RoutingExecutionReadError>> {
+        Box::pin(async { Ok(true) })
+    }
 }
 
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub(crate) enum RoutingExecutionReadError {
     #[error("routing execution read deadline exceeded")]
     DeadlineExceeded,
+    #[error("routing candidate count {actual} exceeds system limit {limit}")]
+    CandidateLimitExceeded { actual: usize, limit: usize },
     #[error("routing execution data unavailable: {0}")]
     Unavailable(String),
     #[error("routing execution state invalid: {0}")]
@@ -104,6 +125,9 @@ impl RoutingExecutionReadError {
     fn from_application(error: ApplicationError) -> Self {
         match error {
             ApplicationError::DeadlineExceeded => Self::DeadlineExceeded,
+            ApplicationError::CandidateLimitExceeded { actual, limit } => {
+                Self::CandidateLimitExceeded { actual, limit }
+            }
             ApplicationError::Unavailable
             | ApplicationError::NotFound
             | ApplicationError::IoFailed => Self::Unavailable(error.to_string()),
@@ -133,6 +157,16 @@ mod tests {
             RoutingExecutionReadError::from_application(ApplicationError::ConstraintViolation),
             RoutingExecutionReadError::InvalidState(_)
         ));
+        assert_eq!(
+            RoutingExecutionReadError::from_application(ApplicationError::CandidateLimitExceeded {
+                actual: 1_025,
+                limit: 1_024,
+            }),
+            RoutingExecutionReadError::CandidateLimitExceeded {
+                actual: 1_025,
+                limit: 1_024,
+            }
+        );
     }
 }
 
@@ -151,7 +185,6 @@ impl RoutingExecutionReader {
 }
 
 impl RoutingExecutionReadPort for RoutingExecutionReader {
-    #[cfg(test)]
     fn load_planning_snapshot(
         &self,
         request: RouteRequestFacts,
@@ -165,28 +198,6 @@ impl RoutingExecutionReadPort for RoutingExecutionReader {
         Box::pin(async move {
             routing
                 .load_intelligent_planning_snapshot(&request, runtime, context)
-                .await
-                .map_err(RoutingExecutionReadError::from_application)
-        })
-    }
-
-    fn load_planning_snapshot_with_probe(
-        &self,
-        request: RouteRequestFacts,
-        runtime: RuntimeOverlaySnapshot,
-        context: PlanningRequestContext,
-        probe: Option<HealthProtectionProbe>,
-        probe_mode: HealthProbeAdmissionMode,
-    ) -> futures_util::future::BoxFuture<
-        'static,
-        Result<Option<PlanningSnapshot>, RoutingExecutionReadError>,
-    > {
-        let routing = Arc::clone(&self.routing);
-        Box::pin(async move {
-            routing
-                .load_intelligent_planning_snapshot_with_probe(
-                    &request, runtime, context, probe, probe_mode,
-                )
                 .await
                 .map_err(RoutingExecutionReadError::from_application)
         })
@@ -238,48 +249,103 @@ impl RoutingExecutionReadPort for RoutingExecutionReader {
         })
     }
 
-    fn load_health_protection_statuses(
+    fn admit_station_key_circuit_with_attempt(
         &self,
-        now_ms: i64,
+        expected_runtime_generation_id: Option<String>,
+        expected_fence_revision: u64,
+        station_key_id: String,
+        lifecycle_revision: u64,
+        policy_revision: u64,
+        now_ms: u64,
+        deadline_at_ms: u64,
+        score_gate_passed: bool,
+        attempt_id: String,
+        correlation_id: String,
+        attempt_index: u16,
+        capacity_lease_id: String,
+        consecutive_failure_threshold: u16,
+        recovery_success_threshold: u16,
+        recovery_wait_ms: u64,
     ) -> futures_util::future::BoxFuture<
         'static,
-        Result<Vec<HealthProtectionStatus>, RoutingExecutionReadError>,
+        Result<CircuitAdmissionResult, RoutingExecutionReadError>,
     > {
         let routing = Arc::clone(&self.routing);
         Box::pin(async move {
             routing
-                .load_health_protection_statuses(now_ms)
+                .admit_station_key_circuit_with_attempt(
+                    expected_runtime_generation_id,
+                    expected_fence_revision,
+                    station_key_id,
+                    lifecycle_revision,
+                    policy_revision,
+                    now_ms,
+                    deadline_at_ms,
+                    score_gate_passed,
+                    attempt_id,
+                    correlation_id,
+                    attempt_index,
+                    capacity_lease_id,
+                    consecutive_failure_threshold,
+                    recovery_success_threshold,
+                    recovery_wait_ms,
+                )
                 .await
                 .map_err(RoutingExecutionReadError::from_application)
         })
     }
 
-    fn begin_health_protection_probe(
+    fn load_station_key_circuit_statuses(
         &self,
-        scope: HealthProtectionScope,
-        now_ms: i64,
     ) -> futures_util::future::BoxFuture<
         'static,
-        Result<Option<HealthProtectionProbe>, RoutingExecutionReadError>,
+        Result<Vec<StationKeyCircuitStatus>, RoutingExecutionReadError>,
     > {
         let routing = Arc::clone(&self.routing);
         Box::pin(async move {
             routing
-                .begin_health_protection_probe(scope, now_ms)
+                .load_station_key_circuit_statuses()
                 .await
                 .map_err(RoutingExecutionReadError::from_application)
         })
     }
 
-    fn cancel_health_protection_probe(
+    fn load_routing_generation_admission_guard(
         &self,
-        probe: HealthProtectionProbe,
-        now_ms: i64,
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        Result<
+            crate::models::routing_generation::RoutingGenerationAdmissionGuard,
+            RoutingExecutionReadError,
+        >,
+    > {
+        let routing = Arc::clone(&self.routing);
+        Box::pin(async move {
+            routing
+                .load_routing_generation_admission_guard()
+                .await
+                .map_err(RoutingExecutionReadError::from_application)
+        })
+    }
+
+    fn mark_station_key_attempt_boundary(
+        &self,
+        station_key_id: String,
+        lifecycle_revision: u64,
+        attempt_id: String,
+        lease_revision: Option<u64>,
+        now_ms: u64,
     ) -> futures_util::future::BoxFuture<'static, Result<bool, RoutingExecutionReadError>> {
         let routing = Arc::clone(&self.routing);
         Box::pin(async move {
             routing
-                .cancel_health_protection_probe(probe, now_ms)
+                .mark_station_key_attempt_boundary(
+                    station_key_id,
+                    lifecycle_revision,
+                    attempt_id,
+                    lease_revision,
+                    now_ms,
+                )
                 .await
                 .map_err(RoutingExecutionReadError::from_application)
         })

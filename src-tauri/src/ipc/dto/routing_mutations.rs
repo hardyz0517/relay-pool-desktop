@@ -9,8 +9,9 @@ use crate::models::{routing::UpdateStationKeyCapabilitiesInput, stations::Endpoi
 
 use crate::models::routing::RoutingGroupFilter;
 use crate::models::routing_policy::{
-    ProtectionProfileConfigV2, RetryFailoverPolicyV2, RoutingPolicyConfigV1, RoutingPolicyConfigV2,
-    RoutingPolicyDocumentV2, TimeoutPolicyV2,
+    CircuitBreakerPolicyV3, ProtectionProfileConfigV2, ReliabilitySamplingPolicyV3,
+    ReliabilitySourceWeightsV3, RetryFailoverPolicyV2, RetryPolicyV3, RoutingPolicyConfigV1,
+    RoutingPolicyConfigV2, RoutingPolicyConfigV3, RoutingPolicyDocumentV3, TimeoutPolicyV2,
 };
 
 use super::{invalid_input, TypeDescriptor};
@@ -108,6 +109,13 @@ impl RoutingPolicyConfigV1Dto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=ipc-routing-policy-v2-compat; owner=ipc/dto/routing_mutations; remove_when=legacy v2 policy clients are retired"
+    )
+)]
 pub struct RetryFailoverPolicyV2Dto {
     pub version: u16,
     pub max_total_attempts: u16,
@@ -129,6 +137,13 @@ impl From<RetryFailoverPolicyV2> for RetryFailoverPolicyV2Dto {
 }
 
 impl RetryFailoverPolicyV2Dto {
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=ipc-routing-policy-v2-compat; owner=ipc/dto/routing_mutations; remove_when=legacy v2 policy clients are retired"
+        )
+    )]
     fn into_domain(self) -> Result<RetryFailoverPolicyV2, crate::commands::error::CommandError> {
         let policy = RetryFailoverPolicyV2 {
             version: self.version,
@@ -146,6 +161,13 @@ impl RetryFailoverPolicyV2Dto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=ipc-routing-protection-v2-compat; owner=ipc/dto/routing_mutations; remove_when=legacy v2 policy clients are retired"
+    )
+)]
 pub struct ProtectionProfileConfigV2Dto {
     pub version: u16,
     pub enabled: bool,
@@ -171,6 +193,13 @@ impl From<ProtectionProfileConfigV2> for ProtectionProfileConfigV2Dto {
 }
 
 impl ProtectionProfileConfigV2Dto {
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=ipc-routing-protection-v2-compat; owner=ipc/dto/routing_mutations; remove_when=legacy v2 policy clients are retired"
+        )
+    )]
     fn into_domain(
         self,
     ) -> Result<ProtectionProfileConfigV2, crate::commands::error::CommandError> {
@@ -233,6 +262,13 @@ impl TimeoutPolicyV2Dto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=ipc-routing-policy-v2-compat; owner=ipc/dto/routing_mutations; remove_when=legacy v2 policy clients are retired"
+    )
+)]
 pub struct RoutingPolicyConfigV2Dto {
     pub version: u16,
     pub reliability_weight: u16,
@@ -280,6 +316,13 @@ impl From<RoutingPolicyConfigV2> for RoutingPolicyConfigV2Dto {
 }
 
 impl RoutingPolicyConfigV2Dto {
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=ipc-routing-policy-v2-compat; owner=ipc/dto/routing_mutations; remove_when=legacy v2 policy clients are retired"
+        )
+    )]
     pub fn into_domain(
         self,
     ) -> Result<RoutingPolicyConfigV2, crate::commands::error::CommandError> {
@@ -309,6 +352,216 @@ impl RoutingPolicyConfigV2Dto {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReliabilitySourceWeightsV3Dto {
+    pub real_traffic_percent: u8,
+    pub monitoring_percent: u8,
+}
+
+impl From<ReliabilitySourceWeightsV3> for ReliabilitySourceWeightsV3Dto {
+    fn from(value: ReliabilitySourceWeightsV3) -> Self {
+        Self {
+            real_traffic_percent: value.real_traffic_percent,
+            monitoring_percent: value.monitoring_percent,
+        }
+    }
+}
+
+impl ReliabilitySourceWeightsV3Dto {
+    fn into_domain(
+        self,
+    ) -> Result<ReliabilitySourceWeightsV3, crate::commands::error::CommandError> {
+        let weights = ReliabilitySourceWeightsV3 {
+            real_traffic_percent: self.real_traffic_percent,
+            monitoring_percent: self.monitoring_percent,
+        };
+        weights
+            .validate()
+            .map_err(|error| invalid_input(error.field, error.code, error.message_key))?;
+        Ok(weights)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReliabilitySamplingPolicyV3Dto {
+    pub historical_minimum_samples: u16,
+    pub recent_minimum_samples: u16,
+    pub optimistic_reliability_percent: u8,
+    pub optimistic_latency_ms: u32,
+}
+
+impl From<ReliabilitySamplingPolicyV3> for ReliabilitySamplingPolicyV3Dto {
+    fn from(value: ReliabilitySamplingPolicyV3) -> Self {
+        Self {
+            historical_minimum_samples: value.historical_minimum_samples,
+            recent_minimum_samples: value.recent_minimum_samples,
+            optimistic_reliability_percent: value.optimistic_reliability_percent,
+            optimistic_latency_ms: value.optimistic_latency_ms,
+        }
+    }
+}
+
+impl ReliabilitySamplingPolicyV3Dto {
+    fn into_domain(
+        self,
+    ) -> Result<ReliabilitySamplingPolicyV3, crate::commands::error::CommandError> {
+        let sampling = ReliabilitySamplingPolicyV3 {
+            historical_minimum_samples: self.historical_minimum_samples,
+            recent_minimum_samples: self.recent_minimum_samples,
+            optimistic_reliability_percent: self.optimistic_reliability_percent,
+            optimistic_latency_ms: self.optimistic_latency_ms,
+        };
+        sampling
+            .validate()
+            .map_err(|error| invalid_input(error.field, error.code, error.message_key))?;
+        Ok(sampling)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RetryPolicyV3Dto {
+    pub version: u16,
+    pub max_retry_count: u16,
+    pub consecutive_failure_threshold: u16,
+}
+
+impl From<RetryPolicyV3> for RetryPolicyV3Dto {
+    fn from(value: RetryPolicyV3) -> Self {
+        Self {
+            version: value.version,
+            max_retry_count: value.max_retry_count,
+            consecutive_failure_threshold: value.consecutive_failure_threshold,
+        }
+    }
+}
+
+impl RetryPolicyV3Dto {
+    fn into_domain(self) -> Result<RetryPolicyV3, crate::commands::error::CommandError> {
+        let retry = RetryPolicyV3 {
+            version: self.version,
+            max_retry_count: self.max_retry_count,
+            consecutive_failure_threshold: self.consecutive_failure_threshold,
+        };
+        retry
+            .validate()
+            .map_err(|error| invalid_input(error.field, error.code, error.message_key))?;
+        Ok(retry)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CircuitBreakerPolicyV3Dto {
+    pub version: u16,
+    pub recovery_success_threshold: u8,
+    pub recovery_wait_seconds: u32,
+}
+
+impl From<CircuitBreakerPolicyV3> for CircuitBreakerPolicyV3Dto {
+    fn from(value: CircuitBreakerPolicyV3) -> Self {
+        Self {
+            version: value.version,
+            recovery_success_threshold: value.recovery_success_threshold,
+            recovery_wait_seconds: value.recovery_wait_seconds,
+        }
+    }
+}
+
+impl CircuitBreakerPolicyV3Dto {
+    fn into_domain(self) -> Result<CircuitBreakerPolicyV3, crate::commands::error::CommandError> {
+        let circuit_breaker = CircuitBreakerPolicyV3 {
+            version: self.version,
+            recovery_success_threshold: self.recovery_success_threshold,
+            recovery_wait_seconds: self.recovery_wait_seconds,
+        };
+        circuit_breaker
+            .validate()
+            .map_err(|error| invalid_input(error.field, error.code, error.message_key))?;
+        Ok(circuit_breaker)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RoutingPolicyConfigV3Dto {
+    pub version: u16,
+    pub reliability_weight: u16,
+    pub responsiveness_weight: u16,
+    pub cost_weight: u16,
+    pub preference_weight: u16,
+    pub allow_depleted_fallback: bool,
+    pub affinity_enabled: bool,
+    pub affinity_ttl_seconds: u32,
+    #[serde(deserialize_with = "deserialize_required_option")]
+    pub max_rate_multiplier: Option<f64>,
+    pub routing_group_filter: RoutingGroupFilter,
+    pub outbound_proxy_mode: String,
+    #[serde(deserialize_with = "deserialize_required_option")]
+    pub outbound_proxy_url: Option<String>,
+    pub reliability_source_weights: ReliabilitySourceWeightsV3Dto,
+    pub reliability_sampling: ReliabilitySamplingPolicyV3Dto,
+    pub retry: RetryPolicyV3Dto,
+    pub circuit_breaker: CircuitBreakerPolicyV3Dto,
+    pub timeout_policy: TimeoutPolicyV2Dto,
+}
+
+impl From<RoutingPolicyConfigV3> for RoutingPolicyConfigV3Dto {
+    fn from(value: RoutingPolicyConfigV3) -> Self {
+        Self {
+            version: value.version,
+            reliability_weight: value.reliability_weight,
+            responsiveness_weight: value.responsiveness_weight,
+            cost_weight: value.cost_weight,
+            preference_weight: value.preference_weight,
+            allow_depleted_fallback: value.allow_depleted_fallback,
+            affinity_enabled: value.affinity_enabled,
+            affinity_ttl_seconds: value.affinity_ttl_seconds,
+            max_rate_multiplier: value.max_rate_multiplier,
+            routing_group_filter: value.routing_group_filter,
+            outbound_proxy_mode: value.outbound_proxy_mode,
+            outbound_proxy_url: value.outbound_proxy_url,
+            reliability_source_weights: value.reliability_source_weights.into(),
+            reliability_sampling: value.reliability_sampling.into(),
+            retry: value.retry.into(),
+            circuit_breaker: value.circuit_breaker.into(),
+            timeout_policy: value.timeout_policy.into(),
+        }
+    }
+}
+
+impl RoutingPolicyConfigV3Dto {
+    pub fn into_domain(
+        self,
+    ) -> Result<RoutingPolicyConfigV3, crate::commands::error::CommandError> {
+        let config = RoutingPolicyConfigV3 {
+            version: self.version,
+            reliability_weight: self.reliability_weight,
+            responsiveness_weight: self.responsiveness_weight,
+            cost_weight: self.cost_weight,
+            preference_weight: self.preference_weight,
+            allow_depleted_fallback: self.allow_depleted_fallback,
+            affinity_enabled: self.affinity_enabled,
+            affinity_ttl_seconds: self.affinity_ttl_seconds,
+            max_rate_multiplier: self.max_rate_multiplier,
+            routing_group_filter: self.routing_group_filter,
+            outbound_proxy_mode: self.outbound_proxy_mode,
+            outbound_proxy_url: self.outbound_proxy_url,
+            reliability_source_weights: self.reliability_source_weights.into_domain()?,
+            reliability_sampling: self.reliability_sampling.into_domain()?,
+            retry: self.retry.into_domain()?,
+            circuit_breaker: self.circuit_breaker.into_domain()?,
+            timeout_policy: self.timeout_policy.into_domain()?,
+        };
+        config
+            .validate()
+            .map_err(|error| invalid_input(error.field, error.code, error.message_key))?;
+        Ok(config)
+    }
+}
+
 /// Complete routing-policy document envelope. `baseRevision` is the only
 /// optimistic-concurrency field; source provenance is attached by the command
 /// owner and is intentionally absent from this consumer DTO.
@@ -317,7 +570,7 @@ impl RoutingPolicyConfigV2Dto {
 pub struct ApplyRoutingPolicyDocumentInputDto {
     pub format_version: u16,
     pub base_revision: u64,
-    pub policy: RoutingPolicyConfigV2Dto,
+    pub policy: RoutingPolicyConfigV3Dto,
 }
 
 impl ApplyRoutingPolicyDocumentInputDto {
@@ -335,8 +588,8 @@ impl ApplyRoutingPolicyDocumentInputDto {
 
     pub fn into_domain(
         self,
-    ) -> Result<RoutingPolicyDocumentV2, crate::commands::error::CommandError> {
-        let document = RoutingPolicyDocumentV2 {
+    ) -> Result<RoutingPolicyDocumentV3, crate::commands::error::CommandError> {
+        let document = RoutingPolicyDocumentV3 {
             format_version: self.format_version,
             base_revision: self.base_revision,
             policy: self.policy.into_domain()?,
@@ -355,13 +608,72 @@ impl ApplyRoutingPolicyDocumentInputDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RoutingPolicySnapshotDto {
-    pub config: RoutingPolicyConfigV2Dto,
+    pub config: RoutingPolicyConfigV3Dto,
     pub revision: u64,
     pub policy_version: String,
     pub system_version: String,
     pub status: String,
     pub updated_at_ms: i64,
     pub document_sync: Option<RoutingDocumentSyncDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RoutingPolicyPublicationStatusInputDto {
+    pub revision: u64,
+    #[serde(default)]
+    pub policy_generation_id: Option<String>,
+}
+
+impl RoutingPolicyPublicationStatusInputDto {
+    pub fn parse(value: Value) -> Result<Self, crate::commands::error::CommandError> {
+        let input: Self = parse_value(value)?;
+        if input.revision == 0 {
+            return Err(invalid_input(
+                "revision",
+                "invalid_revision",
+                "The policy revision is invalid.",
+            ));
+        }
+        if let Some(policy_generation_id) = input.policy_generation_id.as_deref() {
+            validate_id("policyGenerationId", policy_generation_id)?;
+        }
+        Ok(input)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RoutingPolicyPublicationStateDto {
+    Staged,
+    Ready,
+    Failed,
+    Active,
+    Expired,
+}
+
+impl RoutingPolicyPublicationStateDto {
+    pub fn from_internal_code(value: &str) -> Option<Self> {
+        match value {
+            "staged" => Some(Self::Staged),
+            "ready" => Some(Self::Ready),
+            "failed" => Some(Self::Failed),
+            "active" => Some(Self::Active),
+            "expired" => Some(Self::Expired),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RoutingPolicyPublicationStatusDto {
+    pub revision: u64,
+    pub policy_generation_id: Option<String>,
+    pub status: RoutingPolicyPublicationStateDto,
+    pub failure_code: Option<String>,
+    pub updated_at_ms: i64,
+    pub terminal: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -736,7 +1048,7 @@ fn fixture_alias() -> ModelAlias {
 mod tests {
     use super::*;
     use crate::commands::error::CommandErrorCode;
-    use crate::models::routing_policy::RoutingPolicyConfigV2;
+    use crate::models::routing_policy::RoutingPolicyConfigV3;
 
     #[test]
     fn endpoint_ping_output_rejects_open_status_values() {
@@ -775,16 +1087,15 @@ mod tests {
     }
 
     #[test]
-    fn v2_policy_input_is_strict_at_the_public_ipc_boundary() {
-        let dto = RoutingPolicyConfigV2Dto::from(RoutingPolicyConfigV2::default());
-        let complete = serde_json::to_value(dto).expect("complete V2 DTO");
+    fn v3_policy_input_is_strict_at_the_public_ipc_boundary() {
+        let dto = RoutingPolicyConfigV3Dto::from(RoutingPolicyConfigV3::default());
+        let complete = serde_json::to_value(dto).expect("complete V3 DTO");
         for field in [
+            "version",
             "reliabilityWeight",
             "responsivenessWeight",
             "costWeight",
             "preferenceWeight",
-            "maxCandidates",
-            "explorationShareBasisPoints",
             "allowDepletedFallback",
             "affinityEnabled",
             "affinityTtlSeconds",
@@ -792,21 +1103,23 @@ mod tests {
             "routingGroupFilter",
             "outboundProxyMode",
             "outboundProxyUrl",
-            "retryFailover",
-            "protectionProfile",
+            "reliabilitySourceWeights",
+            "reliabilitySampling",
+            "retry",
+            "circuitBreaker",
             "timeoutPolicy",
         ] {
             let mut missing = complete.clone();
             missing
                 .as_object_mut()
-                .expect("V2 DTO object")
+                .expect("V3 DTO object")
                 .remove(field);
             let error = ApplyRoutingPolicyDocumentInputDto::parse(serde_json::json!({
                 "formatVersion": 1,
                 "baseRevision": 1,
                 "policy": missing,
             }))
-            .expect_err("missing V2 DTO field must fail closed");
+            .expect_err("missing V3 DTO field must fail closed");
             assert_eq!(error.code, CommandErrorCode::InvalidInput, "field {field}");
         }
 
@@ -817,8 +1130,29 @@ mod tests {
             "baseRevision": 1,
             "policy": unknown,
         }))
-        .expect_err("unknown V2 DTO field must fail closed");
+        .expect_err("unknown V3 DTO field must fail closed");
         assert_eq!(error.code, CommandErrorCode::InvalidInput);
+
+        for removed in [
+            "maxCandidates",
+            "explorationShareBasisPoints",
+            "retryFailover",
+            "protectionProfile",
+        ] {
+            let mut legacy = complete.clone();
+            legacy[removed] = Value::Bool(true);
+            let error = ApplyRoutingPolicyDocumentInputDto::parse(serde_json::json!({
+                "formatVersion": 1,
+                "baseRevision": 1,
+                "policy": legacy,
+            }))
+            .expect_err("removed V2 field must fail closed");
+            assert_eq!(
+                error.code,
+                CommandErrorCode::InvalidInput,
+                "field {removed}"
+            );
+        }
 
         for (field, value) in [
             ("formatVersion", Value::from(2_u16)),
@@ -831,12 +1165,12 @@ mod tests {
             });
             document[field] = value;
             let error = ApplyRoutingPolicyDocumentInputDto::parse(document)
-                .expect_err("invalid V2 document envelope must fail closed");
+                .expect_err("invalid V3 document envelope must fail closed");
             assert_eq!(error.code, CommandErrorCode::InvalidInput, "field {field}");
         }
 
-        let mut invalid_retry = complete;
-        invalid_retry["retryFailover"]["maxTotalAttempts"] = Value::from(0_u16);
+        let mut invalid_retry = complete.clone();
+        invalid_retry["retry"]["maxRetryCount"] = Value::from(4_u16);
         let error = ApplyRoutingPolicyDocumentInputDto::parse(serde_json::json!({
             "formatVersion": 1,
             "baseRevision": 1,
@@ -845,68 +1179,124 @@ mod tests {
         .expect_err("invalid retry value must fail closed");
         assert_eq!(error.code, CommandErrorCode::InvalidInput);
 
-        let complete = serde_json::to_value(RoutingPolicyConfigV2Dto::from(
-            RoutingPolicyConfigV2::default(),
-        ))
-        .expect("complete V2 DTO");
-        for field in [
-            "version",
-            "enabled",
-            "windowMaxSamples",
-            "windowSeconds",
-            "minSamples",
-            "failureThresholdPercent",
-            "halfOpenSuccessesToClose",
-        ] {
-            let mut missing = complete.clone();
-            missing["protectionProfile"]
-                .as_object_mut()
-                .expect("protection profile object")
-                .remove(field);
-            let error = ApplyRoutingPolicyDocumentInputDto::parse(serde_json::json!({
-                "formatVersion": 1,
-                "baseRevision": 1,
-                "policy": missing,
-            }))
-            .expect_err("missing protection profile field must fail closed");
-            assert_eq!(error.code, CommandErrorCode::InvalidInput, "field {field}");
-        }
-
-        let mut unknown_profile = complete;
-        unknown_profile["protectionProfile"]["futureField"] = Value::Bool(true);
+        let mut invalid_weights = complete.clone();
+        invalid_weights["reliabilitySourceWeights"]["realTrafficPercent"] = Value::from(80_u16);
         let error = ApplyRoutingPolicyDocumentInputDto::parse(serde_json::json!({
             "formatVersion": 1,
             "baseRevision": 1,
-            "policy": unknown_profile,
+            "policy": invalid_weights,
         }))
-        .expect_err("unknown protection profile field must fail closed");
+        .expect_err("source weights must sum to 100");
         assert_eq!(error.code, CommandErrorCode::InvalidInput);
 
-        let complete = serde_json::to_value(RoutingPolicyConfigV2Dto::from(
-            RoutingPolicyConfigV2::default(),
-        ))
-        .expect("complete V2 DTO");
-        for field in [
-            "version",
-            "connectSeconds",
-            "firstByteSeconds",
-            "precommitSeconds",
-            "bufferedExecutionSeconds",
-            "streamIdleSeconds",
+        for (object, fields) in [
+            (
+                "reliabilitySourceWeights",
+                &["realTrafficPercent", "monitoringPercent"][..],
+            ),
+            (
+                "reliabilitySampling",
+                &[
+                    "historicalMinimumSamples",
+                    "recentMinimumSamples",
+                    "optimisticReliabilityPercent",
+                    "optimisticLatencyMs",
+                ][..],
+            ),
+            (
+                "retry",
+                &["version", "maxRetryCount", "consecutiveFailureThreshold"][..],
+            ),
+            (
+                "circuitBreaker",
+                &["version", "recoverySuccessThreshold", "recoveryWaitSeconds"][..],
+            ),
+            (
+                "timeoutPolicy",
+                &[
+                    "version",
+                    "connectSeconds",
+                    "firstByteSeconds",
+                    "precommitSeconds",
+                    "bufferedExecutionSeconds",
+                    "streamIdleSeconds",
+                ][..],
+            ),
         ] {
-            let mut missing = complete.clone();
-            missing["timeoutPolicy"]
-                .as_object_mut()
-                .expect("timeout policy object")
-                .remove(field);
+            for field in fields {
+                let mut missing = complete.clone();
+                missing[object]
+                    .as_object_mut()
+                    .expect("nested V3 object")
+                    .remove(*field);
+                let error = ApplyRoutingPolicyDocumentInputDto::parse(serde_json::json!({
+                    "formatVersion": 1,
+                    "baseRevision": 1,
+                    "policy": missing,
+                }))
+                .expect_err("missing nested V3 field must fail closed");
+                assert_eq!(
+                    error.code,
+                    CommandErrorCode::InvalidInput,
+                    "{object}.{field}"
+                );
+            }
+
+            let mut unknown_nested = complete.clone();
+            unknown_nested[object]["futureField"] = Value::Bool(true);
             let error = ApplyRoutingPolicyDocumentInputDto::parse(serde_json::json!({
                 "formatVersion": 1,
                 "baseRevision": 1,
-                "policy": missing,
+                "policy": unknown_nested,
             }))
-            .expect_err("missing timeout policy field must fail closed");
-            assert_eq!(error.code, CommandErrorCode::InvalidInput, "field {field}");
+            .expect_err("unknown nested V3 field must fail closed");
+            assert_eq!(error.code, CommandErrorCode::InvalidInput, "{object}");
         }
+    }
+
+    #[test]
+    fn publication_status_input_rejects_invalid_revision_generation_and_unknown_fields() {
+        for value in [
+            serde_json::json!({"revision": 0}),
+            serde_json::json!({"revision": 1, "policyGenerationId": ""}),
+            serde_json::json!({
+                "revision": 1,
+                "policyGenerationId": "x".repeat(MAX_ID_BYTES + 1),
+            }),
+            serde_json::json!({"revision": 1, "unexpected": true}),
+        ] {
+            let error = RoutingPolicyPublicationStatusInputDto::parse(value)
+                .expect_err("invalid publication status input");
+            assert_eq!(error.code, CommandErrorCode::InvalidInput);
+        }
+
+        let valid = RoutingPolicyPublicationStatusInputDto::parse(serde_json::json!({
+            "revision": 7,
+            "policyGenerationId": "pg1_fixture"
+        }))
+        .expect("valid publication status input");
+        assert_eq!(valid.revision, 7);
+        assert_eq!(valid.policy_generation_id.as_deref(), Some("pg1_fixture"));
+    }
+
+    #[test]
+    fn publication_state_maps_only_the_closed_internal_code_set() {
+        for (code, expected) in [
+            ("staged", RoutingPolicyPublicationStateDto::Staged),
+            ("ready", RoutingPolicyPublicationStateDto::Ready),
+            ("failed", RoutingPolicyPublicationStateDto::Failed),
+            ("active", RoutingPolicyPublicationStateDto::Active),
+            ("expired", RoutingPolicyPublicationStateDto::Expired),
+        ] {
+            assert_eq!(
+                RoutingPolicyPublicationStateDto::from_internal_code(code),
+                Some(expected)
+            );
+        }
+        assert_eq!(
+            RoutingPolicyPublicationStateDto::from_internal_code("future_state"),
+            None
+        );
     }
 
     #[test]

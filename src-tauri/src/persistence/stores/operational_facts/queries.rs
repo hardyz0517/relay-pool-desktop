@@ -37,10 +37,8 @@ impl OperationalFactStore {
             SELECT
                 k.id AS station_key_id,
                 k.station_id AS station_id,
-                capacity_domain.provider_family AS capacity_provider_family,
-                capacity_domain.deployment_identity AS capacity_deployment_identity,
-                capacity_domain.region_identity AS capacity_region_identity,
-                capacity_domain.revision AS capacity_domain_revision,
+                k.enabled AS key_enabled,
+                s.enabled AS station_enabled,
                 s.endpoint_revision AS endpoint_revision,
                 s.api_base_url AS api_base_url,
                 CASE
@@ -82,7 +80,6 @@ impl OperationalFactStore {
             JOIN stations s ON s.id = k.station_id
             LEFT JOIN station_key_capabilities c ON c.station_key_id = k.id
             LEFT JOIN station_group_bindings group_binding ON group_binding.id = k.group_binding_id
-            LEFT JOIN station_capacity_domains capacity_domain ON capacity_domain.station_id = s.id
             LEFT JOIN balance_snapshots b ON b.id = (
                 SELECT selected.id
                 FROM (
@@ -146,21 +143,12 @@ impl OperationalFactStore {
                 ON account_revision.scope = 'station_account:' || s.id
             LEFT JOIN domain_revisions group_revision
                 ON group_revision.scope = 'station_group:' || k.group_binding_id
-            WHERE k.enabled = 1
-              AND s.enabled = 1
-              -- Credentialless keys are configuration/diagnostic rows, not
-              -- executable routing candidates. Filtering them before the
-              -- deterministic bound keeps the planner and workspace source
-              -- sets aligned and prevents them from starving usable keys.
-              AND (TRIM(k.api_key) != '' OR k.api_key_secret_id IS NOT NULL)
             ORDER BY COALESCE(k.routing_order, k.priority) ASC,
                      k.priority ASC,
                      k.created_at ASC,
                      k.id ASC
-            LIMIT ?1
             "#,
         )
-        .bind(options.candidate_limit() as i64)
         .fetch_all(read.connection())
         .await?;
         query_count += 1;
@@ -225,10 +213,8 @@ impl OperationalFactStore {
                 Ok(RawOperationalCandidateRow {
                     station_key_id: row.get("station_key_id"),
                     station_id: row.get("station_id"),
-                    capacity_provider_family: row.get("capacity_provider_family"),
-                    capacity_deployment_identity: row.get("capacity_deployment_identity"),
-                    capacity_region_identity: row.get("capacity_region_identity"),
-                    capacity_domain_revision: row.get("capacity_domain_revision"),
+                    key_enabled: row.get::<i64, _>("key_enabled") != 0,
+                    station_enabled: row.get::<i64, _>("station_enabled") != 0,
                     endpoint_revision: row.get("endpoint_revision"),
                     api_base_url: row.get("api_base_url"),
                     credential_available: row.get::<i64, _>("credential_available") != 0,

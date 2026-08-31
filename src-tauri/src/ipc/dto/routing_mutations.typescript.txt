@@ -100,20 +100,78 @@ export type RoutingPolicyConfigV2Dto = {
   timeoutPolicy: TimeoutPolicyV2Dto;
 };
 
+export type ReliabilitySourceWeightsV3Dto = {
+  realTrafficPercent: number;
+  monitoringPercent: number;
+};
+
+export type ReliabilitySamplingPolicyV3Dto = {
+  historicalMinimumSamples: number;
+  recentMinimumSamples: number;
+  optimisticReliabilityPercent: number;
+  optimisticLatencyMs: number;
+};
+
+export type RetryPolicyV3Dto = {
+  version: number;
+  maxRetryCount: number;
+  consecutiveFailureThreshold: number;
+};
+
+export type CircuitBreakerPolicyV3Dto = {
+  version: number;
+  recoverySuccessThreshold: number;
+  recoveryWaitSeconds: number;
+};
+
+export type RoutingPolicyConfigV3Dto = {
+  version: number;
+  reliabilityWeight: number;
+  responsivenessWeight: number;
+  costWeight: number;
+  preferenceWeight: number;
+  allowDepletedFallback: boolean;
+  affinityEnabled: boolean;
+  affinityTtlSeconds: number;
+  maxRateMultiplier: number | null;
+  routingGroupFilter: RoutingGroupFilterDto;
+  outboundProxyMode: string;
+  outboundProxyUrl: string | null;
+  reliabilitySourceWeights: ReliabilitySourceWeightsV3Dto;
+  reliabilitySampling: ReliabilitySamplingPolicyV3Dto;
+  retry: RetryPolicyV3Dto;
+  circuitBreaker: CircuitBreakerPolicyV3Dto;
+  timeoutPolicy: TimeoutPolicyV2Dto;
+};
+
 export type ApplyRoutingPolicyDocumentInputDto = {
   formatVersion: number;
   baseRevision: number;
-  policy: RoutingPolicyConfigV2Dto;
+  policy: RoutingPolicyConfigV3Dto;
 };
 
 export type RoutingPolicySnapshotDto = {
-  config: RoutingPolicyConfigV2Dto;
+  config: RoutingPolicyConfigV3Dto;
   revision: number;
   policyVersion: string;
   systemVersion: string;
   status: string;
   updatedAtMs: number;
   documentSync: RoutingDocumentSyncDto | null;
+};
+
+export type RoutingPolicyPublicationStatusInputDto = {
+  revision: number;
+  policyGenerationId?: string | null;
+};
+
+export type RoutingPolicyPublicationStatusDto = {
+  revision: number;
+  policyGenerationId: string | null;
+  status: "staged" | "ready" | "failed" | "active" | "expired";
+  failureCode: "generation_build_failed" | "generation_superseded" | "generation_qualification_failed" | "generation_cutover_failed" | "generation_failed" | null;
+  updatedAtMs: number;
+  terminal: boolean;
 };
 
 export type RoutingDocumentSyncDto = {

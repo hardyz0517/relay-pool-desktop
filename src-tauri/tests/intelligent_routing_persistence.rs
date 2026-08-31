@@ -20,12 +20,35 @@ fn foundation_migration_is_additive_and_has_no_timestamp_revision_fallback() {
         "routing_quality_summaries",
         "routing_health_axes",
     ] {
-        assert!(migration.contains(&format!("CREATE TABLE IF NOT EXISTS {table}")));
+        assert!(
+            migration.contains(&format!("CREATE TABLE IF NOT EXISTS {table}")),
+            "foundation migration missing {table}"
+        );
     }
     assert!(!migration.contains("CAST(updated_at AS INTEGER)"));
     assert!(!migration.contains("unwrap_or(1)"));
     assert!(migration.contains("baseline_snapshot"));
     assert!(migration.contains("provenance"));
+}
+
+#[test]
+fn routing_v3_circuit_and_retention_migrations_own_their_tables() {
+    let circuit = read_source("src/persistence/migrations/0062_routing_key_circuit_v3.sql");
+    assert!(
+        circuit.contains("CREATE TABLE routing_circuit_clock_v3"),
+        "routing v3 circuit migration missing routing_circuit_clock_v3"
+    );
+
+    let retention = read_source("src/persistence/migrations/0065_routing_raw_event_retention.sql");
+    for table in [
+        "routing_raw_event_retention_rollup",
+        "routing_raw_event_retention_run",
+    ] {
+        assert!(
+            retention.contains(&format!("CREATE TABLE {table}")),
+            "routing v3 retention migration missing {table}"
+        );
+    }
 }
 
 #[test]
@@ -156,7 +179,7 @@ fn portable_catalog_declares_foundation_tables_and_explicit_json_rules() {
             "catalog missing {table}"
         );
     }
-    assert!(catalog.contains("EXPECTED_USER_TABLE_COUNT_V1: usize = 77"));
+    assert!(catalog.contains("EXPECTED_USER_TABLE_COUNT_V1: usize = 110"));
     assert!(catalog.contains("ROUTING_POLICY_RULES"));
     assert!(catalog.contains("ROUTING_OBSERVATION_RULES"));
     assert!(catalog.contains("ROUTING_QUALITY_RULES"));

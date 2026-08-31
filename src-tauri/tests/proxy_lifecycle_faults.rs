@@ -8,9 +8,7 @@ mod application {
         pub(crate) mod failure {
             #[derive(Debug, Clone, Copy, PartialEq, Eq)]
             pub(crate) enum RetryDisposition {
-                RetrySameTarget,
-                TryDifferentFailureDomain,
-                WaitThenReplan,
+                TryNextKey,
                 StopRequest,
             }
         }

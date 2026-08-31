@@ -2,7 +2,7 @@
   "schema_version": 1,
   "generator_version": 1,
   "ipc_contract_version": 1,
-  "contract_hash": "399858ad2bc8f3cda2a71ccfaa83f94d7ec8356a8aa7ae34bcf1c638111ff3b0",
+  "contract_hash": "09b8caa845912198d6c6a1c29237fb1c1ba9436c4480020b048f171275578ca8",
   "commands": [
     {
       "name": "activate_data_store_candidate",
@@ -152,17 +152,6 @@
       "transport": "ordinary",
       "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
       "output_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
-      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "idempotent",
-      "transport_retry": false,
-      "result_unknown": false,
-      "runtime_validation": "rust_dto_pre_application"
-    },
-    {
-      "name": "clear_station_capacity_domain",
-      "transport": "ordinary",
-      "input_schema_hash": "8ef2596d344e75aa41d3982818b30965fb101a73da5ab40062e1737dd88aff23",
-      "output_schema_hash": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
       "transport_retry": false,
@@ -797,6 +786,17 @@
       "runtime_validation": "rust_dto_pre_application"
     },
     {
+      "name": "get_routing_policy_publication_status",
+      "transport": "ordinary",
+      "input_schema_hash": "f28167e19dbe9de6100d91e4d99b292403d5b939c3ed68b959c093975b8ecd66",
+      "output_schema_hash": "a81c04161c48bb22c4ba18542a0cec1ecbbed6c5670cb4bea1f977392e217a6b",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "read",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
       "name": "get_routing_protection_status",
       "transport": "ordinary",
       "input_schema_hash": "24478a7dd9d7eddaa0596702847c8d3dd06ab91f272950fbe24673297a9ec740",
@@ -834,17 +834,6 @@
       "transport": "ordinary",
       "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
       "output_schema_hash": "188562d545305afeaa4b61f5d2aa5fe777d60efcbd50d6d7b23107e5db7023d5",
-      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "read",
-      "transport_retry": false,
-      "result_unknown": false,
-      "runtime_validation": "rust_dto_pre_application"
-    },
-    {
-      "name": "get_station_capacity_domain",
-      "transport": "ordinary",
-      "input_schema_hash": "4fff3bd37721f48e52d77d2db977ff3107b8061017f64c7864dd360ca5477505",
-      "output_schema_hash": "c76d08ef3f051502fed0a0adc88898408dccfea84a70551bb43ef35e9f30ff88",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
       "transport_retry": false,
@@ -1131,17 +1120,6 @@
       "transport": "ordinary",
       "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
       "output_schema_hash": "caee08801d95c3d8b80934347c9266249f317487712b75e02c19f65fa39ebfd9",
-      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "read",
-      "transport_retry": false,
-      "result_unknown": false,
-      "runtime_validation": "rust_dto_pre_application"
-    },
-    {
-      "name": "list_error_rate_history",
-      "transport": "ordinary",
-      "input_schema_hash": "0108607c8ae9beb07e167477177891a6dc0a58e91f4a35d02bf47e1c9773c5c9",
-      "output_schema_hash": "5aa1ddf94c4f23821e94e02682d51299e19df67f600e929811c23a7133695ba1",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
       "transport_retry": false,
@@ -2187,17 +2165,6 @@
       "transport": "ordinary",
       "input_schema_hash": "fb3b11fa43ea8a8cf3e19592d131ae141b4ed48db3ea43ac6c5ad000bd3457c5",
       "output_schema_hash": "7994f078994c3a3c5748404b485a29a5bf6f4d4ebe99a7b7fbfb4434c4f4e029",
-      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "idempotent",
-      "transport_retry": false,
-      "result_unknown": false,
-      "runtime_validation": "rust_dto_pre_application"
-    },
-    {
-      "name": "upsert_station_capacity_domain",
-      "transport": "ordinary",
-      "input_schema_hash": "58a9228cfe6a45de3fd01d5581acb889423c71ae80ef7256d9ceb159bac23ef7",
-      "output_schema_hash": "556efc15643238a0c2191d5717fbf00b1bac841142152a2e87fba94aa6e3f505",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
       "transport_retry": false,

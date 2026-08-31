@@ -5,7 +5,7 @@ mod glob;
 mod resolver;
 
 use std::collections::VecDeque;
-use std::sync::{Mutex, OnceLock, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use sha2::{Digest, Sha256};
 
@@ -123,6 +123,21 @@ pub(crate) struct ModelMappingSnapshot {
 }
 
 static RUNTIME_STATE: OnceLock<RwLock<RuntimeMappingState>> = OnceLock::new();
+
+// Model mapping is intentionally process-wide in production.  Test harnesses
+// use isolated databases, so they must serialize the persisted document and
+// the process-wide compiled snapshot as one lifetime-scoped critical section.
+#[cfg(any(test, debug_assertions))]
+static MODEL_MAPPING_TEST_LOCK: OnceLock<Arc<tokio::sync::Mutex<()>>> = OnceLock::new();
+
+#[cfg(any(test, debug_assertions))]
+pub(crate) async fn acquire_model_mapping_test_guard() -> tokio::sync::OwnedMutexGuard<()> {
+    MODEL_MAPPING_TEST_LOCK
+        .get_or_init(|| Arc::new(tokio::sync::Mutex::new(())))
+        .clone()
+        .lock_owned()
+        .await
+}
 
 fn runtime_state() -> &'static RwLock<RuntimeMappingState> {
     RUNTIME_STATE.get_or_init(|| {
@@ -997,13 +1012,8 @@ mod tests {
     // The production mapping snapshot is process-wide. Serialize tests that
     // persist documents so parallel test execution cannot observe another
     // fixture's installed revision.
-    static MODEL_MAPPING_TEST_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-
-    async fn model_mapping_test_guard() -> tokio::sync::MutexGuard<'static, ()> {
-        MODEL_MAPPING_TEST_LOCK
-            .get_or_init(|| tokio::sync::Mutex::new(()))
-            .lock()
-            .await
+    async fn model_mapping_test_guard() -> tokio::sync::OwnedMutexGuard<()> {
+        super::acquire_model_mapping_test_guard().await
     }
 
     fn persisted_document(base_revision: u64, upstream_model: &str) -> ModelMappingDocumentV1 {

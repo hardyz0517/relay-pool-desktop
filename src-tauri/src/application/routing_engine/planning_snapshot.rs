@@ -1,11 +1,11 @@
 use crate::application::model_mapping::CandidateModelVariant;
 use crate::application::routing_policy::AttemptBudgetProfileV1;
 use crate::models::model_mapping::FallbackTrigger;
+use crate::models::operational::MAX_OPERATIONAL_CANDIDATES;
 use crate::models::routing_policy::RoutingPolicyConfigV2;
 
 use super::{
     algorithm_profile::DispatchAlgorithmProfile, candidate_plan::RoutePlanPricingSnapshot,
-    failure_domains::CapacityDomainCommitment,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -23,15 +23,15 @@ pub(crate) struct CandidateSnapshot {
     /// Empty is retained for compatibility with old test fixtures and means
     /// the candidate has one implicit variant from `resolved_upstream_model`.
     pub(crate) model_variants: Vec<CandidateModelVariant>,
-    /// Opaque commitment from explicit station_capacity_domains facts. A
-    /// missing value prohibits cross-domain capacity fallback.
-    pub(crate) capacity_domain: Option<CapacityDomainCommitment>,
-    pub(crate) capacity_domain_revision: Option<i64>,
     pub(crate) credential_available: bool,
     pub(crate) hard_eligible: bool,
     pub(crate) backup_only: bool,
     pub(crate) depleted: bool,
     pub(crate) capability_basis_points: u16,
+    /// False means reliability and responsiveness must be omitted from score
+    /// normalization. The numeric fields remain populated for stable tracing
+    /// but are not scoring inputs in that state.
+    pub(crate) quality_available: bool,
     pub(crate) reliability_basis_points: u16,
     pub(crate) responsiveness_basis_points: u16,
     pub(crate) cost_basis_points: Option<u16>,
@@ -58,7 +58,20 @@ pub(crate) struct RuntimeOverlaySnapshot {
 pub(crate) struct PlanningSnapshot {
     pub(crate) snapshot_id: String,
     pub(crate) durable_revision: u64,
+    /// Number of configured station keys before request capability and static
+    /// execution gates. These three counts are captured from the same durable
+    /// read and drive terminal classification without re-querying mutable data.
+    pub(crate) configured_key_count: usize,
+    pub(crate) capability_match_count: usize,
+    pub(crate) candidate_cap_count: usize,
+    pub(crate) routing_runtime_generation_id: Option<String>,
+    pub(crate) routing_generation_fence_revision: u64,
     pub(crate) routing_policy_revision: u64,
+    pub(crate) routing_quality_revision: u64,
+    pub(crate) routing_health_revision: u64,
+    pub(crate) quality_projection_backlog: u64,
+    pub(crate) quality_projection_lag_seconds: u64,
+    pub(crate) quality_stale: bool,
     pub(crate) policy: RoutingPolicyConfigV2,
     /// Request-local reliability budget compiled with the policy revision.
     /// Replanning must not reconstruct or reset this value.
@@ -75,11 +88,19 @@ impl PlanningSnapshot {
             || self.durable_revision == 0
             || self.routing_policy_revision == 0
             || self.attempt_budget.policy_revision != self.routing_policy_revision
-            || self.candidates.len() > usize::from(self.policy.max_candidates)
+            || self.capability_match_count > self.configured_key_count
+            || self.candidate_cap_count > self.capability_match_count
+            || self.candidates.len() > self.candidate_cap_count
+            || self.candidate_cap_count > MAX_OPERATIONAL_CANDIDATES
+            || self.candidates.len() > MAX_OPERATIONAL_CANDIDATES
             || self.runtime.runtime_instance_id.is_empty()
             || self.runtime.runtime_revision == 0
             || self.runtime.candidate_set_revision == 0
             || self.runtime.in_flight > self.runtime.max_concurrency
+            || (self.routing_runtime_generation_id.is_some()
+                && (self.routing_quality_revision == 0 || self.routing_health_revision == 0))
+            || (self.quality_stale != (self.quality_projection_backlog > 0))
+            || (!self.quality_stale && self.quality_projection_lag_seconds > 0)
         {
             return Err("invalid planning snapshot");
         }
@@ -98,11 +119,6 @@ impl PlanningSnapshot {
                     .is_some_and(|revision| revision <= 0)
                 || candidate.group_binding_id.is_some() != candidate.group_revision.is_some()
                 || candidate.model_alias_revision <= 0
-                || candidate
-                    .capacity_domain_revision
-                    .is_some_and(|revision| revision <= 0)
-                || candidate.capacity_domain.is_some()
-                    != candidate.capacity_domain_revision.is_some()
                 || candidate.capability_basis_points > 10_000
                 || candidate.reliability_basis_points > 10_000
                 || candidate.responsiveness_basis_points > 10_000

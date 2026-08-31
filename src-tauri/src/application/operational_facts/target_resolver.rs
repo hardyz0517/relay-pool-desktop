@@ -5,8 +5,7 @@ use sha2::{Digest, Sha256};
 use crate::{
     application::{
         credentials::{ExecutionCredentialResolver, SecretBytes, SecretRef},
-        routing_engine::capacity::{CapacityLease, RetryPermit},
-        routing_engine::failure_domains::{CapacityDomainCommitment, ProviderCapacityDomain},
+        routing_engine::capacity::CapacityLease,
     },
     models::{
         proxy::UpstreamApiFormat,
@@ -19,10 +18,6 @@ pub(crate) struct ExecutionTargetRef {
     pub(crate) station_key_id: String,
     pub(crate) station_id: String,
     pub(crate) station_type: String,
-    pub(crate) capacity_provider_family: Option<String>,
-    pub(crate) capacity_deployment_identity: Option<String>,
-    pub(crate) capacity_region_identity: Option<String>,
-    pub(crate) capacity_domain_revision: Option<i64>,
     pub(crate) group_binding_id: Option<String>,
     pub(crate) endpoint_revision: i64,
     pub(crate) credential_revision: i64,
@@ -50,13 +45,10 @@ pub(crate) struct LeasedSelectedTarget {
     pub(crate) expected_group_revision: Option<i64>,
     pub(crate) resolved_upstream_model: Option<String>,
     pub(crate) model_alias_revision: i64,
-    pub(crate) expected_capacity_domain: Option<CapacityDomainCommitment>,
-    pub(crate) expected_capacity_domain_revision: Option<i64>,
     pub(crate) policy_revision: u64,
     pub(crate) request_body_identity: RequestBodyIdentity,
     pub(crate) protocol_profile: TargetProtocolProfile,
     pub(crate) lease: CapacityLease,
-    pub(crate) retry_permit: Option<RetryPermit>,
 }
 
 pub(crate) const TARGET_EXECUTION_COMMITMENT_VERSION: &str = "target-execution-v1";
@@ -101,8 +93,6 @@ pub(crate) struct TargetExecutionCommitment {
     pub(crate) group_revision: Option<i64>,
     pub(crate) resolved_upstream_model: Option<String>,
     pub(crate) model_alias_revision: i64,
-    pub(crate) capacity_domain: Option<CapacityDomainCommitment>,
-    pub(crate) capacity_domain_revision: Option<i64>,
     pub(crate) policy_revision: u64,
     pub(crate) request_body_identity: RequestBodyIdentity,
     pub(crate) protocol_profile: TargetProtocolProfile,
@@ -174,7 +164,6 @@ impl ExecutionTargetResolver {
             api_key,
             commitment,
             lease: selected.lease,
-            _retry_permit: selected.retry_permit,
         })
     }
 
@@ -194,8 +183,6 @@ impl ExecutionTargetResolver {
                 .is_some_and(|revision| revision <= 0)
             || selected.expected_group_binding_id.is_some()
                 != selected.expected_group_revision.is_some()
-            || selected.expected_capacity_domain.is_some()
-                != selected.expected_capacity_domain_revision.is_some()
         {
             return Err(ExecutionTargetError::InvalidCommitment {
                 station_key_id: selected.station_key_id.clone(),
@@ -204,25 +191,6 @@ impl ExecutionTargetResolver {
         if selected.expected_credential_revision != current.credential_revision
             || selected.expected_account_revision != current.account_revision
             || selected.expected_group_revision != current.group_revision
-        {
-            return Err(ExecutionTargetError::CommitmentChanged {
-                station_key_id: current.station_key_id.clone(),
-            });
-        }
-        let capacity_domain = selected
-            .resolved_upstream_model
-            .as_deref()
-            .and_then(|model| {
-                ProviderCapacityDomain::from_trusted_identity(
-                    current.capacity_provider_family.as_deref()?,
-                    model,
-                    current.capacity_deployment_identity.as_deref(),
-                    current.capacity_region_identity.as_deref(),
-                )
-                .map(|domain| domain.commitment())
-            });
-        if capacity_domain != selected.expected_capacity_domain
-            || current.capacity_domain_revision != selected.expected_capacity_domain_revision
         {
             return Err(ExecutionTargetError::CommitmentChanged {
                 station_key_id: current.station_key_id.clone(),
@@ -240,14 +208,19 @@ impl ExecutionTargetResolver {
             group_revision: current.group_revision,
             resolved_upstream_model: selected.resolved_upstream_model.clone(),
             model_alias_revision: selected.model_alias_revision,
-            capacity_domain,
-            capacity_domain_revision: current.capacity_domain_revision,
             policy_revision: selected.policy_revision,
             request_body_identity: selected.request_body_identity.clone(),
             protocol_profile: selected.protocol_profile.clone(),
         })
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=execution-target-revalidation; owner=application/operational_facts; remove_when=all retry callers use the v3 admission CAS"
+        )
+    )]
     pub(crate) fn revalidate_commitment(
         expected: &TargetExecutionCommitment,
         current: &TargetExecutionCommitment,
@@ -274,15 +247,13 @@ pub(crate) struct ExecutionTargetHandle {
     pub(crate) collector_proxy_url: Option<String>,
     pub(crate) api_key: SecretBytes,
     pub(crate) commitment: TargetExecutionCommitment,
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "contract=execution-target-handle.raii-lease; owner=application/operational_facts; remove_when=upstream request scope releases capacity without handle ownership"
-        )
-    )]
     pub(crate) lease: CapacityLease,
-    pub(crate) _retry_permit: Option<RetryPermit>,
+}
+
+impl ExecutionTargetHandle {
+    pub(crate) fn into_capacity_lease(self) -> CapacityLease {
+        self.lease
+    }
 }
 
 impl fmt::Debug for ExecutionTargetHandle {

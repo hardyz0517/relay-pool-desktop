@@ -1,18 +1,21 @@
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
+#[cfg(test)]
+use crate::application::error_rate_protection::ErrorRateProtectionService;
+#[cfg(test)]
+use crate::persistence::stores::routing_health_verdict_store::RoutingHealthVerdictStore;
+
 use crate::{
-    application::error_rate_protection::ErrorRateProtectionService,
     models::routing_observation::{
-        ObservationOutcome, ObservationSource, RoutingObservation, TrafficEquivalence,
+        FailureAttribution, ObservationOutcome, ObservationRetryDisposition, ObservationSource,
+        RecoveryOrigin, ResponseOrigin, RoutingObservation, TrafficEquivalence,
     },
     persistence::{
         error::PersistenceError,
-        stores::routing_health_verdict_store::RoutingHealthVerdictStore,
         stores::routing_observation_store::{
             ObservationAppendResult, RoutingObservationAppend, RoutingObservationStore,
         },
-        stores::routing_policy_store::RoutingPolicyStore,
         WriteSession,
     },
 };
@@ -20,6 +23,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub(crate) struct ObservationIngestion {
     store: RoutingObservationStore,
+    #[cfg(test)]
     error_rate: ErrorRateProtectionService,
 }
 
@@ -31,9 +35,14 @@ impl Default for ObservationIngestion {
 
 impl ObservationIngestion {
     pub(crate) fn new() -> Self {
-        Self::with_error_rate(ErrorRateProtectionService::disabled())
+        Self {
+            store: RoutingObservationStore,
+            #[cfg(test)]
+            error_rate: ErrorRateProtectionService::disabled(),
+        }
     }
 
+    #[cfg(test)]
     pub(crate) fn with_error_rate(error_rate: ErrorRateProtectionService) -> Self {
         Self {
             store: RoutingObservationStore,
@@ -49,26 +58,47 @@ impl ObservationIngestion {
         write: &mut WriteSession,
         observation: RoutingObservation,
     ) -> Result<ObservationAppendResult, PersistenceError> {
+        self.append_with_generation_eligibility(write, observation, None)
+            .await
+    }
+
+    pub(crate) async fn append_with_generation_eligibility(
+        &self,
+        write: &mut WriteSession,
+        observation: RoutingObservation,
+        generation_eligibility: Option<&str>,
+    ) -> Result<ObservationAppendResult, PersistenceError> {
         observation
             .validate()
             .map_err(|_| PersistenceError::ConstraintViolation)?;
-        // The versioned routing policy is the only owner of the protection
-        // switch. Read it in the same caller-owned transaction as the
-        // observation so a policy change cannot be observed half-applied.
-        let protection_enabled = routing_policy_protection_enabled(write).await?;
-        let reducer_input = self
-            .error_rate
-            .health_observation_for_policy(&observation, protection_enabled);
-        let history_seed =
-            self.error_rate
-                .history_event_seed_for_policy(&observation, None, protection_enabled);
+        #[cfg(test)]
+        let legacy_projection = {
+            let protection_enabled = routing_policy_protection_enabled(write).await?;
+            (
+                self.error_rate
+                    .health_observation_for_policy(&observation, protection_enabled),
+                self.error_rate.history_event_seed_for_policy(
+                    &observation,
+                    None,
+                    protection_enabled,
+                ),
+                self.error_rate.config_for_policy(protection_enabled),
+            )
+        };
         let append = to_append(&observation)?;
         let received_at_ms = chrono::Utc::now().timestamp_millis().max(0);
         let result = self
             .store
-            .append(write.connection(), &append, received_at_ms)
+            .append_with_generation_eligibility(
+                write.connection(),
+                &append,
+                generation_eligibility,
+                received_at_ms,
+            )
             .await?;
+        #[cfg(test)]
         if matches!(result, ObservationAppendResult::Inserted) {
+            let (reducer_input, history_seed, config) = legacy_projection;
             if let (Some(reducer_input), Some(history_seed)) = (reducer_input, history_seed) {
                 RoutingHealthVerdictStore
                     .apply_error_rate_observation(
@@ -76,7 +106,7 @@ impl ObservationIngestion {
                         reducer_input,
                         history_seed,
                         &observation.id,
-                        &self.error_rate.config_for_policy(protection_enabled),
+                        &config,
                         observation.order.event_at_ms.max(received_at_ms),
                     )
                     .await?;
@@ -86,12 +116,31 @@ impl ObservationIngestion {
     }
 }
 
+#[cfg(test)]
 async fn routing_policy_protection_enabled(
     write: &mut WriteSession,
 ) -> Result<bool, PersistenceError> {
-    let Some(stored) = RoutingPolicyStore.load(write.connection()).await? else {
+    // The legacy error-rate reducer is a compatibility bridge only. Once the
+    // effective v3 generation is active it must stay disabled even if the old
+    // singleton row still contains `protectionProfile.enabled=true`.
+    let Some(stored) =
+        crate::persistence::stores::routing_policy_v3_stage_upgrade::load_effective_active_in(
+            write.connection(),
+        )
+        .await?
+    else {
         return Ok(false);
     };
+    if stored
+        .config
+        .get("version")
+        .and_then(serde_json::Value::as_u64)
+        == Some(u64::from(
+            crate::models::routing_policy::ROUTING_POLICY_CONFIG_VERSION_V3,
+        ))
+    {
+        return Ok(false);
+    }
     Ok(stored
         .config
         .get("protectionProfile")
@@ -118,10 +167,23 @@ fn to_append(
         "outcome": outcome_kind,
         "latency_ms": observation.latency_ms,
         "evidence_mass_basis_points": observation.evidence_mass_basis_points,
+        "comparability_key": observation.comparability_key,
         // Probe scope is an opaque commitment and is persisted so a reloaded
         // observation cannot be mistaken for an ordinary Credential sample.
         "probe_scope": observation.probe_scope,
         "probe_state_revision": observation.probe_state_revision,
+        "correlation_id": observation.correlation_id,
+        "attempt_index": observation.attempt_index,
+        "station_key_lifecycle_revision": observation.station_key_lifecycle_revision,
+        "cluster_finalized": observation.cluster_finalized,
+        "cluster_expected_attempt_count": observation.cluster_expected_attempt_count,
+        "boundary_crossed": observation.boundary_crossed,
+        "event_time_status": observation.event_time_status,
+        "response_origin": observation.response_origin,
+        "failure_code": observation.failure_code,
+        "failure_attribution": observation.failure_attribution,
+        "recovery_origin": observation.recovery_origin,
+        "retry_disposition": observation.retry_disposition,
     });
     let payload = serde_json::to_vec(&evidence)
         .map_err(|error| PersistenceError::InvariantViolation(error.to_string()))?;
@@ -141,8 +203,54 @@ fn to_append(
         outcome_kind: outcome_kind.to_string(),
         latency_ms: observation.latency_ms.map(i64::from),
         mass_basis_points: Some(observation.evidence_mass_basis_points),
+        comparability_key: observation.comparability_key.clone(),
         evidence,
+        correlation_id: observation.correlation_id.clone(),
+        attempt_index: observation.attempt_index,
+        station_key_lifecycle_revision: observation.station_key_lifecycle_revision,
+        cluster_finalized: observation.cluster_finalized,
+        cluster_expected_attempt_count: observation.cluster_expected_attempt_count,
+        boundary_crossed: observation.boundary_crossed,
+        event_time_status: observation.event_time_status,
+        response_origin: response_origin_name(observation.response_origin).to_string(),
+        failure_code: observation.failure_code.clone(),
+        failure_attribution: failure_attribution_name(observation.failure_attribution).to_string(),
+        recovery_origin: recovery_origin_name(observation.recovery_origin).to_string(),
+        retry_disposition: retry_disposition_name(observation.retry_disposition).to_string(),
     })
+}
+
+fn response_origin_name(value: ResponseOrigin) -> &'static str {
+    match value {
+        ResponseOrigin::Upstream => "upstream",
+        ResponseOrigin::Relay => "relay",
+        ResponseOrigin::Unknown => "unknown",
+    }
+}
+
+fn failure_attribution_name(value: FailureAttribution) -> &'static str {
+    match value {
+        FailureAttribution::Key => "key",
+        FailureAttribution::Local => "local",
+        FailureAttribution::Client => "client",
+        FailureAttribution::Unknown => "unknown",
+    }
+}
+
+fn recovery_origin_name(value: RecoveryOrigin) -> &'static str {
+    match value {
+        RecoveryOrigin::Normal => "normal",
+        RecoveryOrigin::CrashRecovery => "crash_recovery",
+        RecoveryOrigin::LeaseReaper => "lease_reaper",
+    }
+}
+
+fn retry_disposition_name(value: ObservationRetryDisposition) -> &'static str {
+    match value {
+        ObservationRetryDisposition::End => "end",
+        ObservationRetryDisposition::RetryableBeforeCommit => "retryable_before_commit",
+        ObservationRetryDisposition::StopRequest => "stop_request",
+    }
 }
 
 fn observation_scope(scope: &crate::models::routing_observation::ObservationScope) -> String {
@@ -196,6 +304,7 @@ mod tests {
     use crate::application::error_rate_protection::{
         ErrorRateProtectionAdapter, ErrorRateProtectionConfigV1, ErrorRateProtectionService,
     };
+    use crate::models::routing_observation::EventTimeStatus;
     use crate::persistence::{
         runtime::PersistenceRuntime,
         stores::routing_error_rate_history_store::RoutingErrorRateHistoryStore,
@@ -238,6 +347,19 @@ mod tests {
             outcome,
             latency_ms: Some(10),
             evidence_mass_basis_points: 10_000,
+            comparability_key: None,
+            correlation_id: id.to_string(),
+            attempt_index: 0,
+            station_key_lifecycle_revision: 1,
+            cluster_finalized: true,
+            cluster_expected_attempt_count: 1,
+            boundary_crossed: true,
+            event_time_status: EventTimeStatus::Valid,
+            response_origin: crate::models::routing_observation::ResponseOrigin::Upstream,
+            failure_code: None,
+            failure_attribution: crate::models::routing_observation::FailureAttribution::Key,
+            recovery_origin: crate::models::routing_observation::RecoveryOrigin::Normal,
+            retry_disposition: crate::models::routing_observation::ObservationRetryDisposition::End,
             probe_scope: None,
             probe_state_revision: None,
         }
@@ -313,6 +435,23 @@ mod tests {
         assert_eq!(observation_count, 1);
         assert_eq!(reducer_count, 1);
         assert_eq!(history_count, 1);
+        let v3 = sqlx::query(
+            "SELECT event_id, attempt_id, generation_eligibility, outcome,
+                    boundary_crossed, station_key_lifecycle_revision
+             FROM routing_observations WHERE id = 'ingested-1'",
+        )
+        .fetch_one(read.connection())
+        .await
+        .expect("v3 observation");
+        assert_eq!(v3.get::<String, _>("event_id"), "ingested-1");
+        assert_eq!(v3.get::<String, _>("attempt_id"), "ingested-1");
+        // A fresh database starts in pre-cutover mode, so new observations
+        // are staged for the first v3 generation rather than the retired
+        // legacy read model.
+        assert_eq!(v3.get::<String, _>("generation_eligibility"), "next");
+        assert_eq!(v3.get::<String, _>("outcome"), "attributable_failure");
+        assert_eq!(v3.get::<i64, _>("boundary_crossed"), 1);
+        assert_eq!(v3.get::<i64, _>("station_key_lifecycle_revision"), 1);
         drop(read);
 
         runtime.close().await.expect("close runtime");

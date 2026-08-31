@@ -5,43 +5,23 @@ export type RoutingGroupFilterDto = "all_groups" | "ungrouped_only" | { group_bi
 export type RoutingStationKeyIdInputDto = { stationKeyId: string };
 export type RoutingWorkspaceSnapshotInputDto = { limit?: number | null; cursor?: string | null };
 export type RecentRouteDecisionsInputDto = { limit?: number | null; cursor?: string | null };
-export type ErrorRateHistoryInputDto = { beforeMs?: number | null; limit?: number | null };
 export type StationKeyOperationalDetailInputDto = { stationKeyId: string };
 export type RequestDecisionTraceInputDto = { requestLogId: string };
 export type RoutingCapacityReadModeDto = "snapshot_only";
 export type RoutingReadModelStatusDto = "available" | "unavailable";
 export type RoutingPlannerEvaluationStatusDto = "available" | "unavailable";
 export type RoutingScoreStatusDto = "scored" | "excluded" | "candidate_limit" | "probe_discovery" | "unavailable";
+export type RoutingAvailabilityStatusDto = "available" | "capacity_exhausted" | "capacity_state_unavailable" | "all_keys_unavailable";
+export type RoutingCandidateCapacityStatusDto = "available" | "exhausted" | "state_unavailable" | "unknown";
+export type RoutingMonitoringSourceStatusDto = "comparable" | "no_evidence" | "incomparable" | "weight_zero" | "disabled";
 export type RouteDecisionReadModelStatusDto = "available" | "unavailable";
 export type OperationalDetailReadModelStatusDto = "available" | "unavailable";
 export type RequestDecisionTraceStatusDto = "durable_summary" | "runtime_trace" | "legacy_summary" | "trace_unavailable";
 export type RequestDecisionDetailAvailabilityDto = "detailed" | "summary_only" | "unavailable";
-export type RequestDecisionActionDto = "retry_same_target" | "wait_then_replan" | "try_different_failure_domain" | "stop_request";
+// The last three values are read-only compatibility for pre-v3 trace history.
+export type RequestDecisionActionDto = "retry_current_key" | "try_next_key" | "stop_request" | "retry_same_target" | "wait_then_replan" | "try_different_failure_domain";
 export type RequestDecisionTimelineKindDto = "legacy_summary" | "planning_round" | "slot_wait" | "attempt_protocol" | "fallback" | "downstream_delivery" | "cost_aggregate" | "unavailable";
 export type RequestDecisionTimelineStatusDto = "available" | "legacy_summary" | "unavailable" | "skipped";
-export type HealthProtectionScopeKindDto = "credential" | "account" | "endpoint" | "model" | "capacity_domain";
-export type HealthProtectionFailureCodeDto = "connect_failure" | "first_byte_timeout" | "upstream_5xx" | "rate_limited" | "capacity_exhausted" | "endpoint_unavailable" | "unknown";
-export type ErrorRateHistoryOutcomeDto = "success" | "failure";
-export type HealthProtectionTransitionCodeDto = "ignored_duplicate" | "observed" | "opened" | "probe_succeeded" | "closed" | "reopened";
-export type ErrorRateHistoryEventDto = {
-  observedAtMs: number;
-  scopeKind: HealthProtectionScopeKindDto;
-  scopeCommitment: string;
-  outcome: ErrorRateHistoryOutcomeDto;
-  failureCode: HealthProtectionFailureCodeDto | null;
-  sampleCount: number;
-  failureCount: number;
-  failureRatePercent: number;
-  transition: HealthProtectionTransitionCodeDto | null;
-};
-export type ErrorRateHistoryPageDto = {
-  version: string;
-  enabled: boolean;
-  detailAvailable: boolean;
-  events: ErrorRateHistoryEventDto[];
-  nextBeforeMs: number | null;
-  droppedEvents: number;
-};
 
 export type StationKeyCapabilitiesDto = {
   stationKeyId: string;
@@ -205,9 +185,8 @@ export type RequestDecisionTimelineItemDto = {
   action: RequestDecisionActionDto | null;
   attemptOrdinal: number | null;
   remainingAttempts: number | null;
-  remainingWaitBudgetMs: number | null;
+  remainingPrecommitBudgetMs: number | null;
   policyRevision: number | null;
-  failureDomain: string | null;
   routePolicy: string | null;
   routeReason: string | null;
   stationKeyId: string | null;
@@ -245,6 +224,7 @@ export type RoutingCapabilitySummaryDto = {
 
 export type RoutingCandidateCapacitySnapshotDto = {
   mode: RoutingCapacityReadModeDto;
+  status: RoutingCandidateCapacityStatusDto;
   maxConcurrency: number;
   inFlight: number | null;
   acquired: boolean;
@@ -257,17 +237,6 @@ export type RoutingCandidateSourceRefsDto = {
   snapshotId: string;
   factVersionVector: string;
   projectorVersion: string;
-};
-
-export type RoutingCandidateFailureDomainSnapshotDto = {
-  kind: "capacity_domain";
-  resolution: "not_configured" | "invalid_identity" | "model_required" | "resolved";
-  providerFamily: string | null;
-  deploymentIdentity: string | null;
-  regionIdentity: string | null;
-  revision: number | null;
-  commitment: string | null;
-  explanationKey: string;
 };
 
 export type RoutingCandidateGroupSnapshotDto = {
@@ -309,6 +278,94 @@ export type RoutingCandidatePricingSnapshotDto = {
   confidence: number | null;
 };
 
+export type RoutingCandidateCircuitStateDto = "closed" | "open" | "half_open";
+export type RoutingCandidateScoreGateStatusDto = "not_applicable" | "waiting_cooldown" | "passed" | "denied" | "unavailable";
+
+export type RoutingCandidateQualityWindowDiagnosticsDto = {
+  sampleCount: number;
+  effectiveWeight: number;
+  successWeight: number;
+  failureWeight: number;
+  reliabilityBasisPoints: number;
+  minimumMet: boolean;
+};
+
+export type RoutingCandidateQualitySourceDiagnosticsDto = {
+  eligible: boolean;
+  effectiveWeightBasisPoints: number;
+  recent: RoutingCandidateQualityWindowDiagnosticsDto;
+  historical: RoutingCandidateQualityWindowDiagnosticsDto;
+  blendedReliabilityBasisPoints: number;
+};
+
+export type RoutingCandidateLatencyDiagnosticsDto = {
+  recentSampleCount: number;
+  recentEffectiveWeight: number;
+  recentWeightedLatencyMs: number;
+  recentMinimumMet: boolean;
+  historicalSampleCount: number;
+  historicalEffectiveWeight: number;
+  historicalWeightedLatencyMs: number;
+  historicalMinimumMet: boolean;
+  blendedWeightedLatencyMs: number;
+};
+
+export type RoutingCandidateQualityDiagnosticsDto = {
+  qualityRevision: number;
+  qualityPolicyRevision: number;
+  algorithmVersion: string;
+  qualityBasis: string;
+  qualityUnavailable: boolean;
+  canonicalSampleCount: number;
+  realReliabilityBasisPoints: number;
+  monitoringReliabilityBasisPoints: number;
+  effectiveRealWeightBasisPoints: number;
+  effectiveMonitoringWeightBasisPoints: number;
+  realSourceEligible: boolean;
+  monitoringSourceEligible: boolean;
+  monitoringSourceStatus: RoutingMonitoringSourceStatusDto;
+  recentSampleCount: number;
+  recentEffectiveMassBasisPoints: number;
+  recentMinimumSamples: number;
+  historicalSampleCount: number;
+  historicalEffectiveMassBasisPoints: number;
+  historicalMinimumSamples: number;
+  realSource: RoutingCandidateQualitySourceDiagnosticsDto;
+  monitoringSource: RoutingCandidateQualitySourceDiagnosticsDto;
+  latency: RoutingCandidateLatencyDiagnosticsDto;
+  idleRealRouteSample: string;
+  lastRealRouteSampleAtMs: number | null;
+};
+
+export type RoutingCandidateAttemptDiagnosticsDto = {
+  rawRealAttemptCount: number;
+  deduplicatedRealRequestCount: number;
+};
+
+export type RoutingCandidateCircuitDiagnosticsDto = {
+  state: RoutingCandidateCircuitStateDto;
+  stateRevision: number | null;
+  lifecycleRevision: number | null;
+  consecutiveFailures: number | null;
+  reopenLevel: number;
+  cooldownUntilMs: number | null;
+  cooldownRemainingMs: number | null;
+  halfOpenLeaseInFlight: boolean;
+  halfOpenLeaseExpiresAtMs: number | null;
+  recoverySuccesses: number | null;
+  scoreGateStatus: RoutingCandidateScoreGateStatusDto;
+  scoreGateReason: string;
+  bestClosedEffectiveScore: number | null;
+};
+
+export type RoutingCandidateDiagnosticsDto = {
+  effectiveScore: number | null;
+  baseScore: number | null;
+  quality: RoutingCandidateQualityDiagnosticsDto | null;
+  attempts: RoutingCandidateAttemptDiagnosticsDto;
+  circuit: RoutingCandidateCircuitDiagnosticsDto;
+};
+
 export type RoutingWorkspaceCandidateDto = {
   stationKeyId: string;
   stationId: string;
@@ -325,6 +382,7 @@ export type RoutingWorkspaceCandidateDto = {
   assessmentDurableRevision: number | null;
   assessmentRequestContextFingerprint: string | null;
   scoreDetails: RoutingCandidateScoreSnapshotDto | null;
+  diagnostics?: RoutingCandidateDiagnosticsDto | null;
   group: RoutingCandidateGroupSnapshotDto | null;
   multiplier: RoutingCandidateMultiplierSnapshotDto;
   capabilitySummary: RoutingCapabilitySummaryDto;
@@ -335,7 +393,6 @@ export type RoutingWorkspaceCandidateDto = {
   balanceValue: number | null;
   balanceCurrency: string | null;
   capacity: RoutingCandidateCapacitySnapshotDto;
-  failureDomain: RoutingCandidateFailureDomainSnapshotDto;
   sourceRefs: RoutingCandidateSourceRefsDto;
   hardRejectionCodes: string[];
 };
@@ -350,27 +407,56 @@ export type RoutingCandidateScoreFactorSnapshotDto = {
 
 export type RoutingCandidateScoreWindowSnapshotDto = {
   recentObservationCount: number;
+  recentRealSampleCount: number;
+  recentMonitoringSampleCount: number;
   recentEffectiveMassBasisPoints: number;
   recentSuccessMassBasisPoints: number;
   recentFailureMassBasisPoints: number;
+  recentMinimumSamples: number;
+  recentReliabilityMinimumMet: boolean;
   recentScore: number;
   recentWeightBasisPoints: number;
   recentResponsivenessWeightBasisPoints: number;
-  recentP95LatencyMs: number | null;
+  recentLatencySampleCount: number;
+  recentLatencyEffectiveMassBasisPoints: number;
+  recentWeightedLatencyMs: number;
+  recentLatencyMinimumMet: boolean;
+  recentRealLatencySampleCount: number;
+  recentMonitoringLatencySampleCount: number;
+  recentRealWeightedLatencyMs: number;
+  recentMonitoringWeightedLatencyMs: number;
+  recentRealLatencyMinimumMet: boolean;
+  recentMonitoringLatencyMinimumMet: boolean;
+  responsivenessRealSourceWeightBasisPoints: number;
+  responsivenessMonitoringSourceWeightBasisPoints: number;
   recentLatencyCoverageBasisPoints: number;
   recentResponsivenessBasisPoints: number;
   historicalObservationCount: number;
+  historicalRealSampleCount: number;
+  historicalMonitoringSampleCount: number;
   historicalEffectiveMassBasisPoints: number;
   historicalSuccessMassBasisPoints: number;
   historicalFailureMassBasisPoints: number;
+  historicalMinimumSamples: number;
+  historicalReliabilityMinimumMet: boolean;
   historicalScore: number;
   historicalWeightBasisPoints: number;
   historicalResponsivenessWeightBasisPoints: number;
-  historicalP95LatencyMs: number | null;
+  historicalLatencySampleCount: number;
+  historicalLatencyEffectiveMassBasisPoints: number;
+  historicalWeightedLatencyMs: number;
+  historicalLatencyMinimumMet: boolean;
+  historicalRealLatencySampleCount: number;
+  historicalMonitoringLatencySampleCount: number;
+  historicalRealWeightedLatencyMs: number;
+  historicalMonitoringWeightedLatencyMs: number;
+  historicalRealLatencyMinimumMet: boolean;
+  historicalMonitoringLatencyMinimumMet: boolean;
   historicalLatencyCoverageBasisPoints: number;
   historicalResponsivenessBasisPoints: number;
   historicalAgeWindowDays: number;
   historicalHalfLifeDays: number;
+  monitoringSourceStatus: RoutingMonitoringSourceStatusDto;
 };
 
 export type RoutingCandidateScoreInputSnapshotDto = {
@@ -395,7 +481,7 @@ export type RoutingReadPageDto = {
 export type RoutingWorkspaceSnapshotDto = {
   readModelVersion: string;
   generatedAtMs: number;
-  policyConfig: RoutingPolicyConfigV2Dto;
+  policyConfig: RoutingPolicyConfigV3Dto;
   previewPolicyVersion: string;
   maxRateMultiplier: number | null;
   routingGroupFilter: RoutingGroupFilterDto;
@@ -405,6 +491,14 @@ export type RoutingWorkspaceSnapshotDto = {
   readModelStatus: RoutingReadModelStatusDto;
   plannerEvaluation?: RoutingPlannerEvaluationStatusDto;
   plannerEvaluationCode?: string | null;
+  availabilityStatus: RoutingAvailabilityStatusDto;
+  runtimeGenerationId?: string | null;
+  policyRevision?: number | null;
+  qualityRevision?: number | null;
+  healthRevision?: number | null;
+  qualityProjectionBacklog?: number | null;
+  qualityProjectionLagSeconds?: number | null;
+  qualityStale?: boolean | null;
 };
 
 export type RoutingRuntimeCandidateOverlayDto = {
@@ -427,6 +521,7 @@ export type RoutingRuntimeOverlayDto = {
 export type ProtectionPersistenceKindDto = "durable" | "legacy_compatibility" | "runtime_capacity";
 export type ProtectionStateDto = "no_protection" | "degraded" | "cooldown" | "blocked" | "open" | "half_open" | "unavailable";
 export type ProtectionReadModelStatusDto = "available" | "unavailable";
+export type ProtectionDiagnosticReasonDto = "capacity_exhausted" | "capacity_state_unavailable";
 export type ProtectionStatusEntryDto = {
   scope: string;
   scopeKind: string | null;
@@ -436,35 +531,19 @@ export type ProtectionStatusEntryDto = {
   cooldownUntilMs: number | null;
   cooldownRemainingMs: number | null;
   recentFailureCode: string | null;
+  diagnosticReason: ProtectionDiagnosticReasonDto | null;
   updatedAtMs: number | null;
   detailAvailable: boolean;
-};
-export type RoutingFailureDomainDiagnosticDto = {
-  commitment: string | null;
-  resolution: "not_configured" | "invalid_identity" | "model_required" | "resolved";
-  providerFamily: string | null;
-  deploymentIdentity: string | null;
-  regionIdentity: string | null;
-  revision: number | null;
-  candidateCount: number;
-  schedulableCandidateCount: number;
-  status: ProtectionStateDto;
-  persistenceKind: ProtectionPersistenceKindDto | null;
-  recentFailureCode: string | null;
-  explanationKey: string;
 };
 export type RoutingProtectionStatusDto = {
   statusVersion: string;
   generatedAtMs: number;
   entries: ProtectionStatusEntryDto[];
-  failureDomains?: RoutingFailureDomainDiagnosticDto[];
   readModelStatus: ProtectionReadModelStatusDto;
   timeouts: ProxyTimeoutFactsDto | null;
 };
 
-export type RoutingProtectionStatusInputDto = {
-  model?: string | null;
-};
+export type RoutingProtectionStatusInputDto = Record<string, never>;
 export type ProxyTimeoutFactsDto = {
   connectSeconds: number;
   firstByteSeconds: number;

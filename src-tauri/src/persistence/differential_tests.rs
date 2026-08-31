@@ -106,7 +106,7 @@ async fn request_finalization_is_idempotent_in_v2() {
 }
 
 #[tokio::test]
-async fn proxy_group_subscription_failure_excludes_only_its_group_in_the_next_planning_snapshot() {
+async fn proxy_group_subscription_failure_does_not_create_a_routing_exclusion() {
     let fixture = V2Fixture::create().await;
     fixture
         .seed_planning_candidate("key-group-a", "station-a", Some("group-a"), "gpt-upstream")
@@ -138,6 +138,7 @@ async fn proxy_group_subscription_failure_excludes_only_its_group_in_the_next_pl
             group_binding_id: Some("group-a".to_string()),
             group_revision: Some(1),
             resolved_upstream_model: Some("gpt-upstream".to_string()),
+            comparability_key: None,
             model_alias_revision: 1,
             started_at_ms: 1,
             probe_scope: None,
@@ -153,7 +154,13 @@ async fn proxy_group_subscription_failure_excludes_only_its_group_in_the_next_pl
     )
     .await;
 
-    assert_eq!(planning_ids(&routing, &request).await, ["key-group-b"]);
+    // Scoped group/account/endpoint health is retained for diagnostics, but
+    // v3 production routing is keyed only by station_key_id. A group-level
+    // subscription failure therefore must not remove sibling candidates.
+    assert_eq!(
+        planning_ids(&routing, &request).await,
+        ["key-group-a", "key-group-b"]
+    );
     fixture.bump_group_revision("group-a").await;
     assert_eq!(
         planning_ids(&routing, &request).await,
@@ -196,6 +203,7 @@ async fn proxy_model_not_found_excludes_only_that_key_model_commitment_until_rev
             group_binding_id: None,
             group_revision: None,
             resolved_upstream_model: Some("gpt-upstream".to_string()),
+            comparability_key: None,
             model_alias_revision: 1,
             started_at_ms: 1,
             probe_scope: None,
@@ -1127,10 +1135,7 @@ async fn routing_service_loads_v2_runtime_candidates_and_workflow_queries() {
     connection.close().await.expect("close fixture");
 
     let service = RoutingService::new(fixture.runtime().await.handle());
-    let diagnostics = RoutingDiagnosticsReader::new(
-        fixture.runtime().await.handle(),
-        ErrorRateProtectionService::disabled(),
-    );
+    let diagnostics = RoutingDiagnosticsReader::new(fixture.runtime().await.handle());
     let request = RouteRequestClassifier::classify(
         CanonicalRouteRequest {
             route_kind: RouteKind::Inference,

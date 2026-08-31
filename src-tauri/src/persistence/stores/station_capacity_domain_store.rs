@@ -11,6 +11,13 @@ use crate::{
 pub(crate) struct StationCapacityDomainStore;
 
 impl StationCapacityDomainStore {
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=legacy-capacity-domain-store-reference; owner=persistence/stores; remove_when=capacity-domain reference persistence is deleted"
+        )
+    )]
     pub(crate) async fn get(
         &self,
         read: &mut ReadSession,
@@ -63,6 +70,13 @@ impl StationCapacityDomainStore {
         get_on_write(write, station_id).await
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=legacy-capacity-domain-store-reference; owner=persistence/stores; remove_when=capacity-domain reference persistence is deleted"
+        )
+    )]
     pub(crate) async fn clear(
         &self,
         write: &mut WriteSession,

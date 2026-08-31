@@ -12,6 +12,17 @@ pub(crate) struct RequestStartWrite {
     pub reasoning_effort: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RequestRouteSelectionWrite {
+    pub request_id: String,
+    pub attempt_ordinal: u16,
+    pub station_key_id: String,
+    pub station_id: String,
+    pub route_policy: String,
+    pub route_reason: String,
+    pub selected_at_ms: i64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AttemptHealthUpdate {
     Success,
@@ -79,6 +90,7 @@ pub(crate) struct AttemptTerminalWrite {
     pub group_binding_id: Option<String>,
     pub group_revision: Option<i64>,
     pub resolved_upstream_model: Option<String>,
+    pub comparability_key: Option<String>,
     pub model_alias_revision: i64,
     pub started_at_ms: i64,
     pub terminal_kind: String,
@@ -92,6 +104,12 @@ pub(crate) struct AttemptTerminalWrite {
     pub public_code: Option<String>,
     pub sanitized_detail: Option<String>,
     pub output_committed: bool,
+    /// Canonical outcome time supplied by the attempt producer.
+    pub event_at_ms: i64,
+    /// Time at which the lifecycle owner observed the terminal outcome.
+    pub observed_at_ms: i64,
+    /// Stable persistence receive time captured before retrying the write.
+    pub ingested_at_ms: i64,
     pub terminal_at_ms: i64,
     pub probe_scope: Option<HealthProtectionScope>,
     pub probe_state_revision: Option<u64>,

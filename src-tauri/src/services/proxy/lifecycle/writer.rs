@@ -14,9 +14,11 @@ use super::{
     ports::{
         AttemptCommitAck, AttemptCostCommitAck, AttemptCostCommitRecord, LifecycleWriteError,
         RequestCommitAck, RequestCostAggregateCommitAck, RequestCostAggregateCommitRecord,
-        RequestLifecycleStore, RequestStartAck,
+        RequestLifecycleStore, RequestRouteSelectionAck, RequestStartAck,
     },
-    request::{FinalRequestRecord, RequestLogAnnotations, RequestStartRecord},
+    request::{
+        FinalRequestRecord, RequestLogAnnotations, RequestRouteSelectionRecord, RequestStartRecord,
+    },
 };
 
 const WRITER_HEALTHY: u8 = 0;
@@ -87,6 +89,10 @@ pub(crate) enum LifecycleWriteCommand {
         record: Box<RequestStartRecord>,
         annotations: RequestLogAnnotations,
         ack: oneshot::Sender<Result<RequestStartAck, LifecycleWriteError>>,
+    },
+    RecordRouteSelection {
+        record: Box<RequestRouteSelectionRecord>,
+        ack: oneshot::Sender<Result<RequestRouteSelectionAck, LifecycleWriteError>>,
     },
     FinishAttempt {
         record: Box<AttemptTerminalRecord>,
@@ -183,6 +189,20 @@ impl LifecycleWriter {
                         completion.finish(result.is_err());
                         let _ = ack.send(result);
                     }
+                    LifecycleWriteCommand::RecordRouteSelection { record, ack } => {
+                        let request_id = record.request_id.clone();
+                        let store = Arc::clone(&store);
+                        let result =
+                            write_with_retry("record_route_selection", &request_id, || {
+                                store.record_route_selection((*record).clone())
+                            })
+                            .await;
+                        // Route selection is an idempotent observational
+                        // projection. Its failure cannot make terminal writes
+                        // unsafe or poison lifecycle admission.
+                        completion.finish(result.is_err());
+                        let _ = ack.send(result);
+                    }
                     LifecycleWriteCommand::FinishAttempt { record, ack } => {
                         let request_id = record.context.attempt_id.request_id.clone();
                         let store = Arc::clone(&store);
@@ -276,6 +296,23 @@ impl LifecycleWriter {
         Ok(AttemptWriteReservation {
             terminal: reserve(&self.sender, &self.metrics)?,
         })
+    }
+
+    pub(crate) fn try_record_route_selection(
+        &self,
+        record: RequestRouteSelectionRecord,
+    ) -> Result<
+        oneshot::Receiver<Result<RequestRouteSelectionAck, LifecycleWriteError>>,
+        WriterAdmissionError,
+    > {
+        self.ensure_healthy()?;
+        let slot = reserve(&self.sender, &self.metrics)?;
+        let (ack, receiver) = oneshot::channel();
+        slot.send(LifecycleWriteCommand::RecordRouteSelection {
+            record: Box::new(record),
+            ack,
+        });
+        Ok(receiver)
     }
 
     pub(crate) fn try_reserve_attempt_cost(
@@ -646,6 +683,20 @@ mod tests {
             })
         }
 
+        fn record_route_selection(
+            &self,
+            record: RequestRouteSelectionRecord,
+        ) -> BoxFuture<'static, Result<RequestRouteSelectionAck, LifecycleWriteError>> {
+            let calls = Arc::clone(&self.calls);
+            Box::pin(async move {
+                calls.lock().expect("calls").push(format!(
+                    "route:{}:{}",
+                    record.request_id, record.station_key_id
+                ));
+                Ok(RequestRouteSelectionAck { updated: true })
+            })
+        }
+
         fn finish_attempt(
             &self,
             record: AttemptTerminalRecord,
@@ -859,6 +910,19 @@ mod tests {
                 .inserted
         );
 
+        let route_ack = writer
+            .try_record_route_selection(RequestRouteSelectionRecord {
+                request_id: "req-1".to_string(),
+                attempt_ordinal: 0,
+                station_key_id: "key-1".to_string(),
+                station_id: "station-1".to_string(),
+                route_policy: "stable_first".to_string(),
+                route_reason: "selected key-1 for /v1/chat/completions".to_string(),
+                selected_at_ms: 2,
+            })
+            .expect("route selection admission");
+        drop(route_ack);
+
         let attempt_id = AttemptId::new("req-1", 0);
         let attempt_ack = attempt.send(AttemptTerminalRecord {
             context: AttemptContext {
@@ -871,6 +935,7 @@ mod tests {
                 group_binding_id: None,
                 group_revision: None,
                 resolved_upstream_model: None,
+                comparability_key: None,
                 model_alias_revision: 1,
                 started_at_ms: 2,
                 probe_scope: None,
@@ -918,7 +983,12 @@ mod tests {
         worker.join().await.expect("worker join");
         assert_eq!(
             *calls.lock().expect("calls"),
-            vec!["start:req-1", "attempt:req-1:0", "finish:req-1"]
+            vec![
+                "start:req-1",
+                "route:req-1:key-1",
+                "attempt:req-1:0",
+                "finish:req-1"
+            ]
         );
     }
 

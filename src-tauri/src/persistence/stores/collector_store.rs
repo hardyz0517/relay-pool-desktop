@@ -10,8 +10,7 @@ use crate::{
         group_facts::{GroupRateRecord, StationGroupBinding},
     },
     persistence::{
-        error::PersistenceError, read_session::ReadSession,
-        stores::domain_revision_store::DomainRevisionStore, write_session::WriteSession,
+        error::PersistenceError, read_session::ReadSession, write_session::WriteSession,
     },
 };
 
@@ -832,11 +831,6 @@ impl CollectorStore {
         if group_binding_ids.is_empty() {
             return Ok(Vec::new());
         }
-        let now_ms = now.parse::<i64>().map_err(|_| {
-            PersistenceError::InvariantViolation(
-                "station key group projection timestamp is not numeric".to_string(),
-            )
-        })?;
         let rows = sqlx::query(
             r#"
             SELECT keys.id,
@@ -862,7 +856,6 @@ impl CollectorStore {
         .fetch_all(session.connection())
         .await?;
 
-        let revisions = DomainRevisionStore;
         let mut updated_ids = Vec::new();
         for row in rows {
             let group_binding_id = row.get::<String, _>("group_binding_id");
@@ -915,18 +908,6 @@ impl CollectorStore {
             .execute(session.connection())
             .await?;
 
-            let revision_scope = format!("station_key:{station_key_id}");
-            let revision = revisions
-                .load(session.connection(), &revision_scope)
-                .await?;
-            revisions
-                .advance(
-                    session.connection(),
-                    &revision_scope,
-                    revision.revision,
-                    now_ms,
-                )
-                .await?;
             updated_ids.push(station_key_id);
         }
         Ok(updated_ids)

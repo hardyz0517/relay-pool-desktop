@@ -100,6 +100,7 @@ pub(crate) fn target_snapshot_from_monitoring_target(
     TargetCapabilitySnapshot {
         station_id: candidate.station_id.clone(),
         station_key_id: candidate.station_key_id.clone(),
+        station_key_lifecycle_revision: candidate.station_key_lifecycle_revision,
         endpoint_revision: candidate.endpoint_revision,
         provider_protocol: protocol_from_upstream_format(&candidate.upstream_api_format),
         endpoint_protocol: protocol_from_capabilities(candidate),

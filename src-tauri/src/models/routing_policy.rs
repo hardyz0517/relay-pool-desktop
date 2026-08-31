@@ -581,6 +581,19 @@ impl RoutingPolicyConfigV2 {
         value: &serde_json::Value,
     ) -> Result<Self, RoutingPolicyFieldValidationError> {
         match value.get("version").and_then(serde_json::Value::as_u64) {
+            Some(3) => {
+                let v3 = serde_json::from_value::<RoutingPolicyConfigV3>(value.clone()).map_err(
+                    |_| {
+                        RoutingPolicyFieldValidationError::new(
+                            "policy",
+                            "invalid_v3_policy",
+                            "routing.policy.invalid",
+                        )
+                    },
+                )?;
+                v3.validate()?;
+                Self::from_v3_compat(&v3)
+            }
             Some(2) => {
                 let policy = serde_json::from_value::<Self>(upgrade_v2_duration_units(value))
                     .map_err(|_| {
@@ -614,6 +627,64 @@ impl RoutingPolicyConfigV2 {
                 "routing.policy.version.required",
             )),
         }
+    }
+
+    /// Temporary execution-shape projection used while the planner/admission
+    /// structs finish moving to the v3 policy type.  It deliberately projects
+    /// only fields that the legacy snapshot can represent: retry budget and
+    /// common score/transport controls.  Removed exploration and capacity
+    /// domain controls are hard-disabled, and the old error-rate switch is not
+    /// re-enabled by a v3 document.
+    fn from_v3_compat(
+        value: &RoutingPolicyConfigV3,
+    ) -> Result<Self, RoutingPolicyFieldValidationError> {
+        let max_total_attempts = value.retry.max_total_attempts().try_into().map_err(|_| {
+            RoutingPolicyFieldValidationError::new(
+                "retry.maxRetryCount",
+                "out_of_range",
+                "routing.retry.maxRetryCount.range",
+            )
+        })?;
+        let projected = Self {
+            version: ROUTING_POLICY_CONFIG_VERSION_V2,
+            reliability_weight: value.reliability_weight,
+            responsiveness_weight: value.responsiveness_weight,
+            cost_weight: value.cost_weight,
+            preference_weight: value.preference_weight,
+            // v3 intentionally has no candidate/exploration control. Keep
+            // the bounded legacy field at its hard maximum so the planner can
+            // inspect every eligible key before deterministic sorting.
+            max_candidates: 1_024,
+            exploration_share_basis_points: 0,
+            allow_depleted_fallback: value.allow_depleted_fallback,
+            affinity_enabled: value.affinity_enabled,
+            affinity_ttl_seconds: value.affinity_ttl_seconds,
+            max_rate_multiplier: value.max_rate_multiplier,
+            routing_group_filter: value.routing_group_filter.clone(),
+            outbound_proxy_mode: value.outbound_proxy_mode.clone(),
+            outbound_proxy_url: value.outbound_proxy_url.clone(),
+            retry_failover: RetryFailoverPolicyV2 {
+                version: RETRY_FAILOVER_POLICY_VERSION_V2,
+                max_total_attempts,
+                max_same_target_capacity_retries: 0,
+                capacity_retry_wait_budget_seconds: 0.0,
+                allow_cross_capacity_domain_fallback: false,
+            },
+            protection_profile: ProtectionProfileConfigV2 {
+                version: PROTECTION_PROFILE_VERSION_V2,
+                // v3 circuit state is not the legacy error-rate switch. Keep
+                // this false until the v3 circuit admission bridge is used.
+                enabled: false,
+                window_max_samples: 64,
+                window_seconds: 300.0,
+                min_samples: 1,
+                failure_threshold_percent: 100,
+                half_open_successes_to_close: value.circuit_breaker.recovery_success_threshold,
+            },
+            timeout_policy: value.timeout_policy.clone(),
+        };
+        projected.validate()?;
+        Ok(projected)
     }
 
     /// Upgrade the existing V1 configuration without changing its routing
@@ -688,6 +759,488 @@ impl RoutingPolicyConfigV2 {
         self.protection_profile
             .validate()
             .and_then(|()| self.timeout_policy.validate())
+    }
+}
+
+/// The routing-policy contract used by the v3 planner.  V2 remains available
+/// only as an explicit migration input; production callers must not silently
+/// decode this shape through the v2 compatibility path.
+pub(crate) const ROUTING_POLICY_CONFIG_VERSION_V3: u16 = 3;
+pub(crate) const ROUTING_POLICY_RETRY_VERSION_V3: u16 = 1;
+pub(crate) const ROUTING_POLICY_CIRCUIT_BREAKER_VERSION_V1: u16 = 1;
+pub(crate) const DEFAULT_REAL_TRAFFIC_PERCENT: u8 = 70;
+pub(crate) const DEFAULT_MONITORING_PERCENT: u8 = 30;
+pub(crate) const DEFAULT_HISTORICAL_MINIMUM_SAMPLES: u16 = 15;
+pub(crate) const DEFAULT_RECENT_MINIMUM_SAMPLES: u16 = 5;
+pub(crate) const DEFAULT_OPTIMISTIC_RELIABILITY_PERCENT: u8 = 95;
+pub(crate) const DEFAULT_OPTIMISTIC_LATENCY_MS: u32 = 2_500;
+pub(crate) const DEFAULT_MAX_RETRY_COUNT: u16 = 3;
+pub(crate) const DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD: u16 = 3;
+pub(crate) const DEFAULT_RECOVERY_SUCCESS_THRESHOLD: u8 = 2;
+pub(crate) const DEFAULT_RECOVERY_WAIT_SECONDS: u32 = 30;
+pub(crate) const MAX_RETRY_COUNT_HARD_CAP: u16 = MAX_TOTAL_ATTEMPTS_HARD_CAP - 1;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ReliabilitySourceWeightsV3 {
+    pub(crate) real_traffic_percent: u8,
+    pub(crate) monitoring_percent: u8,
+}
+
+impl Default for ReliabilitySourceWeightsV3 {
+    fn default() -> Self {
+        Self {
+            real_traffic_percent: DEFAULT_REAL_TRAFFIC_PERCENT,
+            monitoring_percent: DEFAULT_MONITORING_PERCENT,
+        }
+    }
+}
+
+impl ReliabilitySourceWeightsV3 {
+    pub(crate) fn validate(&self) -> Result<(), RoutingPolicyFieldValidationError> {
+        if u16::from(self.real_traffic_percent) + u16::from(self.monitoring_percent) != 100 {
+            return Err(RoutingPolicyFieldValidationError::new(
+                "reliabilitySourceWeights.monitoringPercent",
+                "sum_must_equal_100",
+                "routing.reliabilitySourceWeights.sum",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn real_traffic_basis_points(&self) -> u16 {
+        u16::from(self.real_traffic_percent) * 100
+    }
+
+    pub(crate) fn monitoring_basis_points(&self) -> u16 {
+        u16::from(self.monitoring_percent) * 100
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ReliabilitySamplingPolicyV3 {
+    pub(crate) historical_minimum_samples: u16,
+    pub(crate) recent_minimum_samples: u16,
+    pub(crate) optimistic_reliability_percent: u8,
+    pub(crate) optimistic_latency_ms: u32,
+}
+
+impl Default for ReliabilitySamplingPolicyV3 {
+    fn default() -> Self {
+        Self {
+            historical_minimum_samples: DEFAULT_HISTORICAL_MINIMUM_SAMPLES,
+            recent_minimum_samples: DEFAULT_RECENT_MINIMUM_SAMPLES,
+            optimistic_reliability_percent: DEFAULT_OPTIMISTIC_RELIABILITY_PERCENT,
+            optimistic_latency_ms: DEFAULT_OPTIMISTIC_LATENCY_MS,
+        }
+    }
+}
+
+impl ReliabilitySamplingPolicyV3 {
+    pub(crate) fn validate(&self) -> Result<(), RoutingPolicyFieldValidationError> {
+        if !(1..=10_000).contains(&self.historical_minimum_samples) {
+            return Err(RoutingPolicyFieldValidationError::new(
+                "reliabilitySampling.historicalMinimumSamples",
+                "out_of_range",
+                "routing.reliabilitySampling.historicalMinimumSamples.range",
+            ));
+        }
+        if !(1..=10_000).contains(&self.recent_minimum_samples) {
+            return Err(RoutingPolicyFieldValidationError::new(
+                "reliabilitySampling.recentMinimumSamples",
+                "out_of_range",
+                "routing.reliabilitySampling.recentMinimumSamples.range",
+            ));
+        }
+        if self.optimistic_reliability_percent > 100 {
+            return Err(RoutingPolicyFieldValidationError::new(
+                "reliabilitySampling.optimisticReliabilityPercent",
+                "out_of_range",
+                "routing.reliabilitySampling.optimisticReliabilityPercent.range",
+            ));
+        }
+        if !(100..=120_000).contains(&self.optimistic_latency_ms) {
+            return Err(RoutingPolicyFieldValidationError::new(
+                "reliabilitySampling.optimisticLatencyMs",
+                "out_of_range",
+                "routing.reliabilitySampling.optimisticLatencyMs.range",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn optimistic_reliability_basis_points(&self) -> u16 {
+        u16::from(self.optimistic_reliability_percent) * 100
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct RetryPolicyV3 {
+    pub(crate) version: u16,
+    pub(crate) max_retry_count: u16,
+    pub(crate) consecutive_failure_threshold: u16,
+}
+
+impl Default for RetryPolicyV3 {
+    fn default() -> Self {
+        Self {
+            version: ROUTING_POLICY_RETRY_VERSION_V3,
+            max_retry_count: DEFAULT_MAX_RETRY_COUNT,
+            consecutive_failure_threshold: DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD,
+        }
+    }
+}
+
+impl RetryPolicyV3 {
+    pub(crate) fn validate(&self) -> Result<(), RoutingPolicyFieldValidationError> {
+        if self.version != ROUTING_POLICY_RETRY_VERSION_V3 {
+            return Err(RoutingPolicyFieldValidationError::new(
+                "retry.version",
+                "unsupported_version",
+                "routing.retry.version.unsupported",
+            ));
+        }
+        if self.max_retry_count > MAX_RETRY_COUNT_HARD_CAP {
+            return Err(RoutingPolicyFieldValidationError::new(
+                "retry.maxRetryCount",
+                "out_of_range",
+                "routing.retry.maxRetryCount.range",
+            ));
+        }
+        if !(1..=10).contains(&self.consecutive_failure_threshold) {
+            return Err(RoutingPolicyFieldValidationError::new(
+                "retry.consecutiveFailureThreshold",
+                "out_of_range",
+                "routing.retry.consecutiveFailureThreshold.range",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn max_total_attempts(&self) -> u32 {
+        u32::from(self.max_retry_count) + 1
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CircuitBreakerPolicyV3 {
+    pub(crate) version: u16,
+    pub(crate) recovery_success_threshold: u8,
+    pub(crate) recovery_wait_seconds: u32,
+}
+
+impl Default for CircuitBreakerPolicyV3 {
+    fn default() -> Self {
+        Self {
+            version: ROUTING_POLICY_CIRCUIT_BREAKER_VERSION_V1,
+            recovery_success_threshold: DEFAULT_RECOVERY_SUCCESS_THRESHOLD,
+            recovery_wait_seconds: DEFAULT_RECOVERY_WAIT_SECONDS,
+        }
+    }
+}
+
+impl CircuitBreakerPolicyV3 {
+    pub(crate) fn validate(&self) -> Result<(), RoutingPolicyFieldValidationError> {
+        if self.version != ROUTING_POLICY_CIRCUIT_BREAKER_VERSION_V1 {
+            return Err(RoutingPolicyFieldValidationError::new(
+                "circuitBreaker.version",
+                "unsupported_version",
+                "routing.circuitBreaker.version.unsupported",
+            ));
+        }
+        if !(1..=MAX_PROTECTION_HALF_OPEN_SUCCESSES).contains(&self.recovery_success_threshold) {
+            return Err(RoutingPolicyFieldValidationError::new(
+                "circuitBreaker.recoverySuccessThreshold",
+                "out_of_range",
+                "routing.circuitBreaker.recoverySuccessThreshold.range",
+            ));
+        }
+        if !(5..=3_600).contains(&self.recovery_wait_seconds) {
+            return Err(RoutingPolicyFieldValidationError::new(
+                "circuitBreaker.recoveryWaitSeconds",
+                "out_of_range",
+                "routing.circuitBreaker.recoveryWaitSeconds.range",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Result of the one-time V2 -> V3 upgrade.  Audit fields intentionally name
+/// only policy concepts and never contain user secrets or raw JSON.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RoutingPolicyV3UpgradeAudit {
+    pub(crate) from_version: u16,
+    pub(crate) to_version: u16,
+    pub(crate) discarded_fields: Vec<&'static str>,
+    pub(crate) defaulted_fields: Vec<&'static str>,
+    pub(crate) semantic_changes: Vec<&'static str>,
+    pub(crate) quality_rebuild_required: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct RoutingPolicyV3Upgrade {
+    pub(crate) policy: RoutingPolicyConfigV3,
+    pub(crate) audit: RoutingPolicyV3UpgradeAudit,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct RoutingPolicyConfigV3 {
+    pub(crate) version: u16,
+    pub(crate) reliability_weight: u16,
+    pub(crate) responsiveness_weight: u16,
+    pub(crate) cost_weight: u16,
+    pub(crate) preference_weight: u16,
+    pub(crate) allow_depleted_fallback: bool,
+    pub(crate) affinity_enabled: bool,
+    pub(crate) affinity_ttl_seconds: u32,
+    #[serde(deserialize_with = "deserialize_required_option")]
+    pub(crate) max_rate_multiplier: Option<f64>,
+    pub(crate) routing_group_filter: RoutingGroupFilter,
+    pub(crate) outbound_proxy_mode: String,
+    #[serde(deserialize_with = "deserialize_required_option")]
+    pub(crate) outbound_proxy_url: Option<String>,
+    pub(crate) reliability_source_weights: ReliabilitySourceWeightsV3,
+    pub(crate) reliability_sampling: ReliabilitySamplingPolicyV3,
+    pub(crate) retry: RetryPolicyV3,
+    pub(crate) circuit_breaker: CircuitBreakerPolicyV3,
+    pub(crate) timeout_policy: TimeoutPolicyV2,
+}
+
+impl Default for RoutingPolicyConfigV3 {
+    fn default() -> Self {
+        let v1 = RoutingPolicyConfigV1::default();
+        Self {
+            version: ROUTING_POLICY_CONFIG_VERSION_V3,
+            reliability_weight: v1.reliability_weight,
+            responsiveness_weight: v1.responsiveness_weight,
+            cost_weight: v1.cost_weight,
+            preference_weight: v1.preference_weight,
+            allow_depleted_fallback: v1.allow_depleted_fallback,
+            affinity_enabled: v1.affinity_enabled,
+            affinity_ttl_seconds: v1.affinity_ttl_seconds,
+            max_rate_multiplier: v1.max_rate_multiplier,
+            routing_group_filter: v1.routing_group_filter,
+            outbound_proxy_mode: v1.outbound_proxy_mode,
+            outbound_proxy_url: v1.outbound_proxy_url,
+            reliability_source_weights: ReliabilitySourceWeightsV3::default(),
+            reliability_sampling: ReliabilitySamplingPolicyV3::default(),
+            retry: RetryPolicyV3::default(),
+            circuit_breaker: CircuitBreakerPolicyV3::default(),
+            timeout_policy: TimeoutPolicyV2::default(),
+        }
+    }
+}
+
+impl RoutingPolicyConfigV3 {
+    pub(crate) fn validate(&self) -> Result<(), RoutingPolicyFieldValidationError> {
+        if self.version != ROUTING_POLICY_CONFIG_VERSION_V3 {
+            return Err(RoutingPolicyFieldValidationError::new(
+                "version",
+                "unsupported_version",
+                "routing.policy.version.unsupported",
+            ));
+        }
+        let base = RoutingPolicyConfigV1 {
+            version: 1,
+            reliability_weight: self.reliability_weight,
+            responsiveness_weight: self.responsiveness_weight,
+            cost_weight: self.cost_weight,
+            preference_weight: self.preference_weight,
+            // V3 removes these user fields.  The values below only reuse the
+            // existing common-field validator and never enter the V3 JSON.
+            max_candidates: 1,
+            exploration_share_basis_points: 0,
+            allow_depleted_fallback: self.allow_depleted_fallback,
+            affinity_enabled: self.affinity_enabled,
+            affinity_ttl_seconds: self.affinity_ttl_seconds,
+            max_rate_multiplier: self.max_rate_multiplier,
+            routing_group_filter: self.routing_group_filter.clone(),
+            outbound_proxy_mode: self.outbound_proxy_mode.clone(),
+            outbound_proxy_url: self.outbound_proxy_url.clone(),
+        };
+        base.validate().map_err(|_| {
+            RoutingPolicyFieldValidationError::new(
+                "policy",
+                "invalid_base_policy",
+                "routing.policy.invalid",
+            )
+        })?;
+        self.reliability_source_weights.validate()?;
+        self.reliability_sampling.validate()?;
+        self.retry.validate()?;
+        self.circuit_breaker.validate()?;
+        self.timeout_policy.validate()
+    }
+
+    /// Upgrade a validated V2 policy.  This function is deliberately explicit
+    /// so runtime reads cannot silently re-enable removed V2 settings.
+    pub(crate) fn from_v2(
+        value: &RoutingPolicyConfigV2,
+    ) -> Result<RoutingPolicyV3Upgrade, RoutingPolicyFieldValidationError> {
+        value.validate()?;
+        let max_retry_count = value
+            .retry_failover
+            .max_total_attempts
+            .checked_sub(1)
+            .ok_or_else(|| {
+                RoutingPolicyFieldValidationError::new(
+                    "retry.maxRetryCount",
+                    "invalid_legacy_value",
+                    "routing.retry.maxRetryCount.invalidLegacy",
+                )
+            })?;
+        let policy = Self {
+            version: ROUTING_POLICY_CONFIG_VERSION_V3,
+            reliability_weight: value.reliability_weight,
+            responsiveness_weight: value.responsiveness_weight,
+            cost_weight: value.cost_weight,
+            preference_weight: value.preference_weight,
+            allow_depleted_fallback: value.allow_depleted_fallback,
+            affinity_enabled: value.affinity_enabled,
+            affinity_ttl_seconds: value.affinity_ttl_seconds,
+            max_rate_multiplier: value.max_rate_multiplier,
+            routing_group_filter: value.routing_group_filter.clone(),
+            outbound_proxy_mode: value.outbound_proxy_mode.clone(),
+            outbound_proxy_url: value.outbound_proxy_url.clone(),
+            reliability_source_weights: ReliabilitySourceWeightsV3::default(),
+            reliability_sampling: ReliabilitySamplingPolicyV3::default(),
+            retry: RetryPolicyV3 {
+                version: ROUTING_POLICY_RETRY_VERSION_V3,
+                max_retry_count,
+                consecutive_failure_threshold: DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD,
+            },
+            circuit_breaker: CircuitBreakerPolicyV3 {
+                version: ROUTING_POLICY_CIRCUIT_BREAKER_VERSION_V1,
+                recovery_success_threshold: value.protection_profile.half_open_successes_to_close,
+                recovery_wait_seconds: DEFAULT_RECOVERY_WAIT_SECONDS,
+            },
+            timeout_policy: value.timeout_policy.clone(),
+        };
+        policy.validate()?;
+        Ok(RoutingPolicyV3Upgrade {
+            policy,
+            audit: RoutingPolicyV3UpgradeAudit {
+                from_version: ROUTING_POLICY_CONFIG_VERSION_V2,
+                to_version: ROUTING_POLICY_CONFIG_VERSION_V3,
+                discarded_fields: vec![
+                    "maxCandidates",
+                    "explorationShareBasisPoints",
+                    "retryFailover.maxSameTargetCapacityRetries",
+                    "retryFailover.capacityRetryWaitBudgetSeconds",
+                    "retryFailover.allowCrossCapacityDomainFallback",
+                    "protectionProfile.enabled",
+                    "protectionProfile.windowMaxSamples",
+                    "protectionProfile.windowSeconds",
+                    "protectionProfile.minSamples",
+                    "protectionProfile.failureThresholdPercent",
+                ],
+                defaulted_fields: vec![
+                    "reliabilitySourceWeights",
+                    "reliabilitySampling",
+                    "retry.consecutiveFailureThreshold",
+                    "circuitBreaker.recoveryWaitSeconds",
+                ],
+                semantic_changes: vec![
+                    "circuit_breaker_always_enabled",
+                    "error_rate_protection_replaced_by_consecutive_failures",
+                    "capacity_domain_controls_removed_from_routing",
+                ],
+                quality_rebuild_required: true,
+            },
+        })
+    }
+
+    /// Decode only canonical V3 storage. V1/V2 values must be upgraded by the
+    /// migration boundary before reaching this method.
+    pub(crate) fn from_stored_value(
+        value: &serde_json::Value,
+    ) -> Result<Self, RoutingPolicyFieldValidationError> {
+        if value.get("version").and_then(serde_json::Value::as_u64)
+            != Some(u64::from(ROUTING_POLICY_CONFIG_VERSION_V3))
+        {
+            return Err(RoutingPolicyFieldValidationError::new(
+                "version",
+                "unsupported_version",
+                "routing.policy.version.unsupported",
+            ));
+        }
+        let policy = serde_json::from_value::<Self>(value.clone()).map_err(|_| {
+            RoutingPolicyFieldValidationError::new(
+                "policy",
+                "invalid_v3_policy",
+                "routing.policy.invalid",
+            )
+        })?;
+        policy.validate()?;
+        Ok(policy)
+    }
+}
+
+/// V3 managed-document envelope. The outer format remains version 1; the
+/// nested policy version is the domain contract version.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct RoutingPolicyDocumentV3 {
+    pub(crate) format_version: u16,
+    pub(crate) base_revision: u64,
+    pub(crate) policy: RoutingPolicyConfigV3,
+}
+
+impl Default for RoutingPolicyDocumentV3 {
+    fn default() -> Self {
+        Self {
+            format_version: ROUTING_POLICY_DOCUMENT_FORMAT_VERSION,
+            base_revision: 0,
+            policy: RoutingPolicyConfigV3::default(),
+        }
+    }
+}
+
+impl RoutingPolicyDocumentV3 {
+    pub(crate) fn validate(&self) -> Result<(), RoutingPolicyFieldValidationError> {
+        if self.format_version != ROUTING_POLICY_DOCUMENT_FORMAT_VERSION {
+            return Err(RoutingPolicyFieldValidationError::new(
+                "formatVersion",
+                "unsupported_version",
+                "routing.document.formatVersion.unsupported",
+            ));
+        }
+        if self.base_revision == 0 {
+            return Err(RoutingPolicyFieldValidationError::new(
+                "baseRevision",
+                "must_be_positive",
+                "routing.document.baseRevision.required",
+            ));
+        }
+        self.policy.validate()
+    }
+
+    pub(crate) fn from_v2(
+        value: &RoutingPolicyDocumentV2,
+    ) -> Result<(Self, RoutingPolicyV3UpgradeAudit), RoutingPolicyFieldValidationError> {
+        if value.format_version != ROUTING_POLICY_DOCUMENT_FORMAT_VERSION
+            || value.base_revision == 0
+        {
+            return Err(RoutingPolicyFieldValidationError::new(
+                "document",
+                "invalid_envelope",
+                "routing.document.invalid",
+            ));
+        }
+        let upgraded = RoutingPolicyConfigV3::from_v2(&value.policy)?;
+        Ok((
+            Self {
+                format_version: value.format_version,
+                base_revision: value.base_revision,
+                policy: upgraded.policy,
+            },
+            upgraded.audit,
+        ))
     }
 }
 
@@ -1238,6 +1791,80 @@ mod tests {
                 "missing timeoutPolicy field {field} must fail closed"
             );
         }
+    }
+
+    #[test]
+    fn v3_defaults_have_strict_shape_and_expected_retry_semantics() {
+        let policy = RoutingPolicyConfigV3::default();
+        assert!(policy.validate().is_ok());
+        let value = serde_json::to_value(&policy).expect("serialize V3 policy");
+        assert_eq!(value["version"], 3);
+        assert_eq!(value["reliabilitySourceWeights"]["realTrafficPercent"], 70);
+        assert_eq!(value["reliabilitySourceWeights"]["monitoringPercent"], 30);
+        assert_eq!(value["retry"]["maxRetryCount"], 3);
+        assert_eq!(value["retry"]["consecutiveFailureThreshold"], 3);
+        assert!(value.get("maxCandidates").is_none());
+        assert!(value.get("explorationShareBasisPoints").is_none());
+        assert!(value.get("protectionProfile").is_none());
+    }
+
+    #[test]
+    fn v3_rejects_invalid_source_weights_sampling_and_breaker_fields() {
+        let mut policy = RoutingPolicyConfigV3::default();
+        policy.reliability_source_weights.monitoring_percent = 31;
+        let error = policy
+            .validate()
+            .expect_err("source weights must sum to 100");
+        assert_eq!(error.field, "reliabilitySourceWeights.monitoringPercent");
+
+        policy = RoutingPolicyConfigV3::default();
+        policy.reliability_sampling.optimistic_latency_ms = 99;
+        let error = policy.validate().expect_err("latency lower bound");
+        assert_eq!(error.field, "reliabilitySampling.optimisticLatencyMs");
+
+        policy = RoutingPolicyConfigV3::default();
+        policy.retry.max_retry_count = MAX_RETRY_COUNT_HARD_CAP + 1;
+        let error = policy.validate().expect_err("retry hard cap");
+        assert_eq!(error.field, "retry.maxRetryCount");
+
+        policy = RoutingPolicyConfigV3::default();
+        policy.circuit_breaker.recovery_wait_seconds = 4;
+        let error = policy.validate().expect_err("recovery wait lower bound");
+        assert_eq!(error.field, "circuitBreaker.recoveryWaitSeconds");
+    }
+
+    #[test]
+    fn v2_to_v3_upgrade_maps_attempts_and_records_removed_semantics() {
+        let mut v2 = RoutingPolicyConfigV2::default();
+        v2.retry_failover.max_total_attempts = 2;
+        v2.retry_failover.max_same_target_capacity_retries = 0;
+        v2.protection_profile.half_open_successes_to_close = 4;
+        v2.protection_profile.enabled = false;
+        let result = RoutingPolicyConfigV3::from_v2(&v2).expect("upgrade V2 policy");
+        assert_eq!(result.policy.retry.max_retry_count, 1);
+        assert_eq!(result.policy.retry.max_total_attempts(), 2);
+        assert_eq!(result.policy.circuit_breaker.recovery_success_threshold, 4);
+        assert_eq!(result.policy.circuit_breaker.recovery_wait_seconds, 30);
+        assert!(result.audit.quality_rebuild_required);
+        assert!(result.audit.discarded_fields.contains(&"maxCandidates"));
+        assert!(result
+            .audit
+            .semantic_changes
+            .contains(&"circuit_breaker_always_enabled"));
+    }
+
+    #[test]
+    fn v3_storage_decoder_is_fail_closed_and_never_accepts_v2_fields() {
+        let value = serde_json::to_value(RoutingPolicyConfigV3::default()).expect("V3 value");
+        assert_eq!(
+            RoutingPolicyConfigV3::from_stored_value(&value),
+            Ok(RoutingPolicyConfigV3::default())
+        );
+        let mut unknown = value.clone();
+        unknown["maxCandidates"] = serde_json::json!(64);
+        assert!(RoutingPolicyConfigV3::from_stored_value(&unknown).is_err());
+        let v2 = serde_json::to_value(RoutingPolicyConfigV2::default()).expect("V2 value");
+        assert!(RoutingPolicyConfigV3::from_stored_value(&v2).is_err());
     }
 
     #[test]

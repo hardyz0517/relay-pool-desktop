@@ -168,6 +168,8 @@ pub(crate) fn classify_route_failure(input: RouteFailureInput) -> ClassifiedRout
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RoutePlanningFailure {
+    NoAvailableKey,
+    CapabilityMismatch,
     HealthUnavailable,
     CapacityExhausted,
     #[cfg(any(test, debug_assertions))]
@@ -190,15 +192,25 @@ impl RoutePlanningFailure {
             planning_failure, FailureClass, FailureTarget, LocalAdapterComponent, RetryDisposition,
         };
         match self {
+            Self::NoAvailableKey => planning_failure(
+                FailureClass::NoAvailableKey,
+                FailureTarget::Request,
+                RetryDisposition::StopRequest,
+            ),
+            Self::CapabilityMismatch => planning_failure(
+                FailureClass::CapabilityMismatch,
+                FailureTarget::Request,
+                RetryDisposition::StopRequest,
+            ),
             Self::HealthUnavailable => planning_failure(
                 FailureClass::HealthUnavailable,
                 FailureTarget::Request,
-                RetryDisposition::TryDifferentFailureDomain,
+                RetryDisposition::StopRequest,
             ),
             Self::CapacityExhausted => planning_failure(
                 FailureClass::CapacityExhausted,
                 FailureTarget::Request,
-                RetryDisposition::WaitThenReplan,
+                RetryDisposition::StopRequest,
             ),
             #[cfg(any(test, debug_assertions))]
             Self::CandidateLimitExceeded { .. } => planning_failure(
@@ -209,7 +221,7 @@ impl RoutePlanningFailure {
             Self::ConfigUnstable => planning_failure(
                 FailureClass::ConfigUnstable,
                 FailureTarget::Request,
-                RetryDisposition::TryDifferentFailureDomain,
+                RetryDisposition::StopRequest,
             ),
             Self::DeadlineExceeded => planning_failure(
                 FailureClass::Deadline,
@@ -228,6 +240,8 @@ impl RoutePlanningFailure {
 
     pub(crate) fn stable_code(&self) -> &'static str {
         match self {
+            Self::NoAvailableKey => "no_available_key",
+            Self::CapabilityMismatch => "upstream_capability_mismatch",
             Self::HealthUnavailable => "route_health_unavailable",
             Self::CapacityExhausted => "route_capacity_exhausted",
             #[cfg(any(test, debug_assertions))]
@@ -248,6 +262,32 @@ impl RoutePlanningFailure {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::request_finalization::failure::{
+        FailureClass, FailureTarget, PublicErrorCode, RetryDisposition,
+    };
+
+    #[test]
+    fn no_available_key_has_a_typed_terminal_public_contract() {
+        let failure = RoutePlanningFailure::NoAvailableKey.into_canonical();
+
+        assert_eq!(failure.class, FailureClass::NoAvailableKey);
+        assert_eq!(failure.target, FailureTarget::Request);
+        assert_eq!(failure.retry, RetryDisposition::StopRequest);
+        assert_eq!(failure.public.code, PublicErrorCode::NoAvailableKey);
+        assert_eq!(
+            failure.public.http_status,
+            http::StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(failure.public.message, "no available key");
+    }
+
+    #[test]
+    fn capability_mismatch_is_not_collapsed_into_no_available_key() {
+        let failure = RoutePlanningFailure::CapabilityMismatch.into_canonical();
+
+        assert_eq!(failure.class, FailureClass::CapabilityMismatch);
+        assert_eq!(failure.public.code, PublicErrorCode::CapabilityMismatch);
+    }
 
     #[test]
     fn classifier_treats_single_timeout_as_observe() {

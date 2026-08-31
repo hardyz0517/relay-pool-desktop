@@ -42,7 +42,7 @@ async fn lifecycle_concurrent_no_candidate_failures_return_to_zero_and_log_once_
         let response = response.expect("send request");
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         let body: serde_json::Value = response.json().await.expect("error json");
-        assert_eq!(body["error"]["code"], "route_no_candidate");
+        assert_eq!(body["error"]["code"], "no_available_key");
     }
 
     wait_request_logs_with_status(&fixture, 32, "failed").await;

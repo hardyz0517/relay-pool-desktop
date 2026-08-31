@@ -10,7 +10,6 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     application::health_protection::HealthProtectionStatus,
-    application::routing_engine::failure_domains::ProviderCapacityDomain,
     models::routing::StationKeyHealth,
     persistence::stores::routing_health_verdict_store::{
         DurableHealthVerdict, ScopedHealthVerdictRow,
@@ -46,6 +45,13 @@ pub(crate) enum ProtectionReadModelStatus {
     Unavailable,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ProtectionDiagnosticReason {
+    CapacityExhausted,
+    CapacityStateUnavailable,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ProtectionStatusEntry {
@@ -62,6 +68,7 @@ pub(crate) struct ProtectionStatusEntry {
     pub(crate) cooldown_until_ms: Option<i64>,
     pub(crate) cooldown_remaining_ms: Option<i64>,
     pub(crate) recent_failure_code: Option<String>,
+    pub(crate) diagnostic_reason: Option<ProtectionDiagnosticReason>,
     pub(crate) updated_at_ms: Option<i64>,
     pub(crate) detail_available: bool,
 }
@@ -72,46 +79,10 @@ pub(crate) struct RoutingProtectionStatus {
     pub(crate) status_version: &'static str,
     pub(crate) generated_at_ms: i64,
     pub(crate) entries: Vec<ProtectionStatusEntry>,
-    /// Aggregated, low-sensitivity Provider/capacity-domain diagnostics.
-    ///
-    /// This is projected together with `entries` so callers do not need to
-    /// infer health by joining independent read models in the UI. The vector
-    /// is omitted when no candidate identity is available for the query.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) failure_domains: Vec<RoutingFailureDomainDiagnostic>,
     pub(crate) read_model_status: ProtectionReadModelStatus,
     /// Effective proxy timeout facts. These are read-only runtime facts and
     /// intentionally do not belong to the editable routing policy document.
     pub(crate) timeouts: Option<ProxyTimeoutFacts>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct RoutingFailureDomainDiagnostic {
-    /// Present only when a concrete model and trusted identity resolved to a
-    /// canonical capacity-domain commitment. It is a digest, never a URL or
-    /// credential/account identifier.
-    pub(crate) commitment: Option<String>,
-    pub(crate) resolution: String,
-    pub(crate) provider_family: Option<String>,
-    pub(crate) deployment_identity: Option<String>,
-    pub(crate) region_identity: Option<String>,
-    pub(crate) revision: Option<i64>,
-    pub(crate) candidate_count: u32,
-    pub(crate) schedulable_candidate_count: u32,
-    pub(crate) status: ProtectionState,
-    pub(crate) persistence_kind: Option<ProtectionPersistenceKind>,
-    pub(crate) recent_failure_code: Option<String>,
-    pub(crate) explanation_key: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct FailureDomainCandidateFact {
-    pub(crate) provider_family: Option<String>,
-    pub(crate) deployment_identity: Option<String>,
-    pub(crate) region_identity: Option<String>,
-    pub(crate) revision: Option<i64>,
-    pub(crate) schedulable: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -139,7 +110,7 @@ pub(crate) struct CapacityProtectionFact {
 /// Projects the currently available protection inputs into one public read
 /// model. The projection has no side effects and never writes health state.
 ///
-/// Production callers must use `project_routing_protection_status_with_reducer`
+/// Production callers use `project_routing_protection_status_with_reducer`
 /// so reducer facts and runtime capacity facts share one projector. This
 /// no-reducer convenience is retained only for unit fixtures.
 #[cfg(test)]
@@ -160,7 +131,6 @@ pub(crate) fn project_routing_protection_status(
     )
 }
 
-#[cfg(test)]
 pub(crate) fn project_routing_protection_status_with_reducer(
     generated_at_ms: i64,
     durable: &[ScopedHealthVerdictRow],
@@ -168,28 +138,6 @@ pub(crate) fn project_routing_protection_status_with_reducer(
     capacity: &[CapacityProtectionFact],
     runtime_capacity_available: bool,
     reducer_statuses: &[HealthProtectionStatus],
-) -> RoutingProtectionStatus {
-    project_routing_protection_status_with_reducer_and_domains(
-        generated_at_ms,
-        durable,
-        legacy,
-        capacity,
-        runtime_capacity_available,
-        reducer_statuses,
-        &[],
-        None,
-    )
-}
-
-pub(crate) fn project_routing_protection_status_with_reducer_and_domains(
-    generated_at_ms: i64,
-    durable: &[ScopedHealthVerdictRow],
-    legacy: &[StationKeyHealth],
-    capacity: &[CapacityProtectionFact],
-    runtime_capacity_available: bool,
-    reducer_statuses: &[HealthProtectionStatus],
-    domain_facts: &[FailureDomainCandidateFact],
-    requested_model: Option<&str>,
 ) -> RoutingProtectionStatus {
     let mut entries = Vec::new();
 
@@ -231,6 +179,7 @@ pub(crate) fn project_routing_protection_status_with_reducer_and_domains(
             cooldown_until_ms,
             cooldown_remaining_ms,
             recent_failure_code,
+            diagnostic_reason: None,
             updated_at_ms: reducer_status
                 .map(|status| status.updated_at_ms)
                 .or_else(|| non_negative(row.updated_at_ms)),
@@ -245,6 +194,8 @@ pub(crate) fn project_routing_protection_status_with_reducer_and_domains(
     for status in reducer_statuses.iter().filter(|status| {
         status.persistence_kind
             == crate::application::health_protection::HealthProtectionPersistenceKind::Durable
+            && status.scope.kind
+                != crate::application::health_protection::HealthProtectionScopeKind::CapacityDomain
     }) {
         if durable
             .iter()
@@ -264,6 +215,7 @@ pub(crate) fn project_routing_protection_status_with_reducer_and_domains(
             recent_failure_code: status
                 .recent_failure_code
                 .map(|code| bounded_code(code.as_str(), "durable_failure")),
+            diagnostic_reason: None,
             updated_at_ms: non_negative(status.updated_at_ms),
             detail_available: status.detail_available,
         });
@@ -301,6 +253,7 @@ pub(crate) fn project_routing_protection_status_with_reducer_and_domains(
                 .as_deref()
                 .filter(|summary| !summary.trim().is_empty())
                 .map(|_| "legacy_failure".to_string()),
+            diagnostic_reason: None,
             updated_at_ms: health
                 .updated_at
                 .parse::<i64>()
@@ -317,13 +270,14 @@ pub(crate) fn project_routing_protection_status_with_reducer_and_domains(
     } else {
         entries.push(ProtectionStatusEntry {
             scope: "runtime_capacity".to_string(),
-            scope_kind: Some("capacity_domain".to_string()),
+            scope_kind: Some("local_capacity".to_string()),
             state: ProtectionState::Unavailable,
             explanation_key: "routing.protection.unavailable".to_string(),
             persistence_kind: Some(ProtectionPersistenceKind::RuntimeCapacity),
             cooldown_until_ms: None,
             cooldown_remaining_ms: None,
             recent_failure_code: None,
+            diagnostic_reason: Some(ProtectionDiagnosticReason::CapacityStateUnavailable),
             updated_at_ms: None,
             detail_available: false,
         });
@@ -346,176 +300,18 @@ pub(crate) fn project_routing_protection_status_with_reducer_and_domains(
             cooldown_until_ms: None,
             cooldown_remaining_ms: None,
             recent_failure_code: None,
+            diagnostic_reason: None,
             updated_at_ms: Some(generated_at_ms),
             detail_available: true,
         });
     }
 
-    let failure_domains =
-        project_failure_domain_diagnostics(domain_facts, requested_model, &entries);
-
     RoutingProtectionStatus {
         status_version: ROUTING_PROTECTION_STATUS_VERSION,
         generated_at_ms,
         entries,
-        failure_domains,
         read_model_status: ProtectionReadModelStatus::Available,
         timeouts: None,
-    }
-}
-
-/// Aggregate candidate identity facts by the same canonical capacity-domain
-/// commitment used by planner admission. Unresolved identities remain visible
-/// with a bounded explanation, but never get a guessed commitment or health
-/// status. This keeps the diagnostics useful while preserving fail-closed
-/// routing semantics.
-fn project_failure_domain_diagnostics(
-    facts: &[FailureDomainCandidateFact],
-    requested_model: Option<&str>,
-    entries: &[ProtectionStatusEntry],
-) -> Vec<RoutingFailureDomainDiagnostic> {
-    #[derive(Debug, Clone)]
-    struct Aggregate {
-        commitment: Option<String>,
-        resolution: String,
-        provider_family: Option<String>,
-        deployment_identity: Option<String>,
-        region_identity: Option<String>,
-        revision: Option<i64>,
-        candidate_count: u32,
-        schedulable_candidate_count: u32,
-    }
-
-    let mut aggregates = std::collections::BTreeMap::<String, Aggregate>::new();
-    for fact in facts {
-        let provider = fact
-            .provider_family
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(bounded_identity);
-        let deployment = fact
-            .deployment_identity
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(bounded_identity);
-        let region = fact
-            .region_identity
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(bounded_identity);
-        let resolution = if provider.is_none() {
-            "not_configured"
-        } else if requested_model.is_none() {
-            "model_required"
-        } else if ProviderCapacityDomain::from_trusted_identity(
-            provider.as_deref().unwrap_or_default(),
-            requested_model.unwrap_or_default(),
-            deployment.as_deref(),
-            region.as_deref(),
-        )
-        .is_none()
-        {
-            "invalid_identity"
-        } else {
-            "resolved"
-        };
-        let commitment = if resolution == "resolved" {
-            ProviderCapacityDomain::from_trusted_identity(
-                provider.as_deref().unwrap_or_default(),
-                requested_model.unwrap_or_default(),
-                deployment.as_deref(),
-                region.as_deref(),
-            )
-            .map(|domain| {
-                let commitment = domain.commitment();
-                format!("v{}:{}", commitment.schema_version, commitment.digest_hex)
-            })
-        } else {
-            None
-        };
-        let key = commitment.clone().unwrap_or_else(|| {
-            format!(
-                "unresolved:{resolution}:{}:{}:{}",
-                provider.as_deref().unwrap_or("-").to_ascii_lowercase(),
-                deployment.as_deref().unwrap_or("-").to_ascii_lowercase(),
-                region.as_deref().unwrap_or("-").to_ascii_lowercase()
-            )
-        });
-        let aggregate = aggregates.entry(key).or_insert_with(|| Aggregate {
-            commitment,
-            resolution: resolution.to_string(),
-            provider_family: provider,
-            deployment_identity: deployment,
-            region_identity: region,
-            revision: fact.revision,
-            candidate_count: 0,
-            schedulable_candidate_count: 0,
-        });
-        aggregate.candidate_count = aggregate.candidate_count.saturating_add(1);
-        if fact.schedulable {
-            aggregate.schedulable_candidate_count =
-                aggregate.schedulable_candidate_count.saturating_add(1);
-        }
-        if aggregate.revision.is_none() {
-            aggregate.revision = fact.revision;
-        }
-    }
-
-    aggregates
-        .into_values()
-        .map(|aggregate| {
-            let protection = aggregate
-                .commitment
-                .as_deref()
-                .and_then(|commitment| entries.iter().find(|entry| entry.scope == commitment));
-            let (status, persistence_kind, recent_failure_code, explanation_key) =
-                if let Some(entry) = protection {
-                    (
-                        entry.state,
-                        entry.persistence_kind,
-                        entry.recent_failure_code.clone(),
-                        entry.explanation_key.clone(),
-                    )
-                } else {
-                    (
-                        ProtectionState::NoProtection,
-                        None,
-                        None,
-                        format!("routing.failure_domain.{}", aggregate.resolution),
-                    )
-                };
-            RoutingFailureDomainDiagnostic {
-                commitment: aggregate.commitment,
-                resolution: aggregate.resolution,
-                provider_family: aggregate.provider_family,
-                deployment_identity: aggregate.deployment_identity,
-                region_identity: aggregate.region_identity,
-                revision: aggregate.revision,
-                candidate_count: aggregate.candidate_count,
-                schedulable_candidate_count: aggregate.schedulable_candidate_count,
-                status,
-                persistence_kind,
-                recent_failure_code,
-                explanation_key,
-            }
-        })
-        .collect()
-}
-
-fn bounded_identity(value: &str) -> String {
-    let value = value.trim();
-    if value.len() <= 128
-        && !value.is_empty()
-        && value.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':' | b'/' | b' ')
-        })
-    {
-        value.to_string()
-    } else {
-        format!("identity:v1:{}", digest_hex(value.as_bytes()))
     }
 }
 
@@ -583,9 +379,18 @@ fn capacity_entry(fact: &CapacityProtectionFact, generated_at_ms: i64) -> Protec
         "half_open" | "half-open" => (ProtectionState::HalfOpen, true),
         _ => (ProtectionState::Unavailable, false),
     };
+    let diagnostic_reason = match normalized_state.as_str() {
+        "open" | "exhausted" | "capacity_exhausted" => {
+            Some(ProtectionDiagnosticReason::CapacityExhausted)
+        }
+        "unavailable" | "state_unavailable" | "capacity_state_unavailable" => {
+            Some(ProtectionDiagnosticReason::CapacityStateUnavailable)
+        }
+        _ => None,
+    };
     ProtectionStatusEntry {
         scope: bounded_scope(&fact.scope, "capacity"),
-        scope_kind: Some("capacity_domain".to_string()),
+        scope_kind: Some("local_capacity".to_string()),
         state,
         explanation_key: match state {
             ProtectionState::Open => "routing.protection.open",
@@ -600,6 +405,7 @@ fn capacity_entry(fact: &CapacityProtectionFact, generated_at_ms: i64) -> Protec
             .recent_failure_code
             .as_deref()
             .map(|code| bounded_code(code, "capacity_failure")),
+        diagnostic_reason,
         updated_at_ms: fact.updated_at_ms.filter(|value| *value >= 0),
         detail_available,
     }
@@ -951,140 +757,35 @@ mod tests {
     }
 
     #[test]
-    fn failure_domain_diagnostics_aggregate_candidates_and_join_protection() {
-        let domain = ProviderCapacityDomain::from_trusted_identity(
-            "OpenAI",
-            "gpt-test",
-            Some("primary"),
-            Some("us"),
-        )
-        .expect("valid domain");
-        let commitment = domain.commitment();
-        let commitment = format!("v{}:{}", commitment.schema_version, commitment.digest_hex);
-        let status = project_routing_protection_status_with_reducer_and_domains(
+    fn local_capacity_diagnostics_distinguish_exhaustion_from_state_unavailable() {
+        let exhausted = project_routing_protection_status_with_reducer(
             10,
             &[],
             &[],
             &[CapacityProtectionFact {
-                scope: commitment.clone(),
-                state: "open".to_string(),
+                scope: "key-capacity".to_string(),
+                state: "capacity_exhausted".to_string(),
                 cooldown_until_ms: None,
-                recent_failure_code: Some("capacity_exhausted".to_string()),
+                recent_failure_code: None,
                 updated_at_ms: Some(10),
             }],
             true,
             &[],
-            &[
-                FailureDomainCandidateFact {
-                    provider_family: Some("OpenAI".to_string()),
-                    deployment_identity: Some("primary".to_string()),
-                    region_identity: Some("us".to_string()),
-                    revision: Some(3),
-                    schedulable: true,
-                },
-                FailureDomainCandidateFact {
-                    provider_family: Some(" openai ".to_string()),
-                    deployment_identity: Some("PRIMARY".to_string()),
-                    region_identity: Some("US".to_string()),
-                    revision: Some(3),
-                    schedulable: false,
-                },
-            ],
-            Some("gpt-test"),
         );
-
-        assert_eq!(status.failure_domains.len(), 1);
-        let diagnostic = &status.failure_domains[0];
-        assert_eq!(diagnostic.commitment.as_deref(), Some(commitment.as_str()));
-        assert_eq!(diagnostic.resolution, "resolved");
-        assert_eq!(diagnostic.candidate_count, 2);
-        assert_eq!(diagnostic.schedulable_candidate_count, 1);
-        assert_eq!(diagnostic.status, ProtectionState::Open);
         assert_eq!(
-            diagnostic.recent_failure_code.as_deref(),
-            Some("capacity_exhausted")
+            exhausted.entries[0].diagnostic_reason,
+            Some(ProtectionDiagnosticReason::CapacityExhausted)
         );
-        assert_eq!(diagnostic.explanation_key, "routing.protection.open");
-    }
-
-    #[test]
-    fn unresolved_domain_diagnostics_are_visible_without_guessing_commitment() {
-        let status = project_routing_protection_status_with_reducer_and_domains(
-            10,
-            &[],
-            &[],
-            &[],
-            true,
-            &[],
-            &[
-                FailureDomainCandidateFact {
-                    provider_family: Some("OpenAI".to_string()),
-                    deployment_identity: None,
-                    region_identity: None,
-                    revision: Some(1),
-                    schedulable: true,
-                },
-                FailureDomainCandidateFact {
-                    provider_family: None,
-                    deployment_identity: None,
-                    region_identity: None,
-                    revision: None,
-                    schedulable: false,
-                },
-            ],
-            None,
-        );
-
-        assert_eq!(status.failure_domains.len(), 2);
-        let model_required = status
-            .failure_domains
-            .iter()
-            .find(|domain| domain.resolution == "model_required")
-            .expect("model-required domain");
-        assert!(model_required.commitment.is_none());
-        assert_eq!(model_required.candidate_count, 1);
         assert_eq!(
-            model_required.explanation_key,
-            "routing.failure_domain.model_required"
+            exhausted.entries[0].scope_kind.as_deref(),
+            Some("local_capacity")
         );
-        let not_configured = status
-            .failure_domains
-            .iter()
-            .find(|domain| domain.resolution == "not_configured")
-            .expect("not-configured domain");
-        assert_eq!(
-            not_configured.explanation_key,
-            "routing.failure_domain.not_configured"
-        );
-        assert!(status
-            .failure_domains
-            .iter()
-            .all(|domain| domain.commitment.is_none()));
-    }
 
-    #[test]
-    fn domain_diagnostic_serialization_is_bounded_and_secret_free() {
-        let status = project_routing_protection_status_with_reducer_and_domains(
-            10,
-            &[],
-            &[],
-            &[],
-            true,
-            &[],
-            &[FailureDomainCandidateFact {
-                provider_family: Some("openai".to_string()),
-                deployment_identity: Some("primary".to_string()),
-                region_identity: Some("us".to_string()),
-                revision: Some(1),
-                schedulable: true,
-            }],
-            Some("gpt-test"),
+        let unavailable =
+            project_routing_protection_status_with_reducer(10, &[], &[], &[], false, &[]);
+        assert_eq!(
+            unavailable.entries[0].diagnostic_reason,
+            Some(ProtectionDiagnosticReason::CapacityStateUnavailable)
         );
-        let serialized = serde_json::to_string(&status).expect("serialize status");
-        assert!(serialized.contains("failureDomains"));
-        assert!(serialized.contains("candidateCount"));
-        assert!(!serialized.contains("api_key"));
-        assert!(!serialized.contains("Authorization"));
-        assert!(!serialized.contains("https://"));
     }
 }

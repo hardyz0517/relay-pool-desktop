@@ -27,7 +27,7 @@ async fn v2_soak_returns_all_resource_counters_to_zero() {
             .expect("send soak request");
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         let body: serde_json::Value = response.json().await.expect("error json");
-        assert_eq!(body["error"]["code"], "route_no_candidate");
+        assert_eq!(body["error"]["code"], "no_available_key");
     }
 
     wait_for_quiescence(&runtime, started.port).await;

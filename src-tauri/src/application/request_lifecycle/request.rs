@@ -86,6 +86,17 @@ pub(crate) struct RequestStartRecord {
     pub(crate) context: RequestContextSnapshot,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RequestRouteSelectionRecord {
+    pub(crate) request_id: String,
+    pub(crate) attempt_ordinal: u16,
+    pub(crate) station_key_id: String,
+    pub(crate) station_id: String,
+    pub(crate) route_policy: String,
+    pub(crate) route_reason: String,
+    pub(crate) selected_at_ms: i64,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct RequestLogAnnotations {
     pub model: Option<String>,

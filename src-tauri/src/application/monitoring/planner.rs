@@ -37,6 +37,7 @@ pub(crate) struct MonitorPlanningSnapshot {
 pub(crate) struct TargetCapabilitySnapshot {
     pub(crate) station_id: String,
     pub(crate) station_key_id: String,
+    pub(crate) station_key_lifecycle_revision: u64,
     pub(crate) endpoint_revision: i64,
     pub(crate) provider_protocol: Option<ProtocolKind>,
     pub(crate) endpoint_protocol: Option<ProtocolKind>,
@@ -59,6 +60,7 @@ pub(crate) struct ProbePlan {
 pub(crate) struct ProbeTargetPlan {
     pub(crate) station_id: String,
     pub(crate) station_key_id: String,
+    pub(crate) station_key_lifecycle_revision: u64,
     pub(crate) endpoint_revision: i64,
     pub(crate) protocol_kind: Option<ProtocolKind>,
     pub(crate) skip_failure_kind: Option<FailureKind>,
@@ -149,12 +151,17 @@ impl ProbePlanner {
             };
 
             plan_hash_parts.push(format!(
-                "{}:{}:{:?}:{:?}",
-                target.station_id, target.station_key_id, target.endpoint_revision, resolution
+                "{}:{}:{}:{:?}:{:?}",
+                target.station_id,
+                target.station_key_id,
+                target.station_key_lifecycle_revision,
+                target.endpoint_revision,
+                resolution
             ));
             target_plans.push(ProbeTargetPlan {
                 station_id: target.station_id.clone(),
                 station_key_id: target.station_key_id.clone(),
+                station_key_lifecycle_revision: target.station_key_lifecycle_revision,
                 endpoint_revision: target.endpoint_revision,
                 protocol_kind: resolution,
                 skip_failure_kind,

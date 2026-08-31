@@ -1,3 +1,11 @@
+#![cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=legacy-capacity-domain-reference; owner=application/routing_engine; remove_when=capacity-domain research is intentionally discarded"
+    )
+)]
+
 use sha2::{Digest, Sha256};
 
 const CAPACITY_DOMAIN_SCHEMA_VERSION: u8 = 1;

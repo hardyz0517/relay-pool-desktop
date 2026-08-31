@@ -387,13 +387,23 @@ fn production_constructor_has_deleted_old_request_coupled_finalizer() {
         "Task 28 removes the old request-coupled stream constructor"
     );
 
-    let dual_constructor = function_body(
+    let compatibility_constructor = function_body(
         &source,
         "pub(crate) fn dual_terminal_lifecycle_finalizing_stream_with_idle_timeout_and_diagnostic_memory",
     );
     assert!(
-        dual_constructor.contains("dual_terminal_finalizing_stream("),
-        "the production constructor must delegate into the shared dual-terminal finalizer"
+        compatibility_constructor.contains(
+            "dual_terminal_lifecycle_finalizing_stream_with_idle_timeout_and_diagnostic_memory_and_capacity_lease("
+        ),
+        "the compatibility constructor must delegate into the capacity-aware production constructor"
+    );
+    let production_constructor = function_body(
+        &source,
+        "pub(crate) fn dual_terminal_lifecycle_finalizing_stream_with_idle_timeout_and_diagnostic_memory_and_capacity_lease",
+    );
+    assert!(
+        production_constructor.contains("dual_terminal_finalizing_stream("),
+        "the capacity-aware production constructor must delegate into the shared dual-terminal finalizer"
     );
     let delegate = function_body(&source, "fn dual_terminal_finalizing_stream");
     assert!(delegate.contains("FinalizationTarget::DualTerminal"));
@@ -436,6 +446,7 @@ fn attempt_context(context: &RequestContextSnapshot) -> AttemptContext {
         group_binding_id: None,
         group_revision: None,
         resolved_upstream_model: None,
+        comparability_key: None,
         model_alias_revision: 1,
         started_at_ms: context.received_at_ms,
         probe_scope: None,

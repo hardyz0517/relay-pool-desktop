@@ -600,7 +600,7 @@ async fn reader_does_not_return_secret_raw_json_or_full_endpoint_url() {
 }
 
 #[tokio::test]
-async fn candidate_limit_is_a_deterministic_sql_bound() {
+async fn candidate_source_remains_complete_before_request_capability_filtering() {
     let pool = test_pool().await;
     for index in 0..3 {
         insert_candidate(&pool, index).await;
@@ -614,20 +614,29 @@ async fn candidate_limit_is_a_deterministic_sql_bound() {
             &OperationalFactReadOptions::for_request_model("gpt-4.1").with_candidate_limit(2),
         )
         .await
-        .expect("candidate rows are bounded");
+        .expect("configured candidate rows load");
 
-    assert_eq!(rows.candidates.len(), 2);
+    // The source must not apply the routing cap. Model/capability filtering is
+    // request-specific and belongs to PlanningSnapshotBuilder.
+    assert_eq!(rows.candidates.len(), 3);
     assert_eq!(rows.candidates[0].station_key_id, "key-0");
     assert_eq!(rows.candidates[1].station_key_id, "key-1");
+    assert_eq!(rows.candidates[2].station_key_id, "key-2");
+
+    let bundle = assemble_operational_fact_bundle(
+        rows,
+        &OperationalFactReadOptions::for_request_model("gpt-4.1").with_candidate_limit(2),
+    )
+    .expect("fact assembly must remain complete before capability filtering");
+    assert_eq!(bundle.candidates().len(), 3);
 }
 
 #[tokio::test]
-async fn credentialless_keys_do_not_consume_candidate_limit() {
+async fn credentialless_keys_remain_visible_for_terminal_candidate_counts() {
     let pool = test_pool().await;
     insert_candidate(&pool, 1).await;
-    // Put a credentialless key ahead of the usable key in the deterministic
-    // ordering. The source bound must be applied after the executable-key
-    // predicate, otherwise the usable key would be starved.
+    // A credentialless configured key must remain visible so planning can
+    // distinguish "configured but unavailable" from "no configured key".
     sqlx::query(
         "INSERT INTO station_keys
          (id, station_id, api_key, api_key_secret_id, enabled, priority, routing_order, created_at, updated_at)
@@ -652,11 +661,13 @@ async fn credentialless_keys_do_not_consume_candidate_limit() {
             &OperationalFactReadOptions::for_request_model("gpt-4.1").with_candidate_limit(1),
         )
         .await
-        .expect("candidate rows are bounded");
+        .expect("configured candidate rows load");
 
-    assert_eq!(rows.candidates.len(), 1);
-    assert_eq!(rows.candidates[0].station_key_id, "key-1");
-    assert!(rows.candidates[0].credential_available);
+    assert_eq!(rows.candidates.len(), 2);
+    assert_eq!(rows.candidates[0].station_key_id, "key-empty");
+    assert!(!rows.candidates[0].credential_available);
+    assert_eq!(rows.candidates[1].station_key_id, "key-1");
+    assert!(rows.candidates[1].credential_available);
 }
 
 #[tokio::test]

@@ -156,6 +156,26 @@ pub(crate) fn execute_startup_upgrade_plan(
                     })?,
                 );
             }
+            StartupUpgradeStep::StageRoutingPolicyV3 => {
+                let runtime = runtime.as_ref().ok_or_else(|| {
+                    StartupUpgradeError::new(
+                        RecoveryReason::InternalUpgradeError,
+                        "startup plan tried to stage routing policy before opening runtime",
+                    )
+                })?;
+                block_on(
+                    crate::persistence::stores::routing_policy_v3_stage_upgrade::stage_all(
+                        &runtime.handle(),
+                        Utc::now().timestamp_millis().max(0),
+                    ),
+                )
+                .map_err(|error| {
+                    StartupUpgradeError::new(
+                        RecoveryReason::RoutingPolicyMigrationInvalid,
+                        format!("routing policy v3 staging failed: {error}"),
+                    )
+                })?;
+            }
             StartupUpgradeStep::VerifyWritableRuntime => {
                 let runtime = runtime.as_ref().ok_or_else(|| {
                     StartupUpgradeError::new(
@@ -214,6 +234,7 @@ fn validate_startup_upgrade_steps(steps: &[StartupUpgradeStep]) -> Result<(), St
     }
 
     let mut opened_runtime = false;
+    let mut routing_policy_staged = false;
     let mut verified_writable = false;
     let mut verified_secrets = false;
     let mut alerting_upgrade_seen = false;
@@ -270,10 +291,18 @@ fn validate_startup_upgrade_steps(steps: &[StartupUpgradeStep]) -> Result<(), St
                 }
                 opened_runtime = true;
             }
-            StartupUpgradeStep::VerifyWritableRuntime => {
-                if !opened_runtime {
+            StartupUpgradeStep::StageRoutingPolicyV3 => {
+                if !opened_runtime || routing_policy_staged || verified_writable {
                     return Err(invalid_step_contract(
-                        "startup upgrade plan tried to verify runtime before opening it",
+                        "routing policy staging must run once after runtime open and before verification",
+                    ));
+                }
+                routing_policy_staged = true;
+            }
+            StartupUpgradeStep::VerifyWritableRuntime => {
+                if !opened_runtime || !routing_policy_staged {
+                    return Err(invalid_step_contract(
+                        "startup upgrade plan tried to verify runtime before routing policy staging",
                     ));
                 }
                 verified_writable = true;
@@ -294,7 +323,7 @@ fn validate_startup_upgrade_steps(steps: &[StartupUpgradeStep]) -> Result<(), St
             "startup upgrade plan completed without opening a runtime",
         ));
     }
-    if !verified_writable || !verified_secrets {
+    if !routing_policy_staged || !verified_writable || !verified_secrets {
         return Err(invalid_step_contract(
             "startup upgrade plan completed without final writable and secret verification",
         ));
@@ -369,6 +398,7 @@ mod tests {
             StartupUpgradeStep::EnsureAlertingUpgrade,
             StartupUpgradeStep::EnsureLegacyChangeEventsRemoval,
             StartupUpgradeStep::OpenRuntime,
+            StartupUpgradeStep::StageRoutingPolicyV3,
             StartupUpgradeStep::VerifyWritableRuntime,
             StartupUpgradeStep::VerifySecrets,
         ])
@@ -402,6 +432,7 @@ mod tests {
     fn startup_upgrade_executor_rejects_migrations_after_open_runtime() {
         assert_invalid_contract(&[
             StartupUpgradeStep::OpenRuntime,
+            StartupUpgradeStep::StageRoutingPolicyV3,
             StartupUpgradeStep::VerifyWritableRuntime,
             StartupUpgradeStep::EnsureSchema { target_schema: 29 },
             StartupUpgradeStep::VerifySecrets,

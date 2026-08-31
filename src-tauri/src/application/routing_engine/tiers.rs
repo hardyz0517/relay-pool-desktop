@@ -1,7 +1,8 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum AvailabilityTier {
     Primary,
-    Backup,
+    ConfiguredBackup,
+    DepletedEmergency,
 }
 
 pub(crate) fn classify_tier(
@@ -14,7 +15,7 @@ pub(crate) fn classify_tier(
         return None;
     }
     if depleted {
-        return allow_depleted.then_some(AvailabilityTier::Backup);
+        return allow_depleted.then_some(AvailabilityTier::DepletedEmergency);
     } else {
         Some(AvailabilityTier::Primary)
     }
@@ -25,11 +26,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn depleted_candidates_are_backup_only_when_policy_allows_them() {
+    fn depleted_candidates_are_emergency_only_when_policy_allows_them() {
         assert_eq!(classify_tier(true, true, true, false), None);
         assert_eq!(
             classify_tier(true, true, true, true),
-            Some(AvailabilityTier::Backup)
+            Some(AvailabilityTier::DepletedEmergency)
         );
     }
 }

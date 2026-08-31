@@ -64,6 +64,7 @@ pub enum ProxyFailureCode {
     LocalAuthMissing,
     LocalAuthInvalid,
     RouteNoCandidate,
+    RouteNoAvailableKey,
     RouteConfigRequired,
     RoutePolicyRejected,
     RouteEconomicsUnavailable,
@@ -118,6 +119,7 @@ impl ProxyFailureCode {
             Self::LocalAuthMissing => "local_auth_missing",
             Self::LocalAuthInvalid => "local_auth_invalid",
             Self::RouteNoCandidate => "route_no_candidate",
+            Self::RouteNoAvailableKey => "no_available_key",
             Self::RouteConfigRequired => "routing_configuration_required",
             Self::RoutePolicyRejected => "route_policy_rejected",
             Self::RouteEconomicsUnavailable => "route_economics_unavailable",
@@ -332,6 +334,7 @@ fn canonical_classification(class: FailureClass) -> &'static str {
         FailureClass::Timeout | FailureClass::Deadline => "timeout",
         FailureClass::MalformedResponse | FailureClass::StreamInterrupted => "protocol",
         FailureClass::DownstreamDrop => "downstream",
+        FailureClass::NoAvailableKey => "local",
         FailureClass::Upstream5xx
         | FailureClass::UpstreamOverloaded
         | FailureClass::RelayServiceUnavailable => "server_error",
@@ -367,6 +370,7 @@ fn evidence_source_label(class: FailureClass) -> &'static str {
         FailureClass::Timeout | FailureClass::Deadline => "timeout",
         FailureClass::StreamInterrupted | FailureClass::MalformedResponse => "sse_event",
         FailureClass::DownstreamDrop => "downstream",
+        FailureClass::NoAvailableKey => "local",
         FailureClass::ConfigRequired
         | FailureClass::PolicyRejected
         | FailureClass::EconomicsUnavailable
@@ -419,10 +423,8 @@ fn billing_label(billing: BillingState) -> &'static str {
 
 fn retry_label(retry: RetryDisposition) -> &'static str {
     match retry {
-        RetryDisposition::RetrySameTarget => "same_target_exhausted",
-        RetryDisposition::TryDifferentFailureDomain
-        | RetryDisposition::WaitThenReplan
-        | RetryDisposition::StopRequest => "fail_closed",
+        RetryDisposition::TryNextKey => "try_next_key",
+        RetryDisposition::StopRequest => "fail_closed",
     }
 }
 
@@ -461,6 +463,7 @@ fn proxy_failure_code_for_public_error(code: PublicErrorCode) -> ProxyFailureCod
         PublicErrorCode::MalformedResponse => ProxyFailureCode::UpstreamMalformedResponse,
         PublicErrorCode::StreamInterrupted => ProxyFailureCode::UpstreamStreamFailed,
         PublicErrorCode::DownstreamDisconnected => ProxyFailureCode::DownstreamDisconnected,
+        PublicErrorCode::NoAvailableKey => ProxyFailureCode::RouteNoAvailableKey,
         PublicErrorCode::CapacityExhausted => ProxyFailureCode::RouteCapacityExhausted,
         PublicErrorCode::CandidateLimitExceeded => ProxyFailureCode::RouteCandidateLimitExceeded,
         PublicErrorCode::FactsUnavailable => ProxyFailureCode::RouteFactsUnavailable,
@@ -489,6 +492,7 @@ fn failure_source_for_public_error(code: PublicErrorCode) -> FailureSource {
         PublicErrorCode::DownstreamDisconnected => FailureSource::Downstream,
         PublicErrorCode::InvariantViolation => FailureSource::Internal,
         PublicErrorCode::ConfigRequired
+        | PublicErrorCode::NoAvailableKey
         | PublicErrorCode::PolicyRejected
         | PublicErrorCode::EconomicsUnavailable
         | PublicErrorCode::HealthUnavailable
@@ -510,6 +514,7 @@ fn retry_class_for_public_error(code: PublicErrorCode) -> RetryClass {
         | PublicErrorCode::UpstreamUnavailable
         | PublicErrorCode::UpstreamOverloaded
         | PublicErrorCode::StreamInterrupted
+        | PublicErrorCode::NoAvailableKey
         | PublicErrorCode::CapacityExhausted
         | PublicErrorCode::EconomicsUnavailable
         | PublicErrorCode::HealthUnavailable
@@ -556,6 +561,14 @@ impl OpenAiPublicError {
 
 pub(crate) fn adapt_proxy_failure(failure: &ProxyFailure) -> OpenAiPublicError {
     let message = crate::services::secrets::mask::redact_text(&failure.public_message);
+    if failure.code == ProxyFailureCode::RouteNoAvailableKey {
+        return OpenAiPublicError {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            error_type: "service_unavailable",
+            code: "no_available_key",
+            message,
+        };
+    }
     let (status, error_type, code) = match failure.code {
         ProxyFailureCode::LocalAuthMissing | ProxyFailureCode::LocalAuthInvalid => (
             StatusCode::UNAUTHORIZED,
@@ -623,7 +636,8 @@ pub(crate) fn adapt_proxy_failure(failure: &ProxyFailure) -> OpenAiPublicError {
 mod tests {
     use super::*;
     use crate::application::request_finalization::failure::{
-        failure_from_provider_signal, CapabilityApplicabilitySet, ProviderErrorSemanticSignal,
+        failure_from_provider_signal, public_error_for_class, CapabilityApplicabilitySet,
+        FailureClass, ProviderErrorSemanticSignal,
     };
     use crate::services::proxy::error::{FailureSource, RetryClass};
 
@@ -670,6 +684,42 @@ mod tests {
             (public.error_type, public.code),
             ("authentication_error", "invalid_api_key")
         );
+    }
+
+    #[test]
+    fn no_available_key_uses_its_typed_openai_contract_without_internal_detail() {
+        let failure =
+            ProxyFailure::from_public_error(public_error_for_class(FailureClass::NoAvailableKey));
+
+        assert_eq!(failure.code, ProxyFailureCode::RouteNoAvailableKey);
+        assert_eq!(failure.http_status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(failure.internal_detail, None);
+        let public = adapt_proxy_failure(&failure);
+        assert_eq!(
+            (public.status, public.error_type, public.code),
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "service_unavailable",
+                "no_available_key"
+            )
+        );
+    }
+
+    #[test]
+    fn route_no_candidate_internal_detail_cannot_impersonate_no_available_key() {
+        let mut failure = ProxyFailure::new(
+            ProxyFailureCode::RouteNoCandidate,
+            FailureSource::Routing,
+            RetryClass::BeforeOutput,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "no available key",
+        );
+        failure.internal_detail = Some("no_available_key".to_string());
+
+        let public = adapt_proxy_failure(&failure);
+        assert_eq!(public.status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(public.error_type, "relay_pool_error");
+        assert_eq!(public.code, "route_no_candidate");
     }
 
     #[test]

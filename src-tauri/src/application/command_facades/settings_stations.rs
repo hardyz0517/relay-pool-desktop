@@ -24,6 +24,13 @@ pub(crate) struct SettingsStationsCommandFacade {
     settings: Arc<SettingsService>,
     tray_behavior: Arc<TrayBehaviorState>,
     station_assets: Arc<StationAssetsQuery>,
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=legacy-capacity-domain-command-reference; owner=application/command_facades; remove_when=capacity-domain reference endpoints are deleted"
+        )
+    )]
     station_capacity_domains: Arc<StationCapacityDomainService>,
     station_collection_coordinator: StationCollectionCoordinator,
 }
@@ -85,6 +92,13 @@ impl SettingsStationsCommandFacade {
         self.stations.reorder(station_ids).await
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=legacy-capacity-domain-command-reference; owner=application/command_facades; remove_when=capacity-domain reference endpoints are deleted"
+        )
+    )]
     pub(crate) async fn get_station_capacity_domain(
         &self,
         station_id: String,
@@ -92,6 +106,13 @@ impl SettingsStationsCommandFacade {
         self.station_capacity_domains.get(station_id).await
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=legacy-capacity-domain-command-reference; owner=application/command_facades; remove_when=capacity-domain reference endpoints are deleted"
+        )
+    )]
     pub(crate) async fn upsert_station_capacity_domain(
         &self,
         input: UpsertStationCapacityDomainInput,
@@ -99,6 +120,13 @@ impl SettingsStationsCommandFacade {
         self.station_capacity_domains.upsert(input).await
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=legacy-capacity-domain-command-reference; owner=application/command_facades; remove_when=capacity-domain reference endpoints are deleted"
+        )
+    )]
     pub(crate) async fn clear_station_capacity_domain(
         &self,
         input: ClearStationCapacityDomainInput,

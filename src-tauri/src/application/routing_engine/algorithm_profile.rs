@@ -1,35 +1,32 @@
+pub(crate) const DISPATCH_ALGORITHM_VERSION: u16 = 2;
+pub(crate) const AFFINITY_BONUS_CAP_BASIS_POINTS: u16 = 150;
+pub(crate) const AFFINITY_HYSTERESIS_MARGIN_BASIS_POINTS: u16 = 1_000;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DispatchAlgorithmProfile {
     pub(crate) version: u16,
-    pub(crate) reliability_prior_alpha: u32,
-    pub(crate) reliability_prior_beta: u32,
-    pub(crate) exploit_band_basis_points: u16,
-    pub(crate) exploration_share_basis_points: u16,
     pub(crate) latency_cap_ms: u32,
-    pub(crate) seed_domain: &'static str,
+    pub(crate) affinity_bonus_cap_basis_points: u16,
+    pub(crate) affinity_hysteresis_margin_basis_points: u16,
 }
 impl Default for DispatchAlgorithmProfile {
     fn default() -> Self {
         Self {
-            version: 1,
-            reliability_prior_alpha: 2,
-            reliability_prior_beta: 2,
-            exploit_band_basis_points: 500,
-            exploration_share_basis_points: 500,
+            version: DISPATCH_ALGORITHM_VERSION,
             latency_cap_ms: 120_000,
-            seed_domain: "relay-pool-routing/v1",
+            affinity_bonus_cap_basis_points: AFFINITY_BONUS_CAP_BASIS_POINTS,
+            affinity_hysteresis_margin_basis_points: AFFINITY_HYSTERESIS_MARGIN_BASIS_POINTS,
         }
     }
 }
 impl DispatchAlgorithmProfile {
     pub(crate) fn validate(&self) -> Result<(), &'static str> {
-        if self.version != 1
-            || self.reliability_prior_alpha == 0
-            || self.reliability_prior_beta == 0
-            || self.exploit_band_basis_points > 5_000
-            || self.exploration_share_basis_points > 2_000
+        if self.version != DISPATCH_ALGORITHM_VERSION
             || self.latency_cap_ms == 0
-            || self.seed_domain.is_empty()
+            || self.affinity_bonus_cap_basis_points == 0
+            || self.affinity_bonus_cap_basis_points > 10_000
+            || self.affinity_hysteresis_margin_basis_points == 0
+            || self.affinity_hysteresis_margin_basis_points > 10_000
         {
             return Err("invalid dispatch algorithm profile");
         }
@@ -47,6 +44,8 @@ mod tests {
     fn default_profile_is_complete() {
         let profile = DispatchAlgorithmProfile::default();
         assert!(profile.validate().is_ok());
-        assert_eq!(profile.canonical_version(), "routing-profile-v1");
+        assert_eq!(profile.canonical_version(), "routing-profile-v2");
+        assert_eq!(profile.affinity_bonus_cap_basis_points, 150);
+        assert_eq!(profile.affinity_hysteresis_margin_basis_points, 1_000);
     }
 }

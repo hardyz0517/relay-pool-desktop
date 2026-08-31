@@ -16,6 +16,8 @@ pub mod model_health;
 pub mod model_monitoring;
 #[path = "../src/models/pricing.rs"]
 pub mod model_pricing;
+#[path = "../src/models/routing_generation.rs"]
+pub mod model_routing_generation;
 #[path = "../src/models/routing_policy.rs"]
 pub mod model_routing_policy;
 #[path = "../src/persistence/stores/monitoring/executions.rs"]
@@ -34,6 +36,52 @@ pub mod routing_health_verdict_store;
 pub mod routing_observation;
 #[path = "../src/persistence/stores/routing_observation_store.rs"]
 pub mod routing_observation_store;
+pub mod routing_generation_store {
+    use sqlx::SqliteConnection;
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(crate) enum RoutingGenerationEligibility {
+        Active,
+        Next,
+    }
+
+    impl RoutingGenerationEligibility {
+        pub(crate) const fn as_str(self) -> &'static str {
+            match self {
+                Self::Active => "active",
+                Self::Next => "next",
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub(crate) struct RoutingIngestionFence {
+        pub(crate) eligibility: RoutingGenerationEligibility,
+    }
+
+    #[derive(Debug, Clone, Copy, Default)]
+    pub(crate) struct RoutingGenerationStore;
+
+    impl RoutingGenerationStore {
+        pub(crate) async fn load_ingestion_fence(
+            &self,
+            connection: &mut SqliteConnection,
+        ) -> Result<RoutingIngestionFence, crate::persistence_error::PersistenceError> {
+            let status = sqlx::query_scalar::<_, String>(
+                "SELECT status FROM routing_runtime_cutover_marker WHERE singleton_key = 1",
+            )
+            .fetch_optional(&mut *connection)
+            .await?;
+            Ok(RoutingIngestionFence {
+                eligibility: if status.as_deref() == Some("v3_active") {
+                    RoutingGenerationEligibility::Active
+                } else {
+                    RoutingGenerationEligibility::Next
+                },
+            })
+        }
+    }
+}
 #[path = "../src/persistence/stores/routing_policy_store.rs"]
 pub mod routing_policy_store;
 mod persistence_runtime {
@@ -106,6 +154,10 @@ mod persistence_runtime {
             Ok(WriteSession::from_owned(connection))
         }
 
+        pub(crate) async fn begin_read(&self) -> Result<ReadSession, sqlx::Error> {
+            self.handle.begin_read().await
+        }
+
         pub(crate) fn handle(&self) -> PersistenceHandle {
             self.handle.clone()
         }
@@ -146,6 +198,9 @@ mod models {
     }
     pub(crate) mod routing_policy {
         pub(crate) use crate::model_routing_policy::*;
+    }
+    pub(crate) mod routing_generation {
+        pub(crate) use crate::model_routing_generation::*;
     }
 }
 
@@ -218,6 +273,52 @@ mod persistence {
         pub(crate) mod routing_observation_store {
             pub(crate) use crate::routing_observation_store::*;
         }
+        pub(crate) mod routing_generation_store {
+            use sqlx::SqliteConnection;
+
+            use crate::models::routing_generation::{
+                RoutingCutoverMode, RoutingGenerationMarker, RoutingGenerationRegistrySnapshot,
+            };
+
+            #[derive(Debug, Clone, Copy, Default)]
+            pub(crate) struct RoutingGenerationStore;
+
+            impl RoutingGenerationStore {
+                pub(crate) async fn load_registry_snapshot(
+                    &self,
+                    _connection: &mut SqliteConnection,
+                ) -> Result<
+                    RoutingGenerationRegistrySnapshot,
+                    crate::persistence_error::PersistenceError,
+                > {
+                    Ok(RoutingGenerationRegistrySnapshot {
+                        marker: RoutingGenerationMarker {
+                            mode: RoutingCutoverMode::PreCutover,
+                            active_runtime_generation_id: None,
+                            fenced_runtime_generation_id: None,
+                            fence_revision: 0,
+                            updated_at_ms: 0,
+                        },
+                        active: None,
+                        fencing: None,
+                    })
+                }
+            }
+        }
+        pub(crate) mod routing_policy_v3_stage_upgrade {
+            use sqlx::SqliteConnection;
+
+            pub(crate) async fn load_effective_active_in(
+                connection: &mut SqliteConnection,
+            ) -> Result<
+                Option<crate::persistence::stores::routing_policy_store::StoredRoutingPolicy>,
+                crate::persistence_error::PersistenceError,
+            > {
+                crate::persistence::stores::routing_policy_store::RoutingPolicyStore
+                    .load(connection)
+                    .await
+            }
+        }
         pub(crate) mod routing_health_verdict_store {
             pub(crate) use crate::routing_health_verdict_store::*;
         }
@@ -234,6 +335,25 @@ mod persistence {
 }
 
 mod application {
+    // The production observation writer consults the v3 policy staging owner
+    // to decide whether the legacy error-rate bridge is enabled.  This test
+    // assembles the writer from source files instead of the full application
+    // module, so provide the same read-only pre-cutover behavior here.
+    pub(crate) mod routing_policy_v3_stage_upgrade {
+        use sqlx::SqliteConnection;
+
+        pub(crate) async fn load_effective_active_in(
+            connection: &mut SqliteConnection,
+        ) -> Result<
+            Option<crate::persistence::stores::routing_policy_store::StoredRoutingPolicy>,
+            crate::persistence_error::PersistenceError,
+        > {
+            crate::persistence::stores::routing_policy_store::RoutingPolicyStore
+                .load(connection)
+                .await
+        }
+    }
+
     pub(crate) mod health_protection {
         pub(crate) use crate::application_health_protection::*;
     }
@@ -284,6 +404,7 @@ mod application {
             pub(crate) struct ProbeTargetPlan {
                 pub(crate) station_id: String,
                 pub(crate) station_key_id: String,
+                pub(crate) station_key_lifecycle_revision: u64,
                 pub(crate) endpoint_revision: i64,
                 pub(crate) protocol_kind: Option<ProtocolKind>,
                 pub(crate) skip_failure_kind: Option<crate::model_monitoring::FailureKind>,
@@ -379,6 +500,26 @@ async fn orchestrator_buffer_commits_v2_facts_without_legacy_run_writes_and_repl
         count(&mut connection, "station_key_health_observations").await,
         1
     );
+    let routing_observation = sqlx::query(
+        "SELECT station_key_lifecycle_revision, traffic_equivalence, comparability_key
+         FROM routing_observations WHERE source = 'active_probe'",
+    )
+    .fetch_one(&mut connection)
+    .await
+    .expect("routing observation identity");
+    assert_eq!(
+        routing_observation.get::<Option<i64>, _>("station_key_lifecycle_revision"),
+        Some(1)
+    );
+    assert_eq!(
+        routing_observation.get::<String, _>("traffic_equivalence"),
+        "same_model_shape"
+    );
+    let comparability_key = routing_observation
+        .get::<Option<String>, _>("comparability_key")
+        .expect("comparable probe key");
+    assert!(comparability_key.starts_with("cmp:v1:"));
+    assert_eq!(comparability_key.len(), 71);
     assert_eq!(
         count(&mut connection, "channel_monitor_rollup_dirty_ranges").await,
         1
@@ -621,6 +762,7 @@ fn probe_plan(trigger_kind: TriggerKind) -> ProbePlan {
         target_plans: vec![ProbeTargetPlan {
             station_id: "station-1".to_string(),
             station_key_id: "key-1".to_string(),
+            station_key_lifecycle_revision: 1,
             endpoint_revision: 1,
             protocol_kind: Some(ProtocolKind::GenericOpenAi),
             skip_failure_kind: None,

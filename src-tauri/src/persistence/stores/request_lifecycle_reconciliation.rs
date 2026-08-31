@@ -1,6 +1,9 @@
 use sqlx::{Row, SqliteConnection};
 
-use crate::persistence::error::PersistenceError;
+use crate::persistence::{
+    error::PersistenceError,
+    stores::routing_attempt_store::{FinalizedRoutingAttemptSample, RoutingAttemptStore},
+};
 
 const DEFAULT_STARTUP_RECONCILIATION_BATCH_SIZE: u32 = 64;
 const MAX_STARTUP_RECONCILIATION_BATCH_SIZE: u32 = 256;
@@ -13,10 +16,11 @@ pub(crate) struct StartupReconciliationReport {
     pub(crate) decisions_marked_trace_incomplete: u64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct StartupReconciliationBatch {
     pub(crate) report: StartupReconciliationReport,
     pub(crate) has_more: bool,
+    pub(crate) routing_samples: Vec<FinalizedRoutingAttemptSample>,
 }
 
 impl StartupReconciliationReport {
@@ -77,6 +81,7 @@ pub(crate) async fn reconcile_startup_interrupted_batch(
         return Ok(StartupReconciliationBatch {
             report: StartupReconciliationReport::empty(),
             has_more: false,
+            routing_samples: Vec::new(),
         });
     }
 
@@ -85,11 +90,36 @@ pub(crate) async fn reconcile_startup_interrupted_batch(
         ..StartupReconciliationReport::empty()
     };
     let mut last_request_id = None::<String>;
+    let mut routing_samples = Vec::new();
     for request_id in request_ids {
         report.attempt_cost_gaps_inserted +=
             insert_trace_incomplete_attempt_costs(connection, &request_id, now_ms).await?;
         report.decisions_marked_trace_incomplete +=
             mark_route_decision_trace_incomplete(connection, &request_id, now_ms).await?;
+        let routing_attempt_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM routing_attempt_v3
+             WHERE source = 'real_request' AND correlation_id = ?1
+               AND candidate_admitted = 1",
+        )
+        .bind(&request_id)
+        .fetch_one(&mut *connection)
+        .await?;
+        if routing_attempt_count > 0 {
+            RoutingAttemptStore::recover_startup_interrupted(
+                connection,
+                &request_id,
+                now_ms.max(0),
+            )
+            .await?;
+            routing_samples.extend(
+                RoutingAttemptStore::finalize_request_clusters(
+                    connection,
+                    &request_id,
+                    now_ms.max(0),
+                )
+                .await?,
+            );
+        }
         let interrupted = interrupt_request_log(connection, &request_id, now_ms).await?;
         report.requests_interrupted += interrupted;
         if interrupted > 0 {
@@ -110,7 +140,11 @@ pub(crate) async fn reconcile_startup_interrupted_batch(
     )
     .await?;
 
-    Ok(StartupReconciliationBatch { report, has_more })
+    Ok(StartupReconciliationBatch {
+        report,
+        has_more,
+        routing_samples,
+    })
 }
 
 async fn insert_trace_incomplete_attempt_costs(

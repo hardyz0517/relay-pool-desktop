@@ -31,10 +31,13 @@ pub(crate) struct V2ProxyTestFixture {
     pub(crate) services: AppServices,
     runtime: PersistenceRuntime,
     _root: tempfile::TempDir,
+    _model_mapping_guard: tokio::sync::OwnedMutexGuard<()>,
 }
 
 impl V2ProxyTestFixture {
     pub(crate) async fn new() -> Self {
+        let model_mapping_guard =
+            crate::application::model_mapping::acquire_model_mapping_test_guard().await;
         let root = tempfile::tempdir().expect("tempdir");
         let default_data_dir = root.path().join("default");
         let active_data_dir = root.path().join("active");
@@ -71,6 +74,7 @@ impl V2ProxyTestFixture {
             services,
             runtime,
             _root: root,
+            _model_mapping_guard: model_mapping_guard,
         }
     }
 

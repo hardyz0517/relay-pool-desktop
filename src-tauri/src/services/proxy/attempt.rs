@@ -185,7 +185,7 @@ async fn persist_request_terminal(
     let request_ack = request.terminal.send(record).await;
     match request_ack {
         Ok(Ok(_)) => {}
-        Ok(Err(_)) => record_finalization_failure(
+        Ok(Err(_error)) => record_finalization_failure(
             "proxy.finalization.request_persistence_failed",
             correlation_id,
         ),

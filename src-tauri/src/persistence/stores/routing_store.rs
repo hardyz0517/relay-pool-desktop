@@ -34,10 +34,6 @@ pub(crate) struct OperationalExecutionTargetRefRow {
     pub(crate) station_key_id: String,
     pub(crate) station_id: String,
     pub(crate) station_type: String,
-    pub(crate) capacity_provider_family: Option<String>,
-    pub(crate) capacity_deployment_identity: Option<String>,
-    pub(crate) capacity_region_identity: Option<String>,
-    pub(crate) capacity_domain_revision: Option<i64>,
     pub(crate) group_binding_id: Option<String>,
     pub(crate) endpoint_revision: i64,
     pub(crate) credential_revision: i64,
@@ -62,6 +58,7 @@ pub(crate) struct OperationalExecutionTargetRefRow {
 pub(crate) struct OperationalMonitoringTargetSnapshotRow {
     pub(crate) station_key_id: String,
     pub(crate) station_id: String,
+    pub(crate) station_key_lifecycle_revision: u64,
     pub(crate) endpoint_revision: i64,
     pub(crate) api_base_url: String,
     pub(crate) upstream_api_format: UpstreamApiFormat,
@@ -81,10 +78,6 @@ const OPERATIONAL_EXECUTION_TARGET_REFS_QUERY_PREFIX: &str = r#"
         k.id AS station_key_id,
         k.station_id,
         s.station_type,
-        capacity_domain.provider_family AS capacity_provider_family,
-        capacity_domain.deployment_identity AS capacity_deployment_identity,
-        capacity_domain.region_identity AS capacity_region_identity,
-        capacity_domain.revision AS capacity_domain_revision,
         k.group_binding_id,
         s.endpoint_revision,
         COALESCE(key_revision.revision, 0) AS credential_revision,
@@ -122,7 +115,6 @@ const OPERATIONAL_EXECUTION_TARGET_REFS_QUERY_PREFIX: &str = r#"
     LEFT JOIN domain_revisions key_revision ON key_revision.scope = 'station_key:' || k.id
     LEFT JOIN domain_revisions account_revision ON account_revision.scope = 'station_account:' || s.id
     LEFT JOIN domain_revisions group_revision ON group_revision.scope = 'station_group:' || k.group_binding_id
-    LEFT JOIN station_capacity_domains capacity_domain ON capacity_domain.station_id = s.id
     LEFT JOIN secrets sec ON sec.id = k.api_key_secret_id
     WHERE k.id IN (
 "#;
@@ -178,10 +170,6 @@ impl RoutingStore {
                 k.id AS station_key_id,
                 k.station_id,
                 s.station_type,
-                capacity_domain.provider_family AS capacity_provider_family,
-                capacity_domain.deployment_identity AS capacity_deployment_identity,
-                capacity_domain.region_identity AS capacity_region_identity,
-                capacity_domain.revision AS capacity_domain_revision,
                 s.credit_per_cny AS station_credit_per_cny,
                 s.endpoint_revision,
                 s.api_base_url,
@@ -218,7 +206,6 @@ impl RoutingStore {
                 b.last_checked_at AS binding_last_checked_at
             FROM station_keys k
             JOIN stations s ON s.id = k.station_id
-            LEFT JOIN station_capacity_domains capacity_domain ON capacity_domain.station_id = s.id
             LEFT JOIN station_group_bindings b ON b.id = k.group_binding_id
             WHERE k.enabled = 1
               AND s.enabled = 1
@@ -299,6 +286,7 @@ impl RoutingStore {
             SELECT
                 k.id AS station_key_id,
                 k.station_id,
+                key_revision.revision AS station_key_lifecycle_revision,
                 s.endpoint_revision,
                 s.api_base_url,
                 s.upstream_api_format,
@@ -306,9 +294,12 @@ impl RoutingStore {
                 c.supports_responses
             FROM station_keys k
             JOIN stations s ON s.id = k.station_id
+            JOIN domain_revisions key_revision
+              ON key_revision.scope = 'station_key:' || k.id
             LEFT JOIN station_key_capabilities c ON c.station_key_id = k.id
             WHERE k.enabled = 1
               AND s.enabled = 1
+              AND key_revision.revision > 0
               AND (TRIM(k.api_key) != '' OR k.api_key_secret_id IS NOT NULL)
             ORDER BY k.id ASC
             "#,
@@ -816,11 +807,6 @@ fn row_to_runtime_candidate(row: sqlx::sqlite::SqliteRow) -> CanonicalRoutingCan
         station_key_id: station_key_id.clone(),
         station_id: row.get(runtime_candidate_column::STATION_ID),
         station_type: row.get(runtime_candidate_column::STATION_TYPE),
-        capacity_provider_family: row.get(runtime_candidate_column::CAPACITY_PROVIDER_FAMILY),
-        capacity_deployment_identity: row
-            .get(runtime_candidate_column::CAPACITY_DEPLOYMENT_IDENTITY),
-        capacity_region_identity: row.get(runtime_candidate_column::CAPACITY_REGION_IDENTITY),
-        capacity_domain_revision: row.get(runtime_candidate_column::CAPACITY_DOMAIN_REVISION),
         station_account_concurrency_limit: None,
         station_endpoint_revision: row.get(runtime_candidate_column::ENDPOINT_REVISION),
         sanitized_origin: crate::models::station_endpoints::sanitized_api_base_url_for_trace(
@@ -897,10 +883,6 @@ fn row_to_operational_execution_target_ref(
         station_key_id: row.get("station_key_id"),
         station_id: row.get("station_id"),
         station_type: row.get("station_type"),
-        capacity_provider_family: row.get("capacity_provider_family"),
-        capacity_deployment_identity: row.get("capacity_deployment_identity"),
-        capacity_region_identity: row.get("capacity_region_identity"),
-        capacity_domain_revision: row.get("capacity_domain_revision"),
         group_binding_id: row.get("group_binding_id"),
         endpoint_revision: row.get("endpoint_revision"),
         credential_revision: row.get("credential_revision"),
@@ -929,6 +911,10 @@ fn row_to_operational_monitoring_target_snapshot(
     OperationalMonitoringTargetSnapshotRow {
         station_key_id: row.get("station_key_id"),
         station_id: row.get("station_id"),
+        station_key_lifecycle_revision: u64::try_from(
+            row.get::<i64, _>("station_key_lifecycle_revision"),
+        )
+        .unwrap_or_default(),
         endpoint_revision: row.get("endpoint_revision"),
         api_base_url: row.get("api_base_url"),
         upstream_api_format: parse_upstream_api_format(row.get::<String, _>("upstream_api_format")),
@@ -947,42 +933,37 @@ mod runtime_candidate_column {
     pub(super) const STATION_KEY_ID: usize = 0;
     pub(super) const STATION_ID: usize = 1;
     pub(super) const STATION_TYPE: usize = 2;
-    // Capacity-domain fields occupy 3..=6 in `load_runtime_candidates`.
-    pub(super) const CAPACITY_PROVIDER_FAMILY: usize = 3;
-    pub(super) const CAPACITY_DEPLOYMENT_IDENTITY: usize = 4;
-    pub(super) const CAPACITY_REGION_IDENTITY: usize = 5;
-    pub(super) const CAPACITY_DOMAIN_REVISION: usize = 6;
-    pub(super) const STATION_CREDIT_PER_CNY: usize = 7;
-    pub(super) const ENDPOINT_REVISION: usize = 8;
-    pub(super) const API_BASE_URL: usize = 9;
-    pub(super) const UPSTREAM_API_FORMAT: usize = 10;
-    pub(super) const ROUTING_ORDER: usize = 11;
-    pub(super) const PRIORITY: usize = 12;
-    pub(super) const MAX_CONCURRENCY: usize = 13;
-    pub(super) const LOAD_FACTOR: usize = 14;
-    pub(super) const SCHEDULABLE: usize = 15;
-    pub(super) const COLLECTOR_PROXY_MODE: usize = 16;
-    pub(super) const COLLECTOR_PROXY_URL: usize = 17;
-    pub(super) const STATION_NAME: usize = 18;
-    pub(super) const KEY_NAME: usize = 19;
-    pub(super) const API_KEY: usize = 20;
-    pub(super) const GROUP_NAME: usize = 21;
-    pub(super) const GROUP_BINDING_ID: usize = 22;
-    pub(super) const GROUP_ID_HASH: usize = 23;
-    pub(super) const RATE_MULTIPLIER: usize = 24;
-    pub(super) const MANUAL_RATE_MULTIPLIER: usize = 25;
-    pub(super) const MANUAL_RATE_UPDATED_AT: usize = 26;
-    pub(super) const RATE_SOURCE: usize = 27;
-    pub(super) const RATE_COLLECTED_AT: usize = 28;
-    pub(super) const KEY_UPDATED_AT: usize = 29;
-    pub(super) const BINDING_GROUP_KEY_HASH: usize = 30;
-    pub(super) const BINDING_GROUP_ID_HASH: usize = 31;
-    pub(super) const BINDING_GROUP_NAME: usize = 32;
-    pub(super) const BINDING_STATUS: usize = 33;
-    pub(super) const BINDING_GROUP_CATEGORY: usize = 34;
-    pub(super) const BINDING_EFFECTIVE_RATE_MULTIPLIER: usize = 35;
-    pub(super) const BINDING_CONFIDENCE: usize = 36;
-    pub(super) const BINDING_LAST_CHECKED_AT: usize = 37;
+    pub(super) const STATION_CREDIT_PER_CNY: usize = 3;
+    pub(super) const ENDPOINT_REVISION: usize = 4;
+    pub(super) const API_BASE_URL: usize = 5;
+    pub(super) const UPSTREAM_API_FORMAT: usize = 6;
+    pub(super) const ROUTING_ORDER: usize = 7;
+    pub(super) const PRIORITY: usize = 8;
+    pub(super) const MAX_CONCURRENCY: usize = 9;
+    pub(super) const LOAD_FACTOR: usize = 10;
+    pub(super) const SCHEDULABLE: usize = 11;
+    pub(super) const COLLECTOR_PROXY_MODE: usize = 12;
+    pub(super) const COLLECTOR_PROXY_URL: usize = 13;
+    pub(super) const STATION_NAME: usize = 14;
+    pub(super) const KEY_NAME: usize = 15;
+    pub(super) const API_KEY: usize = 16;
+    pub(super) const GROUP_NAME: usize = 17;
+    pub(super) const GROUP_BINDING_ID: usize = 18;
+    pub(super) const GROUP_ID_HASH: usize = 19;
+    pub(super) const RATE_MULTIPLIER: usize = 20;
+    pub(super) const MANUAL_RATE_MULTIPLIER: usize = 21;
+    pub(super) const MANUAL_RATE_UPDATED_AT: usize = 22;
+    pub(super) const RATE_SOURCE: usize = 23;
+    pub(super) const RATE_COLLECTED_AT: usize = 24;
+    pub(super) const KEY_UPDATED_AT: usize = 25;
+    pub(super) const BINDING_GROUP_KEY_HASH: usize = 26;
+    pub(super) const BINDING_GROUP_ID_HASH: usize = 27;
+    pub(super) const BINDING_GROUP_NAME: usize = 28;
+    pub(super) const BINDING_STATUS: usize = 29;
+    pub(super) const BINDING_GROUP_CATEGORY: usize = 30;
+    pub(super) const BINDING_EFFECTIVE_RATE_MULTIPLIER: usize = 31;
+    pub(super) const BINDING_CONFIDENCE: usize = 32;
+    pub(super) const BINDING_LAST_CHECKED_AT: usize = 33;
 }
 
 fn default_runtime_capabilities(station_key_id: &str) -> StationKeyCapabilities {
@@ -1037,6 +1018,15 @@ fn newest_balance(
         (Some(_), Some(station)) if balance_has_positive_value(&station.balance) => {
             Some(station.balance.clone())
         }
+        // A numeric exhausted balance is authoritative over a text-only
+        // usable status. Without this, a key snapshot such as
+        // `{ value: null, status: "normal" }` can hide a negative station
+        // balance even though routing admission correctly treats it as
+        // depleted.
+        (Some(key), Some(_station)) if balance_has_finite_value(&key.balance) => Some(key.balance),
+        (Some(_), Some(station)) if balance_has_finite_value(&station.balance) => {
+            Some(station.balance.clone())
+        }
         // When neither scope has a positive amount, key-scoped status remains
         // the narrower fact and therefore wins over station-level status.
         (Some(key), _) if balance_is_usable(&key.balance) => Some(key.balance),
@@ -1059,6 +1049,10 @@ fn balance_has_positive_value(balance: &RuntimeRoutingBalance) -> bool {
     balance
         .value
         .is_some_and(|value| value.is_finite() && value > 0.0)
+}
+
+fn balance_has_finite_value(balance: &RuntimeRoutingBalance) -> bool {
+    balance.value.is_some_and(f64::is_finite)
 }
 
 fn balance_rank_is_at_least(left: &RankedRuntimeBalance, right: &RankedRuntimeBalance) -> bool {
@@ -1264,8 +1258,19 @@ mod tests {
         assert_eq!(selected.status, "normal");
     }
 
+    #[test]
+    fn numeric_station_depletion_wins_over_text_only_normal_key_status() {
+        let key = ranked_balance(None, "normal", "3");
+        let station = ranked_balance(Some(-0.05), "normal", "2");
+
+        let selected = newest_balance(Some(key), Some(&station)).expect("balance");
+
+        assert_eq!(selected.value, Some(-0.05));
+        assert!(selected.is_depleted());
+    }
+
     #[tokio::test]
-    async fn operational_execution_target_ref_preserves_capacity_domain_from_join() {
+    async fn operational_execution_target_ref_does_not_require_capacity_domain_storage() {
         let mut connection = sqlx::SqliteConnection::connect("sqlite::memory:")
             .await
             .expect("open sqlite");
@@ -1273,7 +1278,6 @@ mod tests {
             "CREATE TABLE station_keys (id TEXT PRIMARY KEY, station_id TEXT, group_binding_id TEXT, max_concurrency INTEGER, enabled INTEGER, api_key_secret_id TEXT, api_key TEXT)",
             "CREATE TABLE stations (id TEXT PRIMARY KEY, station_type TEXT, endpoint_revision INTEGER, api_base_url TEXT, upstream_api_format TEXT, collector_proxy_mode TEXT, collector_proxy_url TEXT, enabled INTEGER)",
             "CREATE TABLE domain_revisions (scope TEXT PRIMARY KEY, revision INTEGER)",
-            "CREATE TABLE station_capacity_domains (station_id TEXT PRIMARY KEY, provider_family TEXT, deployment_identity TEXT, region_identity TEXT, revision INTEGER)",
             "CREATE TABLE secrets (id TEXT PRIMARY KEY, scope TEXT, owner_id TEXT, kind TEXT)",
             "CREATE TABLE balance_snapshots (station_id TEXT, station_key_id TEXT, account_concurrency_limit INTEGER, updated_at TEXT, created_at TEXT, id TEXT)",
         ] {
@@ -1292,11 +1296,6 @@ mod tests {
         .execute(&mut connection)
         .await
         .expect("station key");
-        sqlx::query("INSERT INTO station_capacity_domains VALUES ('station-a', 'openai', 'deployment-a', 'region-a', 11)")
-            .execute(&mut connection)
-            .await
-            .expect("capacity domain");
-
         let mut query =
             sqlx::QueryBuilder::<sqlx::Sqlite>::new(OPERATIONAL_EXECUTION_TARGET_REFS_QUERY_PREFIX);
         query.push_bind("key-a");
@@ -1308,12 +1307,7 @@ mod tests {
             .expect("joined execution target row");
         let target = row_to_operational_execution_target_ref(row);
 
-        assert_eq!(target.capacity_provider_family.as_deref(), Some("openai"));
-        assert_eq!(
-            target.capacity_deployment_identity.as_deref(),
-            Some("deployment-a")
-        );
-        assert_eq!(target.capacity_region_identity.as_deref(), Some("region-a"));
-        assert_eq!(target.capacity_domain_revision, Some(11));
+        assert_eq!(target.station_key_id, "key-a");
+        assert_eq!(target.station_id, "station-a");
     }
 }

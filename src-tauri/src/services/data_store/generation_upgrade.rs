@@ -146,6 +146,7 @@ fn encrypted_baseline_ready_startup_steps() -> Vec<StartupUpgradeStep> {
     }
     steps.extend([
         StartupUpgradeStep::OpenRuntime,
+        StartupUpgradeStep::StageRoutingPolicyV3,
         StartupUpgradeStep::VerifyWritableRuntime,
         StartupUpgradeStep::VerifySecrets,
     ]);

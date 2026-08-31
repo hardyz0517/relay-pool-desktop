@@ -8,19 +8,21 @@ use crate::{
         },
         quality_projection::QualitySummary,
         routing_engine::{
-            failure_domains::ProviderCapacityDomain, intelligent_planner::CandidateScoreBreakdown,
-            request::RouteRequestFacts,
+            intelligent_planner::CandidateScoreBreakdown, request::RouteRequestFacts,
+            tiers::AvailabilityTier,
         },
+        station_key_circuit::{StationKeyCircuitState, StationKeyCircuitStatus},
     },
     models::{
         pricing::ResolvedPricingContext,
         routing::{CanonicalRoutingCandidate, RoutingGroupFilter, RuntimeRoutingBalance},
-        routing_policy::RoutingPolicyConfigV2,
+        routing_policy::RoutingPolicyConfigV3,
     },
+    persistence::stores::routing_quality_store::RoutingAttemptCountDiagnostics,
 };
 
-pub(crate) const ROUTING_WORKSPACE_READ_MODEL_VERSION: &str = "routing_workspace_read_model_v1";
-pub(crate) const ROUTING_PREVIEW_POLICY_VERSION: &str = "intelligent_planner_v1";
+pub(crate) const ROUTING_WORKSPACE_READ_MODEL_VERSION: &str = "routing_workspace_read_model_v3";
+pub(crate) const ROUTING_PREVIEW_POLICY_VERSION: &str = "intelligent_planner_v3";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -40,7 +42,7 @@ pub(crate) struct RoutingWorkspaceSnapshotInput {
 pub(crate) struct RoutingWorkspaceSnapshot {
     pub(crate) read_model_version: &'static str,
     pub(crate) generated_at_ms: i64,
-    pub(crate) policy_config: RoutingPolicyConfigV2,
+    pub(crate) policy_config: RoutingPolicyConfigV3,
     pub(crate) preview_policy_version: &'static str,
     pub(crate) max_rate_multiplier: Option<f64>,
     pub(crate) routing_group_filter: RoutingGroupFilter,
@@ -50,6 +52,32 @@ pub(crate) struct RoutingWorkspaceSnapshot {
     pub(crate) read_model_status: RoutingReadModelStatus,
     pub(crate) planner_evaluation: RoutingPlannerEvaluationStatus,
     pub(crate) planner_evaluation_code: Option<String>,
+    pub(crate) availability_status: RoutingAvailabilityStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) runtime_generation_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) policy_revision: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) quality_revision: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) health_revision: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) quality_projection_backlog: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) quality_projection_lag_seconds: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) quality_stale: Option<bool>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct RoutingWorkspaceRevisionSnapshot {
+    pub(crate) runtime_generation_id: Option<String>,
+    pub(crate) policy_revision: Option<u64>,
+    pub(crate) quality_revision: Option<u64>,
+    pub(crate) health_revision: Option<u64>,
+    pub(crate) quality_projection_backlog: Option<u64>,
+    pub(crate) quality_projection_lag_seconds: Option<u64>,
+    pub(crate) quality_stale: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,6 +100,15 @@ pub(crate) enum RoutingReadModelStatus {
 pub(crate) enum RoutingPlannerEvaluationStatus {
     Available,
     Unavailable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RoutingAvailabilityStatus {
+    Available,
+    CapacityExhausted,
+    CapacityStateUnavailable,
+    AllKeysUnavailable,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -103,6 +140,8 @@ pub(crate) struct RoutingWorkspaceCandidate {
     pub(crate) assessment_durable_revision: Option<u64>,
     pub(crate) assessment_request_context_fingerprint: Option<String>,
     pub(crate) score_details: Option<RoutingCandidateScoreSnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) diagnostics: Option<RoutingCandidateDiagnostics>,
     pub(crate) group: Option<RoutingCandidateGroupSnapshot>,
     pub(crate) multiplier: RoutingCandidateMultiplierSnapshot,
     pub(crate) capability_summary: RoutingCapabilitySummary,
@@ -113,42 +152,237 @@ pub(crate) struct RoutingWorkspaceCandidate {
     pub(crate) balance_value: Option<f64>,
     pub(crate) balance_currency: Option<String>,
     pub(crate) capacity: RoutingCandidateCapacitySnapshot,
-    /// Trusted capacity-domain configuration facts. This is deliberately
-    /// separate from runtime protection status: a configured identity is not
-    /// proof that the provider is open, half-open, or currently failing.
-    pub(crate) failure_domain: RoutingCandidateFailureDomainSnapshot,
     pub(crate) source_refs: RoutingCandidateSourceRefs,
     pub(crate) hard_rejection_codes: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct RoutingCandidateFailureDomainSnapshot {
-    pub(crate) kind: RoutingFailureDomainKind,
-    pub(crate) resolution: RoutingFailureDomainResolution,
-    pub(crate) provider_family: Option<String>,
-    pub(crate) deployment_identity: Option<String>,
-    pub(crate) region_identity: Option<String>,
-    pub(crate) revision: Option<i64>,
-    /// Present only when the current read-model request has a concrete model
-    /// and the trusted identity can be converted to the canonical commitment.
-    pub(crate) commitment: Option<String>,
-    pub(crate) explanation_key: String,
+pub(crate) struct RoutingCandidateDiagnostics {
+    pub(crate) effective_score: Option<u16>,
+    pub(crate) base_score: Option<u16>,
+    pub(crate) quality: Option<RoutingCandidateQualityDiagnostics>,
+    pub(crate) attempts: RoutingCandidateAttemptDiagnostics,
+    pub(crate) circuit: RoutingCandidateCircuitDiagnostics,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RoutingCandidateQualityDiagnostics {
+    pub(crate) quality_revision: u64,
+    pub(crate) quality_policy_revision: u64,
+    pub(crate) algorithm_version: String,
+    pub(crate) quality_basis: String,
+    pub(crate) quality_unavailable: bool,
+    pub(crate) canonical_sample_count: u64,
+    pub(crate) real_reliability_basis_points: u16,
+    pub(crate) monitoring_reliability_basis_points: u16,
+    pub(crate) effective_real_weight_basis_points: u16,
+    pub(crate) effective_monitoring_weight_basis_points: u16,
+    pub(crate) real_source_eligible: bool,
+    pub(crate) monitoring_source_eligible: bool,
+    pub(crate) monitoring_source_status: RoutingMonitoringSourceStatus,
+    pub(crate) recent_sample_count: u64,
+    pub(crate) recent_effective_mass_basis_points: u64,
+    pub(crate) recent_minimum_samples: u64,
+    pub(crate) historical_sample_count: u64,
+    pub(crate) historical_effective_mass_basis_points: u64,
+    pub(crate) historical_minimum_samples: u64,
+    pub(crate) real_source: RoutingCandidateQualitySourceDiagnostics,
+    pub(crate) monitoring_source: RoutingCandidateQualitySourceDiagnostics,
+    pub(crate) latency: RoutingCandidateLatencyDiagnostics,
+    pub(crate) idle_real_route_sample: String,
+    pub(crate) last_real_route_sample_at_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum RoutingFailureDomainKind {
-    CapacityDomain,
+pub(crate) enum RoutingMonitoringSourceStatus {
+    Comparable,
+    NoEvidence,
+    Incomparable,
+    WeightZero,
+    Disabled,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RoutingCandidateQualityWindowDiagnostics {
+    pub(crate) sample_count: u64,
+    pub(crate) effective_weight: u64,
+    pub(crate) success_weight: u64,
+    pub(crate) failure_weight: u64,
+    pub(crate) reliability_basis_points: u16,
+    pub(crate) minimum_met: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RoutingCandidateQualitySourceDiagnostics {
+    pub(crate) eligible: bool,
+    pub(crate) effective_weight_basis_points: u16,
+    pub(crate) recent: RoutingCandidateQualityWindowDiagnostics,
+    pub(crate) historical: RoutingCandidateQualityWindowDiagnostics,
+    pub(crate) blended_reliability_basis_points: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RoutingCandidateLatencyDiagnostics {
+    pub(crate) recent_sample_count: u64,
+    pub(crate) recent_effective_weight: u64,
+    pub(crate) recent_weighted_latency_ms: u32,
+    pub(crate) recent_minimum_met: bool,
+    pub(crate) historical_sample_count: u64,
+    pub(crate) historical_effective_weight: u64,
+    pub(crate) historical_weighted_latency_ms: u32,
+    pub(crate) historical_minimum_met: bool,
+    pub(crate) blended_weighted_latency_ms: u32,
+}
+
+impl From<&crate::application::quality_projection::QualitySourceWindowSummary>
+    for RoutingCandidateQualityWindowDiagnostics
+{
+    fn from(value: &crate::application::quality_projection::QualitySourceWindowSummary) -> Self {
+        Self {
+            sample_count: value.sample_count,
+            effective_weight: value.effective_weight,
+            success_weight: value.success_weight,
+            failure_weight: value.failure_weight,
+            reliability_basis_points: value.reliability_basis_points,
+            minimum_met: value.minimum_met,
+        }
+    }
+}
+
+impl From<&crate::application::quality_projection::QualitySourceSummary>
+    for RoutingCandidateQualitySourceDiagnostics
+{
+    fn from(value: &crate::application::quality_projection::QualitySourceSummary) -> Self {
+        Self {
+            eligible: value.eligible,
+            effective_weight_basis_points: value.effective_weight_basis_points,
+            recent: (&value.recent).into(),
+            historical: (&value.historical).into(),
+            blended_reliability_basis_points: value.blended_reliability_basis_points,
+        }
+    }
+}
+
+impl From<&crate::application::quality_projection::QualityLatencySummary>
+    for RoutingCandidateLatencyDiagnostics
+{
+    fn from(value: &crate::application::quality_projection::QualityLatencySummary) -> Self {
+        Self {
+            recent_sample_count: value.recent_sample_count,
+            recent_effective_weight: value.recent_effective_weight,
+            recent_weighted_latency_ms: value.recent_weighted_latency_ms,
+            recent_minimum_met: value.recent_minimum_met,
+            historical_sample_count: value.historical_sample_count,
+            historical_effective_weight: value.historical_effective_weight,
+            historical_weighted_latency_ms: value.historical_weighted_latency_ms,
+            historical_minimum_met: value.historical_minimum_met,
+            blended_weighted_latency_ms: value.blended_weighted_latency_ms,
+        }
+    }
+}
+
+impl From<&QualitySummary> for RoutingCandidateQualityDiagnostics {
+    fn from(summary: &QualitySummary) -> Self {
+        Self {
+            quality_revision: summary.checkpoint_sequence,
+            quality_policy_revision: summary.quality_policy_revision,
+            algorithm_version: summary.algorithm_version.clone(),
+            quality_basis: summary.quality_basis.clone(),
+            quality_unavailable: summary.quality_unavailable,
+            canonical_sample_count: summary.observation_count,
+            real_reliability_basis_points: summary.real_reliability_basis_points,
+            monitoring_reliability_basis_points: summary.monitoring_reliability_basis_points,
+            effective_real_weight_basis_points: summary.real_source_weight_basis_points,
+            effective_monitoring_weight_basis_points: summary.monitoring_source_weight_basis_points,
+            real_source_eligible: summary.real_source_eligible,
+            monitoring_source_eligible: summary.monitoring_source_eligible,
+            monitoring_source_status: summary.monitoring_source_status.into(),
+            recent_sample_count: summary.recent_observation_count,
+            recent_effective_mass_basis_points: summary.recent_effective_mass_basis_points,
+            recent_minimum_samples: summary.recent_minimum_samples,
+            historical_sample_count: summary.historical_observation_count,
+            historical_effective_mass_basis_points: summary.historical_effective_mass_basis_points,
+            historical_minimum_samples: summary.historical_minimum_samples,
+            real_source: (&summary.real_source).into(),
+            monitoring_source: (&summary.monitoring_source).into(),
+            latency: (&summary.latency).into(),
+            idle_real_route_sample: summary.idle_real_route_sample.clone(),
+            last_real_route_sample_at_ms: summary.last_real_route_sample_at_ms,
+        }
+    }
+}
+
+impl From<crate::application::quality_projection::MonitoringSourceStatus>
+    for RoutingMonitoringSourceStatus
+{
+    fn from(value: crate::application::quality_projection::MonitoringSourceStatus) -> Self {
+        use crate::application::quality_projection::MonitoringSourceStatus as Source;
+        match value {
+            Source::Comparable => Self::Comparable,
+            Source::NoEvidence => Self::NoEvidence,
+            Source::Incomparable => Self::Incomparable,
+            Source::WeightZero => Self::WeightZero,
+            Source::Disabled => Self::Disabled,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RoutingCandidateAttemptDiagnostics {
+    pub(crate) raw_real_attempt_count: u64,
+    pub(crate) deduplicated_real_request_count: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum RoutingFailureDomainResolution {
-    NotConfigured,
-    InvalidIdentity,
-    ModelRequired,
-    Resolved,
+pub(crate) enum RoutingCandidateCircuitState {
+    Closed,
+    Open,
+    HalfOpen,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RoutingCandidateScoreGateStatus {
+    NotApplicable,
+    WaitingCooldown,
+    Passed,
+    Denied,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RoutingCandidateCircuitDiagnostics {
+    pub(crate) state: RoutingCandidateCircuitState,
+    pub(crate) state_revision: Option<u64>,
+    pub(crate) lifecycle_revision: Option<u64>,
+    pub(crate) consecutive_failures: Option<u16>,
+    pub(crate) reopen_level: u32,
+    pub(crate) cooldown_until_ms: Option<u64>,
+    pub(crate) cooldown_remaining_ms: Option<u64>,
+    pub(crate) half_open_lease_in_flight: bool,
+    pub(crate) half_open_lease_expires_at_ms: Option<u64>,
+    pub(crate) recovery_successes: Option<u16>,
+    pub(crate) score_gate_status: RoutingCandidateScoreGateStatus,
+    pub(crate) score_gate_reason: String,
+    pub(crate) best_closed_effective_score: Option<u16>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RoutingCandidatePlanDiagnostics {
+    pub(crate) effective_score: u16,
+    pub(crate) base_score: u16,
+    pub(crate) target_rank: u16,
+    pub(crate) tier: AvailabilityTier,
+    pub(crate) lifecycle_revision: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -173,27 +407,56 @@ pub(crate) struct RoutingCandidateScoreInputSnapshot {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RoutingCandidateScoreWindowSnapshot {
     pub(crate) recent_observation_count: u64,
+    pub(crate) recent_real_sample_count: u64,
+    pub(crate) recent_monitoring_sample_count: u64,
     pub(crate) recent_effective_mass_basis_points: u64,
     pub(crate) recent_success_mass_basis_points: u64,
     pub(crate) recent_failure_mass_basis_points: u64,
+    pub(crate) recent_minimum_samples: u64,
+    pub(crate) recent_reliability_minimum_met: bool,
     pub(crate) recent_score: u16,
     pub(crate) recent_weight_basis_points: u16,
     pub(crate) recent_responsiveness_weight_basis_points: u16,
-    pub(crate) recent_p95_latency_ms: Option<u32>,
+    pub(crate) recent_latency_sample_count: u64,
+    pub(crate) recent_latency_effective_mass_basis_points: u64,
+    pub(crate) recent_weighted_latency_ms: u32,
+    pub(crate) recent_latency_minimum_met: bool,
+    pub(crate) recent_real_latency_sample_count: u64,
+    pub(crate) recent_monitoring_latency_sample_count: u64,
+    pub(crate) recent_real_weighted_latency_ms: u32,
+    pub(crate) recent_monitoring_weighted_latency_ms: u32,
+    pub(crate) recent_real_latency_minimum_met: bool,
+    pub(crate) recent_monitoring_latency_minimum_met: bool,
+    pub(crate) responsiveness_real_source_weight_basis_points: u16,
+    pub(crate) responsiveness_monitoring_source_weight_basis_points: u16,
     pub(crate) recent_latency_coverage_basis_points: u16,
     pub(crate) recent_responsiveness_basis_points: u16,
     pub(crate) historical_observation_count: u64,
+    pub(crate) historical_real_sample_count: u64,
+    pub(crate) historical_monitoring_sample_count: u64,
     pub(crate) historical_effective_mass_basis_points: u64,
     pub(crate) historical_success_mass_basis_points: u64,
     pub(crate) historical_failure_mass_basis_points: u64,
+    pub(crate) historical_minimum_samples: u64,
+    pub(crate) historical_reliability_minimum_met: bool,
     pub(crate) historical_score: u16,
     pub(crate) historical_weight_basis_points: u16,
     pub(crate) historical_responsiveness_weight_basis_points: u16,
-    pub(crate) historical_p95_latency_ms: Option<u32>,
+    pub(crate) historical_latency_sample_count: u64,
+    pub(crate) historical_latency_effective_mass_basis_points: u64,
+    pub(crate) historical_weighted_latency_ms: u32,
+    pub(crate) historical_latency_minimum_met: bool,
+    pub(crate) historical_real_latency_sample_count: u64,
+    pub(crate) historical_monitoring_latency_sample_count: u64,
+    pub(crate) historical_real_weighted_latency_ms: u32,
+    pub(crate) historical_monitoring_weighted_latency_ms: u32,
+    pub(crate) historical_real_latency_minimum_met: bool,
+    pub(crate) historical_monitoring_latency_minimum_met: bool,
     pub(crate) historical_latency_coverage_basis_points: u16,
     pub(crate) historical_responsiveness_basis_points: u16,
     pub(crate) historical_age_window_days: u16,
     pub(crate) historical_half_life_days: u16,
+    pub(crate) monitoring_source_status: RoutingMonitoringSourceStatus,
 }
 
 impl From<&crate::application::quality_projection::QualitySummary>
@@ -203,10 +466,30 @@ impl From<&crate::application::quality_projection::QualitySummary>
         let has_responsiveness_weights = summary.recent_responsiveness_weight_basis_points > 0
             || summary.historical_responsiveness_weight_basis_points > 0;
         Self {
-            recent_observation_count: summary.recent_observation_count,
-            recent_effective_mass_basis_points: summary.recent_effective_mass_basis_points,
-            recent_success_mass_basis_points: summary.recent_success_mass_basis_points,
-            recent_failure_mass_basis_points: summary.recent_failure_mass_basis_points,
+            recent_observation_count: summary
+                .real_source
+                .recent
+                .sample_count
+                .saturating_add(summary.monitoring_source.recent.sample_count),
+            recent_real_sample_count: summary.real_source.recent.sample_count,
+            recent_monitoring_sample_count: summary.monitoring_source.recent.sample_count,
+            recent_effective_mass_basis_points: summary
+                .real_source
+                .recent
+                .effective_weight
+                .saturating_add(summary.monitoring_source.recent.effective_weight),
+            recent_success_mass_basis_points: summary
+                .real_source
+                .recent
+                .success_weight
+                .saturating_add(summary.monitoring_source.recent.success_weight),
+            recent_failure_mass_basis_points: summary
+                .real_source
+                .recent
+                .failure_weight
+                .saturating_add(summary.monitoring_source.recent.failure_weight),
+            recent_minimum_samples: summary.recent_minimum_samples,
+            recent_reliability_minimum_met: summary.real_source.recent.minimum_met,
             recent_score: summary.recent_reliability_basis_points,
             recent_weight_basis_points: summary.recent_reliability_weight_basis_points,
             recent_responsiveness_weight_basis_points: if has_responsiveness_weights {
@@ -214,13 +497,57 @@ impl From<&crate::application::quality_projection::QualitySummary>
             } else {
                 summary.recent_reliability_weight_basis_points
             },
-            recent_p95_latency_ms: summary.recent_p95_latency_ms,
+            recent_latency_sample_count: summary.latency.recent_sample_count,
+            recent_latency_effective_mass_basis_points: summary.latency.recent_effective_weight,
+            recent_weighted_latency_ms: summary.latency.recent_weighted_latency_ms,
+            recent_latency_minimum_met: summary.latency.recent_minimum_met,
+            recent_real_latency_sample_count: summary.latency.real_source.recent_sample_count,
+            recent_monitoring_latency_sample_count: summary
+                .latency
+                .monitoring_source
+                .recent_sample_count,
+            recent_real_weighted_latency_ms: summary.latency.real_source.recent_weighted_latency_ms,
+            recent_monitoring_weighted_latency_ms: summary
+                .latency
+                .monitoring_source
+                .recent_weighted_latency_ms,
+            recent_real_latency_minimum_met: summary.latency.real_source.recent_minimum_met,
+            recent_monitoring_latency_minimum_met: summary
+                .latency
+                .monitoring_source
+                .recent_minimum_met,
+            responsiveness_real_source_weight_basis_points: summary
+                .latency
+                .real_source_weight_basis_points,
+            responsiveness_monitoring_source_weight_basis_points: summary
+                .latency
+                .monitoring_source_weight_basis_points,
             recent_latency_coverage_basis_points: summary.recent_latency_coverage_basis_points,
             recent_responsiveness_basis_points: summary.recent_responsiveness_basis_points,
-            historical_observation_count: summary.historical_observation_count,
-            historical_effective_mass_basis_points: summary.historical_effective_mass_basis_points,
-            historical_success_mass_basis_points: summary.historical_success_mass_basis_points,
-            historical_failure_mass_basis_points: summary.historical_failure_mass_basis_points,
+            historical_observation_count: summary
+                .real_source
+                .historical
+                .sample_count
+                .saturating_add(summary.monitoring_source.historical.sample_count),
+            historical_real_sample_count: summary.real_source.historical.sample_count,
+            historical_monitoring_sample_count: summary.monitoring_source.historical.sample_count,
+            historical_effective_mass_basis_points: summary
+                .real_source
+                .historical
+                .effective_weight
+                .saturating_add(summary.monitoring_source.historical.effective_weight),
+            historical_success_mass_basis_points: summary
+                .real_source
+                .historical
+                .success_weight
+                .saturating_add(summary.monitoring_source.historical.success_weight),
+            historical_failure_mass_basis_points: summary
+                .real_source
+                .historical
+                .failure_weight
+                .saturating_add(summary.monitoring_source.historical.failure_weight),
+            historical_minimum_samples: summary.historical_minimum_samples,
+            historical_reliability_minimum_met: summary.real_source.historical.minimum_met,
             historical_score: summary.historical_reliability_basis_points,
             historical_weight_basis_points: summary.historical_reliability_weight_basis_points,
             historical_responsiveness_weight_basis_points: if has_responsiveness_weights {
@@ -228,12 +555,111 @@ impl From<&crate::application::quality_projection::QualitySummary>
             } else {
                 summary.historical_reliability_weight_basis_points
             },
-            historical_p95_latency_ms: summary.historical_p95_latency_ms,
+            historical_latency_sample_count: summary.latency.historical_sample_count,
+            historical_latency_effective_mass_basis_points: summary
+                .latency
+                .historical_effective_weight,
+            historical_weighted_latency_ms: summary.latency.historical_weighted_latency_ms,
+            historical_latency_minimum_met: summary.latency.historical_minimum_met,
+            historical_real_latency_sample_count: summary
+                .latency
+                .real_source
+                .historical_sample_count,
+            historical_monitoring_latency_sample_count: summary
+                .latency
+                .monitoring_source
+                .historical_sample_count,
+            historical_real_weighted_latency_ms: summary
+                .latency
+                .real_source
+                .historical_weighted_latency_ms,
+            historical_monitoring_weighted_latency_ms: summary
+                .latency
+                .monitoring_source
+                .historical_weighted_latency_ms,
+            historical_real_latency_minimum_met: summary.latency.real_source.historical_minimum_met,
+            historical_monitoring_latency_minimum_met: summary
+                .latency
+                .monitoring_source
+                .historical_minimum_met,
             historical_latency_coverage_basis_points: summary
                 .historical_latency_coverage_basis_points,
             historical_responsiveness_basis_points: summary.historical_responsiveness_basis_points,
             historical_age_window_days: summary.historical_age_window_days,
             historical_half_life_days: summary.historical_half_life_days,
+            monitoring_source_status: summary.monitoring_source_status.into(),
+        }
+    }
+}
+
+impl RoutingCandidateScoreWindowSnapshot {
+    fn optimistic(
+        policy: &RoutingPolicyConfigV3,
+        reliability_score: u16,
+        responsiveness_score: u16,
+    ) -> Self {
+        Self {
+            recent_observation_count: 0,
+            recent_real_sample_count: 0,
+            recent_monitoring_sample_count: 0,
+            recent_effective_mass_basis_points: 0,
+            recent_success_mass_basis_points: 0,
+            recent_failure_mass_basis_points: 0,
+            recent_minimum_samples: u64::from(policy.reliability_sampling.recent_minimum_samples),
+            recent_reliability_minimum_met: false,
+            recent_score: reliability_score,
+            recent_weight_basis_points: 0,
+            recent_responsiveness_weight_basis_points: 0,
+            recent_latency_sample_count: 0,
+            recent_latency_effective_mass_basis_points: 0,
+            recent_weighted_latency_ms: policy.reliability_sampling.optimistic_latency_ms,
+            recent_latency_minimum_met: false,
+            recent_real_latency_sample_count: 0,
+            recent_monitoring_latency_sample_count: 0,
+            recent_real_weighted_latency_ms: policy.reliability_sampling.optimistic_latency_ms,
+            recent_monitoring_weighted_latency_ms: policy
+                .reliability_sampling
+                .optimistic_latency_ms,
+            recent_real_latency_minimum_met: false,
+            recent_monitoring_latency_minimum_met: false,
+            responsiveness_real_source_weight_basis_points: u16::from(
+                policy.reliability_source_weights.real_traffic_percent,
+            ) * 100,
+            responsiveness_monitoring_source_weight_basis_points: u16::from(
+                policy.reliability_source_weights.monitoring_percent,
+            ) * 100,
+            recent_latency_coverage_basis_points: 0,
+            recent_responsiveness_basis_points: responsiveness_score,
+            historical_observation_count: 0,
+            historical_real_sample_count: 0,
+            historical_monitoring_sample_count: 0,
+            historical_effective_mass_basis_points: 0,
+            historical_success_mass_basis_points: 0,
+            historical_failure_mass_basis_points: 0,
+            historical_minimum_samples: u64::from(
+                policy.reliability_sampling.historical_minimum_samples,
+            ),
+            historical_reliability_minimum_met: false,
+            historical_score: reliability_score,
+            historical_weight_basis_points: 10_000,
+            historical_responsiveness_weight_basis_points: 10_000,
+            historical_latency_sample_count: 0,
+            historical_latency_effective_mass_basis_points: 0,
+            historical_weighted_latency_ms: policy.reliability_sampling.optimistic_latency_ms,
+            historical_latency_minimum_met: false,
+            historical_real_latency_sample_count: 0,
+            historical_monitoring_latency_sample_count: 0,
+            historical_real_weighted_latency_ms: policy.reliability_sampling.optimistic_latency_ms,
+            historical_monitoring_weighted_latency_ms: policy
+                .reliability_sampling
+                .optimistic_latency_ms,
+            historical_real_latency_minimum_met: false,
+            historical_monitoring_latency_minimum_met: false,
+            historical_latency_coverage_basis_points: 0,
+            historical_responsiveness_basis_points: responsiveness_score,
+            historical_age_window_days: 30,
+            historical_half_life_days: 1,
+            monitoring_source_status: RoutingMonitoringSourceStatus::NoEvidence,
         }
     }
 }
@@ -336,9 +762,19 @@ pub(crate) struct RoutingCandidatePricingSnapshot {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RoutingCandidateCapacitySnapshot {
     pub(crate) mode: RoutingCapacityReadMode,
+    pub(crate) status: RoutingCandidateCapacityStatus,
     pub(crate) max_concurrency: i64,
     pub(crate) in_flight: Option<i64>,
     pub(crate) acquired: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RoutingCandidateCapacityStatus {
+    Available,
+    Exhausted,
+    StateUnavailable,
+    Unknown,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -353,7 +789,7 @@ pub(crate) struct RoutingCandidateSourceRefs {
 }
 
 pub(crate) fn workspace_snapshot_from_canonical_candidates(
-    policy_config: RoutingPolicyConfigV2,
+    policy_config: RoutingPolicyConfigV3,
     max_rate_multiplier: Option<f64>,
     routing_group_filter: RoutingGroupFilter,
     candidates: Vec<(CanonicalRoutingCandidate, Option<ResolvedPricingContext>)>,
@@ -364,6 +800,10 @@ pub(crate) fn workspace_snapshot_from_canonical_candidates(
     planner_evaluation: RoutingPlannerEvaluationStatus,
     planner_evaluation_code: Option<String>,
     quality_summaries: &BTreeMap<String, QualitySummary>,
+    plan_diagnostics: &BTreeMap<String, RoutingCandidatePlanDiagnostics>,
+    attempt_diagnostics: &BTreeMap<String, RoutingAttemptCountDiagnostics>,
+    circuit_statuses: &[StationKeyCircuitStatus],
+    revisions: RoutingWorkspaceRevisionSnapshot,
     request: &RouteRequestFacts,
     input: RoutingWorkspaceSnapshotInput,
     generated_at_ms: i64,
@@ -391,6 +831,7 @@ pub(crate) fn workspace_snapshot_from_canonical_candidates(
             candidate_from_canonical(
                 candidate,
                 pricing,
+                &policy_config,
                 request,
                 generated_at_ms,
                 score_details,
@@ -398,6 +839,9 @@ pub(crate) fn workspace_snapshot_from_canonical_candidates(
                 exclusion_codes,
                 provenance,
                 quality_summaries,
+                plan_diagnostics,
+                attempt_diagnostics,
+                circuit_statuses,
             )
         })
         .collect::<Vec<_>>();
@@ -411,6 +855,7 @@ pub(crate) fn workspace_snapshot_from_canonical_candidates(
             .then_with(|| left.priority.cmp(&right.priority))
             .then_with(|| left.station_key_id.cmp(&right.station_key_id))
     });
+    let availability_status = routing_availability_status(&ordered_candidates);
     let total = ordered_candidates.len();
     let rows = ordered_candidates
         .into_iter()
@@ -435,7 +880,51 @@ pub(crate) fn workspace_snapshot_from_canonical_candidates(
         read_model_status: RoutingReadModelStatus::Available,
         planner_evaluation,
         planner_evaluation_code,
+        availability_status,
+        runtime_generation_id: revisions.runtime_generation_id,
+        policy_revision: revisions.policy_revision,
+        quality_revision: revisions.quality_revision,
+        health_revision: revisions.health_revision,
+        quality_projection_backlog: revisions.quality_projection_backlog,
+        quality_projection_lag_seconds: revisions.quality_projection_lag_seconds,
+        quality_stale: revisions.quality_stale,
     }
+}
+
+fn routing_availability_status(
+    candidates: &[RoutingWorkspaceCandidate],
+) -> RoutingAvailabilityStatus {
+    let potentially_admissible = candidates
+        .iter()
+        .filter(|candidate| {
+            matches!(
+                candidate.score_status,
+                RoutingScoreStatus::Scored | RoutingScoreStatus::ProbeDiscovery
+            )
+        })
+        .collect::<Vec<_>>();
+    if potentially_admissible.iter().any(|candidate| {
+        !matches!(
+            candidate.capacity.status,
+            RoutingCandidateCapacityStatus::Exhausted
+                | RoutingCandidateCapacityStatus::StateUnavailable
+        )
+    }) {
+        return RoutingAvailabilityStatus::Available;
+    }
+    if !potentially_admissible.is_empty()
+        && potentially_admissible
+            .iter()
+            .all(|candidate| candidate.capacity.status == RoutingCandidateCapacityStatus::Exhausted)
+    {
+        return RoutingAvailabilityStatus::CapacityExhausted;
+    }
+    if candidates.iter().any(|candidate| {
+        candidate.capacity.status == RoutingCandidateCapacityStatus::StateUnavailable
+    }) {
+        return RoutingAvailabilityStatus::CapacityStateUnavailable;
+    }
+    RoutingAvailabilityStatus::AllKeysUnavailable
 }
 
 fn depleted_rank(value: Option<f64>, status: Option<&str>) -> u8 {
@@ -449,8 +938,12 @@ fn depleted_rank(value: Option<f64>, status: Option<&str>) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::{
-        candidate_matches_group_scope, depleted_rank, failure_domain_snapshot,
-        RoutingCandidateGroupSnapshot, RoutingFailureDomainResolution,
+        candidate_matches_group_scope, circuit_diagnostics, depleted_rank,
+        RoutingCandidateGroupSnapshot, RoutingCandidatePlanDiagnostics,
+        RoutingCandidateScoreGateStatus, RoutingCandidateScoreWindowSnapshot,
+    };
+    use crate::application::quality_projection::{
+        rebuild_quality_summary_v3_at, QualityProjectionConfig, QUALITY_RECENT_WINDOW_MS,
     };
     use crate::application::routing_engine::request::{
         CanonicalRouteRequest, GroupFilterMode, OrderingProfile, RouteKind, RouteRequestClassifier,
@@ -459,6 +952,11 @@ mod tests {
     use crate::models::{
         proxy::UpstreamApiFormat,
         routing::{CanonicalRoutingCandidate, StationKeyCapabilities},
+        routing_observation::{
+            EventTimeStatus, FailureAttribution, ObservationOrder, ObservationOutcome,
+            ObservationRetryDisposition, ObservationScope, ObservationSource, RecoveryOrigin,
+            ResponseOrigin, RoutingObservation, TrafficEquivalence,
+        },
     };
 
     fn request(
@@ -493,10 +991,6 @@ mod tests {
             station_key_id: "key-1".into(),
             station_id: "station-1".into(),
             station_type: "newapi".into(),
-            capacity_provider_family: Some("OpenAI".into()),
-            capacity_deployment_identity: Some("primary".into()),
-            capacity_region_identity: Some("US".into()),
-            capacity_domain_revision: Some(3),
             station_account_concurrency_limit: None,
             station_endpoint_revision: 1,
             sanitized_origin: "https://station.example.test".into(),
@@ -546,35 +1040,114 @@ mod tests {
     }
 
     #[test]
-    fn configured_capacity_identity_is_projected_without_claiming_runtime_health() {
-        let projected = failure_domain_snapshot(&candidate(), &request(Some("gpt-test")));
+    fn optimistic_score_details_keep_recent_and_historical_windows_visible() {
+        let policy = crate::models::routing_policy::RoutingPolicyConfigV3::default();
+        let details = RoutingCandidateScoreWindowSnapshot::optimistic(&policy, 9_500, 9_791);
+
+        assert_eq!(details.recent_observation_count, 0);
+        assert_eq!(details.historical_observation_count, 0);
         assert_eq!(
-            projected.resolution,
-            RoutingFailureDomainResolution::Resolved
+            details.recent_minimum_samples,
+            u64::from(policy.reliability_sampling.recent_minimum_samples)
         );
-        assert_eq!(projected.provider_family.as_deref(), Some("OpenAI"));
-        assert_eq!(projected.deployment_identity.as_deref(), Some("primary"));
-        assert_eq!(projected.region_identity.as_deref(), Some("US"));
-        assert_eq!(projected.revision, Some(3));
-        assert!(projected
-            .commitment
-            .as_deref()
-            .is_some_and(|value| value.starts_with("v1:")));
-        assert_eq!(projected.explanation_key, "routing.failure_domain.resolved");
+        assert_eq!(
+            details.historical_minimum_samples,
+            u64::from(policy.reliability_sampling.historical_minimum_samples)
+        );
+        assert!(!details.recent_reliability_minimum_met);
+        assert!(!details.historical_reliability_minimum_met);
+        assert_eq!(details.recent_score, 9_500);
+        assert_eq!(details.historical_score, 9_500);
+        assert_eq!(details.recent_weight_basis_points, 0);
+        assert_eq!(details.historical_weight_basis_points, 10_000);
+        assert_eq!(
+            details.recent_weighted_latency_ms,
+            policy.reliability_sampling.optimistic_latency_ms
+        );
+        assert_eq!(
+            details.historical_weighted_latency_ms,
+            policy.reliability_sampling.optimistic_latency_ms
+        );
     }
 
     #[test]
-    fn configured_capacity_identity_requires_model_before_commitment() {
-        let projected = failure_domain_snapshot(&candidate(), &request(None));
-        assert_eq!(
-            projected.resolution,
-            RoutingFailureDomainResolution::ModelRequired
+    fn score_window_keeps_real_and_monitoring_samples_separate() {
+        let now_ms = QUALITY_RECENT_WINDOW_MS;
+        let comparability_key = format!("cmp:v1:{}", "a".repeat(64));
+        let real = quality_observation(
+            "real",
+            ObservationSource::RealRequest,
+            TrafficEquivalence::ExactRequest,
+            Some(comparability_key.clone()),
+            now_ms,
         );
-        assert!(projected.commitment.is_none());
-        assert_eq!(
-            projected.explanation_key,
-            "routing.failure_domain.model_required"
+        let monitoring = quality_observation(
+            "monitoring",
+            ObservationSource::ActiveProbe,
+            TrafficEquivalence::SameModelShape,
+            Some(comparability_key),
+            now_ms,
         );
+        let summary = rebuild_quality_summary_v3_at(
+            "station_key:key-1",
+            &[real, monitoring],
+            QualityProjectionConfig::default(),
+            2,
+            now_ms,
+        );
+        let details: RoutingCandidateScoreWindowSnapshot = (&summary).into();
+
+        assert_eq!(details.recent_real_sample_count, 1);
+        assert_eq!(details.recent_monitoring_sample_count, 1);
+        assert_eq!(details.recent_observation_count, 2);
+        assert_eq!(
+            details.monitoring_source_status,
+            super::RoutingMonitoringSourceStatus::Comparable
+        );
+    }
+
+    fn quality_observation(
+        id: &str,
+        source: ObservationSource,
+        traffic_equivalence: TrafficEquivalence,
+        comparability_key: Option<String>,
+        event_at_ms: i64,
+    ) -> RoutingObservation {
+        RoutingObservation {
+            id: id.to_string(),
+            order: ObservationOrder {
+                producer_id: "routing-workspace-test".to_string(),
+                producer_sequence: 1,
+                event_at_ms,
+                ingested_at_ms: event_at_ms,
+            },
+            scope: ObservationScope {
+                station_id: Some("station-1".to_string()),
+                station_key_id: Some("key-1".to_string()),
+                model: Some("model-1".to_string()),
+                endpoint_revision: Some(1),
+            },
+            source,
+            traffic_equivalence,
+            outcome: ObservationOutcome::Success,
+            latency_ms: Some(100),
+            evidence_mass_basis_points: 10_000,
+            comparability_key,
+            correlation_id: id.to_string(),
+            attempt_index: 0,
+            station_key_lifecycle_revision: 1,
+            cluster_finalized: true,
+            cluster_expected_attempt_count: 1,
+            boundary_crossed: true,
+            event_time_status: EventTimeStatus::Valid,
+            response_origin: ResponseOrigin::Upstream,
+            failure_code: None,
+            failure_attribution: FailureAttribution::Key,
+            recovery_origin: RecoveryOrigin::Normal,
+            retry_disposition: ObservationRetryDisposition::End,
+            probe_scope: None,
+            probe_state_revision: None,
+        }
     }
 
     #[test]
@@ -620,11 +1193,122 @@ mod tests {
         ));
         assert!(!candidate_matches_group_scope(&request, Some(&group), None));
     }
+
+    #[test]
+    fn circuit_diagnostics_use_same_tier_closed_baseline_without_exposing_lease_identity() {
+        use std::collections::BTreeMap;
+
+        use crate::application::station_key_circuit::StationKeyCircuitStatus;
+        use crate::application::{
+            routing_engine::tiers::AvailabilityTier, station_key_circuit::StationKeyCircuitState,
+        };
+
+        let plans = BTreeMap::from([
+            (
+                "recovering".to_string(),
+                RoutingCandidatePlanDiagnostics {
+                    effective_score: 9_100,
+                    base_score: 9_000,
+                    target_rank: 0,
+                    tier: AvailabilityTier::Primary,
+                    lifecycle_revision: 2,
+                },
+            ),
+            (
+                "closed".to_string(),
+                RoutingCandidatePlanDiagnostics {
+                    effective_score: 8_800,
+                    base_score: 8_800,
+                    target_rank: 0,
+                    tier: AvailabilityTier::Primary,
+                    lifecycle_revision: 1,
+                },
+            ),
+        ]);
+        let statuses = vec![StationKeyCircuitStatus {
+            station_key_id: "recovering".to_string(),
+            lifecycle_revision: 2,
+            policy_revision: 1,
+            lease_policy: None,
+            state: StationKeyCircuitState::HalfOpen {
+                state_revision: 7,
+                lease_id: Some("secret-lease-id".to_string()),
+                lease_revision: 4,
+                lease_expires_at_ms: Some(20_000),
+                recovery_successes: 1,
+                reopen_level: 2,
+            },
+        }];
+
+        let diagnostics = circuit_diagnostics("recovering", 10_000, &plans, &statuses);
+        assert_eq!(
+            diagnostics.score_gate_status,
+            RoutingCandidateScoreGateStatus::Passed
+        );
+        assert!(diagnostics.half_open_lease_in_flight);
+        assert_eq!(diagnostics.best_closed_effective_score, Some(8_800));
+        let serialized = serde_json::to_string(&diagnostics).expect("serialize diagnostics");
+        assert!(!serialized.contains("secret-lease-id"));
+        assert!(!serialized.contains("leaseId"));
+    }
+
+    #[test]
+    fn circuit_score_gate_requires_strictly_higher_effective_score() {
+        use std::collections::BTreeMap;
+
+        use crate::application::station_key_circuit::StationKeyCircuitStatus;
+        use crate::application::{
+            routing_engine::tiers::AvailabilityTier, station_key_circuit::StationKeyCircuitState,
+        };
+
+        let plans = BTreeMap::from([
+            (
+                "recovering".to_string(),
+                RoutingCandidatePlanDiagnostics {
+                    effective_score: 8_800,
+                    base_score: 8_700,
+                    target_rank: 0,
+                    tier: AvailabilityTier::Primary,
+                    lifecycle_revision: 2,
+                },
+            ),
+            (
+                "closed".to_string(),
+                RoutingCandidatePlanDiagnostics {
+                    effective_score: 8_800,
+                    base_score: 8_800,
+                    target_rank: 0,
+                    tier: AvailabilityTier::Primary,
+                    lifecycle_revision: 1,
+                },
+            ),
+        ]);
+        let statuses = vec![StationKeyCircuitStatus {
+            station_key_id: "recovering".to_string(),
+            lifecycle_revision: 2,
+            policy_revision: 1,
+            lease_policy: None,
+            state: StationKeyCircuitState::Open {
+                state_revision: 5,
+                opened_at_ms: 1_000,
+                cooldown_until_ms: 2_000,
+                consecutive_failures: 3,
+                reopen_level: 1,
+            },
+        }];
+
+        let diagnostics = circuit_diagnostics("recovering", 10_000, &plans, &statuses);
+        assert_eq!(
+            diagnostics.score_gate_status,
+            RoutingCandidateScoreGateStatus::Denied
+        );
+    }
 }
 
 fn candidate_from_canonical(
     candidate: CanonicalRoutingCandidate,
     pricing: Option<ResolvedPricingContext>,
+    policy_config: &RoutingPolicyConfigV3,
     request: &RouteRequestFacts,
     generated_at_ms: i64,
     score_details: Option<RoutingCandidateScoreSnapshot>,
@@ -632,8 +1316,32 @@ fn candidate_from_canonical(
     planner_exclusion_codes: Vec<String>,
     assessment_provenance: Option<&(String, u64, String)>,
     quality_summaries: &BTreeMap<String, QualitySummary>,
+    plan_diagnostics: &BTreeMap<String, RoutingCandidatePlanDiagnostics>,
+    attempt_diagnostics: &BTreeMap<String, RoutingAttemptCountDiagnostics>,
+    circuit_statuses: &[StationKeyCircuitStatus],
 ) -> RoutingWorkspaceCandidate {
-    let failure_domain = failure_domain_snapshot(&candidate, request);
+    let quality_scope = format!("station_key:{}", candidate.station_key_id);
+    let quality_summary = quality_summaries.get(&quality_scope);
+    let plan_diagnostic = plan_diagnostics.get(&candidate.station_key_id);
+    let attempt_diagnostic = attempt_diagnostics
+        .get(&quality_scope)
+        .copied()
+        .unwrap_or_default();
+    let diagnostics = RoutingCandidateDiagnostics {
+        effective_score: plan_diagnostic.map(|value| value.effective_score),
+        base_score: plan_diagnostic.map(|value| value.base_score),
+        quality: quality_summary.map(Into::into),
+        attempts: RoutingCandidateAttemptDiagnostics {
+            raw_real_attempt_count: attempt_diagnostic.raw_attempt_count,
+            deduplicated_real_request_count: attempt_diagnostic.deduplicated_request_count,
+        },
+        circuit: circuit_diagnostics(
+            &candidate.station_key_id,
+            generated_at_ms,
+            plan_diagnostics,
+            circuit_statuses,
+        ),
+    };
     let source_snapshot_id = assessment_provenance
         .map(|value| value.0.clone())
         .unwrap_or_else(|| format!("workspace-{generated_at_ms}"));
@@ -657,57 +1365,71 @@ fn candidate_from_canonical(
             )
         });
     let score_details = score_details.map(|mut details| {
-        let quality_summary = quality_summaries
-            .get(&format!("station_key:{}", candidate.station_key_id))
-            .filter(|summary| {
-                summary.recent_observation_count > 0 || summary.historical_observation_count > 0
-            });
         if let Some(summary) = quality_summary {
             let window_details = Some(summary.into());
             details.reliability.window_details = window_details.clone();
             details.responsiveness.window_details = window_details;
             details.reliability.inputs = vec![
                 score_input(
-                    "近24小时成功",
-                    format_mass_value(summary.recent_success_mass_basis_points),
+                    "真实流量可靠性",
+                    format_basis_points(summary.real_reliability_basis_points),
                 ),
                 score_input(
-                    "近24小时失败",
-                    format_mass_value(summary.recent_failure_mass_basis_points),
+                    "真实流量采用权重",
+                    format_basis_points(summary.real_source_weight_basis_points),
                 ),
                 score_input(
-                    "历史成功（衰减后）",
-                    format_mass_value(summary.historical_success_mass_basis_points),
+                    "监控可靠性",
+                    format_basis_points(summary.monitoring_reliability_basis_points),
                 ),
                 score_input(
-                    "历史失败（衰减后）",
-                    format_mass_value(summary.historical_failure_mass_basis_points),
+                    "监控采用权重",
+                    format_basis_points(summary.monitoring_source_weight_basis_points),
                 ),
-                score_input("先验", "2 成功 + 2 失败"),
+                score_input(
+                    "样本不足乐观值",
+                    format_basis_points(summary.optimistic_reliability_basis_points),
+                ),
             ];
             details.responsiveness.inputs = vec![
                 score_input(
-                    "近24小时 P95",
-                    format_latency_value(summary.recent_p95_latency_ms),
+                    "近24小时加权平均延迟",
+                    format_latency_value(Some(summary.latency.recent_weighted_latency_ms)),
                 ),
                 score_input(
-                    "历史 P95",
-                    format_latency_value(summary.historical_p95_latency_ms),
+                    "历史加权平均延迟",
+                    format_latency_value(Some(summary.latency.historical_weighted_latency_ms)),
                 ),
                 score_input(
-                    "近24小时延迟覆盖",
-                    format_basis_points(summary.recent_latency_coverage_basis_points),
+                    "近24小时样本门槛",
+                    if summary.latency.recent_minimum_met {
+                        "已达到"
+                    } else {
+                        "未达到，采用乐观值"
+                    },
                 ),
                 score_input(
-                    "历史延迟覆盖",
-                    format_basis_points(summary.historical_latency_coverage_basis_points),
+                    "历史样本门槛",
+                    if summary.latency.historical_minimum_met {
+                        "已达到"
+                    } else {
+                        "未达到，采用乐观值"
+                    },
+                ),
+                score_input(
+                    "样本不足乐观延迟",
+                    format_latency_value(Some(summary.optimistic_latency_ms)),
                 ),
                 score_input("延迟上限", "120000 ms"),
             ];
         } else {
-            // Keep the pre-projection aggregate as a first-run compatibility
-            // path; once the quality projector catches up, the window data
-            // above becomes the only source shown to users.
+            let window_details = Some(RoutingCandidateScoreWindowSnapshot::optimistic(
+                policy_config,
+                details.reliability.score,
+                details.responsiveness.score,
+            ));
+            details.reliability.window_details = window_details.clone();
+            details.responsiveness.window_details = window_details;
             details.reliability.inputs = vec![
                 score_input(
                     "成功请求",
@@ -725,7 +1447,7 @@ fn candidate_from_canonical(
                         .map(|health| health.failure_count.max(0).to_string())
                         .unwrap_or_else(|| "暂无数据".to_string()),
                 ),
-                score_input("先验", "2 成功 + 2 失败"),
+                score_input("样本不足处理", "使用当前策略乐观可靠性"),
             ];
             details.responsiveness.inputs = vec![
                 score_input(
@@ -737,6 +1459,7 @@ fn candidate_from_canonical(
                         .map(|value| format!("{value} ms"))
                         .unwrap_or_else(|| "暂无数据".to_string()),
                 ),
+                score_input("样本不足处理", "使用当前策略乐观响应时间"),
                 score_input("延迟上限", "120000 ms"),
             ];
         }
@@ -920,6 +1643,18 @@ fn candidate_from_canonical(
     }
     .max(0);
     let in_flight = candidate.load_factor.map(|value| value.max(0));
+    let capacity_status = if planner_exclusion_codes
+        .iter()
+        .any(|code| code == "capacity_state_unavailable")
+    {
+        RoutingCandidateCapacityStatus::StateUnavailable
+    } else if capacity_limit > 0 && in_flight.is_some_and(|in_flight| in_flight >= capacity_limit) {
+        RoutingCandidateCapacityStatus::Exhausted
+    } else if capacity_limit <= 0 || in_flight.is_some() {
+        RoutingCandidateCapacityStatus::Available
+    } else {
+        RoutingCandidateCapacityStatus::Unknown
+    };
     RoutingWorkspaceCandidate {
         station_key_id: candidate.station_key_id.clone(),
         station_id: candidate.station_id.clone(),
@@ -938,6 +1673,7 @@ fn candidate_from_canonical(
         assessment_durable_revision: assessment_provenance.map(|value| value.1),
         assessment_request_context_fingerprint: assessment_provenance.map(|value| value.2.clone()),
         score_details,
+        diagnostics: Some(diagnostics),
         group,
         multiplier: RoutingCandidateMultiplierSnapshot {
             status: multiplier
@@ -1027,11 +1763,11 @@ fn candidate_from_canonical(
             .map(|balance| balance.currency.clone()),
         capacity: RoutingCandidateCapacitySnapshot {
             mode: RoutingCapacityReadMode::SnapshotOnly,
+            status: capacity_status,
             max_concurrency: capacity_limit,
             in_flight: in_flight,
             acquired: false,
         },
-        failure_domain,
         source_refs: RoutingCandidateSourceRefs {
             station_key_id: candidate.station_key_id,
             station_id: candidate.station_id,
@@ -1044,87 +1780,159 @@ fn candidate_from_canonical(
     }
 }
 
-fn failure_domain_snapshot(
-    candidate: &CanonicalRoutingCandidate,
-    request: &RouteRequestFacts,
-) -> RoutingCandidateFailureDomainSnapshot {
-    let provider_family = candidate
-        .capacity_provider_family
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned);
-    let deployment_identity = candidate
-        .capacity_deployment_identity
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned);
-    let region_identity = candidate
-        .capacity_region_identity
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned);
-    let revision = candidate.capacity_domain_revision;
-
-    let Some(provider) = provider_family.clone() else {
-        return RoutingCandidateFailureDomainSnapshot {
-            kind: RoutingFailureDomainKind::CapacityDomain,
-            resolution: RoutingFailureDomainResolution::NotConfigured,
-            provider_family: None,
-            deployment_identity: None,
-            region_identity: None,
-            revision: None,
-            commitment: None,
-            explanation_key: "routing.failure_domain.not_configured".to_string(),
-        };
+fn circuit_diagnostics(
+    station_key_id: &str,
+    generated_at_ms: i64,
+    plan_diagnostics: &BTreeMap<String, RoutingCandidatePlanDiagnostics>,
+    circuit_statuses: &[StationKeyCircuitStatus],
+) -> RoutingCandidateCircuitDiagnostics {
+    let plan = plan_diagnostics.get(station_key_id);
+    let status = circuit_statuses.iter().find(|status| {
+        status.station_key_id == station_key_id
+            && plan.is_none_or(|plan| status.lifecycle_revision == plan.lifecycle_revision)
+    });
+    let now_ms = u64::try_from(generated_at_ms.max(0)).unwrap_or_default();
+    let best_closed_effective_score = plan.and_then(|current| {
+        plan_diagnostics
+            .iter()
+            .filter(|(other_key, other)| {
+                other_key.as_str() != station_key_id
+                    && other.target_rank == current.target_rank
+                    && other.tier == current.tier
+                    && circuit_statuses
+                        .iter()
+                        .find(|status| {
+                            status.station_key_id == other_key.as_str()
+                                && status.lifecycle_revision == other.lifecycle_revision
+                        })
+                        .is_none_or(|status| {
+                            matches!(status.state, StationKeyCircuitState::Closed { .. })
+                        })
+            })
+            .map(|(_, other)| other.effective_score)
+            .max()
+    });
+    let score_gate = || match plan {
+        None => (
+            RoutingCandidateScoreGateStatus::Unavailable,
+            "candidate_score_unavailable",
+        ),
+        Some(_) if best_closed_effective_score.is_none() => (
+            RoutingCandidateScoreGateStatus::Passed,
+            "no_closed_candidate_baseline",
+        ),
+        Some(plan)
+            if best_closed_effective_score.is_some_and(|best| plan.effective_score > best) =>
+        {
+            (
+                RoutingCandidateScoreGateStatus::Passed,
+                "higher_than_best_closed_candidate",
+            )
+        }
+        Some(_) => (
+            RoutingCandidateScoreGateStatus::Denied,
+            "not_higher_than_best_closed_candidate",
+        ),
     };
 
-    let Some(model) = request.requested_model() else {
-        return RoutingCandidateFailureDomainSnapshot {
-            kind: RoutingFailureDomainKind::CapacityDomain,
-            resolution: RoutingFailureDomainResolution::ModelRequired,
-            provider_family: Some(provider),
-            deployment_identity,
-            region_identity,
-            revision,
-            commitment: None,
-            explanation_key: "routing.failure_domain.model_required".to_string(),
-        };
-    };
-
-    let domain = ProviderCapacityDomain::from_trusted_identity(
-        provider.as_str(),
-        model,
-        deployment_identity.as_deref(),
-        region_identity.as_deref(),
-    );
-    let Some(domain) = domain else {
-        return RoutingCandidateFailureDomainSnapshot {
-            kind: RoutingFailureDomainKind::CapacityDomain,
-            resolution: RoutingFailureDomainResolution::InvalidIdentity,
-            provider_family: Some(provider),
-            deployment_identity,
-            region_identity,
-            revision,
-            commitment: None,
-            explanation_key: "routing.failure_domain.invalid_identity".to_string(),
-        };
-    };
-    let commitment = domain.commitment();
-    RoutingCandidateFailureDomainSnapshot {
-        kind: RoutingFailureDomainKind::CapacityDomain,
-        resolution: RoutingFailureDomainResolution::Resolved,
-        provider_family: Some(provider),
-        deployment_identity,
-        region_identity,
-        revision,
-        commitment: Some(format!(
-            "v{}:{}",
-            commitment.schema_version, commitment.digest_hex
-        )),
-        explanation_key: "routing.failure_domain.resolved".to_string(),
+    match status.map(|status| &status.state) {
+        Some(StationKeyCircuitState::Closed {
+            state_revision,
+            consecutive_failures,
+            reopen_level,
+        }) => RoutingCandidateCircuitDiagnostics {
+            state: RoutingCandidateCircuitState::Closed,
+            state_revision: Some(*state_revision),
+            lifecycle_revision: status.map(|value| value.lifecycle_revision),
+            consecutive_failures: Some(*consecutive_failures),
+            reopen_level: *reopen_level,
+            cooldown_until_ms: None,
+            cooldown_remaining_ms: None,
+            half_open_lease_in_flight: false,
+            half_open_lease_expires_at_ms: None,
+            recovery_successes: None,
+            score_gate_status: RoutingCandidateScoreGateStatus::NotApplicable,
+            score_gate_reason: "circuit_closed".to_string(),
+            best_closed_effective_score,
+        },
+        Some(StationKeyCircuitState::Open {
+            state_revision,
+            cooldown_until_ms,
+            consecutive_failures,
+            reopen_level,
+            ..
+        }) => {
+            let (score_gate_status, score_gate_reason) = if *cooldown_until_ms > now_ms {
+                (
+                    RoutingCandidateScoreGateStatus::WaitingCooldown,
+                    "cooldown_active",
+                )
+            } else {
+                score_gate()
+            };
+            RoutingCandidateCircuitDiagnostics {
+                state: RoutingCandidateCircuitState::Open,
+                state_revision: Some(*state_revision),
+                lifecycle_revision: status.map(|value| value.lifecycle_revision),
+                consecutive_failures: Some(*consecutive_failures),
+                reopen_level: *reopen_level,
+                cooldown_until_ms: Some(*cooldown_until_ms),
+                cooldown_remaining_ms: Some(cooldown_until_ms.saturating_sub(now_ms)),
+                half_open_lease_in_flight: false,
+                half_open_lease_expires_at_ms: None,
+                recovery_successes: None,
+                score_gate_status,
+                score_gate_reason: score_gate_reason.to_string(),
+                best_closed_effective_score,
+            }
+        }
+        Some(StationKeyCircuitState::HalfOpen {
+            state_revision,
+            lease_id,
+            lease_expires_at_ms,
+            recovery_successes,
+            reopen_level,
+            ..
+        }) => {
+            let (score_gate_status, score_gate_reason) = if lease_id.is_some() {
+                (
+                    RoutingCandidateScoreGateStatus::Passed,
+                    "half_open_lease_in_flight",
+                )
+            } else {
+                score_gate()
+            };
+            RoutingCandidateCircuitDiagnostics {
+                state: RoutingCandidateCircuitState::HalfOpen,
+                state_revision: Some(*state_revision),
+                lifecycle_revision: status.map(|value| value.lifecycle_revision),
+                consecutive_failures: None,
+                reopen_level: *reopen_level,
+                cooldown_until_ms: None,
+                cooldown_remaining_ms: None,
+                half_open_lease_in_flight: lease_id.is_some(),
+                half_open_lease_expires_at_ms: *lease_expires_at_ms,
+                recovery_successes: Some(*recovery_successes),
+                score_gate_status,
+                score_gate_reason: score_gate_reason.to_string(),
+                best_closed_effective_score,
+            }
+        }
+        None => RoutingCandidateCircuitDiagnostics {
+            state: RoutingCandidateCircuitState::Closed,
+            state_revision: None,
+            lifecycle_revision: plan.map(|value| value.lifecycle_revision),
+            consecutive_failures: Some(0),
+            reopen_level: 0,
+            cooldown_until_ms: None,
+            cooldown_remaining_ms: None,
+            half_open_lease_in_flight: false,
+            half_open_lease_expires_at_ms: None,
+            recovery_successes: None,
+            score_gate_status: RoutingCandidateScoreGateStatus::NotApplicable,
+            score_gate_reason: "default_closed_state".to_string(),
+            best_closed_effective_score,
+        },
     }
 }
 
@@ -1135,15 +1943,6 @@ fn score_input(
     RoutingCandidateScoreInputSnapshot {
         label: label.into(),
         value: value.into(),
-    }
-}
-
-fn format_mass_value(value: u64) -> String {
-    let tenths = value.saturating_mul(10).saturating_add(5_000) / 10_000;
-    if tenths % 10 == 0 {
-        format!("{} 次", tenths / 10)
-    } else {
-        format!("{}.{} 次", tenths / 10, tenths % 10)
     }
 }
 

@@ -27,6 +27,13 @@ impl StationCapacityDomainService {
         }
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=legacy-capacity-domain-service-reference; owner=application/station_capacity_domains; remove_when=capacity-domain reference endpoints are deleted"
+        )
+    )]
     pub(crate) async fn get(
         &self,
         station_id: String,
@@ -64,6 +71,13 @@ impl StationCapacityDomainService {
             .map_err(Into::into)
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=legacy-capacity-domain-service-reference; owner=application/station_capacity_domains; remove_when=capacity-domain reference endpoints are deleted"
+        )
+    )]
     pub(crate) async fn clear(
         &self,
         input: ClearStationCapacityDomainInput,

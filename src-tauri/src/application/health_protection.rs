@@ -347,8 +347,22 @@ pub(crate) enum HealthProtectionTransition {
     IgnoredDuplicate,
     Observed,
     Opened,
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=legacy-health-transition-reference; owner=application/health_protection; remove_when=legacy scoped health reducer is deleted"
+        )
+    )]
     ProbeSucceeded,
     Closed,
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=legacy-health-transition-reference; owner=application/health_protection; remove_when=legacy scoped health reducer is deleted"
+        )
+    )]
     Reopened,
 }
 
@@ -358,10 +372,31 @@ pub(crate) enum HealthProtectionError {
     InvalidProfile,
     InvalidScope,
     InvalidObservation,
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=legacy-health-scope-error; owner=application/health_protection; remove_when=legacy scoped health adapter is retired"
+        )
+    )]
     ScopeNotFound,
     ProbeNotAllowed,
     ProbeAlreadyInFlight,
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=legacy-health-stale-result-reference; owner=application/health_protection; remove_when=legacy scoped health reducer is deleted"
+        )
+    )]
     StaleProbe,
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=legacy-health-stale-result-reference; owner=application/health_protection; remove_when=legacy scoped health reducer is deleted"
+        )
+    )]
     StaleObservation,
     EntryLimit,
     SnapshotInvalid,
@@ -514,6 +549,13 @@ pub(crate) struct HealthProtectionProbe {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HealthProbeAdmissionMode {
     Normal,
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=legacy-health-lease-race-mode; owner=application/health_protection; remove_when=v3 station-key circuit owns lease-race admission"
+        )
+    )]
     StrictAfterLeaseRace,
 }
 
@@ -677,6 +719,13 @@ impl HealthProtectionReducer {
         })
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=legacy-health-observation-reference; owner=application/health_protection; remove_when=legacy scoped health reducer is deleted"
+        )
+    )]
     pub(crate) fn observe(
         &mut self,
         observation: HealthProtectionObservation,
@@ -794,6 +843,13 @@ impl HealthProtectionReducer {
 
     /// Reserves the only probe allowed for a scope in Half-Open. The caller
     /// must submit a `probe: true` observation carrying the returned token.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=legacy-health-probe; owner=application/health_protection; remove_when=v3 station-key circuit owns durable Half-Open leases"
+        )
+    )]
     pub(crate) fn begin_probe(
         &mut self,
         scope: &HealthProtectionScope,

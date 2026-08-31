@@ -4,7 +4,6 @@
 //! configuration. Legacy strategy names are handled by the migration boundary
 //! in `legacy_mapping`; they are never parsed by the runtime compiler.
 
-#[cfg(test)]
 use serde_json::Value;
 use thiserror::Error;
 
@@ -12,8 +11,10 @@ use crate::{
     models::{
         routing::RoutingPolicy as LegacyRoutingPolicy,
         routing_policy::{
-            RetryFailoverPolicyV2, RoutingPolicyConfigV1, RoutingPolicyConfigV2,
-            RoutingPolicyFieldValidationError, MAX_CAPACITY_RETRY_WAIT_BUDGET_SECONDS_HARD_CAP,
+            CircuitBreakerPolicyV3, ReliabilitySamplingPolicyV3, ReliabilitySourceWeightsV3,
+            RetryFailoverPolicyV2, RetryPolicyV3, RoutingPolicyConfigV1, RoutingPolicyConfigV2,
+            RoutingPolicyConfigV3, RoutingPolicyFieldValidationError,
+            MAX_CAPACITY_RETRY_WAIT_BUDGET_SECONDS_HARD_CAP,
             MAX_SAME_TARGET_CAPACITY_RETRIES_HARD_CAP, MAX_TOTAL_ATTEMPTS_HARD_CAP,
         },
     },
@@ -47,6 +48,10 @@ pub(crate) struct RoutingPolicyAggregate {
     /// Canonical active domain shape. V1 is accepted only by
     /// `RoutingPolicyConfigV2::from_stored_value` at this boundary.
     pub(crate) policy: RoutingPolicyConfigV2,
+    /// Canonical v3 policy when storage already contains the v3 payload. The
+    /// V2-shaped `policy` above is retained as a planner compatibility view;
+    /// runtime retry/circuit controls must come from this field.
+    pub(crate) policy_v3: Option<crate::models::routing_policy::RoutingPolicyConfigV3>,
     pub(crate) revision: u64,
     pub(crate) policy_version: String,
     pub(crate) system_version: String,
@@ -54,10 +59,10 @@ pub(crate) struct RoutingPolicyAggregate {
     pub(crate) updated_at_ms: i64,
 }
 
-/// The single request-local attempt budget emitted by the policy compiler.
-/// `max_total_attempts` includes the initial outbound attempt.  Consumers must
-/// pass this immutable value through admission, execution, capacity retry and
-/// trace rather than reading policy settings or defaults independently.
+/// The request-local distinct-key budget emitted by the policy compiler.
+/// `max_total_attempts` is a compatibility field name: it includes the first
+/// key and therefore equals `1 + maxRetryCount`. Same-key outbound retries are
+/// bounded separately by `consecutive_failure_threshold`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct AttemptBudgetProfileV1 {
     pub(crate) policy_revision: u64,
@@ -65,6 +70,9 @@ pub(crate) struct AttemptBudgetProfileV1 {
     pub(crate) max_same_target_capacity_retries: u32,
     pub(crate) capacity_retry_wait_budget_ms: u64,
     pub(crate) allow_cross_capacity_domain_fallback: bool,
+    pub(crate) consecutive_failure_threshold: u32,
+    pub(crate) circuit_recovery_success_threshold: u16,
+    pub(crate) circuit_recovery_wait_ms: u64,
 }
 
 impl AttemptBudgetProfileV1 {
@@ -89,6 +97,47 @@ impl AttemptBudgetProfileV1 {
             capacity_retry_wait_budget_ms: retry_failover.capacity_retry_wait_budget_millis(),
             allow_cross_capacity_domain_fallback: retry_failover
                 .allow_cross_capacity_domain_fallback,
+            consecutive_failure_threshold: u32::from(
+                crate::models::routing_policy::DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD,
+            ),
+            circuit_recovery_success_threshold: u16::from(
+                crate::models::routing_policy::DEFAULT_RECOVERY_SUCCESS_THRESHOLD,
+            ),
+            circuit_recovery_wait_ms: u64::from(
+                crate::models::routing_policy::DEFAULT_RECOVERY_WAIT_SECONDS,
+            ) * 1_000,
+        };
+        profile.validate()?;
+        Ok(profile)
+    }
+
+    pub(crate) fn from_v3_policy(
+        policy_revision: u64,
+        retry: &crate::models::routing_policy::RetryPolicyV3,
+        circuit_breaker: &crate::models::routing_policy::CircuitBreakerPolicyV3,
+    ) -> Result<Self, RoutingPolicyCompileError> {
+        if policy_revision == 0 {
+            return Err(RoutingPolicyCompileError::NotAdmitted(
+                "revision_unavailable",
+            ));
+        }
+        retry
+            .validate()
+            .map_err(RoutingPolicyCompileError::InvalidField)?;
+        circuit_breaker
+            .validate()
+            .map_err(RoutingPolicyCompileError::InvalidField)?;
+        let profile = Self {
+            policy_revision,
+            max_total_attempts: retry.max_total_attempts(),
+            max_same_target_capacity_retries: 0,
+            capacity_retry_wait_budget_ms: 0,
+            allow_cross_capacity_domain_fallback: false,
+            consecutive_failure_threshold: u32::from(retry.consecutive_failure_threshold),
+            circuit_recovery_success_threshold: u16::from(
+                circuit_breaker.recovery_success_threshold,
+            ),
+            circuit_recovery_wait_ms: u64::from(circuit_breaker.recovery_wait_seconds) * 1_000,
         };
         profile.validate()?;
         Ok(profile)
@@ -138,6 +187,18 @@ impl AttemptBudgetProfileV1 {
                 },
             ));
         }
+        if !(1..=10).contains(&self.consecutive_failure_threshold)
+            || self.circuit_recovery_success_threshold == 0
+            || self.circuit_recovery_wait_ms < 5_000
+        {
+            return Err(RoutingPolicyCompileError::InvalidField(
+                RoutingPolicyFieldValidationError {
+                    field: "circuitBreaker",
+                    code: "out_of_range",
+                    message_key: "routing.circuitBreaker.invalid",
+                },
+            ));
+        }
         Ok(())
     }
 }
@@ -176,10 +237,164 @@ pub(crate) struct CompiledRoutingPolicy {
     pub(crate) protection_enabled: bool,
 }
 
+/// V3 request budget. `max_retry_count` is the user-facing number of extra
+/// keys; `max_total_attempts` is the derived number of distinct keys including
+/// the first one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AttemptBudgetProfileV3 {
+    pub(crate) policy_revision: u64,
+    pub(crate) max_retry_count: u32,
+    pub(crate) max_total_attempts: u32,
+    pub(crate) consecutive_failure_threshold: u32,
+}
+
+impl AttemptBudgetProfileV3 {
+    pub(crate) fn into_execution_profile(
+        self,
+        circuit_breaker: &CircuitBreakerPolicyV3,
+    ) -> Result<AttemptBudgetProfileV1, RoutingPolicyCompileError> {
+        let retry = RetryPolicyV3 {
+            version: crate::models::routing_policy::ROUTING_POLICY_RETRY_VERSION_V3,
+            max_retry_count: u16::try_from(self.max_retry_count).map_err(|_| {
+                RoutingPolicyCompileError::InvalidField(RoutingPolicyFieldValidationError {
+                    field: "retry.maxRetryCount",
+                    code: "out_of_range",
+                    message_key: "routing.retry.maxRetryCount.range",
+                })
+            })?,
+            consecutive_failure_threshold: u16::try_from(self.consecutive_failure_threshold)
+                .map_err(|_| {
+                    RoutingPolicyCompileError::InvalidField(RoutingPolicyFieldValidationError {
+                        field: "retry.consecutiveFailureThreshold",
+                        code: "out_of_range",
+                        message_key: "routing.retry.consecutiveFailureThreshold.range",
+                    })
+                })?,
+        };
+        AttemptBudgetProfileV1::from_v3_policy(self.policy_revision, &retry, circuit_breaker)
+    }
+}
+
+impl AttemptBudgetProfileV3 {
+    pub(crate) fn from_policy(
+        policy_revision: u64,
+        retry: &RetryPolicyV3,
+    ) -> Result<Self, RoutingPolicyCompileError> {
+        if policy_revision == 0 {
+            return Err(RoutingPolicyCompileError::NotAdmitted(
+                "revision_unavailable",
+            ));
+        }
+        retry
+            .validate()
+            .map_err(RoutingPolicyCompileError::InvalidField)?;
+        let profile = Self {
+            policy_revision,
+            max_retry_count: u32::from(retry.max_retry_count),
+            max_total_attempts: retry.max_total_attempts(),
+            consecutive_failure_threshold: u32::from(retry.consecutive_failure_threshold),
+        };
+        if profile.max_total_attempts > u32::from(MAX_TOTAL_ATTEMPTS_HARD_CAP) {
+            return Err(RoutingPolicyCompileError::InvalidField(
+                RoutingPolicyFieldValidationError {
+                    field: "retry.maxRetryCount",
+                    code: "out_of_range",
+                    message_key: "routing.retry.maxRetryCount.range",
+                },
+            ));
+        }
+        Ok(profile)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct CompiledRoutingPolicyV3 {
+    pub(crate) source_revision: u64,
+    pub(crate) policy_version: String,
+    pub(crate) system_version: String,
+    pub(crate) reliability_weight: BasisPoints,
+    pub(crate) responsiveness_weight: BasisPoints,
+    pub(crate) cost_weight: BasisPoints,
+    pub(crate) preference_weight: BasisPoints,
+    pub(crate) allow_depleted_fallback: bool,
+    pub(crate) affinity_enabled: bool,
+    pub(crate) affinity_ttl_seconds: u32,
+    pub(crate) reliability_source_weights: ReliabilitySourceWeightsV3,
+    pub(crate) reliability_sampling: ReliabilitySamplingPolicyV3,
+    pub(crate) attempt_budget: AttemptBudgetProfileV3,
+    pub(crate) circuit_breaker: CircuitBreakerPolicyV3,
+    pub(crate) timeout_policy: crate::models::routing_policy::TimeoutPolicyV2,
+}
+
+pub(crate) fn compile_config_v3(
+    config: &RoutingPolicyConfigV3,
+    source_revision: u64,
+    policy_version: &str,
+    system_version: &str,
+) -> Result<CompiledRoutingPolicyV3, RoutingPolicyCompileError> {
+    if config.version != crate::models::routing_policy::ROUTING_POLICY_CONFIG_VERSION_V3 {
+        return Err(RoutingPolicyCompileError::UnknownVersion(config.version));
+    }
+    config
+        .validate()
+        .map_err(RoutingPolicyCompileError::InvalidField)?;
+    if source_revision == 0 || policy_version.is_empty() || system_version.is_empty() {
+        return Err(RoutingPolicyCompileError::NotAdmitted(
+            "missing_policy_identity",
+        ));
+    }
+    let bp = |value| BasisPoints::new(value).expect("validated basis-point field");
+    Ok(CompiledRoutingPolicyV3 {
+        source_revision,
+        policy_version: policy_version.to_owned(),
+        system_version: system_version.to_owned(),
+        reliability_weight: bp(config.reliability_weight),
+        responsiveness_weight: bp(config.responsiveness_weight),
+        cost_weight: bp(config.cost_weight),
+        preference_weight: bp(config.preference_weight),
+        allow_depleted_fallback: config.allow_depleted_fallback,
+        affinity_enabled: config.affinity_enabled,
+        affinity_ttl_seconds: config.affinity_ttl_seconds,
+        reliability_source_weights: config.reliability_source_weights.clone(),
+        reliability_sampling: config.reliability_sampling.clone(),
+        attempt_budget: AttemptBudgetProfileV3::from_policy(source_revision, &config.retry)?,
+        circuit_breaker: config.circuit_breaker.clone(),
+        timeout_policy: config.timeout_policy.clone(),
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn compile_json_v3(
+    config: &Value,
+    source_revision: u64,
+    policy_version: &str,
+    system_version: &str,
+) -> Result<CompiledRoutingPolicyV3, RoutingPolicyCompileError> {
+    if !config.is_object() {
+        return Err(RoutingPolicyCompileError::NotAnObject);
+    }
+    let typed = serde_json::from_value::<RoutingPolicyConfigV3>(config.clone())
+        .map_err(|error| RoutingPolicyCompileError::InvalidConfig(error.to_string()))?;
+    compile_config_v3(&typed, source_revision, policy_version, system_version)
+}
+
 impl RoutingPolicyAggregate {
     pub(crate) fn from_stored(
         stored: StoredRoutingPolicy,
     ) -> Result<Self, RoutingPolicyCompileError> {
+        let policy_v3 = if stored.config.get("version").and_then(Value::as_u64)
+            == Some(u64::from(
+                crate::models::routing_policy::ROUTING_POLICY_CONFIG_VERSION_V3,
+            )) {
+            Some(
+                crate::models::routing_policy::RoutingPolicyConfigV3::from_stored_value(
+                    &stored.config,
+                )
+                .map_err(RoutingPolicyCompileError::InvalidField)?,
+            )
+        } else {
+            None
+        };
         let policy = RoutingPolicyConfigV2::from_stored_value(&stored.config)
             .map_err(|error| RoutingPolicyCompileError::InvalidField(error))?;
         let status = match stored.status.as_str() {
@@ -194,6 +409,7 @@ impl RoutingPolicyAggregate {
         };
         Ok(Self {
             policy,
+            policy_v3,
             revision: stored.revision,
             policy_version: stored.policy_version,
             system_version: stored.system_version,
@@ -217,6 +433,35 @@ impl RoutingPolicyAggregate {
         }
         compile_config_v2(
             &self.policy,
+            self.revision,
+            &self.policy_version,
+            &self.system_version,
+        )
+    }
+
+    /// Compile the canonical v3 controls. Legacy stored policies are upgraded
+    /// at this boundary so callers never need to invent retry/circuit defaults.
+    pub(crate) fn compile_v3(&self) -> Result<CompiledRoutingPolicyV3, RoutingPolicyCompileError> {
+        if self.revision == 0 {
+            return Err(RoutingPolicyCompileError::NotAdmitted(
+                "revision_unavailable",
+            ));
+        }
+        if self.status != RoutingPolicyStatus::Active {
+            return Err(RoutingPolicyCompileError::NotAdmitted(self.status.as_str()));
+        }
+        if let Some(policy) = &self.policy_v3 {
+            return compile_config_v3(
+                policy,
+                self.revision,
+                &self.policy_version,
+                &self.system_version,
+            );
+        }
+        let upgraded = RoutingPolicyConfigV3::from_v2(&self.policy)
+            .map_err(RoutingPolicyCompileError::InvalidField)?;
+        compile_config_v3(
+            &upgraded.policy,
             self.revision,
             &self.policy_version,
             &self.system_version,

@@ -1,9 +1,9 @@
 use crate::application::model_mapping::CandidateModelVariant;
 use crate::models::routing_policy::RoutingPolicyConfigV2;
+use sha2::Digest;
 
 use super::{
-    dispatch::{weighted_rendezvous, DispatchCandidate, DispatchDecision},
-    exploration::{choose_lane, derive_seed, ExplorationBudgetRegistry, ExplorationLane},
+    dispatch::DispatchDecision,
     factors::cost_score,
     fixed_point::{BasisPoints, FactorContribution, UtilityScore},
     planning_snapshot::{CandidateSnapshot, PlanningSnapshot},
@@ -13,11 +13,15 @@ use super::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PlannedCandidate {
     pub(crate) station_key_id: String,
+    pub(crate) lifecycle_revision: i64,
     pub(crate) routing_identity: String,
     pub(crate) target_rank: u16,
     pub(crate) variant: Option<CandidateModelVariant>,
     pub(crate) tier: AvailabilityTier,
+    pub(crate) base_utility: UtilityScore,
     pub(crate) utility: UtilityScore,
+    pub(crate) affinity_bonus: BasisPoints,
+    pub(crate) affinity_applied: bool,
     pub(crate) contributions: [FactorContribution; 4],
 }
 
@@ -42,20 +46,10 @@ pub(crate) enum PlannerError {
     RuntimeAtCapacity,
 }
 
-#[cfg(test)]
 pub(crate) fn plan_snapshot(
     snapshot: &PlanningSnapshot,
-    root_seed: &[u8],
-    round: u64,
-) -> Result<RoutePlan, PlannerError> {
-    plan_snapshot_with_budget(snapshot, root_seed, round, None)
-}
-
-pub(crate) fn plan_snapshot_with_budget(
-    snapshot: &PlanningSnapshot,
-    root_seed: &[u8],
-    round: u64,
-    exploration_budget: Option<&ExplorationBudgetRegistry>,
+    _root_seed: &[u8],
+    _round: u64,
 ) -> Result<RoutePlan, PlannerError> {
     snapshot.validate().map_err(PlannerError::InvalidSnapshot)?;
     if snapshot.runtime.in_flight >= snapshot.runtime.max_concurrency {
@@ -70,122 +64,57 @@ pub(crate) fn plan_snapshot_with_budget(
             } else {
                 candidate.model_variants.iter().cloned().map(Some).collect()
             };
-            variants.into_iter().filter_map(move |variant| {
-                planned_candidate(
-                    candidate,
-                    variant,
-                    &snapshot.policy,
-                    snapshot.runtime.affinity_station_key_id.as_deref(),
-                )
-            })
+            variants
+                .into_iter()
+                .filter_map(move |variant| planned_candidate(candidate, variant, &snapshot.policy))
         })
         .collect::<Vec<_>>();
     if planned.is_empty() {
         return Err(PlannerError::NoEligibleCandidate);
     }
+    apply_affinity_correction(
+        &mut planned,
+        &snapshot.candidates,
+        &snapshot.policy,
+        &snapshot.profile,
+        snapshot.runtime.affinity_station_key_id.as_deref(),
+    );
     planned.sort_by(|left, right| {
         left.target_rank
             .cmp(&right.target_rank)
+            .then_with(|| left.tier.cmp(&right.tier))
             .then_with(|| right.utility.value().cmp(&left.utility.value()))
             .then_with(|| left.station_key_id.cmp(&right.station_key_id))
             .then_with(|| left.routing_identity.cmp(&right.routing_identity))
     });
     let best_rank = planned
-        .iter()
+        .first()
         .map(|candidate| candidate.target_rank)
-        .min()
-        .expect("not empty");
+        .ok_or(PlannerError::NoEligibleCandidate)?;
     let best_tier = planned
         .iter()
         .filter(|candidate| candidate.target_rank == best_rank)
         .map(|candidate| candidate.tier)
         .min()
-        .expect("not empty");
-    let seed = derive_seed(root_seed, snapshot.profile.seed_domain, round);
-    // Exploration is constrained to the best eligible tier. Only advertise
-    // the lane when that tier actually has an unknown-cost candidate; using a
-    // lower-priority unknown here can reserve budget and then produce an empty
-    // dispatch set even though the request has eligible candidates.
-    let unknown_exists = planned.iter().any(|candidate| {
-        candidate.target_rank == best_rank
-            && candidate.tier == best_tier
-            && snapshot
-                .candidates
-                .iter()
-                .find(|raw| raw.station_key_id == candidate.station_key_id)
-                .is_some_and(|raw| raw.cost_basis_points.is_none())
-    });
-    let lane = exploration_budget
-        .map(|budget| {
-            choose_lane(
-                &seed,
-                snapshot.profile.exploration_share_basis_points,
-                unknown_exists,
-                budget,
-            )
-        })
-        .unwrap_or(ExplorationLane::Exploit);
-    let dispatch_candidates = planned
+        .ok_or(PlannerError::NoEligibleCandidate)?;
+    let selected = planned
         .iter()
-        .filter(|candidate| candidate.target_rank == best_rank && candidate.tier == best_tier)
-        .filter(|candidate| {
-            lane != ExplorationLane::Explore
-                || snapshot
-                    .candidates
-                    .iter()
-                    .find(|raw| raw.station_key_id == candidate.station_key_id)
-                    .is_some_and(|raw| raw.cost_basis_points.is_none())
-        })
-        .map(|candidate| DispatchCandidate {
-            id: candidate.routing_identity.clone(),
-            utility: candidate.utility.value(),
-            tier: candidate.tier,
-            failure_domains: snapshot
-                .candidates
-                .iter()
-                .find(|raw| {
-                    raw.station_key_id == candidate.station_key_id
-                        && (raw.model_variants.is_empty()
-                            || raw.model_variants.iter().any(|variant| {
-                                variant.identity_key() == candidate.routing_identity
-                            }))
-                })
-                .map(|raw| raw.failure_domains.clone())
-                .unwrap_or_default(),
-        })
-        .collect::<Vec<_>>();
-    let affinity_dispatch = snapshot
-        .policy
-        .affinity_enabled
-        .then(|| snapshot.runtime.affinity_station_key_id.as_deref())
-        .flatten()
-        .and_then(|affinity_id| {
-            let affinity_prefix = format!("{affinity_id}\u{1f}");
-            dispatch_candidates
-                .iter()
-                .find(|candidate| {
-                    candidate.id == affinity_id || candidate.id.starts_with(&affinity_prefix)
-                })
-                .cloned()
-        });
-    let mut dispatch = if let Some(affinity_candidate) = affinity_dispatch {
-        // A validated live affinity is a deterministic preference correction,
-        // not a probabilistic hint. It still stays inside the hard-eligible
-        // best tier and therefore cannot bypass safety gates.
-        weighted_rendezvous(
-            std::slice::from_ref(&affinity_candidate),
-            &seed,
-            snapshot.profile.exploit_band_basis_points,
-        )
-    } else {
-        weighted_rendezvous(
-            &dispatch_candidates,
-            &seed,
-            snapshot.profile.exploit_band_basis_points,
-        )
-    }
-    .ok_or(PlannerError::NoEligibleCandidate)?;
-    dispatch.explored = lane == ExplorationLane::Explore;
+        .find(|candidate| candidate.target_rank == best_rank && candidate.tier == best_tier)
+        .ok_or(PlannerError::NoEligibleCandidate)?;
+    // Production routing is score ordered.  Keep the dispatch shape for
+    // tracing/compatibility, but make the selected identity the first item in
+    // the already deterministic order.  No random exploration or rendezvous
+    // draw is allowed to move a lower-scoring key ahead of it.
+    let seed_commitment = sha2::Sha256::digest(snapshot.snapshot_id.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let dispatch = DispatchDecision {
+        selected_id: selected.routing_identity.clone(),
+        band_size: 1,
+        explored: false,
+        seed_commitment,
+    };
     Ok(RoutePlan {
         snapshot_id: snapshot.snapshot_id.clone(),
         selected_station_key_id: dispatch.selected_id.clone(),
@@ -198,27 +127,25 @@ fn planned_candidate(
     candidate: &CandidateSnapshot,
     variant: Option<CandidateModelVariant>,
     policy: &RoutingPolicyConfigV2,
-    affinity_station_key_id: Option<&str>,
 ) -> Option<PlannedCandidate> {
     if !candidate.hard_eligible {
         return None;
     }
     let tier = classify_tier(
         candidate.credential_available,
-        candidate.reliability_basis_points >= 1_000,
+        true,
         candidate.depleted,
         policy.allow_depleted_fallback,
     )?;
-    let tier = if candidate.backup_only {
-        AvailabilityTier::Backup
-    } else {
-        tier
+    let tier = match (tier, candidate.backup_only) {
+        (AvailabilityTier::DepletedEmergency, _) => AvailabilityTier::DepletedEmergency,
+        (_, true) => AvailabilityTier::ConfiguredBackup,
+        (tier, false) => tier,
     };
     if candidate.capability_basis_points == 0 {
         return None;
     }
-    let (total, contributions) =
-        weighted_score_components(candidate, policy, affinity_station_key_id, None)?;
+    let (total, contributions) = weighted_score_components(candidate, policy, None)?;
     let target_rank = variant.as_ref().map(|value| value.target_rank).unwrap_or(0);
     let routing_identity = variant
         .as_ref()
@@ -226,51 +153,131 @@ fn planned_candidate(
         .unwrap_or_else(|| candidate.station_key_id.clone());
     Some(PlannedCandidate {
         station_key_id: candidate.station_key_id.clone(),
+        lifecycle_revision: candidate.credential_revision,
         routing_identity,
         target_rank,
         variant,
         tier,
+        base_utility: UtilityScore::new(total),
         utility: UtilityScore::new(total),
+        affinity_bonus: BasisPoints::ZERO,
+        affinity_applied: false,
         contributions,
     })
+}
+
+fn apply_affinity_correction(
+    planned: &mut [PlannedCandidate],
+    candidates: &[CandidateSnapshot],
+    policy: &RoutingPolicyConfigV2,
+    profile: &super::algorithm_profile::DispatchAlgorithmProfile,
+    affinity_station_key_id: Option<&str>,
+) {
+    if !policy.affinity_enabled {
+        return;
+    }
+    let Some(affinity_station_key_id) = affinity_station_key_id else {
+        return;
+    };
+    let Some(best_rank) = planned.iter().map(|candidate| candidate.target_rank).min() else {
+        return;
+    };
+    let Some(best_tier) = planned
+        .iter()
+        .filter(|candidate| candidate.target_rank == best_rank)
+        .map(|candidate| candidate.tier)
+        .min()
+    else {
+        return;
+    };
+    if !planned.iter().any(|candidate| {
+        candidate.station_key_id == affinity_station_key_id
+            && candidate.target_rank == best_rank
+            && candidate.tier == best_tier
+    }) {
+        return;
+    }
+    let Some(affinity_candidate) = candidates
+        .iter()
+        .find(|candidate| candidate.station_key_id == affinity_station_key_id)
+    else {
+        return;
+    };
+    let layer_candidates = planned
+        .iter()
+        .filter(|candidate| candidate.target_rank == best_rank && candidate.tier == best_tier)
+        .filter_map(|planned| {
+            candidates
+                .iter()
+                .find(|candidate| candidate.station_key_id == planned.station_key_id)
+        })
+        .collect::<Vec<_>>();
+    if affinity_candidate.quality_available {
+        let best_reliability = layer_candidates
+            .iter()
+            .filter(|candidate| candidate.quality_available)
+            .map(|candidate| candidate.reliability_basis_points)
+            .max()
+            .unwrap_or(affinity_candidate.reliability_basis_points);
+        let best_responsiveness = layer_candidates
+            .iter()
+            .filter(|candidate| candidate.quality_available)
+            .map(|candidate| candidate.responsiveness_basis_points)
+            .max()
+            .unwrap_or(affinity_candidate.responsiveness_basis_points);
+        let margin = profile.affinity_hysteresis_margin_basis_points;
+        if best_reliability.saturating_sub(affinity_candidate.reliability_basis_points) > margin
+            || best_responsiveness.saturating_sub(affinity_candidate.responsiveness_basis_points)
+                > margin
+        {
+            return;
+        }
+    }
+
+    for candidate in planned.iter_mut().filter(|candidate| {
+        candidate.station_key_id == affinity_station_key_id
+            && candidate.target_rank == best_rank
+            && candidate.tier == best_tier
+    }) {
+        let bonus_value = profile
+            .affinity_bonus_cap_basis_points
+            .min(10_000_u16.saturating_sub(candidate.base_utility.value().get()));
+        let Some(bonus) = BasisPoints::new(bonus_value) else {
+            continue;
+        };
+        let Some(effective) = candidate.base_utility.value().checked_add(bonus) else {
+            continue;
+        };
+        candidate.affinity_bonus = bonus;
+        candidate.affinity_applied = bonus_value > 0;
+        candidate.utility = UtilityScore::new(effective);
+    }
 }
 
 pub(crate) fn candidate_score_breakdown_with_cost_basis(
     candidate: &CandidateSnapshot,
     policy: &RoutingPolicyConfigV2,
-    affinity_station_key_id: Option<&str>,
     cost_basis_override: Option<u16>,
 ) -> Option<CandidateScoreBreakdown> {
-    weighted_score_components(
-        candidate,
-        policy,
-        affinity_station_key_id,
-        cost_basis_override,
-    )
-    .map(|(score, factors)| CandidateScoreBreakdown {
-        total: score.get(),
-        factors,
+    weighted_score_components(candidate, policy, cost_basis_override).map(|(score, factors)| {
+        CandidateScoreBreakdown {
+            total: score.get(),
+            factors,
+        }
     })
 }
 
 fn weighted_score_components(
     candidate: &CandidateSnapshot,
     policy: &RoutingPolicyConfigV2,
-    affinity_station_key_id: Option<&str>,
     cost_basis_override: Option<u16>,
 ) -> Option<(BasisPoints, [FactorContribution; 4])> {
-    let preference = if policy.affinity_enabled
-        && affinity_station_key_id == Some(candidate.station_key_id.as_str())
-    {
-        10_000
-    } else {
-        candidate.preference_basis_points
-    };
+    let cost = cost_score(cost_basis_override.or(candidate.cost_basis_points));
     let scores = [
         candidate.reliability_basis_points,
         candidate.responsiveness_basis_points,
-        cost_score(cost_basis_override.or(candidate.cost_basis_points)).get(),
-        preference,
+        cost.map(BasisPoints::get).unwrap_or(0),
+        candidate.preference_basis_points,
     ];
     let weights = [
         policy.reliability_weight,
@@ -278,12 +285,44 @@ fn weighted_score_components(
         policy.cost_weight,
         policy.preference_weight,
     ];
-    let mut total = BasisPoints::ZERO;
+    let available = [
+        candidate.quality_available,
+        candidate.quality_available,
+        cost.is_some(),
+        true,
+    ];
+    let effective_weights = normalized_available_weights(weights, available)?;
+    let configured_weight_sum = weights
+        .iter()
+        .zip(available)
+        .filter(|(_, available)| *available)
+        .try_fold(0_u64, |sum, (weight, _)| {
+            sum.checked_add(u64::from(*weight))
+        })?;
+    let total = if configured_weight_sum == 0 {
+        BasisPoints::ZERO
+    } else {
+        let numerator = scores
+            .iter()
+            .zip(weights)
+            .zip(available)
+            .filter(|(_, available)| *available)
+            .try_fold(0_u64, |sum, ((score, weight), _)| {
+                sum.checked_add(u64::from(*score) * u64::from(weight))
+            })?;
+        let rounded = numerator
+            .checked_add(configured_weight_sum / 2)?
+            .checked_div(configured_weight_sum)?
+            .min(10_000);
+        BasisPoints::new(u16::try_from(rounded).ok()?)?
+    };
     let contributions = std::array::from_fn(|index| {
-        let weight = BasisPoints::new(weights[index]).expect("validated policy");
+        let weight = BasisPoints::new(effective_weights[index]).expect("normalized weight");
         let score = BasisPoints::new(scores[index]).expect("validated snapshot");
-        let contribution = weight.checked_mul(score).unwrap_or(BasisPoints::ZERO);
-        total = total.checked_add(contribution).unwrap_or(BasisPoints::FULL);
+        let contribution_value =
+            (u64::from(weight.get()) * u64::from(score.get()) + 5_000) / 10_000;
+        let contribution =
+            BasisPoints::new(contribution_value.min(10_000) as u16).unwrap_or(BasisPoints::ZERO);
         FactorContribution {
             weight,
             score,
@@ -293,6 +332,47 @@ fn weighted_score_components(
     Some((total, contributions))
 }
 
+fn normalized_available_weights(configured: [u16; 4], available: [bool; 4]) -> Option<[u16; 4]> {
+    let total = configured
+        .iter()
+        .zip(available)
+        .filter(|(_, available)| *available)
+        .try_fold(0_u64, |sum, (weight, _)| {
+            sum.checked_add(u64::from(*weight))
+        })?;
+    if total == 0 {
+        return Some([0; 4]);
+    }
+    let mut normalized = [0_u16; 4];
+    let mut remainders = [0_u64; 4];
+    let mut allocated = 0_u64;
+    for index in 0..4 {
+        if !available[index] || configured[index] == 0 {
+            continue;
+        }
+        let scaled = u64::from(configured[index]).checked_mul(10_000)?;
+        let quotient = scaled / total;
+        normalized[index] = u16::try_from(quotient).ok()?;
+        remainders[index] = scaled % total;
+        allocated = allocated.checked_add(quotient)?;
+    }
+    let mut remainder_units = 10_000_u64.checked_sub(allocated)?;
+    let mut awarded = [false; 4];
+    while remainder_units > 0 {
+        let index = (0..4)
+            .filter(|index| available[*index] && configured[*index] > 0 && !awarded[*index])
+            .max_by(|left, right| {
+                remainders[*left]
+                    .cmp(&remainders[*right])
+                    .then_with(|| right.cmp(left))
+            })?;
+        normalized[index] = normalized[index].checked_add(1)?;
+        awarded[index] = true;
+        remainder_units -= 1;
+    }
+    Some(normalized)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -300,12 +380,107 @@ mod tests {
         algorithm_profile::DispatchAlgorithmProfile, candidate_plan::RoutePlanPricingSnapshot,
         planning_snapshot::RuntimeOverlaySnapshot,
     };
+
+    fn scoring_candidate(station_key_id: &str) -> CandidateSnapshot {
+        CandidateSnapshot {
+            station_key_id: station_key_id.to_string(),
+            station_id: format!("station-{station_key_id}"),
+            endpoint_revision: 1,
+            credential_revision: 1,
+            account_revision: 1,
+            group_binding_id: None,
+            group_revision: None,
+            resolved_upstream_model: Some("gpt-test".into()),
+            model_alias_revision: 1,
+            model_variants: Vec::new(),
+            credential_available: true,
+            hard_eligible: true,
+            backup_only: false,
+            depleted: false,
+            capability_basis_points: 10_000,
+            quality_available: true,
+            reliability_basis_points: 8_000,
+            responsiveness_basis_points: 8_000,
+            cost_basis_points: Some(8_000),
+            pricing: RoutePlanPricingSnapshot::unpriced("test"),
+            preference_basis_points: 2_000,
+            failure_domains: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn unavailable_quality_is_omitted_and_remaining_weights_are_renormalized() {
+        let mut candidate = scoring_candidate("quality-unavailable");
+        candidate.quality_available = false;
+        let policy = RoutingPolicyConfigV2::default();
+
+        let (score, contributions) =
+            weighted_score_components(&candidate, &policy, None).expect("fallback score");
+
+        assert_eq!(score.get(), 5_429);
+        assert_eq!(contributions[0].weight.get(), 0);
+        assert_eq!(contributions[1].weight.get(), 0);
+        assert_eq!(contributions[2].weight.get(), 5_714);
+        assert_eq!(contributions[3].weight.get(), 4_286);
+    }
+
+    #[test]
+    fn unavailable_cost_is_omitted_and_remaining_weights_are_renormalized() {
+        let mut candidate = scoring_candidate("cost-unavailable");
+        candidate.cost_basis_points = None;
+
+        let (score, contributions) =
+            weighted_score_components(&candidate, &RoutingPolicyConfigV2::default(), None)
+                .expect("score from remaining factors");
+
+        assert_ne!(score.get(), 5_000);
+        assert_eq!(contributions[2].weight, BasisPoints::ZERO);
+        assert_eq!(contributions[2].contribution, BasisPoints::ZERO);
+        assert_eq!(
+            contributions
+                .iter()
+                .map(|factor| u32::from(factor.weight.get()))
+                .sum::<u32>(),
+            10_000,
+        );
+    }
+
+    #[test]
+    fn no_available_positive_weight_keeps_a_stable_zero_score_candidate() {
+        let mut candidate = scoring_candidate("fallback");
+        candidate.quality_available = false;
+        candidate.reliability_basis_points = 0;
+        let mut policy = RoutingPolicyConfigV2::default();
+        policy.reliability_weight = 5_000;
+        policy.responsiveness_weight = 5_000;
+        policy.cost_weight = 0;
+        policy.preference_weight = 0;
+
+        let planned = planned_candidate(&candidate, None, &policy)
+            .expect("quality-unavailable candidate remains sortable");
+
+        assert_eq!(planned.utility.value(), BasisPoints::ZERO);
+        assert!(planned.contributions.iter().all(|factor| {
+            factor.weight == BasisPoints::ZERO && factor.contribution == BasisPoints::ZERO
+        }));
+    }
+
     #[test]
     fn planner_accepts_only_a_snapshot_and_replays_deterministically() {
         let snapshot = PlanningSnapshot {
             snapshot_id: "snapshot-1".into(),
             durable_revision: 1,
+            configured_key_count: 1,
+            capability_match_count: 1,
+            candidate_cap_count: 1,
+            routing_runtime_generation_id: None,
+            routing_generation_fence_revision: 0,
             routing_policy_revision: 1,
+            routing_quality_revision: 0,
+            routing_health_revision: 0,
+            quality_projection_backlog: 0,
+            quality_projection_lag_seconds: 0,
+            quality_stale: false,
             policy: RoutingPolicyConfigV2::default(),
             attempt_budget:
                 crate::application::routing_policy::AttemptBudgetProfileV1::from_policy(
@@ -325,13 +500,12 @@ mod tests {
                 resolved_upstream_model: Some("gpt-test".into()),
                 model_alias_revision: 1,
                 model_variants: Vec::new(),
-                capacity_domain: None,
-                capacity_domain_revision: None,
                 credential_available: true,
                 hard_eligible: true,
                 backup_only: false,
                 depleted: false,
                 capability_basis_points: 10_000,
+                quality_available: true,
                 reliability_basis_points: 8_000,
                 responsiveness_basis_points: 8_000,
                 cost_basis_points: Some(8_000),
@@ -366,7 +540,17 @@ mod tests {
         let mut snapshot = PlanningSnapshot {
             snapshot_id: "affinity".into(),
             durable_revision: 1,
+            configured_key_count: 2,
+            capability_match_count: 2,
+            candidate_cap_count: 2,
+            routing_runtime_generation_id: None,
+            routing_generation_fence_revision: 0,
             routing_policy_revision: 1,
+            routing_quality_revision: 0,
+            routing_health_revision: 0,
+            quality_projection_backlog: 0,
+            quality_projection_lag_seconds: 0,
+            quality_stale: false,
             policy,
             attempt_budget:
                 crate::application::routing_policy::AttemptBudgetProfileV1::from_policy(
@@ -387,13 +571,12 @@ mod tests {
                     resolved_upstream_model: Some("gpt-test".into()),
                     model_alias_revision: 1,
                     model_variants: Vec::new(),
-                    capacity_domain: None,
-                    capacity_domain_revision: None,
                     credential_available: true,
                     hard_eligible: true,
                     backup_only: false,
                     depleted: false,
                     capability_basis_points: 10_000,
+                    quality_available: true,
                     reliability_basis_points: 5_000,
                     responsiveness_basis_points: 5_000,
                     cost_basis_points: None,
@@ -412,18 +595,17 @@ mod tests {
                     resolved_upstream_model: Some("gpt-test".into()),
                     model_alias_revision: 1,
                     model_variants: Vec::new(),
-                    capacity_domain: None,
-                    capacity_domain_revision: None,
                     credential_available: true,
                     hard_eligible: true,
                     backup_only: false,
                     depleted: false,
                     capability_basis_points: 10_000,
+                    quality_available: true,
                     reliability_basis_points: 5_000,
                     responsiveness_basis_points: 5_000,
                     cost_basis_points: None,
                     pricing: RoutePlanPricingSnapshot::unpriced("test"),
-                    preference_basis_points: 1_000,
+                    preference_basis_points: 8_900,
                     failure_domains: vec![],
                 },
             ],
@@ -439,21 +621,61 @@ mod tests {
         };
         let plan = plan_snapshot(&snapshot, b"seed", 1).unwrap();
         assert_eq!(plan.candidates[0].station_key_id, "sticky");
+        let sticky = plan
+            .candidates
+            .iter()
+            .find(|candidate| candidate.station_key_id == "sticky")
+            .expect("sticky candidate");
+        assert_eq!(sticky.base_utility.value().get(), 8_900);
+        assert_eq!(sticky.affinity_bonus.get(), 150);
+        assert_eq!(sticky.utility.value().get(), 9_050);
+        assert!(sticky.affinity_applied);
 
+        snapshot.candidates[1].reliability_basis_points = 4_000;
+        let at_hysteresis_boundary = plan_snapshot(&snapshot, b"seed", 1).unwrap();
+        assert_eq!(
+            at_hysteresis_boundary.candidates[0].station_key_id,
+            "sticky"
+        );
+
+        snapshot.candidates[1].reliability_basis_points = 3_999;
+        let escaped = plan_snapshot(&snapshot, b"seed", 1).unwrap();
+        assert_eq!(escaped.candidates[0].station_key_id, "ordinary");
+        let escaped_sticky = escaped
+            .candidates
+            .iter()
+            .find(|candidate| candidate.station_key_id == "sticky")
+            .expect("escaped sticky candidate");
+        assert_eq!(escaped_sticky.base_utility, escaped_sticky.utility);
+        assert_eq!(escaped_sticky.affinity_bonus, BasisPoints::ZERO);
+        assert!(!escaped_sticky.affinity_applied);
+
+        snapshot.candidates[1].reliability_basis_points = 5_000;
         snapshot.runtime.affinity_station_key_id = None;
         let without_affinity = plan_snapshot(&snapshot, b"seed", 1).unwrap();
         assert_eq!(without_affinity.candidates[0].station_key_id, "ordinary");
     }
 
     #[test]
-    fn exploration_does_not_empty_the_best_tier_for_lower_tier_unknown_cost() {
+    fn lower_tier_unknown_cost_never_displaces_the_best_tier() {
         let profile = DispatchAlgorithmProfile::default();
-        let budget = ExplorationBudgetRegistry::new(1);
+        let mut policy = RoutingPolicyConfigV2::default();
+        policy.allow_depleted_fallback = true;
         let snapshot = PlanningSnapshot {
             snapshot_id: "mixed-cost-tiers".into(),
             durable_revision: 1,
+            configured_key_count: 3,
+            capability_match_count: 3,
+            candidate_cap_count: 3,
+            routing_runtime_generation_id: None,
+            routing_generation_fence_revision: 0,
             routing_policy_revision: 1,
-            policy: RoutingPolicyConfigV2::default(),
+            routing_quality_revision: 0,
+            routing_health_revision: 0,
+            quality_projection_backlog: 0,
+            quality_projection_lag_seconds: 0,
+            quality_stale: false,
+            policy,
             attempt_budget:
                 crate::application::routing_policy::AttemptBudgetProfileV1::from_policy(
                     1,
@@ -473,13 +695,12 @@ mod tests {
                     resolved_upstream_model: Some("gpt-test".into()),
                     model_alias_revision: 1,
                     model_variants: Vec::new(),
-                    capacity_domain: None,
-                    capacity_domain_revision: None,
                     credential_available: true,
                     hard_eligible: true,
                     backup_only: false,
                     depleted: false,
                     capability_basis_points: 10_000,
+                    quality_available: true,
                     reliability_basis_points: 9_000,
                     responsiveness_basis_points: 9_000,
                     cost_basis_points: Some(8_000),
@@ -498,18 +719,41 @@ mod tests {
                     resolved_upstream_model: Some("gpt-test".into()),
                     model_alias_revision: 1,
                     model_variants: Vec::new(),
-                    capacity_domain: None,
-                    capacity_domain_revision: None,
                     credential_available: true,
                     hard_eligible: true,
                     backup_only: true,
                     depleted: false,
                     capability_basis_points: 10_000,
+                    quality_available: true,
                     reliability_basis_points: 9_000,
                     responsiveness_basis_points: 9_000,
                     cost_basis_points: None,
                     pricing: RoutePlanPricingSnapshot::unpriced("test"),
                     preference_basis_points: 5_000,
+                    failure_domains: vec![],
+                },
+                CandidateSnapshot {
+                    station_key_id: "depleted-emergency".into(),
+                    station_id: "station-emergency".into(),
+                    endpoint_revision: 1,
+                    credential_revision: 1,
+                    account_revision: 1,
+                    group_binding_id: None,
+                    group_revision: None,
+                    resolved_upstream_model: Some("gpt-test".into()),
+                    model_alias_revision: 1,
+                    model_variants: Vec::new(),
+                    credential_available: true,
+                    hard_eligible: true,
+                    backup_only: false,
+                    depleted: true,
+                    capability_basis_points: 10_000,
+                    quality_available: true,
+                    reliability_basis_points: 10_000,
+                    responsiveness_basis_points: 10_000,
+                    cost_basis_points: Some(10_000),
+                    pricing: RoutePlanPricingSnapshot::unpriced("test"),
+                    preference_basis_points: 10_000,
                     failure_domains: vec![],
                 },
             ],
@@ -524,10 +768,12 @@ mod tests {
             },
         };
 
-        let plan = plan_snapshot_with_budget(&snapshot, b"seed", 1, Some(&budget))
+        let plan = plan_snapshot(&snapshot, b"seed", 1)
             .expect("known primary candidate must remain dispatchable");
         assert_eq!(plan.selected_station_key_id, "primary-known");
+        assert_eq!(plan.candidates[0].tier, AvailabilityTier::Primary);
+        assert_eq!(plan.candidates[1].tier, AvailabilityTier::ConfiguredBackup);
+        assert_eq!(plan.candidates[2].tier, AvailabilityTier::DepletedEmergency);
         assert!(!plan.dispatch.explored);
-        assert_eq!(budget.remaining(), 1, "no exploration token was reserved");
     }
 }

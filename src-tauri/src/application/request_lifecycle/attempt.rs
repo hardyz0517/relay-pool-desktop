@@ -12,6 +12,9 @@ pub(crate) struct AttemptContext {
     pub group_binding_id: Option<String>,
     pub group_revision: Option<i64>,
     pub resolved_upstream_model: Option<String>,
+    /// Opaque commitment proving which comparable protocol/model/request
+    /// shape crossed the outbound boundary. It never contains request data.
+    pub comparability_key: Option<String>,
     pub model_alias_revision: i64,
     pub started_at_ms: i64,
     /// The exact durable Half-Open scope leased for this attempt.  The
@@ -81,6 +84,7 @@ pub(crate) enum AttemptFailureKind {
     )
 )]
 pub(crate) enum RetryDisposition {
+    RetrySameTarget,
     TryNextCandidate,
     StopRequest,
 }
@@ -98,9 +102,7 @@ pub(crate) fn project_retry_disposition(
     use crate::application::request_finalization::failure::RetryDisposition as CanonicalRetry;
 
     match retry {
-        CanonicalRetry::RetrySameTarget
-        | CanonicalRetry::TryDifferentFailureDomain
-        | CanonicalRetry::WaitThenReplan => RetryDisposition::TryNextCandidate,
+        CanonicalRetry::TryNextKey => RetryDisposition::TryNextCandidate,
         CanonicalRetry::StopRequest => RetryDisposition::StopRequest,
     }
 }
@@ -335,6 +337,7 @@ mod tests {
             group_binding_id: None,
             group_revision: None,
             resolved_upstream_model: None,
+            comparability_key: None,
             model_alias_revision: 1,
             started_at_ms: 1,
             probe_scope: None,
@@ -382,15 +385,7 @@ mod tests {
     #[test]
     fn canonical_retry_projection_has_one_compatibility_mapping() {
         assert_eq!(
-            project_retry_disposition(CanonicalRetry::RetrySameTarget),
-            RetryDisposition::TryNextCandidate
-        );
-        assert_eq!(
-            project_retry_disposition(CanonicalRetry::WaitThenReplan),
-            RetryDisposition::TryNextCandidate
-        );
-        assert_eq!(
-            project_retry_disposition(CanonicalRetry::TryDifferentFailureDomain),
+            project_retry_disposition(CanonicalRetry::TryNextKey),
             RetryDisposition::TryNextCandidate
         );
         assert_eq!(

@@ -272,7 +272,7 @@ async fn model_mapping_fallback_rewrites_target_before_output_for_json() {
     let log = logs.first().expect("request log");
     assert_eq!(log.fallback_count, 1);
     assert_eq!(log.attempt_count, Some(2));
-    let attempts = harness.attempt_terminal_summaries(&log.id).await;
+    let attempts = wait_for_attempt_terminal_summaries(&harness, &log.id, 2).await;
     assert_eq!(attempts.len(), 2);
     assert!(!attempts[0].output_committed);
     assert!(attempts[1].output_committed);
@@ -366,7 +366,7 @@ data: [DONE]
     let log = logs.first().expect("request log");
     assert_eq!(log.fallback_count, 1);
     assert_eq!(log.attempt_count, Some(2));
-    let attempts = harness.attempt_terminal_summaries(&log.id).await;
+    let attempts = wait_for_attempt_terminal_summaries(&harness, &log.id, 2).await;
     assert_eq!(attempts.len(), 2);
     assert!(!attempts[0].output_committed);
     assert!(attempts[1].output_committed);
@@ -464,7 +464,7 @@ data: [DONE]
     let log = logs.first().expect("request log");
     assert_eq!(log.fallback_count, 0);
     assert_eq!(log.attempt_count, Some(1));
-    let attempts = harness.attempt_terminal_summaries(&log.id).await;
+    let attempts = wait_for_attempt_terminal_summaries(&harness, &log.id, 1).await;
     assert_eq!(attempts.len(), 1);
     assert!(
         attempts[0].output_committed,
@@ -552,7 +552,7 @@ async fn auth_failure_then_backup_success_persists_dual_terminal_outcome() {
     assert_eq!(log.attempt_count, Some(2));
     assert_eq!(log.completion_source.as_deref(), Some("upstream"));
 
-    let attempts = harness.attempt_terminal_summaries(&log.id).await;
+    let attempts = wait_for_attempt_terminal_summaries(&harness, &log.id, 2).await;
     assert_eq!(attempts.len(), 2);
     assert_eq!(attempts[0].ordinal, 0);
     assert_eq!(attempts[0].station_key_id, primary_candidate.station_key_id);
@@ -669,10 +669,7 @@ async fn model_not_found_writes_exact_capability_verdict_excludes_next_snapshot_
             }),
         )
         .await;
-    assert_eq!(
-        excluded_response.status,
-        reqwest::StatusCode::SERVICE_UNAVAILABLE
-    );
+    assert_eq!(excluded_response.status, reqwest::StatusCode::BAD_GATEWAY);
     assert_eq!(
         rejected.captured_requests().len(),
         1,
@@ -716,7 +713,7 @@ async fn model_not_found_writes_exact_capability_verdict_excludes_next_snapshot_
 }
 
 #[tokio::test]
-async fn group_subscription_failure_blocks_exact_group_and_group_revision_recovers() {
+async fn group_subscription_failure_is_diagnostic_only_for_v3_routing() {
     let rejected = LoopbackUpstream::script(vec![
         ScriptedResponse::Raw {
             status: 403,
@@ -808,35 +805,22 @@ async fn group_subscription_failure_blocks_exact_group_and_group_revision_recove
         "terminal finalization must durably learn the exact rejected group binding"
     );
 
-    let unrelated_response = proxy
+    let next_response = proxy
         .post_json(
             "/v1/chat/completions",
             serde_json::json!({
                 "model": "gpt-loopback",
-                "messages": [{"role": "user", "content": "unrelated group remains selectable"}]
+                "messages": [{"role": "user", "content": "group diagnostics do not gate v3"}]
             }),
         )
         .await;
-    assert_eq!(unrelated_response.status, reqwest::StatusCode::OK);
-    unrelated.wait_for_requests(1);
-    assert_eq!(
-        rejected.captured_requests().len(),
-        1,
-        "the next planning snapshot must exclude only the learned group commitment"
-    );
-
-    harness.bump_group_revision(&rejected_group).await;
-    let recovered_response = proxy
-        .post_json(
-            "/v1/chat/completions",
-            serde_json::json!({
-                "model": "gpt-loopback",
-                "messages": [{"role": "user", "content": "group revision recovery"}]
-            }),
-        )
-        .await;
-    assert_eq!(recovered_response.status, reqwest::StatusCode::OK);
+    assert_eq!(next_response.status, reqwest::StatusCode::OK);
     rejected.wait_for_requests(2);
+    assert_eq!(
+        unrelated.captured_requests().len(),
+        0,
+        "legacy group-scoped protection must not become a v3 planner gate"
+    );
 
     harness.stop_proxy().await;
 }
@@ -857,7 +841,7 @@ async fn retry_policy_black_box_max_total_attempts_bounds_outbound_and_trace_pro
     let _backup_candidate = harness
         .seed_candidate(&backup.base_url, "budget-backup", 10_000)
         .await;
-    harness.set_retry_failover_policy(1, 0, 2_000, true).await;
+    harness.set_retry_policy(1).await;
 
     let proxy = harness.start_proxy().await;
     let response = proxy
@@ -884,7 +868,7 @@ async fn retry_policy_black_box_max_total_attempts_bounds_outbound_and_trace_pro
         Some("upstream_rate_limited")
     );
     let trace = harness.decision_trace_event_summaries(&log.id).await;
-    assert_profile_trace(&trace, "profile_total_1_same_0_wait_2000_cross_1");
+    assert_profile_trace(&trace, "profile_total_1_fail_3_recover_2_wait_ms_30000");
     assert!(trace.iter().any(|event| {
         event.kind == "canonical_failure"
             && event.detail.as_deref().is_some_and(|detail| {
@@ -897,7 +881,7 @@ async fn retry_policy_black_box_max_total_attempts_bounds_outbound_and_trace_pro
 }
 
 #[tokio::test]
-async fn retry_policy_same_target_capacity_limit_controls_outbound_and_trace_profile() {
+async fn retry_policy_never_retries_the_same_key_after_an_overload() {
     let upstream = LoopbackUpstream::script(vec![
         capacity_response(),
         ScriptedResponse::Json(
@@ -914,10 +898,7 @@ async fn retry_policy_same_target_capacity_limit_controls_outbound_and_trace_pro
     harness
         .set_candidate_upstream_api_format(&candidate, "openai_chat_completions")
         .await;
-    harness
-        .set_candidate_capacity_domain(&candidate, "openai", Some("same-target"), None)
-        .await;
-    harness.set_retry_failover_policy(4, 1, 2_000, true).await;
+    harness.set_retry_policy(4).await;
 
     let proxy = harness.start_proxy().await;
     let response = proxy
@@ -930,31 +911,22 @@ async fn retry_policy_same_target_capacity_limit_controls_outbound_and_trace_pro
             "loopback-same-target-retry",
         )
         .await;
-    assert_eq!(
-        response.status,
-        reqwest::StatusCode::OK,
-        "{}",
-        response.body_text()
-    );
-    upstream.wait_for_requests(2);
-    assert_eq!(upstream.captured_requests().len(), 2);
-    let log = wait_for_log_attempt_count(&harness, "success", 2).await;
-    assert_eq!(log.attempt_count, Some(2));
-    assert_eq!(log.fallback_count, 1);
+    assert_eq!(response.status, reqwest::StatusCode::SERVICE_UNAVAILABLE);
+    upstream.wait_for_requests(1);
+    assert_eq!(upstream.captured_requests().len(), 1);
+    let log = wait_for_latest_log(&harness, "failed").await;
+    assert_eq!(log.attempt_count, Some(1));
+    assert_eq!(log.fallback_count, 0);
     let trace = harness.decision_trace_event_summaries(&log.id).await;
-    assert_profile_trace(&trace, "profile_total_4_same_1_wait_2000_cross_1");
-    assert_eq!(
-        trace
-            .iter()
-            .filter(|event| event.code == "capacity_same_target_retry")
-            .count(),
-        1
-    );
+    assert_profile_trace(&trace, "profile_total_4_fail_3_recover_2_wait_ms_30000");
+    assert!(trace
+        .iter()
+        .all(|event| !event.code.starts_with("capacity_")));
     harness.stop_proxy().await;
 }
 
 #[tokio::test]
-async fn retry_policy_wait_budget_suppresses_capacity_retry_and_records_effective_budget() {
+async fn retry_policy_trace_exposes_only_the_v3_retry_and_circuit_controls() {
     let upstream = LoopbackUpstream::script(vec![capacity_response()]);
     let harness = RoutingLoopbackHarness::new().await;
     let candidate = harness
@@ -966,10 +938,7 @@ async fn retry_policy_wait_budget_suppresses_capacity_retry_and_records_effectiv
     harness
         .set_candidate_upstream_api_format(&candidate, "openai_chat_completions")
         .await;
-    harness
-        .set_candidate_capacity_domain(&candidate, "openai", Some("wait-budget"), None)
-        .await;
-    harness.set_retry_failover_policy(4, 2, 0, true).await;
+    harness.set_retry_policy(4).await;
 
     let proxy = harness.start_proxy().await;
     let response = proxy
@@ -993,19 +962,19 @@ async fn retry_policy_wait_budget_suppresses_capacity_retry_and_records_effectiv
         Some("upstream_overloaded")
     );
     let trace = harness.decision_trace_event_summaries(&log.id).await;
-    assert_profile_trace(&trace, "profile_total_4_same_2_wait_0_cross_1");
-    assert!(trace.iter().any(|event| {
-        event.code == "capacity_same_domain_fallback_suppressed"
-            || event
+    assert_profile_trace(&trace, "profile_total_4_fail_3_recover_2_wait_ms_30000");
+    assert!(trace.iter().all(|event| {
+        !event.code.starts_with("capacity_")
+            && event
                 .detail
                 .as_deref()
-                .is_some_and(|detail| detail.contains("budget_0"))
+                .is_none_or(|detail| !detail.contains("same_domain"))
     }));
     harness.stop_proxy().await;
 }
 
 #[tokio::test]
-async fn retry_policy_wait_budget_exhaustion_still_allows_cross_capacity_domain_fallback() {
+async fn ordinary_overload_tries_the_next_key_without_capacity_domain_branching() {
     let primary = LoopbackUpstream::script(vec![capacity_response()]);
     let backup = LoopbackUpstream::script(vec![ScriptedResponse::Json(
         br#"{"id":"cross-domain-recovered","object":"chat.completion","choices":[]}"#.to_vec(),
@@ -1025,13 +994,7 @@ async fn retry_policy_wait_budget_exhaustion_still_allows_cross_capacity_domain_
             .set_candidate_upstream_api_format(candidate, "openai_chat_completions")
             .await;
     }
-    harness
-        .set_candidate_capacity_domain(&primary_candidate, "openai", Some("primary"), None)
-        .await;
-    harness
-        .set_candidate_capacity_domain(&backup_candidate, "openai", Some("backup"), None)
-        .await;
-    harness.set_retry_failover_policy(4, 1, 0, true).await;
+    harness.set_retry_policy(4).await;
 
     let proxy = harness.start_proxy().await;
     let response = proxy
@@ -1059,19 +1022,15 @@ async fn retry_policy_wait_budget_exhaustion_still_allows_cross_capacity_domain_
     assert_eq!(log.attempt_count, Some(2));
     assert_eq!(log.fallback_count, 1);
     let trace = harness.decision_trace_event_summaries(&log.id).await;
-    assert!(trace.iter().any(|event| {
-        event.detail.as_deref().is_some_and(|detail| {
-            event.code == "capacity_retry_wait_budget_exhausted" && detail.contains("budget_0")
-        })
-    }));
+    assert_profile_trace(&trace, "profile_total_4_fail_3_recover_2_wait_ms_30000");
     assert!(trace
         .iter()
-        .any(|event| event.code == "capacity_cross_domain_fallback"));
+        .all(|event| !event.code.starts_with("capacity_")));
     harness.stop_proxy().await;
 }
 
 #[tokio::test]
-async fn retry_policy_disabling_cross_capacity_domain_fallback_keeps_backup_uncalled() {
+async fn legacy_capacity_domain_metadata_does_not_block_v3_failover() {
     let primary = LoopbackUpstream::script(vec![capacity_response()]);
     let backup = LoopbackUpstream::script(vec![ScriptedResponse::Json(
         br#"{"id":"cross-domain-should-not-run","object":"chat.completion","choices":[]}"#.to_vec(),
@@ -1097,7 +1056,7 @@ async fn retry_policy_disabling_cross_capacity_domain_fallback_keeps_backup_unca
     harness
         .set_candidate_capacity_domain(&backup_candidate, "openai", Some("backup"), None)
         .await;
-    harness.set_retry_failover_policy(4, 0, 2_000, false).await;
+    harness.set_retry_policy(4).await;
 
     let proxy = harness.start_proxy().await;
     let response = proxy
@@ -1110,20 +1069,17 @@ async fn retry_policy_disabling_cross_capacity_domain_fallback_keeps_backup_unca
             "loopback-cross-domain",
         )
         .await;
-    assert_eq!(response.status, reqwest::StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response.status, reqwest::StatusCode::OK);
     primary.wait_for_requests(1);
-    assert_eq!(backup.captured_requests().len(), 0);
-    let log = wait_for_latest_log(&harness, "failed").await;
-    assert_eq!(log.attempt_count, Some(1));
-    assert_eq!(log.fallback_count, 0);
+    backup.wait_for_requests(1);
+    let log = wait_for_log_attempt_count(&harness, "success", 2).await;
+    assert_eq!(log.attempt_count, Some(2));
+    assert_eq!(log.fallback_count, 1);
     let trace = harness.decision_trace_event_summaries(&log.id).await;
-    assert_profile_trace(&trace, "profile_total_4_same_0_wait_2000_cross_0");
-    assert!(
-        trace
-            .iter()
-            .any(|event| event.code == "capacity_same_domain_fallback_suppressed"),
-        "expected same-domain suppression event, got {trace:?}"
-    );
+    assert_profile_trace(&trace, "profile_total_4_fail_3_recover_2_wait_ms_30000");
+    assert!(trace
+        .iter()
+        .all(|event| !event.code.starts_with("capacity_")));
     harness.stop_proxy().await;
 }
 
@@ -1172,6 +1128,23 @@ async fn wait_for_log_attempt_count(
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     panic!("timed out waiting for request log status {status} and attempt count {attempt_count}");
+}
+
+async fn wait_for_attempt_terminal_summaries(
+    harness: &RoutingLoopbackHarness,
+    request_log_id: &str,
+    expected_count: usize,
+) -> Vec<support::routing_loopback::AttemptTerminalSummary> {
+    for _ in 0..200 {
+        let attempts = harness.attempt_terminal_summaries(request_log_id).await;
+        if attempts.len() == expected_count {
+            return attempts;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!(
+        "timed out waiting for {expected_count} attempt terminal rows for request {request_log_id}"
+    );
 }
 
 fn assert_profile_trace(

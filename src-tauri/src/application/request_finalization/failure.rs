@@ -10,6 +10,10 @@ use http::StatusCode;
 )]
 pub(crate) enum FailureTarget {
     Request,
+    /// The failure is attributable to the Key selected for this attempt, but
+    /// does not justify a broader credential, account, endpoint, or provider
+    /// health verdict.
+    CurrentKey,
     ModelOnKey {
         station_key_id: String,
         model: String,
@@ -102,6 +106,7 @@ pub(crate) enum FailureClass {
     MalformedResponse,
     StreamInterrupted,
     DownstreamDrop,
+    NoAvailableKey,
     CapacityExhausted,
     CandidateLimit,
     FactsUnavailable,
@@ -114,9 +119,7 @@ pub(crate) enum FailureClass {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RetryDisposition {
-    RetrySameTarget,
-    TryDifferentFailureDomain,
-    WaitThenReplan,
+    TryNextKey,
     StopRequest,
 }
 
@@ -239,6 +242,7 @@ pub(crate) enum PublicErrorCode {
     MalformedResponse,
     StreamInterrupted,
     DownstreamDisconnected,
+    NoAvailableKey,
     CapacityExhausted,
     CandidateLimitExceeded,
     FactsUnavailable,
@@ -270,6 +274,7 @@ impl PublicErrorCode {
             Self::MalformedResponse => "upstream_malformed_response",
             Self::StreamInterrupted => "upstream_stream_interrupted",
             Self::DownstreamDisconnected => "downstream_disconnected",
+            Self::NoAvailableKey => "no_available_key",
             Self::CapacityExhausted => "route_capacity_exhausted",
             Self::CandidateLimitExceeded => "route_candidate_limit_exceeded",
             Self::FactsUnavailable => "route_facts_unavailable",
@@ -394,6 +399,11 @@ pub(crate) fn public_error_for_class(class: FailureClass) -> PublicError {
             http_status: StatusCode::BAD_GATEWAY,
             message: "downstream disconnected",
         },
+        FailureClass::NoAvailableKey => PublicError {
+            code: PublicErrorCode::NoAvailableKey,
+            http_status: StatusCode::SERVICE_UNAVAILABLE,
+            message: "no available key",
+        },
         FailureClass::CapacityExhausted => PublicError {
             code: PublicErrorCode::CapacityExhausted,
             http_status: StatusCode::SERVICE_UNAVAILABLE,
@@ -501,7 +511,7 @@ pub(crate) fn failure_from_provider_signal(
         ProviderErrorSemanticSignal::ConfirmedAuthentication { station_key_id } => (
             FailureTarget::StationKeyCredential { station_key_id },
             FailureClass::Authentication,
-            RetryDisposition::TryDifferentFailureDomain,
+            RetryDisposition::TryNextKey,
             HealthEffect::HardFail,
             CapabilityEffect::Neutral,
         ),
@@ -531,7 +541,11 @@ pub(crate) fn failure_from_provider_signal(
         ProviderErrorSemanticSignal::ConfirmedInsufficientBalance { station_id } => (
             FailureTarget::StationAccount { station_id },
             FailureClass::InsufficientBalance,
-            RetryDisposition::TryDifferentFailureDomain,
+            // A confirmed balance exhaustion is the only provider business
+            // error that must stop immediately. Retrying it on the same key
+            // or silently failing over would only repeat a deterministic
+            // account-level rejection.
+            RetryDisposition::StopRequest,
             HealthEffect::HardFail,
             CapabilityEffect::Neutral,
         ),
@@ -544,63 +558,65 @@ pub(crate) fn failure_from_provider_signal(
                 group_binding_id,
             },
             FailureClass::PolicyRejected,
-            RetryDisposition::TryDifferentFailureDomain,
+            RetryDisposition::TryNextKey,
             HealthEffect::HardFail,
             CapabilityEffect::Neutral,
         ),
         ProviderErrorSemanticSignal::ConfirmedCapabilityMismatch { protocol } => (
             FailureTarget::ProviderProtocol { protocol },
             FailureClass::CapabilityMismatch,
-            RetryDisposition::TryDifferentFailureDomain,
+            RetryDisposition::TryNextKey,
             HealthEffect::Neutral,
             CapabilityEffect::ConfirmUnsupportedProtocol { protocol },
         ),
         ProviderErrorSemanticSignal::RateLimited {
-            station_id,
-            retry_after_ms,
+            station_id: _,
+            retry_after_ms: _,
         } => (
-            FailureTarget::StationAccount { station_id },
+            FailureTarget::CurrentKey,
             FailureClass::RateLimited,
-            RetryDisposition::WaitThenReplan,
-            HealthEffect::Cooldown { retry_after_ms },
+            // 429 is an ordinary retryable failure. The execution layer first
+            // retries the same key until its circuit threshold is reached,
+            // then consumes one distinct-key failover slot.
+            RetryDisposition::TryNextKey,
+            HealthEffect::ObserveFailure,
             CapabilityEffect::Neutral,
         ),
         ProviderErrorSemanticSignal::BadRequest => (
             FailureTarget::Request,
             FailureClass::ProviderRejectedRequest,
-            RetryDisposition::StopRequest,
+            RetryDisposition::TryNextKey,
             HealthEffect::Neutral,
             CapabilityEffect::Neutral,
         ),
         ProviderErrorSemanticSignal::Overloaded => (
-            FailureTarget::Uncertain,
+            FailureTarget::CurrentKey,
             FailureClass::UpstreamOverloaded,
-            RetryDisposition::TryDifferentFailureDomain,
-            HealthEffect::Cooldown {
-                retry_after_ms: None,
-            },
+            RetryDisposition::TryNextKey,
+            HealthEffect::ObserveFailure,
             CapabilityEffect::Neutral,
         ),
         ProviderErrorSemanticSignal::ProviderCapacity {
-            domain_commitment,
-            retry_after_ms,
+            domain_commitment: _,
+            retry_after_ms: _,
         } => (
-            FailureTarget::ProviderCapacity { domain_commitment },
+            FailureTarget::CurrentKey,
             FailureClass::ProviderCapacity,
-            RetryDisposition::RetrySameTarget,
-            HealthEffect::Cooldown { retry_after_ms },
+            // Capacity-domain routing is intentionally out of the v3
+            // production policy. Treat this as a normal failure of the
+            // selected key and let the single request retry loop choose the
+            // next ranked candidate.
+            RetryDisposition::TryNextKey,
+            HealthEffect::ObserveFailure,
             CapabilityEffect::Neutral,
         ),
         ProviderErrorSemanticSignal::ServerError {
-            station_id,
-            endpoint_revision,
+            station_id: _,
+            endpoint_revision: _,
         } => (
-            FailureTarget::StationEndpoint {
-                station_id,
-                endpoint_revision,
-            },
+            FailureTarget::CurrentKey,
             FailureClass::Upstream5xx,
-            RetryDisposition::TryDifferentFailureDomain,
+            RetryDisposition::TryNextKey,
             HealthEffect::ObserveFailure,
             CapabilityEffect::Neutral,
         ),
@@ -612,34 +628,28 @@ pub(crate) fn failure_from_provider_signal(
             (
                 FailureTarget::Uncertain,
                 FailureClass::Uncertain,
-                RetryDisposition::StopRequest,
+                RetryDisposition::TryNextKey,
                 HealthEffect::Neutral,
                 CapabilityEffect::Neutral,
             )
         }
         ProviderErrorSemanticSignal::Transport {
-            station_id,
-            endpoint_revision,
+            station_id: _,
+            endpoint_revision: _,
         } => (
-            FailureTarget::StationEndpoint {
-                station_id,
-                endpoint_revision,
-            },
+            FailureTarget::CurrentKey,
             FailureClass::Transport,
-            RetryDisposition::TryDifferentFailureDomain,
+            RetryDisposition::TryNextKey,
             HealthEffect::ObserveFailure,
             CapabilityEffect::Neutral,
         ),
         ProviderErrorSemanticSignal::Timeout {
-            station_id,
-            endpoint_revision,
+            station_id: _,
+            endpoint_revision: _,
         } => (
-            FailureTarget::StationEndpoint {
-                station_id,
-                endpoint_revision,
-            },
+            FailureTarget::CurrentKey,
             FailureClass::Timeout,
-            RetryDisposition::TryDifferentFailureDomain,
+            RetryDisposition::TryNextKey,
             HealthEffect::ObserveFailure,
             CapabilityEffect::Neutral,
         ),
@@ -648,7 +658,7 @@ pub(crate) fn failure_from_provider_signal(
                 protocol: ProviderProtocolKind::Unknown,
             },
             FailureClass::MalformedResponse,
-            RetryDisposition::StopRequest,
+            RetryDisposition::TryNextKey,
             HealthEffect::Neutral,
             CapabilityEffect::Neutral,
         ),
@@ -691,7 +701,9 @@ pub(crate) fn planning_failure(
 fn default_request_acceptance(class: FailureClass) -> RequestAcceptance {
     match class {
         FailureClass::ProviderCapacity
+        | FailureClass::UpstreamOverloaded
         | FailureClass::ProviderRejectedRequest
+        | FailureClass::PolicyRejected
         | FailureClass::Authentication
         | FailureClass::InsufficientBalance
         | FailureClass::RateLimited
@@ -699,6 +711,7 @@ fn default_request_acceptance(class: FailureClass) -> RequestAcceptance {
         | FailureClass::RuntimeConcurrencyLimited
         | FailureClass::ModelUnavailable
         | FailureClass::CapabilityMismatch
+        | FailureClass::Uncertain
         // Planning/admission deadlines are exhausted before downstream
         // output is committed. Keep them out of the PossiblyAccepted bucket
         // so lifecycle and health evidence remain replay-safe.
@@ -706,6 +719,7 @@ fn default_request_acceptance(class: FailureClass) -> RequestAcceptance {
         FailureClass::Upstream5xx
         | FailureClass::Transport
         | FailureClass::Timeout
+        | FailureClass::MalformedResponse
         | FailureClass::StreamInterrupted => RequestAcceptance::AcceptedOrMayHaveBeenAccepted,
         _ => RequestAcceptance::Unknown,
     }
@@ -714,16 +728,21 @@ fn default_request_acceptance(class: FailureClass) -> RequestAcceptance {
 fn default_replay_safety(class: FailureClass) -> ReplaySafety {
     match class {
         FailureClass::ProviderCapacity
+        | FailureClass::UpstreamOverloaded
+        | FailureClass::ProviderRejectedRequest
+        | FailureClass::PolicyRejected
         | FailureClass::Authentication
         | FailureClass::InsufficientBalance
         | FailureClass::RateLimited
         | FailureClass::QuotaExhausted
         | FailureClass::RuntimeConcurrencyLimited
         | FailureClass::ModelUnavailable
-        | FailureClass::CapabilityMismatch => ReplaySafety::ReplaySafe,
+        | FailureClass::CapabilityMismatch
+        | FailureClass::Uncertain => ReplaySafety::ReplaySafe,
         FailureClass::Transport
         | FailureClass::Timeout
         | FailureClass::Upstream5xx
+        | FailureClass::MalformedResponse
         | FailureClass::StreamInterrupted => ReplaySafety::RequiresProviderIdempotency,
         _ => ReplaySafety::NotReplayable,
     }

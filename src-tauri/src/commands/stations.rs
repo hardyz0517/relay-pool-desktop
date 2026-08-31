@@ -43,6 +43,13 @@ pub async fn list_stations(
 }
 
 #[tauri::command]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=legacy-capacity-domain-command-reference; owner=commands/stations; remove_when=capacity-domain reference endpoints are deleted"
+    )
+)]
 pub async fn get_station_capacity_domain(
     facade: State<'_, SettingsStationsCommandFacade>,
     input: Value,
@@ -70,6 +77,13 @@ pub async fn get_station_capacity_domain(
 }
 
 #[tauri::command]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=legacy-capacity-domain-command-reference; owner=commands/stations; remove_when=capacity-domain reference endpoints are deleted"
+    )
+)]
 pub async fn upsert_station_capacity_domain(
     facade: State<'_, SettingsStationsCommandFacade>,
     input: Value,
@@ -97,6 +111,13 @@ pub async fn upsert_station_capacity_domain(
 }
 
 #[tauri::command]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=legacy-capacity-domain-command-reference; owner=commands/stations; remove_when=capacity-domain reference endpoints are deleted"
+    )
+)]
 pub async fn clear_station_capacity_domain(
     facade: State<'_, SettingsStationsCommandFacade>,
     input: Value,

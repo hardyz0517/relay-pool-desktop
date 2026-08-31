@@ -4,7 +4,6 @@ use std::fmt;
 pub(crate) struct BasisPoints(u16);
 impl BasisPoints {
     pub(crate) const ZERO: Self = Self(0);
-    pub(crate) const FULL: Self = Self(10_000);
     pub(crate) const fn new(value: u16) -> Option<Self> {
         if value <= 10_000 {
             Some(Self(value))
@@ -18,6 +17,7 @@ impl BasisPoints {
     pub(crate) fn checked_add(self, other: Self) -> Option<Self> {
         Self::new(self.0.checked_add(other.0)?)
     }
+    #[cfg(test)]
     pub(crate) fn checked_mul(self, other: Self) -> Option<Self> {
         let value = u32::from(self.0).checked_mul(u32::from(other.0))? / 10_000;
         Self::new(u16::try_from(value).ok()?)

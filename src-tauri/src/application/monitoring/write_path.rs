@@ -1,5 +1,7 @@
+#[cfg(test)]
+use crate::application::error_rate_protection::ErrorRateProtectionService;
+
 use crate::{
-    application::error_rate_protection::ErrorRateProtectionService,
     application::health_transitions::HealthTransitionService,
     application::observation_ingestion::ObservationIngestion,
     application::spendability::{sample_disposition, SampleExclusionReason, TechnicalHealthEffect},
@@ -13,7 +15,8 @@ use crate::{
             TriggerKind,
         },
         routing_observation::{
-            ObservationOrder, ObservationOutcome, ObservationScope, ObservationSource,
+            FailureAttribution, ObservationOrder, ObservationOutcome, ObservationRetryDisposition,
+            ObservationScope, ObservationSource, RecoveryOrigin, ResponseOrigin,
             RoutingObservation, TrafficEquivalence as RoutingTrafficEquivalence,
         },
     },
@@ -42,14 +45,16 @@ pub(crate) struct MonitoringExecutionCommitter {
 }
 
 impl MonitoringExecutionCommitter {
-    #[expect(
-        dead_code,
-        reason = "contract=monitoring.test-constructor; owner=application/monitoring; remove_when=all test fixtures compose the explicit error-rate adapter"
-    )]
     pub(crate) fn new() -> Self {
-        Self::new_with_error_rate(ErrorRateProtectionService::disabled())
+        Self {
+            executions: MonitoringExecutionRepository,
+            health: HealthTransitionService::new(),
+            observations: ObservationIngestion::new(),
+            retention: MonitoringRetentionRepository,
+        }
     }
 
+    #[cfg(test)]
     pub(crate) fn new_with_error_rate(error_rate: ErrorRateProtectionService) -> Self {
         Self {
             executions: MonitoringExecutionRepository,
@@ -116,6 +121,8 @@ impl MonitoringExecutionCommitter {
                     write,
                     routing_observation_from_health(
                         &observation,
+                        target_plan(&execution.plan, &target.station_key_id)?,
+                        &target_row,
                         monitor_sequence(&execution.execution_id, &target_row.id),
                         monitor_producer_id(&execution.execution_id),
                     ),
@@ -169,6 +176,8 @@ fn monitor_producer_id(execution_id: &str) -> String {
 
 fn routing_observation_from_health(
     observation: &HealthObservation,
+    target_plan: &ProbeTargetPlan,
+    target_result: &FinalizeTargetRow,
     producer_sequence: u64,
     producer_id: String,
 ) -> RoutingObservation {
@@ -180,6 +189,15 @@ fn routing_observation_from_health(
         HealthObservationOutcome::Skipped => ObservationOutcome::Cancelled,
         HealthObservationOutcome::Neutral => ObservationOutcome::Unknown,
     };
+    let comparability_key = probe_comparability_key(target_plan, target_result);
+    let (response_origin, failure_attribution) = if matches!(
+        observation.outcome,
+        HealthObservationOutcome::Skipped | HealthObservationOutcome::Neutral
+    ) {
+        (ResponseOrigin::Relay, FailureAttribution::Local)
+    } else {
+        (ResponseOrigin::Upstream, FailureAttribution::Key)
+    };
     RoutingObservation {
         id: format!("routing-monitor-observation-{}", observation.id),
         order: ObservationOrder {
@@ -189,24 +207,75 @@ fn routing_observation_from_health(
             ingested_at_ms: observation.observed_at_ms.max(0),
         },
         scope: ObservationScope {
-            station_id: None,
+            station_id: Some(target_plan.station_id.clone()),
             station_key_id: Some(observation.station_key_id.clone()),
-            model: None,
+            model: target_result
+                .effective_model
+                .clone()
+                .or_else(|| Some(target_result.requested_model.clone())),
             endpoint_revision: Some(observation.endpoint_revision),
         },
         source: ObservationSource::ActiveProbe,
-        traffic_equivalence: match observation.traffic_equivalence {
-            TrafficEquivalence::SyntheticCliCompat => RoutingTrafficEquivalence::EndpointOnly,
-            _ => RoutingTrafficEquivalence::SameModelShape,
+        traffic_equivalence: match (&observation.traffic_equivalence, &comparability_key) {
+            (TrafficEquivalence::SyntheticStandard, Some(_)) => {
+                RoutingTrafficEquivalence::SameModelShape
+            }
+            _ => RoutingTrafficEquivalence::EndpointOnly,
         },
         outcome,
         latency_ms: observation
             .latency_ms
             .and_then(|value| u32::try_from(value).ok()),
         evidence_mass_basis_points: 5_000,
+        comparability_key,
+        correlation_id: observation.id.clone(),
+        attempt_index: 0,
+        station_key_lifecycle_revision: target_plan.station_key_lifecycle_revision,
+        cluster_finalized: true,
+        cluster_expected_attempt_count: 1,
+        boundary_crossed: true,
+        event_time_status: crate::models::routing_observation::EventTimeStatus::Valid,
+        response_origin,
+        failure_code: observation.failure_kind.clone(),
+        failure_attribution,
+        recovery_origin: RecoveryOrigin::Normal,
+        retry_disposition: ObservationRetryDisposition::End,
         probe_scope: None,
         probe_state_revision: None,
     }
+}
+
+fn probe_comparability_key(
+    target_plan: &ProbeTargetPlan,
+    target_result: &FinalizeTargetRow,
+) -> Option<String> {
+    if !matches!(target_plan.client_profile.id, ClientProfileId::StandardApi) {
+        return None;
+    }
+    let protocol = target_plan.protocol_kind?.as_str();
+    let request_profile_hash = target_plan.request_profile_hash.as_deref()?;
+    if target_result.requested_model.trim().is_empty()
+        || target_result.protocol_kind.as_deref() != Some(protocol)
+        || target_result.request_profile_hash.as_deref() != Some(request_profile_hash)
+    {
+        return None;
+    }
+    let effective_model = target_result
+        .effective_model
+        .as_deref()
+        .unwrap_or(&target_result.requested_model)
+        .trim();
+    if effective_model.is_empty() {
+        return None;
+    }
+
+    crate::models::routing_observation::routing_comparability_key_v1(
+        protocol,
+        target_plan.client_profile.id.as_str(),
+        target_plan.client_profile.version,
+        effective_model,
+        request_profile_hash,
+    )
 }
 
 fn attempt_row(

@@ -643,6 +643,7 @@ fn target(key: &str, protocol: Option<ProtocolKind>) -> TargetCapabilitySnapshot
     TargetCapabilitySnapshot {
         station_id: "station-1".to_string(),
         station_key_id: key.to_string(),
+        station_key_lifecycle_revision: 1,
         endpoint_revision: 7,
         provider_protocol: protocol,
         endpoint_protocol: protocol,

@@ -2,7 +2,9 @@ use futures_util::future::BoxFuture;
 
 use super::{
     attempt::AttemptTerminalRecord,
-    request::{FinalRequestRecord, RequestLogAnnotations, RequestStartRecord},
+    request::{
+        FinalRequestRecord, RequestLogAnnotations, RequestRouteSelectionRecord, RequestStartRecord,
+    },
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,6 +24,11 @@ pub(crate) enum LifecycleWriteError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RequestStartAck {
     pub inserted: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RequestRouteSelectionAck {
+    pub updated: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,6 +95,17 @@ pub(crate) trait RequestLifecycleStore: Send + Sync + 'static {
     ) -> BoxFuture<'static, Result<RequestStartAck, LifecycleWriteError>> {
         let _ = annotations;
         self.start_request(record)
+    }
+
+    fn record_route_selection(
+        &self,
+        _record: RequestRouteSelectionRecord,
+    ) -> BoxFuture<'static, Result<RequestRouteSelectionAck, LifecycleWriteError>> {
+        Box::pin(async {
+            Err(LifecycleWriteError::Unavailable(
+                "request route selection persistence is not wired for this store".to_string(),
+            ))
+        })
     }
 
     fn finish_attempt(

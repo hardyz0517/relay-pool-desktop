@@ -15,9 +15,7 @@ mod application {
         pub(crate) mod failure {
             #[derive(Debug, Clone, Copy, PartialEq, Eq)]
             pub(crate) enum RetryDisposition {
-                RetrySameTarget,
-                TryDifferentFailureDomain,
-                WaitThenReplan,
+                TryNextKey,
                 StopRequest,
             }
         }
@@ -205,6 +203,7 @@ fn attempt_record(request_id: &str) -> AttemptTerminalRecord {
             group_binding_id: None,
             group_revision: None,
             resolved_upstream_model: None,
+            comparability_key: None,
             model_alias_revision: 1,
             started_at_ms: 2,
             probe_scope: None,

@@ -1,7 +1,8 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct OperationalFactReadOptions {
-    /// Maximum number of executable (credentialed) routing candidates. The
-    /// source query applies this bound after excluding credentialless keys.
+    /// Maximum number of statically eligible routing candidates. The planning
+    /// builder applies this after model/capability evaluation; the fact source
+    /// must remain complete so an early database row cannot starve a match.
     candidate_limit: usize,
     requested_model: Option<String>,
     include_model_catalog: bool,
@@ -63,10 +64,8 @@ pub(crate) const MAX_OPERATIONAL_CANDIDATES: usize = 1024;
 pub(crate) struct RawOperationalCandidateRow {
     pub(crate) station_key_id: String,
     pub(crate) station_id: String,
-    pub(crate) capacity_provider_family: Option<String>,
-    pub(crate) capacity_deployment_identity: Option<String>,
-    pub(crate) capacity_region_identity: Option<String>,
-    pub(crate) capacity_domain_revision: Option<i64>,
+    pub(crate) key_enabled: bool,
+    pub(crate) station_enabled: bool,
     pub(crate) endpoint_revision: i64,
     pub(crate) api_base_url: String,
     pub(crate) credential_available: bool,

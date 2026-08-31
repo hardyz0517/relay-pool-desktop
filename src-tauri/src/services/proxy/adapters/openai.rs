@@ -87,7 +87,6 @@ pub(crate) fn openai_error_semantic_signal(
         endpoint_revision,
         model,
         applicability,
-        None,
     )
 }
 
@@ -102,13 +101,7 @@ pub(crate) fn openai_error_semantic_signal_from_capture(
     endpoint_revision: i64,
     model: Option<&str>,
     applicability: CapabilityApplicabilitySet,
-    capacity_domain_commitment: Option<&str>,
 ) -> ProviderErrorSemanticSignal {
-    let rule_profile = if capacity_domain_commitment.is_some() {
-        ProviderRuleProfile::NativeOpenAiV1
-    } else {
-        ProviderRuleProfile::GenericOpenAiCompatibleV1
-    };
     openai_error_semantic_signal_from_capture_for_profile(
         status,
         body,
@@ -119,8 +112,7 @@ pub(crate) fn openai_error_semantic_signal_from_capture(
         endpoint_revision,
         model,
         applicability,
-        capacity_domain_commitment,
-        rule_profile,
+        ProviderRuleProfile::GenericOpenAiCompatibleV1,
         None,
     )
 }
@@ -136,7 +128,6 @@ pub(crate) fn openai_error_semantic_signal_from_capture_for_profile(
     endpoint_revision: i64,
     model: Option<&str>,
     applicability: CapabilityApplicabilitySet,
-    capacity_domain_commitment: Option<&str>,
     rule_profile: ProviderRuleProfile,
     group_binding_id: Option<&str>,
 ) -> ProviderErrorSemanticSignal {
@@ -158,7 +149,6 @@ pub(crate) fn openai_error_semantic_signal_from_capture_for_profile(
         endpoint_revision,
         model,
         applicability,
-        capacity_domain_commitment,
         group_binding_id,
     )
 }
@@ -174,13 +164,7 @@ pub(crate) fn openai_sse_error_semantic_signal_from_capture(
     endpoint_revision: i64,
     model: Option<&str>,
     applicability: CapabilityApplicabilitySet,
-    capacity_domain_commitment: Option<&str>,
 ) -> ProviderErrorSemanticSignal {
-    let rule_profile = if capacity_domain_commitment.is_some() {
-        ProviderRuleProfile::NativeOpenAiV1
-    } else {
-        ProviderRuleProfile::GenericOpenAiCompatibleV1
-    };
     openai_sse_error_semantic_signal_from_capture_for_profile(
         transport,
         body,
@@ -190,8 +174,7 @@ pub(crate) fn openai_sse_error_semantic_signal_from_capture(
         endpoint_revision,
         model,
         applicability,
-        capacity_domain_commitment,
-        rule_profile,
+        ProviderRuleProfile::GenericOpenAiCompatibleV1,
         None,
     )
 }
@@ -206,7 +189,6 @@ pub(crate) fn openai_sse_error_semantic_signal_from_capture_for_profile(
     endpoint_revision: i64,
     model: Option<&str>,
     applicability: CapabilityApplicabilitySet,
-    capacity_domain_commitment: Option<&str>,
     rule_profile: ProviderRuleProfile,
     group_binding_id: Option<&str>,
 ) -> ProviderErrorSemanticSignal {
@@ -232,7 +214,6 @@ pub(crate) fn openai_sse_error_semantic_signal_from_capture_for_profile(
         endpoint_revision,
         model,
         applicability,
-        capacity_domain_commitment,
         group_binding_id,
     )
 }
@@ -247,7 +228,6 @@ pub(crate) fn openai_semantic_signal_from_evidence(
     endpoint_revision: i64,
     model: Option<&str>,
     applicability: CapabilityApplicabilitySet,
-    capacity_domain_commitment: Option<&str>,
     group_binding_id: Option<&str>,
 ) -> ProviderErrorSemanticSignal {
     let confirmed = evidence.confidence == EvidenceConfidence::Confirmed;
@@ -306,12 +286,7 @@ pub(crate) fn openai_semantic_signal_from_evidence(
             .semantic_candidates
             .contains(&SemanticCandidate::ProviderCapacity)
     {
-        return capacity_domain_commitment.map_or(ProviderErrorSemanticSignal::Overloaded, |id| {
-            ProviderErrorSemanticSignal::ProviderCapacity {
-                domain_commitment: id.to_string(),
-                retry_after_ms: evidence.retry_after_ms,
-            }
-        });
+        return ProviderErrorSemanticSignal::Overloaded;
     }
     if evidence
         .semantic_candidates
@@ -518,7 +493,7 @@ mod tests {
     }
 
     #[test]
-    fn confirmed_capacity_requires_a_trusted_domain_before_same_target_retry_signal() {
+    fn confirmed_capacity_is_an_ordinary_key_overload_signal() {
         let evidence = collect_upstream_failure_evidence_for_profile(
             ErrorEnvelopeInput {
                 status: 400,
@@ -539,28 +514,9 @@ mod tests {
             1,
             Some("gpt-test"),
             CapabilityApplicabilitySet::UnknownModelCatalog,
-            Some("capacity-domain-v1:fixture"),
             None,
         );
-        assert_eq!(
-            signal,
-            ProviderErrorSemanticSignal::ProviderCapacity {
-                domain_commitment: "capacity-domain-v1:fixture".to_string(),
-                retry_after_ms: Some(2_000),
-            }
-        );
-
-        let without_domain = openai_semantic_signal_from_evidence(
-            &evidence,
-            "key-test",
-            "station-test",
-            1,
-            Some("gpt-test"),
-            CapabilityApplicabilitySet::UnknownModelCatalog,
-            None,
-            None,
-        );
-        assert_eq!(without_domain, ProviderErrorSemanticSignal::Overloaded);
+        assert_eq!(signal, ProviderErrorSemanticSignal::Overloaded);
     }
 
     #[test]
@@ -597,7 +553,6 @@ mod tests {
             1,
             Some("gpt-test"),
             CapabilityApplicabilitySet::UnknownModelCatalog,
-            None,
         );
         assert_eq!(
             signal,
@@ -621,17 +576,10 @@ mod tests {
             1,
             Some("gpt-test"),
             CapabilityApplicabilitySet::ConfirmedModelCatalog,
-            Some("capacity-domain-v1:fixture"),
             ProviderRuleProfile::Sub2ApiV1,
             None,
         );
-        assert_eq!(
-            capacity,
-            ProviderErrorSemanticSignal::ProviderCapacity {
-                domain_commitment: "capacity-domain-v1:fixture".to_string(),
-                retry_after_ms: None,
-            }
-        );
+        assert_eq!(capacity, ProviderErrorSemanticSignal::Overloaded);
 
         let rate = openai_sse_error_semantic_signal_from_capture(
             FailureTransport::ChatSseError,
@@ -644,7 +592,6 @@ mod tests {
             1,
             Some("gpt-test"),
             CapabilityApplicabilitySet::ConfirmedModelCatalog,
-            None,
         );
         assert_eq!(
             rate,
@@ -674,7 +621,6 @@ mod tests {
                 1,
                 Some("gpt-test"),
                 CapabilityApplicabilitySet::ConfirmedModelCatalog,
-                None,
                 ProviderRuleProfile::Sub2ApiV1,
                 Some("group-binding-test"),
             );
@@ -700,7 +646,6 @@ mod tests {
             1,
             Some("gpt-test"),
             CapabilityApplicabilitySet::ConfirmedModelCatalog,
-            None,
             ProviderRuleProfile::Sub2ApiV1,
             None,
         );

@@ -1,10 +1,6 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    application::health_protection::{
-        HealthProbeAdmissionMode, HealthProtectionProbe, HealthProtectionScope,
-        HealthProtectionStatus,
-    },
     application::{
         operational_facts::target_resolver::ExecutionTargetRef,
         routing_engine::planning_snapshot::{PlanningSnapshot, RuntimeOverlaySnapshot},
@@ -13,6 +9,7 @@ use crate::{
             request::{PlanningRequestContext, RouteRequestFacts},
         },
         routing_execution_reader::{RoutingExecutionReadError, RoutingExecutionReadPort},
+        station_key_circuit::{CircuitAdmissionResult, StationKeyCircuitStatus},
     },
     models::{pricing::BalanceSnapshot, routing::RuntimeRoutingSettings},
     services::outbound::resolve_routing_proxy_config,
@@ -58,24 +55,11 @@ pub(crate) trait RoutingRepository: Send + Sync {
     /// keep that state distinct from an empty candidate set. `context` is
     /// caller-owned and absolute: replans must reuse it rather than starting
     /// another request budget.
-    #[cfg(test)]
     fn load_planning_snapshot(
         &self,
         request: RouteRequestFacts,
         runtime: RuntimeOverlaySnapshot,
         context: PlanningRequestContext,
-    ) -> futures_util::future::BoxFuture<
-        'static,
-        Result<Option<PlanningSnapshot>, RoutingExecutionReadError>,
-    >;
-
-    fn load_planning_snapshot_with_probe(
-        &self,
-        request: RouteRequestFacts,
-        runtime: RuntimeOverlaySnapshot,
-        context: PlanningRequestContext,
-        probe: Option<HealthProtectionProbe>,
-        probe_mode: HealthProbeAdmissionMode,
     ) -> futures_util::future::BoxFuture<
         'static,
         Result<Option<PlanningSnapshot>, RoutingExecutionReadError>,
@@ -104,51 +88,75 @@ pub(crate) trait RoutingRepository: Send + Sync {
         Result<OperationalRouteSnapshot, RoutingExecutionReadError>,
     >;
 
-    /// Reloads the authoritative execution row for a retry. The immutable
-    /// planning snapshot remains the expected commitment; this fresh read is
-    /// the current side of the resolver fence.
-    fn load_current_execution_target(
+    /// Atomically admits a station key against its durable v3 circuit state.
+    /// Lightweight test repositories use the Closed default; production
+    /// adapters delegate to the SQLite CAS implementation.
+    fn admit_station_key_circuit_with_attempt(
         &self,
-        station_key_id: String,
+        _expected_runtime_generation_id: Option<String>,
+        _expected_fence_revision: u64,
+        _station_key_id: String,
+        _lifecycle_revision: u64,
+        _policy_revision: u64,
+        _now_ms: u64,
+        _deadline_at_ms: u64,
+        _score_gate_passed: bool,
+        _attempt_id: String,
+        _correlation_id: String,
+        _attempt_index: u16,
+        _capacity_lease_id: String,
+        _consecutive_failure_threshold: u16,
+        _recovery_success_threshold: u16,
+        _recovery_wait_ms: u64,
     ) -> futures_util::future::BoxFuture<
         'static,
-        Result<Option<ExecutionTargetRef>, RoutingExecutionReadError>,
-    >;
+        Result<CircuitAdmissionResult, RoutingExecutionReadError>,
+    > {
+        Box::pin(async { Ok(CircuitAdmissionResult::AllowedClosed { state_revision: 1 }) })
+    }
 
-    /// Returns the durable health protection projection used to decide whether
-    /// a real request may consume a Half-Open probe lease. The default keeps
-    /// lightweight test repositories fail-closed and does not invent health.
-    fn load_health_protection_statuses(
+    fn load_station_key_circuit_statuses(
         &self,
-        _now_ms: i64,
     ) -> futures_util::future::BoxFuture<
         'static,
-        Result<Vec<HealthProtectionStatus>, RoutingExecutionReadError>,
-    >;
+        Result<Vec<StationKeyCircuitStatus>, RoutingExecutionReadError>,
+    > {
+        Box::pin(async { Ok(Vec::new()) })
+    }
 
-    /// Reserves one durable, revision-fenced probe. Reservation is atomic and
-    /// never performs network I/O; the caller must attach the returned fence
-    /// to a real request observation.
-    fn begin_health_protection_probe(
+    fn load_routing_generation_admission_guard(
         &self,
-        _scope: HealthProtectionScope,
-        _now_ms: i64,
     ) -> futures_util::future::BoxFuture<
         'static,
-        Result<Option<HealthProtectionProbe>, RoutingExecutionReadError>,
-    >;
+        Result<
+            crate::models::routing_generation::RoutingGenerationAdmissionGuard,
+            RoutingExecutionReadError,
+        >,
+    > {
+        Box::pin(async {
+            Ok(
+                crate::models::routing_generation::RoutingGenerationAdmissionGuard {
+                    active_runtime_generation_id: None,
+                    fence_revision: 0,
+                    fencing: false,
+                },
+            )
+        })
+    }
 
-    /// Releases a reserved probe when no outbound attempt was started. The
-    /// application/store implementation is revision-fenced and idempotent.
-    fn cancel_health_protection_probe(
+    fn mark_station_key_attempt_boundary(
         &self,
-        _probe: HealthProtectionProbe,
-        _now_ms: i64,
-    ) -> futures_util::future::BoxFuture<'static, Result<bool, RoutingExecutionReadError>>;
+        _station_key_id: String,
+        _lifecycle_revision: u64,
+        _attempt_id: String,
+        _lease_revision: Option<u64>,
+        _now_ms: u64,
+    ) -> futures_util::future::BoxFuture<'static, Result<bool, RoutingExecutionReadError>> {
+        Box::pin(async { Ok(true) })
+    }
 }
 
 impl RoutingRepository for RoutingExecutionRepository {
-    #[cfg(test)]
     fn load_planning_snapshot(
         &self,
         request: RouteRequestFacts,
@@ -160,21 +168,6 @@ impl RoutingRepository for RoutingExecutionRepository {
     > {
         self.execution
             .load_planning_snapshot(request, runtime, context)
-    }
-
-    fn load_planning_snapshot_with_probe(
-        &self,
-        request: RouteRequestFacts,
-        runtime: RuntimeOverlaySnapshot,
-        context: PlanningRequestContext,
-        probe: Option<HealthProtectionProbe>,
-        probe_mode: HealthProbeAdmissionMode,
-    ) -> futures_util::future::BoxFuture<
-        'static,
-        Result<Option<PlanningSnapshot>, RoutingExecutionReadError>,
-    > {
-        self.execution
-            .load_planning_snapshot_with_probe(request, runtime, context, probe, probe_mode)
     }
 
     fn load_execution_settings(
@@ -272,8 +265,6 @@ impl RoutingRepository for RoutingExecutionRepository {
                             .or_else(|| candidate.resolved_upstream_model.clone()),
                         model_alias_revision: candidate.model_alias_revision,
                         model_variant: variant,
-                        capacity_domain: candidate.capacity_domain.clone(),
-                        capacity_domain_revision: candidate.capacity_domain_revision,
                         priority: 0,
                         tier: crate::application::routing_engine::candidate_plan::AvailabilityTier::Primary,
                         pricing: candidate.pricing.clone(),
@@ -292,54 +283,82 @@ impl RoutingRepository for RoutingExecutionRepository {
         })
     }
 
-    fn load_current_execution_target(
+    fn admit_station_key_circuit_with_attempt(
+        &self,
+        expected_runtime_generation_id: Option<String>,
+        expected_fence_revision: u64,
+        station_key_id: String,
+        lifecycle_revision: u64,
+        policy_revision: u64,
+        now_ms: u64,
+        deadline_at_ms: u64,
+        score_gate_passed: bool,
+        attempt_id: String,
+        correlation_id: String,
+        attempt_index: u16,
+        capacity_lease_id: String,
+        consecutive_failure_threshold: u16,
+        recovery_success_threshold: u16,
+        recovery_wait_ms: u64,
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        Result<CircuitAdmissionResult, RoutingExecutionReadError>,
+    > {
+        self.execution.admit_station_key_circuit_with_attempt(
+            expected_runtime_generation_id,
+            expected_fence_revision,
+            station_key_id,
+            lifecycle_revision,
+            policy_revision,
+            now_ms,
+            deadline_at_ms,
+            score_gate_passed,
+            attempt_id,
+            correlation_id,
+            attempt_index,
+            capacity_lease_id,
+            consecutive_failure_threshold,
+            recovery_success_threshold,
+            recovery_wait_ms,
+        )
+    }
+
+    fn load_station_key_circuit_statuses(
+        &self,
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        Result<Vec<StationKeyCircuitStatus>, RoutingExecutionReadError>,
+    > {
+        self.execution.load_station_key_circuit_statuses()
+    }
+
+    fn load_routing_generation_admission_guard(
+        &self,
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        Result<
+            crate::models::routing_generation::RoutingGenerationAdmissionGuard,
+            RoutingExecutionReadError,
+        >,
+    > {
+        self.execution.load_routing_generation_admission_guard()
+    }
+
+    fn mark_station_key_attempt_boundary(
         &self,
         station_key_id: String,
-    ) -> futures_util::future::BoxFuture<
-        'static,
-        Result<Option<ExecutionTargetRef>, RoutingExecutionReadError>,
-    > {
-        let execution = self.execution.clone();
-        Box::pin(async move {
-            let execution_settings = execution.load_execution_settings().await?;
-            let mut target = execution
-                .load_operational_execution_target_refs(vec![station_key_id])
-                .await
-                .map(|mut targets| targets.pop())?;
-            if let Some(target) = target.as_mut() {
-                apply_effective_proxy_config(target, &execution_settings);
-            }
-            Ok(target)
-        })
-    }
-
-    fn load_health_protection_statuses(
-        &self,
-        now_ms: i64,
-    ) -> futures_util::future::BoxFuture<
-        'static,
-        Result<Vec<HealthProtectionStatus>, RoutingExecutionReadError>,
-    > {
-        self.execution.load_health_protection_statuses(now_ms)
-    }
-
-    fn begin_health_protection_probe(
-        &self,
-        scope: HealthProtectionScope,
-        now_ms: i64,
-    ) -> futures_util::future::BoxFuture<
-        'static,
-        Result<Option<HealthProtectionProbe>, RoutingExecutionReadError>,
-    > {
-        self.execution.begin_health_protection_probe(scope, now_ms)
-    }
-
-    fn cancel_health_protection_probe(
-        &self,
-        probe: HealthProtectionProbe,
-        now_ms: i64,
+        lifecycle_revision: u64,
+        attempt_id: String,
+        lease_revision: Option<u64>,
+        now_ms: u64,
     ) -> futures_util::future::BoxFuture<'static, Result<bool, RoutingExecutionReadError>> {
-        self.execution.cancel_health_protection_probe(probe, now_ms)
+        self.execution.mark_station_key_attempt_boundary(
+            station_key_id,
+            lifecycle_revision,
+            attempt_id,
+            lease_revision,
+            now_ms,
+        )
     }
 }
 

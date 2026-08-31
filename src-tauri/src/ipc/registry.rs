@@ -18,7 +18,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "399858ad2bc8f3cda2a71ccfaa83f94d7ec8356a8aa7ae34bcf1c638111ff3b0";
+    "09b8caa845912198d6c6a1c29237fb1c1ba9436c4480020b048f171275578ca8";
 
 #[cfg_attr(
     not(test),
@@ -106,9 +106,6 @@ macro_rules! ipc_command_registry {
             update_station => $crate::commands::stations::update_station,
             delete_station => $crate::commands::stations::delete_station,
             reorder_stations => $crate::commands::stations::reorder_stations,
-            get_station_capacity_domain => $crate::commands::stations::get_station_capacity_domain,
-            upsert_station_capacity_domain => $crate::commands::stations::upsert_station_capacity_domain,
-            clear_station_capacity_domain => $crate::commands::stations::clear_station_capacity_domain,
             create_or_resume_provider_draft => $crate::commands::provider_drafts::create_or_resume_provider_draft,
             get_provider_draft => $crate::commands::provider_drafts::get_provider_draft,
             patch_provider_draft => $crate::commands::provider_drafts::patch_provider_draft,
@@ -168,12 +165,12 @@ macro_rules! ipc_command_registry {
             list_station_key_health => $crate::commands::routing_health::list_station_key_health,
             get_routing_protection_status => $crate::commands::routing_health::get_routing_protection_status,
             load_routing_policy => $crate::commands::routing_health::load_routing_policy,
+            get_routing_policy_publication_status => $crate::commands::routing_health::get_routing_policy_publication_status,
             apply_routing_policy_document => $crate::commands::routing_health::apply_routing_policy_document,
             list_station_endpoint_health => $crate::commands::routing_health::list_station_endpoint_health,
             load_routing_workspace_snapshot => $crate::commands::routing_health::load_routing_workspace_snapshot,
             load_routing_runtime_overlay => $crate::commands::routing_health::load_routing_runtime_overlay,
             list_recent_route_decisions => $crate::commands::routing_health::list_recent_route_decisions,
-            list_error_rate_history => $crate::commands::routing_health::list_error_rate_history,
             get_station_key_operational_detail => $crate::commands::routing_health::get_station_key_operational_detail,
             get_request_decision_trace => $crate::commands::routing_health::get_request_decision_trace,
             list_channel_monitors => $crate::commands::channel_monitoring::list_channel_monitors,
@@ -395,22 +392,6 @@ fn command_contract(name: &str) -> CommandContract {
         "reorder_stations" => migrated_mutation(
             "ReorderStationsInputDto",
             "Vec<StationDto>",
-            "idempotent",
-            false,
-        ),
-        "get_station_capacity_domain" => migrated_read(
-            "StationCapacityDomainQueryInputDto",
-            "Option<StationCapacityDomainDto>",
-        ),
-        "upsert_station_capacity_domain" => migrated_mutation(
-            "UpsertStationCapacityDomainInputDto",
-            "StationCapacityDomainDto",
-            "idempotent",
-            false,
-        ),
-        "clear_station_capacity_domain" => migrated_mutation(
-            "ClearStationCapacityDomainInputDto",
-            "()",
             "idempotent",
             false,
         ),
@@ -871,6 +852,10 @@ fn command_contract(name: &str) -> CommandContract {
             "RoutingProtectionStatusDto",
         ),
         "load_routing_policy" => migrated_read("EmptyInputDto", "RoutingPolicySnapshotDto"),
+        "get_routing_policy_publication_status" => migrated_read(
+            "RoutingPolicyPublicationStatusInputDto",
+            "RoutingPolicyPublicationStatusDto",
+        ),
         "apply_routing_policy_document" => migrated_mutation(
             "ApplyRoutingPolicyDocumentInputDto",
             "RoutingPolicySnapshotDto",
@@ -891,9 +876,6 @@ fn command_contract(name: &str) -> CommandContract {
             "RecentRouteDecisionsInputDto",
             "RecentRouteDecisionsPageDto",
         ),
-        "list_error_rate_history" => {
-            migrated_read("ErrorRateHistoryInputDto", "ErrorRateHistoryPageDto")
-        }
         "get_station_key_operational_detail" => migrated_read(
             "StationKeyOperationalDetailInputDto",
             "StationKeyOperationalDetailDto",
@@ -1302,22 +1284,6 @@ fn render_typescript(contract_hash: &str) -> String {
             r#"return invokeNonIdempotent<StationDto>("create_station", { input });"#,
         )
         .replace(
-            r#"export function listStationKeys(input: StationIdInputDto): Promise<StationKeyDto[]> {"#,
-            r#"export function getStationCapacityDomain(input: StationCapacityDomainQueryInputDto): Promise<StationCapacityDomainDto | null> {
-  return invokeCommand<StationCapacityDomainDto | null>("get_station_capacity_domain", { input });
-}
-
-export function upsertStationCapacityDomain(input: UpsertStationCapacityDomainInputDto): Promise<StationCapacityDomainDto> {
-  return invokeCommand<StationCapacityDomainDto>("upsert_station_capacity_domain", { input });
-}
-
-export function clearStationCapacityDomain(input: ClearStationCapacityDomainInputDto): Promise<void> {
-  return invokeCommand<void>("clear_station_capacity_domain", { input });
-}
-
-export function listStationKeys(input: StationIdInputDto): Promise<StationKeyDto[]> {"#,
-        )
-        .replace(
             r#"export function listModelAliases(input: EmptyInputDto = {}): Promise<ModelAliasDto[]> {
   return invokeCommand<ModelAliasDto[]>("list_model_aliases", { input });
 }"#,
@@ -1687,6 +1653,10 @@ export function loadRoutingPolicy(input: EmptyInputDto = {}): Promise<RoutingPol
   return invokeCommand<RoutingPolicySnapshotDto>("load_routing_policy", { input });
 }
 
+export function getRoutingPolicyPublicationStatus(input: RoutingPolicyPublicationStatusInputDto): Promise<RoutingPolicyPublicationStatusDto> {
+  return invokeCommand<RoutingPolicyPublicationStatusDto>("get_routing_policy_publication_status", { input });
+}
+
 export function applyRoutingPolicyDocument(input: ApplyRoutingPolicyDocumentInputDto): Promise<RoutingPolicySnapshotDto> {
   return invokeCommand<RoutingPolicySnapshotDto>("apply_routing_policy_document", { input });
 }
@@ -1705,10 +1675,6 @@ export function loadRoutingRuntimeOverlay(input: EmptyInputDto = {}): Promise<Ro
 
 export function listRecentRouteDecisions(input: RecentRouteDecisionsInputDto = {}): Promise<RecentRouteDecisionsPageDto> {
   return invokeCommand<RecentRouteDecisionsPageDto>("list_recent_route_decisions", { input });
-}
-
-export function listErrorRateHistory(input: ErrorRateHistoryInputDto = {}): Promise<ErrorRateHistoryPageDto> {
-  return invokeCommand<ErrorRateHistoryPageDto>("list_error_rate_history", { input });
 }
 
 export function getStationKeyOperationalDetail(input: StationKeyOperationalDetailInputDto): Promise<StationKeyOperationalDetailDto> {
@@ -2409,6 +2375,11 @@ mod tests {
                 "get_routing_protection_status",
                 "RoutingProtectionStatusInputDto",
                 "RoutingProtectionStatusDto",
+            ),
+            (
+                "get_routing_policy_publication_status",
+                "RoutingPolicyPublicationStatusInputDto",
+                "RoutingPolicyPublicationStatusDto",
             ),
             (
                 "list_station_endpoint_health",

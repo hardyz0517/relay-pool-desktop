@@ -25,8 +25,8 @@ use crate::{
             limits::ProxyStartupResourceLimits,
             request::{ProxyHttpResponse, ProxyResponsePayload},
             response_body::{
-                dual_terminal_buffered_lifecycle_finalizing_stream,
-                dual_terminal_lifecycle_finalizing_stream_with_idle_timeout_and_diagnostic_memory,
+                dual_terminal_buffered_lifecycle_finalizing_stream_with_capacity_lease,
+                dual_terminal_lifecycle_finalizing_stream_with_idle_timeout_and_diagnostic_memory_and_capacity_lease,
             },
             routing_repository::RoutingRepository,
             server::{self, RunningServer},
@@ -133,17 +133,6 @@ impl ProxyRuntimeState {
         self.transport_policy_store
             .publish_if_newer(snapshot)
             .map_err(|error| format!("publish transport policy failed: {error:?}"))
-    }
-
-    pub(crate) async fn capacity_protection_facts(
-        &self,
-        now_ms: i64,
-    ) -> Option<Vec<crate::application::queries::routing_protection::CapacityProtectionFact>> {
-        let inner = self.v2.lock().await;
-        inner
-            .routing_runtime
-            .as_ref()
-            .map(|runtime| runtime.capacity_retry_registry().protection_facts(now_ms))
     }
 
     pub(crate) async fn active_for_station(
@@ -704,7 +693,7 @@ impl IngressExecutor for ProxyExecutor {
                             code: failure.code.as_str().to_string(),
                             detail: Some(failure.public_message.clone()),
                         };
-                        let _join = super::attempt::DualTerminalFinalizationLease::new(
+                        let join = super::attempt::DualTerminalFinalizationLease::new(
                             super::attempt::DownstreamRequestFinalizationLease::new(
                                 request_terminal
                                     .take()
@@ -721,11 +710,21 @@ impl IngressExecutor for ProxyExecutor {
                             None,
                             false,
                         );
+                        // The HTTP error is returned only after the durable
+                        // request terminal has been handed to the lifecycle
+                        // writer. Otherwise callers can observe an
+                        // `in_progress` row immediately after a precommit
+                        // failure, and restart recovery must guess whether
+                        // finalization was ever scheduled.
+                        if let Some(join) = join {
+                            let _ = join.await;
+                        }
                         return Err(failure);
                     }
                 };
                 let status = response.status;
                 let headers = response.headers;
+                let capacity_lease = response.capacity_lease;
                 let mut lifecycle = response.lifecycle;
                 lifecycle.annotations.http_status = Some(status.as_u16());
                 let pending_record = PendingFinalRequestRecord::new(
@@ -776,7 +775,7 @@ impl IngressExecutor for ProxyExecutor {
                 let payload = match response.body {
                     super::execution::ProxyExecutionBody::Buffered(body) => {
                         ProxyResponsePayload::Stream(
-                            dual_terminal_buffered_lifecycle_finalizing_stream(
+                            dual_terminal_buffered_lifecycle_finalizing_stream_with_capacity_lease(
                                 body,
                                 pending_record,
                                 request_terminal
@@ -785,6 +784,7 @@ impl IngressExecutor for ProxyExecutor {
                                 selected_attempt,
                                 Some(costs),
                                 request_lease.take().expect("request lease available"),
+                                capacity_lease,
                             ),
                         )
                     }
@@ -793,7 +793,7 @@ impl IngressExecutor for ProxyExecutor {
                         diagnostic_memory,
                     } => {
                         ProxyResponsePayload::Stream(
-                            dual_terminal_lifecycle_finalizing_stream_with_idle_timeout_and_diagnostic_memory(
+                            dual_terminal_lifecycle_finalizing_stream_with_idle_timeout_and_diagnostic_memory_and_capacity_lease(
                                 chunks,
                                 pending_record,
                                 request_terminal
@@ -802,6 +802,7 @@ impl IngressExecutor for ProxyExecutor {
                                 selected_attempt,
                                 Some(costs),
                                 request_lease.take().expect("request lease available"),
+                                capacity_lease,
                                 stream_idle_timeout,
                                 diagnostic_memory,
                             ),
@@ -971,11 +972,28 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use crate::{
-        application::credentials::{
-            ExecutionCredentialError, ExecutionCredentialResolver, SecretBytes, SecretRef,
-        },
         application::routing_execution_reader::RoutingExecutionReadError,
-        models::{pricing::UpsertModelBasePriceInput, routing::RouteEndpointKind},
+        application::{
+            credentials::{
+                ExecutionCredentialError, ExecutionCredentialResolver, SecretBytes, SecretRef,
+            },
+            observation_ingestion::ObservationIngestion,
+            routing_generation::{
+                canonical_json_sha256, policy_generation_id, ROUTING_GENERATION_ALGORITHM_VERSION,
+            },
+            routing_generation_coordinator::RoutingGenerationCoordinator,
+        },
+        background_tasks::routing_generation_cutover_runner::build_ready_once,
+        models::{
+            pricing::UpsertModelBasePriceInput,
+            routing::RouteEndpointKind,
+            routing_generation::RoutingGenerationQualification,
+            routing_observation::{
+                EventTimeStatus, ObservationOrder, ObservationOutcome, ObservationScope,
+                ObservationSource, RoutingObservation, TrafficEquivalence,
+            },
+            routing_policy::RoutingPolicyConfigV3,
+        },
         services::proxy::{
             lifecycle::{
                 attempt::AttemptTerminalRecord,
@@ -1024,6 +1042,142 @@ mod tests {
             })
             .await
             .expect("model base price");
+    }
+
+    async fn append_real_quality_samples(
+        fixture: &V2ProxyTestFixture,
+        station_id: &str,
+        station_key_id: &str,
+        outcome: ObservationOutcome,
+        sample_prefix: &str,
+    ) {
+        let now_ms = chrono::Utc::now().timestamp_millis().max(0);
+        let handle = fixture.runtime().handle();
+        let lifecycle_revision = {
+            let mut read = handle.begin_read().await.expect("quality lifecycle read");
+            let revision: i64 = sqlx::query_scalar(
+                "SELECT revision FROM domain_revisions WHERE scope = 'station_key:' || ?1",
+            )
+            .bind(station_key_id)
+            .fetch_one(read.connection())
+            .await
+            .expect("quality lifecycle revision");
+            u64::try_from(revision).expect("positive lifecycle revision")
+        };
+        let mut write = handle.begin_write().await.expect("quality sample write");
+        for index in 0_u64..15 {
+            let sample_id = format!("{sample_prefix}-{index}");
+            let event_at_ms = now_ms.saturating_sub((15 - index) as i64 * 100);
+            ObservationIngestion::new()
+                .append(
+                    &mut write,
+                    RoutingObservation {
+                        id: sample_id.clone(),
+                        order: ObservationOrder {
+                            producer_id: format!("runtime-quality:{station_key_id}"),
+                            producer_sequence: index + 1,
+                            event_at_ms,
+                            ingested_at_ms: event_at_ms,
+                        },
+                        scope: ObservationScope {
+                            station_id: Some(station_id.to_string()),
+                            station_key_id: Some(station_key_id.to_string()),
+                            model: Some("gpt-test".to_string()),
+                            endpoint_revision: Some(1),
+                        },
+                        comparability_key: None,
+                        source: ObservationSource::RealRequest,
+                        traffic_equivalence: TrafficEquivalence::ExactRequest,
+                        outcome: outcome.clone(),
+                        latency_ms: Some(100),
+                        evidence_mass_basis_points: 10_000,
+                        correlation_id: format!("{sample_id}-request"),
+                        attempt_index: 0,
+                        station_key_lifecycle_revision: lifecycle_revision,
+                        cluster_finalized: true,
+                        cluster_expected_attempt_count: 1,
+                        boundary_crossed: true,
+                        event_time_status: EventTimeStatus::Valid,
+                        response_origin:
+                            crate::models::routing_observation::ResponseOrigin::Upstream,
+                        failure_code: None,
+                        failure_attribution:
+                            crate::models::routing_observation::FailureAttribution::Key,
+                        recovery_origin: crate::models::routing_observation::RecoveryOrigin::Normal,
+                        retry_disposition:
+                            crate::models::routing_observation::ObservationRetryDisposition::End,
+                        probe_state_revision: None,
+                        probe_scope: None,
+                    },
+                )
+                .await
+                .expect("append quality sample");
+        }
+        write.commit().await.expect("commit quality samples");
+    }
+
+    fn runtime_quality_qualification(
+        runtime_generation_id: &str,
+        qualified_at_ms: i64,
+    ) -> RoutingGenerationQualification {
+        let (comparison_report, replay_report) =
+            crate::models::routing_generation::test_activation_qualification_reports(
+                runtime_generation_id,
+            );
+        RoutingGenerationQualification {
+            runtime_generation_id: runtime_generation_id.to_string(),
+            comparison_report_hash: canonical_json_sha256(&comparison_report)
+                .expect("comparison report hash"),
+            comparison_report,
+            replay_report_hash: canonical_json_sha256(&replay_report).expect("replay report hash"),
+            replay_report,
+            qualified_at_ms,
+        }
+    }
+
+    async fn stage_default_v3_policy(fixture: &V2ProxyTestFixture) {
+        let policy = RoutingPolicyConfigV3::default();
+        let policy_json = serde_json::to_value(&policy).expect("serialize v3 policy");
+        let policy_hash = canonical_json_sha256(&policy_json).expect("v3 policy hash");
+        let policy_generation_id = policy_generation_id(
+            "active",
+            1,
+            "routing-policy-v3",
+            &policy_hash,
+            ROUTING_GENERATION_ALGORITHM_VERSION,
+        )
+        .expect("v3 policy generation id");
+        let handle = fixture.runtime().handle();
+        let mut write = handle.begin_write().await.expect("stage v3 policy write");
+        sqlx::query("DELETE FROM routing_policy_v3_migration_audit")
+            .execute(write.connection())
+            .await
+            .expect("clear staged policy audit fixture");
+        sqlx::query("DELETE FROM routing_policy_v3_staged")
+            .execute(write.connection())
+            .await
+            .expect("clear staged policy fixture");
+        sqlx::query(
+            "INSERT INTO routing_policy_v3_staged (
+                 scope, source_config_revision, target_policy_revision,
+                 config_revision, policy_generation_id, canonical_policy_hash,
+                 policy_algorithm_version, source_policy_version, system_version,
+                 target_policy_version, staged_policy_version, config_json,
+                 status, created_at_ms, updated_at_ms
+             ) VALUES (
+                 'active', 1, 1, 1, ?1, ?2,
+                 'routing-policy-v3', 'routing-policy-v3', 'routing-system-v1',
+                 'routing-policy-v3', 'routing-policy-v3', ?3,
+                 'staged', 1, 1
+             )",
+        )
+        .bind(policy_generation_id)
+        .bind(policy_hash)
+        .bind(serde_json::to_string(&policy_json).expect("stored v3 policy JSON"))
+        .execute(write.connection())
+        .await
+        .expect("insert staged v3 policy");
+        write.commit().await.expect("commit staged v3 policy");
     }
 
     struct DropObservedStore {
@@ -1094,23 +1248,6 @@ mod tests {
     }
 
     impl RoutingRepository for CorrelationCapturingRepository {
-        fn load_planning_snapshot_with_probe(
-            &self,
-            request: crate::application::routing_engine::request::RouteRequestFacts,
-            runtime: crate::application::routing_engine::planning_snapshot::RuntimeOverlaySnapshot,
-            context: crate::application::routing_engine::request::PlanningRequestContext,
-            _probe: Option<crate::application::health_protection::HealthProtectionProbe>,
-            _probe_mode: crate::application::health_protection::HealthProbeAdmissionMode,
-        ) -> BoxFuture<
-            'static,
-            Result<
-                Option<crate::application::routing_engine::planning_snapshot::PlanningSnapshot>,
-                RoutingExecutionReadError,
-            >,
-        > {
-            self.load_planning_snapshot(request, runtime, context)
-        }
-
         fn load_execution_settings(
             &self,
         ) -> BoxFuture<
@@ -1145,7 +1282,17 @@ mod tests {
                 Ok(Some(crate::application::routing_engine::planning_snapshot::PlanningSnapshot {
                 snapshot_id: "correlation-test-planning-snapshot".to_string(),
                 durable_revision: 1,
+                configured_key_count: 0,
+                capability_match_count: 0,
+                candidate_cap_count: 0,
+                routing_runtime_generation_id: None,
+                routing_generation_fence_revision: 0,
                 routing_policy_revision: 1,
+                routing_quality_revision: 0,
+                routing_health_revision: 0,
+                quality_projection_backlog: 0,
+                quality_projection_lag_seconds: 0,
+                quality_stale: false,
                 policy: crate::models::routing_policy::RoutingPolicyConfigV2::default(),
                 attempt_budget: crate::application::routing_policy::AttemptBudgetProfileV1::from_policy(
                     1,
@@ -1177,54 +1324,6 @@ mod tests {
                     legacy_candidates: Vec::new(),
                 })
             })
-        }
-
-        fn load_current_execution_target(
-            &self,
-            _station_key_id: String,
-        ) -> BoxFuture<
-            'static,
-            Result<
-                Option<crate::application::operational_facts::target_resolver::ExecutionTargetRef>,
-                RoutingExecutionReadError,
-            >,
-        > {
-            Box::pin(async { Ok(None) })
-        }
-
-        fn load_health_protection_statuses(
-            &self,
-            _now_ms: i64,
-        ) -> BoxFuture<
-            'static,
-            Result<
-                Vec<crate::application::health_protection::HealthProtectionStatus>,
-                RoutingExecutionReadError,
-            >,
-        > {
-            Box::pin(async { Ok(Vec::new()) })
-        }
-
-        fn begin_health_protection_probe(
-            &self,
-            _scope: crate::application::health_protection::HealthProtectionScope,
-            _now_ms: i64,
-        ) -> BoxFuture<
-            'static,
-            Result<
-                Option<crate::application::health_protection::HealthProtectionProbe>,
-                RoutingExecutionReadError,
-            >,
-        > {
-            Box::pin(async { Ok(None) })
-        }
-
-        fn cancel_health_protection_probe(
-            &self,
-            _probe: crate::application::health_protection::HealthProtectionProbe,
-            _now_ms: i64,
-        ) -> BoxFuture<'static, Result<bool, RoutingExecutionReadError>> {
-            Box::pin(async { Ok(false) })
         }
     }
 
@@ -1321,7 +1420,7 @@ mod tests {
             Err(failure) => failure,
         };
 
-        assert_eq!(failure.code.as_str(), "route_no_candidate");
+        assert_eq!(failure.code.as_str(), "no_available_key");
         assert_eq!(
             captured
                 .lock()
@@ -1569,7 +1668,7 @@ mod tests {
             release: Arc::clone(&release),
         }]);
         let fixture = V2ProxyTestFixture::new().await;
-        fixture.seed_candidate(upstream.base_url.as_str()).await;
+        let seeded = fixture.seed_candidate(upstream.base_url.as_str()).await;
         let runtime = ProxyRuntimeState::for_tests();
         let started = runtime.start(fixture.config(0)).await.expect("start v2");
 
@@ -1590,10 +1689,32 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         upstream.wait_for_requests(1);
         wait_runtime_active_requests(&runtime, started.port, 1).await;
+        assert_eq!(
+            runtime.active_for_station_key(&seeded.station_key_id).await,
+            Some(1),
+            "the selected key capacity lease must survive while the stream is active"
+        );
+        let active_logs = fixture.request_logs().await;
+        assert_eq!(active_logs.len(), 1);
+        assert_eq!(active_logs[0].status, "in_progress");
+        assert_eq!(
+            active_logs[0].lifecycle_status.as_deref(),
+            Some("attempting")
+        );
+        assert_eq!(
+            active_logs[0].station_key_id.as_deref(),
+            Some(seeded.station_key_id.as_str()),
+            "the active request must expose its selected key without waiting for terminalization"
+        );
 
         drop(response);
         release.store(true, AtomicOrdering::Relaxed);
         wait_runtime_active_requests(&runtime, started.port, 0).await;
+        assert_eq!(
+            runtime.active_for_station_key(&seeded.station_key_id).await,
+            Some(0),
+            "dropping the stream must release the selected key capacity lease"
+        );
         runtime.stop(started.port).await.unwrap();
     }
 
@@ -1844,7 +1965,7 @@ data: [DONE]
     }
 
     #[tokio::test]
-    async fn v2_uses_canonical_policy_for_ordering() {
+    async fn v3_pre_cutover_ignores_legacy_health_axes_and_uses_optimistic_ordering() {
         let upstream = LoopbackUpstream::script(vec![ScriptedResponse::Json(
             br#"{"id":"chatcmpl-stable","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop","index":0}]}"#.to_vec(),
         )]);
@@ -1897,13 +2018,104 @@ data: [DONE]
         runtime.stop(started.port).await.unwrap();
 
         upstream.wait_for_requests(1);
+        // The v3 registry is still pre-cutover in this fixture. Legacy
+        // `routing_health_axes` rows must not leak into production ordering;
+        // both keys therefore use the deterministic optimistic score and the
+        // stable station-key identity tie-breaker.
         assert_eq!(
             upstream.captured_requests()[0].header("authorization"),
-            Some("Bearer sk-v2-stable")
+            Some("Bearer sk-v2-flaky")
         );
         let logs = fixture.request_logs().await;
         assert_eq!(logs.len(), 1);
         assert_eq!(logs[0].route_policy.as_deref(), Some("automatic_balanced"));
+    }
+
+    #[tokio::test]
+    async fn v3_active_quality_generation_orders_real_request_samples() {
+        let upstream = LoopbackUpstream::script(vec![ScriptedResponse::Json(
+            br#"{"id":"chatcmpl-quality","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop","index":0}]}"#.to_vec(),
+        )]);
+        let fixture = V2ProxyTestFixture::new().await;
+        stage_default_v3_policy(&fixture).await;
+        let flaky = fixture
+            .seed_candidate_named(upstream.base_url.as_str(), "flaky", 0, "auto")
+            .await;
+        let stable = fixture
+            .seed_candidate_named(upstream.base_url.as_str(), "stable", 1, "auto")
+            .await;
+
+        append_real_quality_samples(
+            &fixture,
+            &flaky.station_id,
+            &flaky.station_key_id,
+            ObservationOutcome::RateLimited,
+            "runtime-flaky",
+        )
+        .await;
+        append_real_quality_samples(
+            &fixture,
+            &stable.station_id,
+            &stable.station_key_id,
+            ObservationOutcome::Success,
+            "runtime-stable",
+        )
+        .await;
+
+        let handle = fixture.runtime().handle();
+        let generation_id = build_ready_once(&handle, &tokio_util::sync::CancellationToken::new())
+            .await
+            .expect("build quality generation")
+            .expect("ready quality generation");
+        let coordinator = RoutingGenerationCoordinator::new(handle.clone());
+        let qualified_at_ms = chrono::Utc::now().timestamp_millis().max(1);
+        coordinator
+            .record_qualification(&runtime_quality_qualification(
+                &generation_id,
+                qualified_at_ms,
+            ))
+            .await
+            .expect("qualify quality generation");
+        let fence = coordinator
+            .begin_cutover(&generation_id, None, qualified_at_ms.saturating_add(1))
+            .await
+            .expect("begin quality generation cutover");
+        coordinator
+            .complete_cutover(&fence, qualified_at_ms.saturating_add(2))
+            .await
+            .expect("activate quality generation");
+
+        let runtime = ProxyRuntimeState::for_tests();
+        let started = runtime
+            .start(fixture.config(0))
+            .await
+            .expect("start v3 quality runtime");
+        let response = reqwest::Client::new()
+            .post(format!(
+                "http://127.0.0.1:{}/v1/chat/completions",
+                started.port
+            ))
+            .bearer_auth("relay-local-secret")
+            .json(&serde_json::json!({
+                "model": "gpt-test",
+                "messages": [{"role": "user", "content": "ping"}],
+            }))
+            .send()
+            .await
+            .expect("send quality-ranked chat");
+        assert_eq!(response.status(), StatusCode::OK);
+        let _ = response.bytes().await.expect("quality-ranked body");
+        runtime
+            .stop(started.port)
+            .await
+            .expect("stop quality runtime");
+
+        upstream.wait_for_requests(1);
+        assert_eq!(
+            upstream.captured_requests()[0].header("authorization"),
+            Some("Bearer sk-v2-stable"),
+            "the active generation must outrank the Key with 15 attributable 429 samples"
+        );
     }
 
     #[tokio::test]
@@ -1995,7 +2207,7 @@ data: [DONE]
     }
 
     #[tokio::test]
-    async fn v2_precommit_failure_finalizes_request_log_and_key_health() {
+    async fn v2_precommit_failure_finalizes_request_log_and_key_circuit() {
         let upstream = LoopbackUpstream::script(vec![ScriptedResponse::Status {
             status: 502,
             reason: "Bad Gateway",
@@ -2025,25 +2237,32 @@ data: [DONE]
         assert_eq!(logs[0].http_status, Some(502));
         assert_eq!(logs[0].failure_source.as_deref(), Some("upstream"));
         assert_eq!(logs[0].attempt_count, Some(1));
-        // Durable health now lands in the scoped observation/verdict tables
-        // owned by the scoped projector; the legacy station_key_health read
-        // model is read-only after the cutover.
         let mut session = fixture
             .runtime()
             .begin_read()
             .await
-            .expect("scoped health read session");
-        let observations: Vec<(String, String)> = sqlx::query_as(
-            "SELECT scope_kind, verdict FROM routing_health_observations WHERE station_id = ?1",
+            .expect("routing state read session");
+        let scoped_observation_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM routing_health_observations WHERE station_id = ?1",
         )
         .bind(&seeded.station_id)
-        .fetch_all(session.connection())
+        .fetch_one(session.connection())
         .await
         .expect("scoped health observations");
         assert_eq!(
-            observations,
-            vec![("station_endpoint".to_string(), "degraded".to_string())]
+            scoped_observation_count, 0,
+            "ordinary upstream failures must not create a second endpoint-health protection path"
         );
+        let circuit: (String, i64) = sqlx::query_as(
+            "SELECT state, consecutive_failures
+             FROM routing_circuit_state_v3
+             WHERE station_key_id = ?1",
+        )
+        .bind(&seeded.station_key_id)
+        .fetch_one(session.connection())
+        .await
+        .expect("station key circuit state");
+        assert_eq!(circuit, ("closed".to_string(), 1));
     }
 
     #[tokio::test]

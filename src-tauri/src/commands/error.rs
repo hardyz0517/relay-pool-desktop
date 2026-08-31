@@ -191,6 +191,11 @@ impl CommandError {
                 "The operation conflicts with existing data.",
                 None,
             ),
+            ApplicationError::CandidateLimitExceeded { .. } => (
+                CommandErrorCode::Conflict,
+                "The routing candidate set exceeds the supported limit.",
+                None,
+            ),
             ApplicationError::MigrationFailed | ApplicationError::IncompatibleSchema => (
                 CommandErrorCode::DataStoreUnavailable,
                 "The local data store is unavailable.",

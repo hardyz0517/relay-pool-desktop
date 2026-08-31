@@ -167,7 +167,7 @@ fn effect_planner_consumes_typed_attempt_outcome_without_reclassifying_strings()
             station_id: "station-a".to_string(),
             endpoint_revision: 3,
         },
-        RetryDisposition::WaitThenReplan,
+        RetryDisposition::TryNextKey,
     );
     failure.health = HealthEffect::Cooldown {
         retry_after_ms: Some(1000),
@@ -194,7 +194,7 @@ fn effect_planner_consumes_typed_attempt_outcome_without_reclassifying_strings()
     let plan = plan_attempt_outcome_effects(&outcome);
     let failure_plan = plan.failure.expect("failure effect");
     assert_eq!(failure_plan.class, FailureClass::RateLimited);
-    assert_eq!(failure_plan.retry, RetryDisposition::WaitThenReplan);
+    assert_eq!(failure_plan.retry, RetryDisposition::TryNextKey);
     assert_eq!(
         failure_plan.health,
         HealthEffect::Cooldown {

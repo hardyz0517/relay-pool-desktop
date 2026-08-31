@@ -242,10 +242,6 @@ fn target_ref(
         station_key_id: station_key_id.to_string(),
         station_id: format!("station-{station_key_id}"),
         station_type: "openai_compatible".to_string(),
-        capacity_provider_family: None,
-        capacity_deployment_identity: None,
-        capacity_region_identity: None,
-        capacity_domain_revision: None,
         group_binding_id: None,
         endpoint_revision,
         credential_revision: 1,
@@ -291,8 +287,6 @@ fn leased_selected(
         expected_group_revision: None,
         resolved_upstream_model: Some("fixture-model".to_string()),
         model_alias_revision: 1,
-        expected_capacity_domain: None,
-        expected_capacity_domain_revision: None,
         policy_revision: 1,
         request_body_identity: target_resolver::RequestBodyIdentity::from_bytes(b"fixture-body"),
         protocol_profile: target_resolver::TargetProtocolProfile {
@@ -303,7 +297,6 @@ fn leased_selected(
             uses_reasoning: false,
         },
         lease,
-        retry_permit: None,
     }
 }
 

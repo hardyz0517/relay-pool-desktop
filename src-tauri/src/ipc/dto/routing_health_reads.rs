@@ -45,35 +45,17 @@ pub type StationKeyHealthDto = StationKeyHealth;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct RoutingProtectionStatusInputDto {
-    /// Optional request model used to resolve the canonical capacity-domain
-    /// commitment. An empty object preserves the legacy aggregate-only query.
-    #[serde(default)]
-    pub model: Option<String>,
-}
+pub struct RoutingProtectionStatusInputDto {}
 
 impl RoutingProtectionStatusInputDto {
     pub fn parse(value: Value) -> Result<Self, crate::commands::error::CommandError> {
-        let input: Self = serde_json::from_value(value).map_err(|_| {
+        serde_json::from_value(value).map_err(|_| {
             invalid_input(
                 "input",
                 "invalid_shape",
                 "The routing protection status payload is invalid.",
             )
-        })?;
-        validate_optional_text("model", input.model.as_deref(), MAX_TEXT_BYTES)?;
-        if input
-            .model
-            .as_deref()
-            .is_some_and(|model| model.trim().is_empty())
-        {
-            return Err(invalid_input(
-                "model",
-                "invalid_text",
-                "The routing protection model must not be empty.",
-            ));
-        }
-        Ok(input)
+        })
     }
 }
 
@@ -139,6 +121,13 @@ pub struct RecentRouteDecisionsInputDto {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=legacy-error-rate-ipc-reference; owner=ipc/dto/routing_health_reads; remove_when=legacy error-rate diagnostics are deleted"
+    )
+)]
 pub struct ErrorRateHistoryInputDto {
     #[serde(default)]
     pub before_ms: Option<i64>,
@@ -146,6 +135,13 @@ pub struct ErrorRateHistoryInputDto {
     pub limit: Option<usize>,
 }
 
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=legacy-error-rate-ipc-reference; owner=ipc/dto/routing_health_reads; remove_when=legacy error-rate diagnostics are deleted"
+    )
+)]
 impl ErrorRateHistoryInputDto {
     pub fn parse(value: Value) -> Result<Self, crate::commands::error::CommandError> {
         let input: Self = serde_json::from_value(value).map_err(|_| {
@@ -805,25 +801,16 @@ mod tests {
 
     #[test]
     fn routing_protection_status_input_keeps_empty_input_compatibility() {
-        let empty = RoutingProtectionStatusInputDto::parse(serde_json::json!({}))
+        RoutingProtectionStatusInputDto::parse(serde_json::json!({}))
             .expect("empty protection input remains valid");
-        assert_eq!(empty.model, None);
-
-        let model =
-            RoutingProtectionStatusInputDto::parse(serde_json::json!({"model":"gpt-5-mini"}))
-                .expect("model-scoped protection input");
-        assert_eq!(model.model.as_deref(), Some("gpt-5-mini"));
     }
 
     #[test]
-    fn routing_protection_status_input_rejects_empty_model_and_unknown_fields() {
-        for value in [
-            serde_json::json!({"model":"  "}),
-            serde_json::json!({"model":"gpt-5-mini","unexpected":true}),
-        ] {
-            let error = RoutingProtectionStatusInputDto::parse(value)
-                .expect_err("invalid protection input");
-            assert_eq!(error.code, CommandErrorCode::InvalidInput);
-        }
+    fn routing_protection_status_input_rejects_unknown_fields() {
+        let error = RoutingProtectionStatusInputDto::parse(serde_json::json!({
+            "model":"gpt-5-mini"
+        }))
+        .expect_err("retired capacity-domain query input is rejected");
+        assert_eq!(error.code, CommandErrorCode::InvalidInput);
     }
 }

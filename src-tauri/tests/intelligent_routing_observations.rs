@@ -36,9 +36,15 @@ fn observation_model_rejects_anonymous_probe_quality_success() {
 }
 
 #[test]
-fn request_finalization_uses_the_same_transaction_for_routing_observation() {
+fn request_finalization_projects_routing_observation_through_durable_outbox() {
     let source = source("src/application/request_finalization/mod.rs");
-    assert!(source.contains(".append(&mut session, observation)"));
-    assert!(source.contains("routing_observation(\n                    &write"));
+    // v3 finalization first persists the canonical attempt and request
+    // terminal, then projects the finalized cluster through the durable
+    // outbox. The projection and outbox deletion must share one transaction,
+    // so a crash can leave work to replay without duplicating observations.
+    assert!(source.contains(".enqueue(session.connection(), &write, terminal_at_ms)"));
+    assert!(source.contains(".delete_claimed(session.connection(), &record.request_id, &owner)"));
+    assert!(source.contains("append_with_generation_eligibility"));
+    assert!(source.contains("routing_observation_from_finalized(sample)?"));
     assert!(source.contains("producer_sequence"));
 }

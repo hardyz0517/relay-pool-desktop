@@ -3412,6 +3412,22 @@ mod tests {
             .await
             .expect("unbound station key");
 
+        let revisions_before = {
+            let mut read = runtime.begin_read().await.expect("revision read");
+            sqlx::query_as::<_, (String, i64)>(
+                "SELECT keys.id, revisions.revision
+                 FROM station_keys keys
+                 JOIN domain_revisions revisions
+                   ON revisions.scope = 'station_key:' || keys.id
+                 WHERE keys.station_id = ?1
+                 ORDER BY keys.id",
+            )
+            .bind(&station.id)
+            .fetch_all(read.connection())
+            .await
+            .expect("read key revisions")
+        };
+
         collectors
             .apply_result(CollectorApplyRequest {
                 run_key: "bound-key-rate-refresh".to_string(),
@@ -3456,7 +3472,7 @@ mod tests {
             .expect("collector apply");
 
         let keys = credentials
-            .list_station_keys(station.id)
+            .list_station_keys(station.id.clone())
             .await
             .expect("station keys");
         let automatic = keys
@@ -3487,6 +3503,26 @@ mod tests {
             .expect("unbound key");
         assert_eq!(unbound.rate_multiplier, Some(0.7));
         assert_eq!(unbound.rate_source.as_deref(), Some("manual"));
+
+        let revisions_after = {
+            let mut read = runtime.begin_read().await.expect("revision read");
+            sqlx::query_as::<_, (String, i64)>(
+                "SELECT keys.id, revisions.revision
+                 FROM station_keys keys
+                 JOIN domain_revisions revisions
+                   ON revisions.scope = 'station_key:' || keys.id
+                 WHERE keys.station_id = ?1
+                 ORDER BY keys.id",
+            )
+            .bind(&station.id)
+            .fetch_all(read.connection())
+            .await
+            .expect("read key revisions")
+        };
+        assert_eq!(
+            revisions_after, revisions_before,
+            "derived group/rate projection must not create a new Key lifecycle"
+        );
         runtime.close().await.expect("close persistence runtime");
     }
 }

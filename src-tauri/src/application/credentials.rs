@@ -628,9 +628,14 @@ impl CredentialService {
         station_key_id: String,
     ) -> Result<(), ApplicationError> {
         let store = self.store;
+        let now_ms = self.clock.now_utc().timestamp_millis();
         self.runtime
             .write(|write| {
-                Box::pin(async move { store.delete_station_key(write, &station_key_id).await })
+                Box::pin(async move {
+                    store
+                        .delete_station_key(write, &station_key_id, now_ms)
+                        .await
+                })
             })
             .await
             .map_err(Into::into)

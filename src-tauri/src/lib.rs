@@ -1148,12 +1148,6 @@ pub fn run() {
                             .map_err(|error| {
                                 format!("failed to load application settings: {error}")
                             })?;
-                        tauri::async_runtime::block_on(
-                            app_services.routing.refresh_protection_configuration(),
-                        )
-                        .map_err(|error| {
-                            format!("failed to load routing protection configuration: {error}")
-                        })?;
                         #[cfg(all(feature = "runtime-logging-windows-smoke", debug_assertions))]
                         let settings = if std::env::var_os(
                             "RELAY_POOL_RUNTIME_LOGGING_SMOKE_ROOT",
@@ -1392,6 +1386,20 @@ pub fn run() {
                             .map_err(|error| {
                                 format!("failed to start alerting runtime: {error}")
                             })?;
+                        let routing_generation_cutover_task =
+                            background_tasks::routing_generation_cutover_runner::register_routing_generation_cutover_task(
+                                &supervisor_handle,
+                                runtime.handle(),
+                                Arc::clone(&routing_policy_mutations),
+                            )
+                            .map_err(|error| {
+                                format!("failed to register routing generation builder: {error}")
+                            })?;
+                        supervisor_handle
+                            .start(&routing_generation_cutover_task)
+                            .map_err(|error| {
+                                format!("failed to start routing generation builder: {error}")
+                            })?;
                         let routing_projection_task =
                             background_tasks::routing_projection_runner::register_routing_projection_task(
                                 &supervisor_handle,
@@ -1404,6 +1412,21 @@ pub fn run() {
                             .start(&routing_projection_task)
                             .map_err(|error| {
                                 format!("failed to start routing projection runner: {error}")
+                            })?;
+                        let station_key_circuit_reaper_task =
+                            background_tasks::station_key_circuit_reaper::register_station_key_circuit_reaper_task(
+                                 &supervisor_handle,
+                                 runtime.handle(),
+                                 Arc::clone(&app_services.routing),
+                                 Arc::clone(&app_services.request_finalization),
+                             )
+                            .map_err(|error| {
+                                format!("failed to register station-key circuit reaper: {error}")
+                            })?;
+                        supervisor_handle
+                            .start(&station_key_circuit_reaper_task)
+                            .map_err(|error| {
+                                format!("failed to start station-key circuit reaper: {error}")
                             })?;
                         let policy_document_task =
                             background_tasks::policy_document_runner::register_policy_document_task(

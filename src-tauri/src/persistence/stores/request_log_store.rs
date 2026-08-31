@@ -6,8 +6,14 @@ use super::super::{error::PersistenceError, write_session::WriteSession};
 use super::dashboard_metrics_rollup::{
     clear_dashboard_metric_rollups, record_request_finish_rollup, record_request_start_rollup,
 };
-use super::request_log_write::{AttemptTerminalWrite, RequestStartWrite, RequestTerminalWrite};
+use super::request_log_write::{
+    AttemptTerminalWrite, RequestRouteSelectionWrite, RequestStartWrite, RequestTerminalWrite,
+};
 use super::request_outcome_store::{RequestOutcomeStore, RoutingDecisionEventWrite};
+use super::routing_attempt_store::{
+    FinalizedRoutingAttemptSample, RoutingAttemptAdmission, RoutingAttemptStore,
+    RoutingAttemptTerminal, RoutingGenerationEligibility,
+};
 
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct RequestLogStore;
@@ -18,14 +24,21 @@ pub(crate) struct RequestStartPersistenceResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RequestRouteSelectionPersistenceResult {
+    pub updated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AttemptPersistenceResult {
     pub inserted: bool,
     pub health_applied: bool,
+    pub boundary_crossed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RequestTerminalPersistenceResult {
     pub finalized: bool,
+    pub routing_samples: Vec<FinalizedRoutingAttemptSample>,
 }
 
 impl RequestLogStore {
@@ -151,11 +164,61 @@ impl RequestLogStore {
         })
     }
 
+    pub(crate) async fn record_route_selection(
+        &self,
+        session: &mut WriteSession,
+        record: &RequestRouteSelectionWrite,
+    ) -> Result<RequestRouteSelectionPersistenceResult, PersistenceError> {
+        let attempt_count = i64::from(record.attempt_ordinal) + 1;
+        let fallback_count = i64::from(record.attempt_ordinal);
+        let updated = sqlx::query(
+            "UPDATE request_logs SET
+                lifecycle_status = 'attempting', station_key_id = ?, station_id = ?,
+                route_policy = ?, route_reason = ?,
+                route_wait_ms = MAX(0, ? - received_at_ms),
+                attempt_count = CASE
+                    WHEN attempt_count IS NULL OR attempt_count < ? THEN ? ELSE attempt_count END,
+                fallback_count = CASE
+                    WHEN fallback_count < ? THEN ? ELSE fallback_count END
+             WHERE request_id = ? AND terminal_at_ms IS NULL AND status = 'in_progress'",
+        )
+        .bind(&record.station_key_id)
+        .bind(&record.station_id)
+        .bind(&record.route_policy)
+        .bind(&record.route_reason)
+        .bind(record.selected_at_ms)
+        .bind(attempt_count)
+        .bind(attempt_count)
+        .bind(fallback_count)
+        .bind(fallback_count)
+        .bind(&record.request_id)
+        .execute(session.connection())
+        .await?
+        .rows_affected();
+        Ok(RequestRouteSelectionPersistenceResult {
+            updated: updated > 0,
+        })
+    }
+
     pub(crate) async fn finish_attempt(
         &self,
         session: &mut WriteSession,
         record: &AttemptTerminalWrite,
     ) -> Result<AttemptPersistenceResult, PersistenceError> {
+        ensure_pre_cutover_routing_attempt_slot(session.connection(), record).await?;
+        let routing_attempt_id = format!("{}:{}", record.request_id, record.ordinal);
+        let routing_terminal = RoutingAttemptTerminal {
+            attempt_id: &routing_attempt_id,
+            comparability_key: record.comparability_key.as_deref(),
+            failure_code: record.public_code.as_deref(),
+            failure_blame: record.failure_blame.as_deref(),
+            terminal_kind: &record.terminal_kind,
+            retry_disposition: routing_retry_disposition(record.retry_disposition.as_deref()),
+            event_at_ms: nonnegative_u64(record.event_at_ms)?,
+            observed_at_ms: nonnegative_u64(record.observed_at_ms)?,
+            ingested_at_ms: nonnegative_u64(record.ingested_at_ms)?,
+            latency_ms: nonnegative_u64(record.event_at_ms.saturating_sub(record.started_at_ms))?,
+        };
         if let Some(existing) = request_attempt_by_request_and_ordinal(
             session.connection(),
             &record.request_id,
@@ -169,9 +232,12 @@ impl RequestLogStore {
                 ));
             }
             append_attempt_decision_events(session.connection(), record).await?;
+            let terminal =
+                RoutingAttemptStore::terminalize(session.connection(), &routing_terminal).await?;
             return Ok(AttemptPersistenceResult {
                 inserted: false,
                 health_applied: false,
+                boundary_crossed: terminal.boundary_crossed,
             });
         }
 
@@ -202,11 +268,19 @@ impl RequestLogStore {
         .execute(session.connection())
         .await?;
 
+        let terminal =
+            RoutingAttemptStore::terminalize(session.connection(), &routing_terminal).await?;
+
         append_attempt_decision_events(session.connection(), record).await?;
 
         Ok(AttemptPersistenceResult {
-            inserted: true,
+            // A request finalizer that loses the race with the durable
+            // deadline reaper may still append its bounded request-attempt
+            // audit row. It must not re-apply circuit, quality, or health
+            // effects after the v3 attempt cluster has been finalized.
+            inserted: terminal.updated,
             health_applied: false,
+            boundary_crossed: terminal.boundary_crossed,
         })
     }
 
@@ -246,8 +320,115 @@ impl RequestLogStore {
         if finalized {
             record_request_finish_rollup(session.connection(), record).await?;
         }
-        Ok(RequestTerminalPersistenceResult { finalized })
+        let routing_samples = if finalized {
+            RoutingAttemptStore::finalize_request_clusters(
+                session.connection(),
+                &record.request_id,
+                record.terminal_at_ms,
+            )
+            .await?
+        } else {
+            Vec::new()
+        };
+        Ok(RequestTerminalPersistenceResult {
+            finalized,
+            routing_samples,
+        })
     }
+}
+
+async fn ensure_pre_cutover_routing_attempt_slot(
+    connection: &mut sqlx::SqliteConnection,
+    record: &AttemptTerminalWrite,
+) -> Result<(), PersistenceError> {
+    let attempt_id = format!("{}:{}", record.request_id, record.ordinal);
+    let exists = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM routing_attempt_v3 WHERE attempt_id = ?1",
+    )
+    .bind(&attempt_id)
+    .fetch_one(&mut *connection)
+    .await?
+        > 0;
+    if exists {
+        return Ok(());
+    }
+    let marker = sqlx::query_scalar::<_, String>(
+        "SELECT status FROM routing_runtime_cutover_marker WHERE singleton_key = 1",
+    )
+    .fetch_optional(&mut *connection)
+    .await?;
+    if marker.as_deref() == Some("v3_active") {
+        return Err(PersistenceError::InvariantViolation(
+            "v3 routing attempt terminal has no durable admission slot".into(),
+        ));
+    }
+    let boundary_crossed = attempt_boundary_crossed(record);
+    RoutingAttemptStore::admit(
+        connection,
+        &RoutingAttemptAdmission {
+            attempt_id: &attempt_id,
+            correlation_id: &record.request_id,
+            station_key_id: &record.station_key_id,
+            station_key_lifecycle_revision: u64::try_from(record.credential_revision.max(1))
+                .map_err(|_| PersistenceError::ConstraintViolation)?,
+            attempt_index: record.ordinal,
+            capacity_lease_id: "pre-cutover-compatibility",
+            half_open_lease_id: None,
+            lease_revision: None,
+            deadline_at_ms: u64::try_from(record.event_at_ms.max(0))
+                .map_err(|_| PersistenceError::ConstraintViolation)?,
+            admitted_at_ms: u64::try_from(record.started_at_ms.max(0))
+                .map_err(|_| PersistenceError::ConstraintViolation)?,
+            generation_eligibility: RoutingGenerationEligibility::Legacy,
+        },
+    )
+    .await?;
+    if boundary_crossed {
+        RoutingAttemptStore::mark_boundary_crossed(
+            connection,
+            &attempt_id,
+            &record.station_key_id,
+            u64::try_from(record.credential_revision.max(1))
+                .map_err(|_| PersistenceError::ConstraintViolation)?,
+            u64::try_from(record.event_at_ms.max(0))
+                .map_err(|_| PersistenceError::ConstraintViolation)?,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+fn routing_retry_disposition(value: Option<&str>) -> &'static str {
+    match value {
+        Some(value)
+            if value.eq_ignore_ascii_case("trynextcandidate")
+                || value.eq_ignore_ascii_case("retry_same_target") =>
+        {
+            "retryable_before_commit"
+        }
+        Some(value) if value.eq_ignore_ascii_case("stoprequest") => "stop_request",
+        _ => "end",
+    }
+}
+
+fn nonnegative_u64(value: i64) -> Result<u64, PersistenceError> {
+    u64::try_from(value.max(0)).map_err(|_| PersistenceError::ConstraintViolation)
+}
+
+/// A circuit/quality sample exists only after the request crossed the
+/// outbound boundary. Upstream failures, including 429, are attributable to
+/// the selected key; local adapter and downstream failures are excluded.
+fn attempt_boundary_crossed(record: &AttemptTerminalWrite) -> bool {
+    if record.terminal_kind == "succeeded" {
+        return true;
+    }
+    if record.terminal_kind == "abandoned" {
+        return false;
+    }
+    !matches!(
+        record.failure_blame.as_deref(),
+        Some("LocalAdapter") | Some("Downstream") | Some("local") | Some("downstream")
+    )
 }
 
 async fn append_attempt_decision_events(
@@ -646,7 +827,7 @@ mod v2_tests {
         runtime::PersistenceRuntime,
         stores::request_log_write::{
             AttemptHealthUpdate, AttemptTerminalWrite, RequestLogAnnotationsWrite,
-            RequestStartWrite, RequestTerminalWrite,
+            RequestRouteSelectionWrite, RequestStartWrite, RequestTerminalWrite,
         },
     };
 
@@ -689,6 +870,7 @@ mod v2_tests {
             group_binding_id: None,
             group_revision: None,
             resolved_upstream_model: None,
+            comparability_key: None,
             model_alias_revision: 1,
             started_at_ms: 1001,
             terminal_kind: "succeeded".to_string(),
@@ -702,6 +884,9 @@ mod v2_tests {
             public_code: None,
             sanitized_detail: None,
             output_committed: true,
+            event_at_ms: 1100,
+            observed_at_ms: 1100,
+            ingested_at_ms: 1100,
             terminal_at_ms: 1100,
             probe_scope: None,
             probe_state_revision: None,
@@ -936,6 +1121,50 @@ mod v2_tests {
     }
 
     #[tokio::test]
+    async fn route_selection_is_visible_before_request_terminal() {
+        let runtime = runtime().await;
+        let store = RequestLogStore;
+        seed_attempt_owner(&runtime).await;
+        let record = start_record("req-routing");
+        let mut start = runtime.begin_write().await.expect("start write");
+        store
+            .start_request(&mut start, &record, 1000)
+            .await
+            .expect("start request");
+        start.commit().await.expect("start commit");
+
+        let mut selection = runtime.begin_write().await.expect("selection write");
+        let outcome = store
+            .record_route_selection(
+                &mut selection,
+                &RequestRouteSelectionWrite {
+                    request_id: "req-routing".to_string(),
+                    attempt_ordinal: 1,
+                    station_key_id: "key-1".to_string(),
+                    station_id: "station-1".to_string(),
+                    route_policy: "stable_first".to_string(),
+                    route_reason: "selected key-1 for /v1/chat/completions".to_string(),
+                    selected_at_ms: 1025,
+                },
+            )
+            .await
+            .expect("record route selection");
+        assert!(outcome.updated);
+        selection.commit().await.expect("selection commit");
+
+        let mut read = runtime.begin_read().await.expect("read");
+        let logs = store.list_recent(&mut read, 500).await.expect("list");
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].status, "in_progress");
+        assert_eq!(logs[0].lifecycle_status.as_deref(), Some("attempting"));
+        assert_eq!(logs[0].station_key_id.as_deref(), Some("key-1"));
+        assert_eq!(logs[0].station_id.as_deref(), Some("station-1"));
+        assert_eq!(logs[0].route_wait_ms, Some(25));
+        assert_eq!(logs[0].attempt_count, Some(2));
+        assert_eq!(logs[0].fallback_count, 1);
+    }
+
+    #[tokio::test]
     async fn attempt_terminal_is_applied_once_without_store_level_health_side_effect() {
         let runtime = runtime().await;
         let store = RequestLogStore;
@@ -971,6 +1200,56 @@ mod v2_tests {
             .await
             .expect("attempt row");
         assert_eq!(row.get::<i64, _>(0), 1);
+        let v3 = sqlx::query(
+            "SELECT terminal_state, outcome, boundary_crossed, ingestion_sequence
+             FROM routing_attempt_v3 WHERE attempt_id = 'req-attempt:0'",
+        )
+        .fetch_one(read.connection())
+        .await
+        .expect("v3 attempt row");
+        assert_eq!(v3.get::<String, _>("terminal_state"), "success");
+        assert_eq!(v3.get::<String, _>("outcome"), "success");
+        assert_eq!(v3.get::<i64, _>("boundary_crossed"), 1);
+        assert!(v3.get::<Option<i64>, _>("ingestion_sequence").is_some());
+    }
+
+    #[tokio::test]
+    async fn v3_attempt_excludes_local_failure_from_key_quality() {
+        let runtime = runtime().await;
+        let store = RequestLogStore;
+        seed_attempt_owner(&runtime).await;
+        let mut start = runtime.begin_write().await.expect("start write");
+        store
+            .start_request(&mut start, &start_record("req-local"), 1000)
+            .await
+            .expect("start request");
+        start.commit().await.expect("start commit");
+        let mut record = attempt_record("req-local");
+        record.ordinal = 1;
+        record.terminal_kind = "failed".to_string();
+        record.failure_kind = Some("LocalAdapter".to_string());
+        record.failure_blame = Some("LocalAdapter".to_string());
+        record.retry_disposition = Some("StopRequest".to_string());
+        record.health_update = AttemptHealthUpdate::Neutral;
+        record.health_effect = "neutral".to_string();
+        record.output_committed = false;
+        let mut write = runtime.begin_write().await.expect("write");
+        store
+            .finish_attempt(&mut write, &record)
+            .await
+            .expect("local terminal");
+        write.commit().await.expect("commit");
+        let mut read = runtime.begin_read().await.expect("read");
+        let row = sqlx::query(
+            "SELECT terminal_state, outcome, boundary_crossed
+             FROM routing_attempt_v3 WHERE attempt_id = 'req-local:1'",
+        )
+        .fetch_one(read.connection())
+        .await
+        .expect("v3 local attempt");
+        assert_eq!(row.get::<String, _>("terminal_state"), "local_abandoned");
+        assert_eq!(row.get::<String, _>("outcome"), "excluded");
+        assert_eq!(row.get::<i64, _>("boundary_crossed"), 0);
     }
 
     async fn seed_attempt_owner(runtime: &PersistenceRuntime) {

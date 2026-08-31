@@ -270,10 +270,29 @@ impl RouteProgress {
         }
     }
 
-    pub(crate) fn record_actual_attempt(&mut self, station_key_id: impl Into<String>) {
+    pub(crate) fn record_actual_attempt(&mut self, station_key_id: impl Into<String>) -> bool {
         self.ordinal = self.ordinal.saturating_add(1);
         self.attempt_count = self.attempt_count.saturating_add(1);
-        self.actual_attempt_exclusions.insert(station_key_id.into());
+        self.actual_attempt_exclusions.insert(station_key_id.into())
+    }
+
+    /// Records another outbound attempt without consuming another provider
+    /// slot. Same-key retries are governed by the circuit failure threshold;
+    /// `attempt_count` counts distinct attempted keys for maxRetryCount.
+    pub(crate) fn record_retry_attempt(&mut self) {
+        self.ordinal = self.ordinal.saturating_add(1);
+    }
+
+    /// Finishes a key after its circuit opens between retry attempts. The
+    /// preceding outbound attempt already advanced `ordinal`, so only the
+    /// distinct-key budget and exclusion set change here.
+    pub(crate) fn exclude_attempted_key(&mut self, station_key_id: impl Into<String>) -> bool {
+        self.attempt_count = self.attempt_count.saturating_add(1);
+        self.actual_attempt_exclusions.insert(station_key_id.into())
+    }
+
+    pub(crate) fn exclude_without_attempt(&mut self, station_key_id: impl Into<String>) -> bool {
+        self.actual_attempt_exclusions.insert(station_key_id.into())
     }
 
     pub(crate) fn record_snapshot_rebuild(&mut self) {

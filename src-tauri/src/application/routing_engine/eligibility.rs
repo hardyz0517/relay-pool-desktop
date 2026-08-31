@@ -49,10 +49,10 @@ pub(crate) fn evaluate_candidate(
     if has_code(candidate, "health_hard_reject") {
         return Err(rejection(candidate, "health_hard_reject", HardGate::Health));
     }
-    if has_code(candidate, "capacity_unavailable") {
+    if has_code(candidate, "capacity_state_unavailable") {
         return Err(rejection(
             candidate,
-            "capacity_unavailable",
+            "capacity_state_unavailable",
             HardGate::RuntimeGuard,
         ));
     }

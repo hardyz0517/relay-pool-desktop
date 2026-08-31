@@ -1,3 +1,11 @@
+#![cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=legacy-error-rate-reference; owner=application/error_rate_protection; remove_when=v3 station-key quality and circuit migration no longer needs the retained compatibility implementation"
+    )
+)]
+
 //! Bounded error-rate observation adapter for the routing health reducer.
 //!
 //! This module is intentionally an adapter, not a second breaker.  It accepts
@@ -49,12 +57,26 @@ const MAX_FAILURE_CODE_COUNTS: usize = 8;
 /// configuration. It is produced by the application-owned service and cannot
 /// be inferred from a request or from a persisted reducer row.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=legacy-error-rate-admission; owner=application/error_rate_protection; remove_when=v3 station-key circuit is the only production admission owner"
+    )
+)]
 pub(crate) struct ErrorRateAdmissionConfigV1 {
     pub(crate) enabled: bool,
     pub(crate) probe: Option<HealthProtectionProbe>,
 }
 
 impl ErrorRateAdmissionConfigV1 {
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=legacy-error-rate-admission; owner=application/error_rate_protection; remove_when=v3 station-key circuit is the only production admission owner"
+        )
+    )]
     pub(crate) const fn disabled() -> Self {
         Self {
             enabled: false,
@@ -81,12 +103,26 @@ impl ErrorRateAdmissionConfigV1 {
 /// Missing/Closed scopes are admissible; Open scopes are ejected. Half-Open
 /// scopes remain suppressed unless the caller supplies a matching lease.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=legacy-error-rate-verdict; owner=application/error_rate_protection; remove_when=v3 station-key circuit is the only production admission owner"
+    )
+)]
 pub(crate) enum ErrorRateScopedVerdict {
     Admitted,
     Suppressed(HealthProtectionState),
 }
 
 impl ErrorRateScopedVerdict {
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=legacy-error-rate-verdict; owner=application/error_rate_protection; remove_when=v3 station-key circuit is the only production admission owner"
+        )
+    )]
     pub(crate) const fn is_admitted(self) -> bool {
         matches!(self, Self::Admitted)
     }
@@ -103,6 +139,13 @@ pub(crate) fn scoped_admission_verdict(
     scoped_admission_verdict_with_probe(statuses, scope, None)
 }
 
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=legacy-error-rate-admission; owner=application/error_rate_protection; remove_when=v3 station-key circuit is the only production admission owner"
+    )
+)]
 pub(crate) fn scoped_admission_verdict_with_probe(
     statuses: &[HealthProtectionStatus],
     scope: &HealthProtectionScope,
@@ -142,6 +185,13 @@ pub(crate) fn scoped_admission_verdict_with_probe(
 /// revision-fenced reservation and replans with the returned fence before any
 /// outbound attempt is started. Half-Open entries and Open entries with
 /// remaining cooldown stay suppressed.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=legacy-error-rate-probe-admission; owner=application/error_rate_protection; remove_when=v3 station-key circuit is the only production admission owner"
+    )
+)]
 pub(crate) fn scoped_admission_verdict_for_probe_candidate(
     statuses: &[HealthProtectionStatus],
     scope: &HealthProtectionScope,
@@ -167,6 +217,13 @@ pub(crate) fn scoped_admission_verdict_for_probe_candidate(
 /// Build the same one-way commitment used by observation ingestion. Keeping
 /// this constructor in the adapter prevents planner code from reproducing the
 /// hashing algorithm or accidentally comparing raw secrets.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=legacy-error-rate-scope; owner=application/error_rate_protection; remove_when=v3 station-key circuit owns opaque key admission"
+    )
+)]
 pub(crate) fn admission_scope(
     kind: HealthProtectionScopeKind,
     value: &str,
@@ -205,15 +262,36 @@ pub(crate) fn endpoint_health_scope(
 /// capability. Keeping this resolver here makes planner and proxy execution
 /// compare the exact same opaque value.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=legacy-error-rate-scope; owner=application/error_rate_protection; remove_when=v3 station-key circuit owns opaque key admission"
+    )
+)]
 pub(crate) struct CandidateHealthScopes {
     pub(crate) credential: HealthProtectionScope,
 }
 
 impl CandidateHealthScopes {
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=legacy-error-rate-scope; owner=application/error_rate_protection; remove_when=v3 station-key circuit owns opaque key admission"
+        )
+    )]
     pub(crate) fn iter(&self) -> impl Iterator<Item = &HealthProtectionScope> {
         std::iter::once(&self.credential)
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=legacy-error-rate-scope; owner=application/error_rate_protection; remove_when=v3 station-key circuit owns opaque key admission"
+        )
+    )]
     pub(crate) fn contains(&self, scope: &HealthProtectionScope) -> bool {
         self.credential == *scope
     }
@@ -223,6 +301,13 @@ impl CandidateHealthScopes {
 /// identity snapshot. Endpoint revisions are intentionally not resolved here;
 /// endpoint-scoped durable verdicts are handled by the independent health
 /// attribution/read-model path until an endpoint probe resolver is introduced.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=legacy-error-rate-scope; owner=application/error_rate_protection; remove_when=v3 station-key circuit owns opaque key admission"
+    )
+)]
 pub(crate) fn candidate_health_scopes(
     station_id: &str,
     station_key_id: &str,
@@ -421,15 +506,6 @@ impl ErrorRateProtectionService {
         }
     }
 
-    /// Refresh only the planner/observation enable switch from the committed
-    /// routing policy. Thresholds remain owned by the durable reducer profile
-    /// loaded from that same policy; no caller can inject a partial profile.
-    pub(crate) fn set_enabled(&self, enabled: bool) {
-        if let Ok(mut adapter) = self.adapter.lock() {
-            adapter.config.enabled = enabled;
-        }
-    }
-
     pub(crate) fn config(&self) -> ErrorRateProtectionConfigV1 {
         self.adapter
             .lock()
@@ -437,6 +513,13 @@ impl ErrorRateProtectionService {
             .unwrap_or_default()
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=legacy-error-rate-admission; owner=application/error_rate_protection; remove_when=v3 station-key circuit is the only production admission owner"
+        )
+    )]
     pub(crate) fn admission_config(&self) -> ErrorRateAdmissionConfigV1 {
         self.adapter
             .lock()
@@ -451,6 +534,13 @@ impl ErrorRateProtectionService {
     /// service keeps its bounded adapter settings (history limits and version)
     /// while this method projects the policy switch at the application
     /// boundary.  This avoids a second mutable configuration owner.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=legacy-error-rate-admission; owner=application/error_rate_protection; remove_when=v3 station-key circuit is the only production admission owner"
+        )
+    )]
     pub(crate) fn admission_config_for_policy(&self, enabled: bool) -> ErrorRateAdmissionConfigV1 {
         let mut config = self.admission_config();
         config.enabled = enabled;
@@ -1020,6 +1110,19 @@ mod tests {
             outcome,
             latency_ms: Some(10),
             evidence_mass_basis_points: 10_000,
+            comparability_key: None,
+            correlation_id: id.to_string(),
+            attempt_index: 0,
+            station_key_lifecycle_revision: 1,
+            cluster_finalized: true,
+            cluster_expected_attempt_count: 1,
+            boundary_crossed: true,
+            event_time_status: crate::models::routing_observation::EventTimeStatus::Valid,
+            response_origin: crate::models::routing_observation::ResponseOrigin::Upstream,
+            failure_code: None,
+            failure_attribution: crate::models::routing_observation::FailureAttribution::Key,
+            recovery_origin: crate::models::routing_observation::RecoveryOrigin::Normal,
+            retry_disposition: crate::models::routing_observation::ObservationRetryDisposition::End,
             probe_scope: None,
             probe_state_revision: None,
         }
@@ -1065,6 +1168,19 @@ mod tests {
             outcome: ObservationOutcome::EndpointFailure,
             latency_ms: None,
             evidence_mass_basis_points: 10_000,
+            comparability_key: None,
+            correlation_id: "endpoint-only".to_string(),
+            attempt_index: 0,
+            station_key_lifecycle_revision: 1,
+            cluster_finalized: true,
+            cluster_expected_attempt_count: 1,
+            boundary_crossed: true,
+            event_time_status: crate::models::routing_observation::EventTimeStatus::Valid,
+            response_origin: crate::models::routing_observation::ResponseOrigin::Upstream,
+            failure_code: None,
+            failure_attribution: crate::models::routing_observation::FailureAttribution::Key,
+            recovery_origin: crate::models::routing_observation::RecoveryOrigin::Normal,
+            retry_disposition: crate::models::routing_observation::ObservationRetryDisposition::End,
             probe_scope: None,
             probe_state_revision: None,
         };
@@ -1271,7 +1387,7 @@ mod tests {
             31,
             ObservationOutcome::Success,
             ObservationSource::ActiveProbe,
-            TrafficEquivalence::ExactRequest,
+            TrafficEquivalence::EndpointOnly,
         );
         active_probe.probe_state_revision = None;
         let adapter = ErrorRateProtectionAdapter::new(config).expect("adapter");

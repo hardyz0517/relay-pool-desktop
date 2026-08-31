@@ -1,16 +1,15 @@
 //! Application control plane for routing-policy mutations.
 //!
-//! The routing aggregate owns validation, CAS and document materialization.
-//! This coordinator owns the application-level post-commit effect: compiling
-//! the committed timeout policy and publishing it to the proxy runtime. All
-//! policy mutation sources use this boundary so a file edit cannot silently
-//! diverge from a UI save or a history restore.
+//! The routing aggregate owns validation and staged CAS. This coordinator
+//! serializes all mutation sources; runtime publication is deliberately
+//! deferred until the generation coordinator atomically activates the staged
+//! policy, quality and circuit components.
 
 use std::{path::PathBuf, sync::Arc};
 
 use crate::{
     application::{error::ApplicationError, routing::RoutingService},
-    models::{document_sync::TrustedDocumentSource, routing_policy::RoutingPolicyDocumentV2},
+    models::{document_sync::TrustedDocumentSource, routing_policy::RoutingPolicyDocumentV3},
     persistence::{error::PersistenceError, stores::routing_policy_store::StoredRoutingPolicy},
     services::proxy::{
         limits::ProxyStartupResourceLimits, runtime::ProxyRuntimeState,
@@ -42,22 +41,21 @@ impl RoutingPolicyMutationCoordinator {
 
     pub(crate) async fn apply_ui(
         &self,
-        document: RoutingPolicyDocumentV2,
+        document: RoutingPolicyDocumentV3,
     ) -> Result<StoredRoutingPolicy, ApplicationError> {
         self.apply(document, TrustedDocumentSource::ui()).await
     }
 
     async fn apply(
         &self,
-        document: RoutingPolicyDocumentV2,
+        document: RoutingPolicyDocumentV3,
         source: TrustedDocumentSource,
     ) -> Result<StoredRoutingPolicy, ApplicationError> {
         let _gate = self.mutation_gate.lock().await;
         let stored = self
             .routing
-            .apply_routing_policy_document_v2(document, source)
+            .apply_routing_policy_document_v3(document, source)
             .await?;
-        self.activate(&stored).await?;
         Ok(stored)
     }
 
@@ -72,18 +70,15 @@ impl RoutingPolicyMutationCoordinator {
             .routing
             .reconcile_external_routing_policy_document()
             .await?;
-        if let Some(stored) = stored.as_ref() {
-            self.activate(stored)
-                .await
-                .map_err(|error| PersistenceError::InvariantViolation(error.to_string()))?;
-        }
         Ok(stored)
     }
 
-    async fn activate(&self, stored: &StoredRoutingPolicy) -> Result<(), ApplicationError> {
-        let policy =
-            crate::models::routing_policy::RoutingPolicyConfigV2::from_stored_value(&stored.config)
-                .map_err(|_| ApplicationError::ConstraintViolation)?;
+    pub(crate) async fn publish_active_policy(
+        &self,
+        stored: &StoredRoutingPolicy,
+    ) -> Result<(), ApplicationError> {
+        let policy = crate::application::routing::routing_policy_v3_from_stored(&stored.config)
+            .map_err(|_| ApplicationError::ConstraintViolation)?;
         let snapshot = TransportPolicySnapshot::from_timeout_policy(
             &policy.timeout_policy,
             stored.revision,
@@ -103,7 +98,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn ui_commit_publishes_the_committed_revision_to_proxy_runtime() {
+    async fn ui_commit_stages_without_publishing_an_unqualified_runtime_policy() {
         let temp = tempfile::tempdir().expect("tempdir");
         let runtime = crate::persistence::runtime::PersistenceRuntime::initialize_new(
             &temp.path().join("routing.sqlite3"),
@@ -114,13 +109,12 @@ mod tests {
         let proxy = Arc::new(ProxyRuntimeState::for_tests());
         let coordinator = RoutingPolicyMutationCoordinator::new(routing.clone(), proxy.clone());
         let current = routing.load_routing_policy().await.expect("current policy");
-        let mut policy = crate::models::routing_policy::RoutingPolicyConfigV2::from_stored_value(
-            &current.config,
-        )
-        .expect("v2 policy");
+        let mut policy =
+            crate::application::routing::routing_policy_v3_from_stored(&current.config)
+                .expect("v3 policy");
         policy.timeout_policy.connect_seconds = 3.0;
         let applied = coordinator
-            .apply_ui(RoutingPolicyDocumentV2 {
+            .apply_ui(RoutingPolicyDocumentV3 {
                 format_version:
                     crate::models::routing_policy::ROUTING_POLICY_DOCUMENT_FORMAT_VERSION,
                 base_revision: current.revision,
@@ -129,9 +123,10 @@ mod tests {
             .await
             .expect("apply policy");
 
+        assert_eq!(applied.status, "staged");
         let snapshot = proxy.transport_policy_snapshot();
-        assert_eq!(snapshot.source_routing_policy_revision, applied.revision);
-        assert_eq!(snapshot.connect_timeout, std::time::Duration::from_secs(3));
+        assert_ne!(snapshot.source_routing_policy_revision, applied.revision);
+        assert_ne!(snapshot.connect_timeout, std::time::Duration::from_secs(3));
         runtime.close().await.expect("close persistence runtime");
     }
 }

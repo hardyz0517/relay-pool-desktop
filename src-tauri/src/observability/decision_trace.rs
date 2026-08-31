@@ -25,8 +25,29 @@ const TRACE_EVENT_ENVELOPE_OVERHEAD_BYTES: usize = 128;
 pub(crate) enum DecisionTraceEventKind {
     AttemptStart,
     CanonicalFailure,
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=decision-trace.legacy-same-target-retry; owner=observability/decision_trace; remove_when=legacy same-target retry traces are removed from compatibility decoding"
+        )
+    )]
     SameTargetRetry,
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=decision-trace.legacy-domain-fallback; owner=observability/decision_trace; remove_when=capacity-domain fallback traces are removed from compatibility decoding"
+        )
+    )]
     SameDomainFallbackSuppressed,
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=decision-trace.legacy-domain-fallback; owner=observability/decision_trace; remove_when=capacity-domain fallback traces are removed from compatibility decoding"
+        )
+    )]
     CrossDomainFallback,
     #[cfg_attr(
         not(test),

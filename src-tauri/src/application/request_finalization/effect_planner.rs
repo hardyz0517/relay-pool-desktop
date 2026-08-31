@@ -220,6 +220,7 @@ fn attempt_kind_for_class(class: FailureClass) -> AttemptFailureKind {
         FailureClass::MalformedResponse => AttemptFailureKind::MalformedResponse,
         FailureClass::StreamInterrupted => AttemptFailureKind::StreamInterrupted,
         FailureClass::DownstreamDrop => AttemptFailureKind::DownstreamDrop,
+        FailureClass::NoAvailableKey => AttemptFailureKind::LocalAdapter,
         FailureClass::Upstream5xx
         | FailureClass::UpstreamOverloaded
         | FailureClass::ProviderCapacity
@@ -240,7 +241,8 @@ fn blame_for_target(target: &FailureTarget) -> FailureBlame {
         FailureTarget::LocalAdapter { .. } | FailureTarget::Request | FailureTarget::Uncertain => {
             FailureBlame::LocalAdapter
         }
-        FailureTarget::ModelOnKey { .. }
+        FailureTarget::CurrentKey
+        | FailureTarget::ModelOnKey { .. }
         | FailureTarget::StationKeyCredential { .. }
         | FailureTarget::StationAccount { .. }
         | FailureTarget::StationGroup { .. }
@@ -266,7 +268,8 @@ fn lifecycle_health(health: HealthEffect) -> LifecycleHealthEffect {
 mod tests {
     use super::*;
     use crate::application::request_finalization::failure::{
-        failure_from_provider_signal, CapabilityApplicabilitySet, ProviderErrorSemanticSignal,
+        failure_from_provider_signal, planning_failure, CapabilityApplicabilitySet,
+        ProviderErrorSemanticSignal,
     };
 
     #[test]
@@ -292,5 +295,41 @@ mod tests {
                 ..
             }) if station_id == "station-test" && group_binding_id == "binding-test"
         ));
+    }
+
+    #[test]
+    fn overloaded_provider_signal_is_an_ordinary_current_key_failure() {
+        let failure = failure_from_provider_signal(
+            ProviderErrorSemanticSignal::Overloaded,
+            CapabilityApplicabilitySet::UnknownModelCatalog,
+        );
+        let classified = classified_attempt_failure_from_canonical(&failure);
+        assert_eq!(classified.blame, FailureBlame::Upstream);
+        assert_eq!(
+            classified.retry,
+            crate::application::request_lifecycle::attempt::RetryDisposition::TryNextCandidate
+        );
+        assert!(matches!(
+            classified.health,
+            LifecycleHealthEffect::ObserveFailure
+        ));
+    }
+
+    #[test]
+    fn no_available_key_is_a_local_terminal_failure() {
+        let failure = planning_failure(
+            FailureClass::NoAvailableKey,
+            FailureTarget::Request,
+            crate::application::request_finalization::failure::RetryDisposition::StopRequest,
+        );
+
+        let classified = classified_attempt_failure_from_canonical(&failure);
+
+        assert_eq!(classified.kind, AttemptFailureKind::LocalAdapter);
+        assert_eq!(classified.blame, FailureBlame::LocalAdapter);
+        assert_eq!(
+            classified.retry,
+            crate::application::request_lifecycle::attempt::RetryDisposition::StopRequest
+        );
     }
 }

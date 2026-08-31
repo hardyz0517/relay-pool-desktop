@@ -8,7 +8,6 @@ pub(crate) mod coordinator;
 pub(crate) mod dispatch;
 #[cfg(test)]
 pub(crate) mod eligibility;
-pub(crate) mod exploration;
 pub(crate) mod factors;
 pub(crate) mod failure_domains;
 pub(crate) mod fixed_point;

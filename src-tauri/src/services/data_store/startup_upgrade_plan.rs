@@ -30,6 +30,7 @@ pub(crate) enum StartupUpgradeStep {
     EnsureAlertingUpgrade,
     EnsureLegacyChangeEventsRemoval,
     OpenRuntime,
+    StageRoutingPolicyV3,
     VerifyWritableRuntime,
     VerifySecrets,
 }
@@ -122,6 +123,7 @@ pub(crate) fn plan_upgrade(probe: &StartupUpgradeProbe) -> StartupUpgradePlan {
     }
     steps.extend([
         StartupUpgradeStep::OpenRuntime,
+        StartupUpgradeStep::StageRoutingPolicyV3,
         StartupUpgradeStep::VerifyWritableRuntime,
         StartupUpgradeStep::VerifySecrets,
     ]);
@@ -222,6 +224,7 @@ mod tests {
                 StartupUpgradeStep::EnsureAlertingUpgrade,
                 StartupUpgradeStep::EnsureLegacyChangeEventsRemoval,
                 StartupUpgradeStep::OpenRuntime,
+                StartupUpgradeStep::StageRoutingPolicyV3,
                 StartupUpgradeStep::VerifyWritableRuntime,
                 StartupUpgradeStep::VerifySecrets,
             ])
@@ -242,6 +245,7 @@ mod tests {
                 StartupUpgradeStep::EnsureAlertingUpgrade,
                 StartupUpgradeStep::EnsureLegacyChangeEventsRemoval,
                 StartupUpgradeStep::OpenRuntime,
+                StartupUpgradeStep::StageRoutingPolicyV3,
                 StartupUpgradeStep::VerifyWritableRuntime,
                 StartupUpgradeStep::VerifySecrets,
             ])
@@ -262,6 +266,7 @@ mod tests {
             StartupUpgradePlan::Execute(vec![
                 StartupUpgradeStep::EnsureSchema { target_schema: 18 },
                 StartupUpgradeStep::OpenRuntime,
+                StartupUpgradeStep::StageRoutingPolicyV3,
                 StartupUpgradeStep::VerifyWritableRuntime,
                 StartupUpgradeStep::VerifySecrets,
             ])
@@ -282,6 +287,7 @@ mod tests {
             StartupUpgradePlan::Execute(vec![
                 StartupUpgradeStep::EnsureSchema { target_schema: 42 },
                 StartupUpgradeStep::OpenRuntime,
+                StartupUpgradeStep::StageRoutingPolicyV3,
                 StartupUpgradeStep::VerifyWritableRuntime,
                 StartupUpgradeStep::VerifySecrets,
             ])

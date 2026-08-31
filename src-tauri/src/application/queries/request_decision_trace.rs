@@ -79,10 +79,17 @@ pub(crate) enum RequestDecisionDetailAvailability {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum RequestDecisionAction {
-    RetrySameTarget,
-    WaitThenReplan,
-    TryDifferentFailureDomain,
+    RetryCurrentKey,
+    TryNextKey,
     StopRequest,
+    // Read-only compatibility values for traces produced before the v3
+    // next-key cutover. Production retry actions must not emit these values.
+    #[serde(rename = "retry_same_target")]
+    LegacyRetrySameTarget,
+    #[serde(rename = "wait_then_replan")]
+    LegacyWaitThenReplan,
+    #[serde(rename = "try_different_failure_domain")]
+    LegacyTryDifferentFailureDomain,
 }
 
 pub(crate) fn decision_trace_from_durable_outcome(
@@ -122,9 +129,8 @@ pub(crate) fn decision_trace_from_durable_outcome(
             action: None,
             attempt_ordinal: Some(summary.attempt_count.max(0) as u32),
             remaining_attempts: Some(0),
-            remaining_wait_budget_ms: None,
+            remaining_precommit_budget_ms: None,
             policy_revision: None,
-            failure_domain: None,
             route_policy: None,
             route_reason: Some(summary.profile_version),
             station_key_id: None,
@@ -186,9 +192,8 @@ pub(crate) fn append_durable_attempt_trace(
             action: None,
             attempt_ordinal: Some(ordinal.saturating_add(1)),
             remaining_attempts: None,
-            remaining_wait_budget_ms: None,
+            remaining_precommit_budget_ms: None,
             policy_revision: None,
-            failure_domain: None,
             route_policy: None,
             route_reason: Some("durable_attempt_lifecycle".to_string()),
             station_key_id: None,
@@ -258,9 +263,8 @@ pub(crate) fn append_durable_decision_events(
                     .and_then(|value| u32::try_from(value).ok())
                     .map(|value| value.saturating_add(1)),
                 remaining_attempts: None,
-                remaining_wait_budget_ms: None,
+                remaining_precommit_budget_ms: None,
                 policy_revision: None,
-                failure_domain: None,
                 route_policy: None,
                 route_reason: Some("durable_decision_event".to_string()),
                 station_key_id: None,
@@ -378,11 +382,8 @@ pub(crate) struct RequestDecisionTimelineItem {
     /// boundary.
     pub(crate) attempt_ordinal: Option<u32>,
     pub(crate) remaining_attempts: Option<u32>,
-    pub(crate) remaining_wait_budget_ms: Option<u64>,
+    pub(crate) remaining_precommit_budget_ms: Option<u64>,
     pub(crate) policy_revision: Option<u64>,
-    /// Coarse, non-secret failure domain category (never a provider/account
-    /// identifier or endpoint).
-    pub(crate) failure_domain: Option<String>,
     pub(crate) route_policy: Option<String>,
     pub(crate) route_reason: Option<String>,
     pub(crate) station_key_id: Option<String>,
@@ -461,9 +462,8 @@ pub fn decision_trace_from_decision(
         action: None,
         attempt_ordinal: None,
         remaining_attempts: None,
-        remaining_wait_budget_ms: None,
+        remaining_precommit_budget_ms: None,
         policy_revision: None,
-        failure_domain: None,
         station_key_id: selected.clone(),
         station_id: summary.selected_station_id.clone(),
         attempt_count: Some(
@@ -563,15 +563,12 @@ pub(crate) fn decision_trace_from_runtime(trace: RequestDecisionTraceV1) -> Requ
                 remaining_attempts: structured
                     .as_ref()
                     .and_then(|detail| detail.remaining_attempts),
-                remaining_wait_budget_ms: structured
+                remaining_precommit_budget_ms: structured
                     .as_ref()
-                    .and_then(|detail| detail.remaining_wait_budget_ms),
+                    .and_then(|detail| detail.remaining_precommit_budget_ms),
                 policy_revision: structured
                     .as_ref()
                     .and_then(|detail| detail.policy_revision),
-                failure_domain: structured
-                    .as_ref()
-                    .and_then(|detail| detail.failure_domain.clone()),
                 route_policy: None,
                 route_reason: None,
                 station_key_id: None,
@@ -615,9 +612,8 @@ struct ParsedActionDetail {
     action: Option<RequestDecisionAction>,
     attempt_ordinal: Option<u32>,
     remaining_attempts: Option<u32>,
-    remaining_wait_budget_ms: Option<u64>,
+    remaining_precommit_budget_ms: Option<u64>,
     policy_revision: Option<u64>,
-    failure_domain: Option<String>,
 }
 
 fn parse_action_detail(detail: Option<&str>) -> Option<ParsedActionDetail> {
@@ -625,25 +621,38 @@ fn parse_action_detail(detail: Option<&str>) -> Option<ParsedActionDetail> {
     let mut action = None;
     let mut attempt_ordinal = None;
     let mut remaining_attempts = None;
-    let mut remaining_wait_budget_ms = None;
+    let mut remaining_precommit_budget_ms = None;
     let mut policy_revision = None;
-    let mut failure_domain = None;
     let parts: Vec<&str> = detail.split('_').collect();
     let mut index = 0;
     while index < parts.len() {
         match parts[index] {
             "retry"
+                if parts.get(index + 1) == Some(&"current")
+                    && parts.get(index + 2) == Some(&"key") =>
+            {
+                action = Some(RequestDecisionAction::RetryCurrentKey);
+                index += 3;
+            }
+            "try"
+                if parts.get(index + 1) == Some(&"next")
+                    && parts.get(index + 2) == Some(&"key") =>
+            {
+                action = Some(RequestDecisionAction::TryNextKey);
+                index += 3;
+            }
+            "retry"
                 if parts.get(index + 1) == Some(&"same")
                     && parts.get(index + 2) == Some(&"target") =>
             {
-                action = Some(RequestDecisionAction::RetrySameTarget);
+                action = Some(RequestDecisionAction::LegacyRetrySameTarget);
                 index += 3;
             }
             "wait"
                 if parts.get(index + 1) == Some(&"then")
                     && parts.get(index + 2) == Some(&"replan") =>
             {
-                action = Some(RequestDecisionAction::WaitThenReplan);
+                action = Some(RequestDecisionAction::LegacyWaitThenReplan);
                 index += 3;
             }
             "try"
@@ -651,7 +660,7 @@ fn parse_action_detail(detail: Option<&str>) -> Option<ParsedActionDetail> {
                     && parts.get(index + 2) == Some(&"failure")
                     && parts.get(index + 3) == Some(&"domain") =>
             {
-                action = Some(RequestDecisionAction::TryDifferentFailureDomain);
+                action = Some(RequestDecisionAction::LegacyTryDifferentFailureDomain);
                 index += 4;
             }
             "stop" if parts.get(index + 1) == Some(&"request") => {
@@ -667,25 +676,12 @@ fn parse_action_detail(detail: Option<&str>) -> Option<ParsedActionDetail> {
                 index += 2;
             }
             "budget" => {
-                remaining_wait_budget_ms =
+                remaining_precommit_budget_ms =
                     parts.get(index + 1).and_then(|value| value.parse().ok());
                 index += 2;
             }
             "policy" => {
                 policy_revision = parts.get(index + 1).and_then(|value| value.parse().ok());
-                index += 2;
-            }
-            "failure" => {
-                // The failure code is intentionally reduced to a coarse
-                // category; no target/provider identifier crosses this API.
-                let code = parts.get(index + 1).copied().unwrap_or_default();
-                failure_domain = Some(if code.contains("capacity") || code.contains("rate") {
-                    "capacity_domain".to_string()
-                } else if code.contains("endpoint") || code.contains("upstream") {
-                    "upstream".to_string()
-                } else {
-                    "unknown".to_string()
-                });
                 index += 2;
             }
             // A delay suggestion is not the remaining request deadline.
@@ -699,9 +695,8 @@ fn parse_action_detail(detail: Option<&str>) -> Option<ParsedActionDetail> {
         action,
         attempt_ordinal,
         remaining_attempts,
-        remaining_wait_budget_ms,
+        remaining_precommit_budget_ms,
         policy_revision,
-        failure_domain,
     })
 }
 
@@ -734,17 +729,84 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_bounded_retry_action_detail_without_exposing_target_data() {
+    fn parses_production_next_key_action_detail_without_exposing_target_data() {
         let parsed = parse_action_detail(Some(
-            "action_wait_then_replan_failure_capacity_exhausted_attempt_1_remaining_2_policy_7_excluded_1_delay_250",
+            "action_try_next_key_failure_capacity_exhausted_attempt_1_remaining_2_budget_250_policy_7",
         ))
         .expect("valid bounded action detail");
-        assert_eq!(parsed.action, Some(RequestDecisionAction::WaitThenReplan));
+        assert_eq!(parsed.action, Some(RequestDecisionAction::TryNextKey));
         assert_eq!(parsed.attempt_ordinal, Some(1));
         assert_eq!(parsed.remaining_attempts, Some(2));
         assert_eq!(parsed.policy_revision, Some(7));
-        assert_eq!(parsed.failure_domain.as_deref(), Some("capacity_domain"));
-        assert_eq!(parsed.remaining_wait_budget_ms, None);
+        assert_eq!(parsed.remaining_precommit_budget_ms, Some(250));
+    }
+
+    #[test]
+    fn parses_production_current_key_retry_action_detail() {
+        let parsed = parse_action_detail(Some(
+            "action_retry_current_key_failure_upstream_rate_limited_attempt_1_remaining_3_budget_250_policy_7",
+        ))
+        .expect("valid bounded action detail");
+        assert_eq!(parsed.action, Some(RequestDecisionAction::RetryCurrentKey));
+        assert_eq!(parsed.attempt_ordinal, Some(1));
+        assert_eq!(parsed.remaining_attempts, Some(3));
+        assert_eq!(parsed.policy_revision, Some(7));
+        assert_eq!(parsed.remaining_precommit_budget_ms, Some(250));
+    }
+
+    #[test]
+    fn parses_pre_cutover_action_details_only_as_legacy_compatibility_values() {
+        for (value, expected) in [
+            (
+                "retry_same_target",
+                RequestDecisionAction::LegacyRetrySameTarget,
+            ),
+            (
+                "wait_then_replan",
+                RequestDecisionAction::LegacyWaitThenReplan,
+            ),
+            (
+                "try_different_failure_domain",
+                RequestDecisionAction::LegacyTryDifferentFailureDomain,
+            ),
+        ] {
+            let detail = format!(
+                "action_{value}_failure_capacity_exhausted_attempt_1_remaining_2_policy_7_excluded_1_delay_250"
+            );
+            let parsed = parse_action_detail(Some(&detail)).expect("valid legacy action detail");
+            assert_eq!(parsed.action, Some(expected));
+            assert_eq!(parsed.attempt_ordinal, Some(1));
+            assert_eq!(parsed.remaining_attempts, Some(2));
+            assert_eq!(parsed.policy_revision, Some(7));
+            assert_eq!(parsed.remaining_precommit_budget_ms, None);
+        }
+    }
+
+    #[test]
+    fn serializes_production_and_legacy_action_contract_values() {
+        assert_eq!(
+            serde_json::to_value(RequestDecisionAction::RetryCurrentKey).expect("serialize action"),
+            serde_json::json!("retry_current_key")
+        );
+        assert_eq!(
+            serde_json::to_value(RequestDecisionAction::TryNextKey).expect("serialize action"),
+            serde_json::json!("try_next_key")
+        );
+        assert_eq!(
+            serde_json::to_value(RequestDecisionAction::LegacyRetrySameTarget)
+                .expect("serialize legacy action"),
+            serde_json::json!("retry_same_target")
+        );
+        assert_eq!(
+            serde_json::to_value(RequestDecisionAction::LegacyTryDifferentFailureDomain)
+                .expect("serialize legacy action"),
+            serde_json::json!("try_different_failure_domain")
+        );
+        assert_eq!(
+            serde_json::to_value(RequestDecisionAction::LegacyWaitThenReplan)
+                .expect("serialize legacy action"),
+            serde_json::json!("wait_then_replan")
+        );
     }
 
     #[test]

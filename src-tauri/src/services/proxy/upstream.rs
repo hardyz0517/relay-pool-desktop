@@ -914,8 +914,6 @@ mod tests {
                 group_revision: None,
                 resolved_upstream_model: Some("gpt-test".to_string()),
                 model_alias_revision: 1,
-                capacity_domain: None,
-                capacity_domain_revision: None,
                 policy_revision: 1,
                 request_body_identity: crate::application::operational_facts::target_resolver::RequestBodyIdentity::from_bytes(b"{}"),
                 protocol_profile: crate::application::operational_facts::target_resolver::TargetProtocolProfile {
@@ -927,7 +925,6 @@ mod tests {
                 },
             },
             lease,
-            _retry_permit: None,
         }
     }
 

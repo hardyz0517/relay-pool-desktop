@@ -20,8 +20,29 @@ const MAX_REORDER_STATIONS: usize = 1_000;
 const MAX_CREDIT_PER_CNY: f64 = 1_000_000.0;
 const MAX_BALANCE_THRESHOLD_CNY: f64 = 1_000_000_000.0;
 const MAX_COLLECTION_INTERVAL_MINUTES: u16 = 10_080;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=legacy-capacity-domain-ipc-reference; owner=ipc/dto/stations; remove_when=capacity-domain reference DTOs are deleted"
+    )
+)]
 const MAX_CAPACITY_PROVIDER_FAMILY_BYTES: usize = 128;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=legacy-capacity-domain-ipc-reference; owner=ipc/dto/stations; remove_when=capacity-domain reference DTOs are deleted"
+    )
+)]
 const MAX_CAPACITY_DEPLOYMENT_BYTES: usize = 256;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=legacy-capacity-domain-ipc-reference; owner=ipc/dto/stations; remove_when=capacity-domain reference DTOs are deleted"
+    )
+)]
 const MAX_CAPACITY_REGION_BYTES: usize = 128;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -225,10 +246,24 @@ impl From<StationCapacityDomain> for StationCapacityDomainDto {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=legacy-capacity-domain-ipc-reference; owner=ipc/dto/stations; remove_when=capacity-domain reference DTOs are deleted"
+    )
+)]
 pub struct StationCapacityDomainQueryInputDto {
     pub station_id: String,
 }
 
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=legacy-capacity-domain-ipc-reference; owner=ipc/dto/stations; remove_when=capacity-domain reference DTOs are deleted"
+    )
+)]
 impl StationCapacityDomainQueryInputDto {
     pub fn parse(value: serde_json::Value) -> Result<Self, crate::commands::error::CommandError> {
         let input: Self = parse_value(value, "The capacity-domain query payload is invalid.")?;
@@ -239,6 +274,13 @@ impl StationCapacityDomainQueryInputDto {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=legacy-capacity-domain-ipc-reference; owner=ipc/dto/stations; remove_when=capacity-domain reference DTOs are deleted"
+    )
+)]
 pub struct UpsertStationCapacityDomainInputDto {
     pub station_id: String,
     pub expected_revision: i64,
@@ -247,6 +289,13 @@ pub struct UpsertStationCapacityDomainInputDto {
     pub region_identity: Option<String>,
 }
 
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=legacy-capacity-domain-ipc-reference; owner=ipc/dto/stations; remove_when=capacity-domain reference DTOs are deleted"
+    )
+)]
 impl UpsertStationCapacityDomainInputDto {
     pub fn parse(value: serde_json::Value) -> Result<Self, crate::commands::error::CommandError> {
         let input: Self = parse_value(value, "The capacity-domain update payload is invalid.")?;
@@ -297,11 +346,25 @@ impl UpsertStationCapacityDomainInputDto {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=legacy-capacity-domain-ipc-reference; owner=ipc/dto/stations; remove_when=capacity-domain reference DTOs are deleted"
+    )
+)]
 pub struct ClearStationCapacityDomainInputDto {
     pub station_id: String,
     pub expected_revision: i64,
 }
 
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=legacy-capacity-domain-ipc-reference; owner=ipc/dto/stations; remove_when=capacity-domain reference DTOs are deleted"
+    )
+)]
 impl ClearStationCapacityDomainInputDto {
     pub fn parse(value: serde_json::Value) -> Result<Self, crate::commands::error::CommandError> {
         let input: Self = parse_value(value, "The capacity-domain clear payload is invalid.")?;
@@ -604,27 +667,6 @@ export type UpdateStationInputDto = Omit<CreateStationInputDto, "apiKey"> & {
 export type DeleteStationInputDto = { id: string };
 
 export type ReorderStationsInputDto = { stationIds: string[] };
-
-export type StationCapacityDomainQueryInputDto = { stationId: string };
-
-export type UpsertStationCapacityDomainInputDto = {
-  stationId: string;
-  expectedRevision: number;
-  providerFamily: string;
-  deploymentIdentity: string | null;
-  regionIdentity: string | null;
-};
-
-export type ClearStationCapacityDomainInputDto = { stationId: string; expectedRevision: number };
-
-export type StationCapacityDomainDto = {
-  stationId: string;
-  providerFamily: string;
-  deploymentIdentity: string | null;
-  regionIdentity: string | null;
-  revision: number;
-  updatedAt: string;
-};
 
 export type StationDto = {
   id: string;

@@ -1,18 +1,16 @@
 //! Process-local routing runtime composition.
 //!
 //! `RoutingRuntimeState` is intentionally a small composition root. Mutable
-//! state with a distinct owner or lifecycle lives in `activity`,
-//! `capacity_retry`, or `diagnostics`; this type only creates and holds those
+//! state with a distinct owner or lifecycle lives in `activity` or
+//! `diagnostics`; this type only creates and holds those
 //! owners alongside the process identity/revision overlay.
 
 mod activity;
-mod capacity_retry;
 mod diagnostics;
 
 #[cfg(test)]
 pub(crate) use activity::ActivityLease as RoutingLease;
 use activity::ActivityState;
-use capacity_retry::{CapacityRetryRegistry, CapacityRetryRuntime};
 use diagnostics::{DiagnosticMemoryBudget, DiagnosticsState};
 
 use std::sync::{
@@ -37,12 +35,11 @@ pub(crate) struct RoutingRuntimeState {
     max_concurrency: u32,
     root_seed: [u8; 32],
     activity: ActivityState,
-    capacity_retry: CapacityRetryRuntime,
     diagnostics: DiagnosticsState,
 }
 
 impl RoutingRuntimeState {
-    pub(crate) fn new(max_concurrency: u32, exploration_budget: u32) -> Self {
+    pub(crate) fn new(max_concurrency: u32, _legacy_exploration_budget: u32) -> Self {
         let mut root_seed = [0_u8; 32];
         OsRng.fill_bytes(&mut root_seed);
         Self {
@@ -52,7 +49,6 @@ impl RoutingRuntimeState {
             max_concurrency,
             root_seed,
             activity: ActivityState::new(),
-            capacity_retry: CapacityRetryRuntime::new(max_concurrency, exploration_budget),
             diagnostics: DiagnosticsState::new(),
         }
     }
@@ -83,22 +79,6 @@ impl RoutingRuntimeState {
 
     pub(crate) fn root_seed(&self) -> [u8; 32] {
         self.root_seed
-    }
-
-    pub(crate) fn retry_budget(
-        &self,
-    ) -> crate::application::routing_engine::capacity::RetryBudgetRegistry {
-        self.capacity_retry.retry_budget()
-    }
-
-    pub(crate) fn exploration_budget(
-        &self,
-    ) -> crate::application::routing_engine::exploration::ExplorationBudgetRegistry {
-        self.capacity_retry.exploration_budget()
-    }
-
-    pub(crate) fn capacity_retry_registry(&self) -> CapacityRetryRegistry {
-        self.capacity_retry.capacity_retry_registry()
     }
 
     pub(crate) fn diagnostic_memory_budget(&self) -> DiagnosticMemoryBudget {

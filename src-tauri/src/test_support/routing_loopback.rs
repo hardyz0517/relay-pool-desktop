@@ -50,12 +50,6 @@ use crate::{
 
 const LOCAL_ACCESS_KEY: &str = "relay-local-secret";
 
-// Model-mapping runtime state is process-wide, while each loopback harness
-// owns an isolated database. Keep a harness's persisted document and runtime
-// snapshot paired for its entire lifetime when tests run in parallel.
-static ROUTING_LOOPBACK_TEST_LOCK: std::sync::OnceLock<Arc<tokio::sync::Mutex<()>>> =
-    std::sync::OnceLock::new();
-
 pub struct RoutingLoopbackHarness {
     services: AppServices,
     runtime: PersistenceRuntime,
@@ -66,11 +60,8 @@ pub struct RoutingLoopbackHarness {
 
 impl RoutingLoopbackHarness {
     pub async fn new() -> Self {
-        let test_guard = ROUTING_LOOPBACK_TEST_LOCK
-            .get_or_init(|| Arc::new(tokio::sync::Mutex::new(())))
-            .clone()
-            .lock_owned()
-            .await;
+        let test_guard =
+            crate::application::model_mapping::acquire_model_mapping_test_guard().await;
         let root = TempRoot::new("relay-routing-loopback");
         let default_data_dir = root.path.join("default");
         let active_data_dir = root.path.join("active");
@@ -106,13 +97,15 @@ impl RoutingLoopbackHarness {
             .update_local_access_key(LOCAL_ACCESS_KEY.to_string())
             .await
             .expect("persist local access key");
-        Self {
+        let harness = Self {
             services,
             runtime,
             proxy: Arc::new(ProxyRuntimeState::default()),
             _test_guard: test_guard,
             _root: root,
-        }
+        };
+        harness.activate_staged_routing_policy().await;
+        harness
     }
 
     pub async fn start_proxy(&self) -> ProxyEndpoint {
@@ -311,33 +304,20 @@ impl RoutingLoopbackHarness {
     /// versioned CAS boundary used by the routing settings UI.  Loopback
     /// scenarios must not mutate the policy row directly because that would
     /// bypass the compiler and revision fence exercised by production.
-    pub async fn set_retry_failover_policy(
-        &self,
-        max_total_attempts: u16,
-        max_same_target_capacity_retries: u16,
-        capacity_retry_wait_budget_ms: u32,
-        allow_cross_capacity_domain_fallback: bool,
-    ) {
+    pub async fn set_retry_policy(&self, max_total_attempts: u16) {
         let stored = self
             .services
             .routing
             .load_routing_policy()
             .await
             .expect("load routing policy");
-        let mut policy =
-            crate::models::routing_policy::RoutingPolicyConfigV2::from_stored_value(&stored.config)
-                .expect("decode routing policy as v2");
-        policy.retry_failover = crate::models::routing_policy::RetryFailoverPolicyV2 {
-            version: crate::models::routing_policy::RETRY_FAILOVER_POLICY_VERSION_V2,
-            max_total_attempts,
-            max_same_target_capacity_retries,
-            capacity_retry_wait_budget_seconds: f64::from(capacity_retry_wait_budget_ms) / 1_000.0,
-            allow_cross_capacity_domain_fallback,
-        };
+        let mut policy = crate::application::routing::routing_policy_v3_from_stored(&stored.config)
+            .expect("decode routing policy as v3");
+        policy.retry.max_retry_count = max_total_attempts.saturating_sub(1);
         self.services
             .routing
-            .apply_routing_policy_document_v2(
-                crate::models::routing_policy::RoutingPolicyDocumentV2 {
+            .apply_routing_policy_document_v3(
+                crate::models::routing_policy::RoutingPolicyDocumentV3 {
                     format_version:
                         crate::models::routing_policy::ROUTING_POLICY_DOCUMENT_FORMAT_VERSION,
                     base_revision: stored.revision,
@@ -347,6 +327,32 @@ impl RoutingLoopbackHarness {
             )
             .await
             .expect("apply retry/failover policy");
+        self.activate_staged_routing_policy().await;
+    }
+
+    async fn activate_staged_routing_policy(&self) {
+        let cancellation = tokio_util::sync::CancellationToken::new();
+        let handle = self.runtime.handle();
+        let built = crate::background_tasks::routing_generation_cutover_runner::build_ready_once(
+            &handle,
+            &cancellation,
+        )
+        .await
+        .expect("build staged routing generation");
+        if built.is_none() {
+            return;
+        }
+        let activated =
+            crate::background_tasks::routing_generation_cutover_runner::qualify_and_activate_once(
+                &handle,
+                &cancellation,
+            )
+            .await
+            .expect("activate staged routing generation");
+        assert!(
+            activated.is_some(),
+            "staged routing generation must activate before loopback traffic"
+        );
     }
 
     pub async fn update_candidate_capabilities(

@@ -1,3 +1,11 @@
+#![cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=legacy-error-rate-history-reference; owner=persistence/stores; remove_when=v3 station-key quality and circuit migration no longer needs legacy history inspection"
+    )
+)]
+
 use sqlx::{Row, SqliteConnection};
 
 use crate::{
