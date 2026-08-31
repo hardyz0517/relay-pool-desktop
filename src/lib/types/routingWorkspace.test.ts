@@ -8,6 +8,40 @@ import type {
 import { toRoutingWorkspaceView } from "./routingWorkspace";
 
 describe("routing workspace view", () => {
+  it("preserves v3 circuit diagnostics for candidate status rendering", () => {
+    const diagnostics = {
+      circuit: {
+        state: "half_open" as const,
+        stateRevision: 3,
+        lifecycleRevision: 2,
+        consecutiveFailures: 4,
+        reopenLevel: 1,
+        cooldownUntilMs: null,
+        cooldownRemainingMs: null,
+        halfOpenLeaseInFlight: true,
+        halfOpenLeaseExpiresAtMs: 123,
+        recoverySuccesses: 1,
+        scoreGateStatus: "passed" as const,
+        scoreGateReason: "half_open_lease_in_flight",
+        bestClosedEffectiveScore: 8800,
+      },
+      effectiveScore: 8800,
+      baseScore: 8800,
+      quality: null,
+      attempts: {
+        rawRealAttemptCount: 1,
+        deduplicatedRealRequestCount: 1,
+      },
+    } as NonNullable<RoutingWorkspaceCandidate["diagnostics"]>;
+
+    const view = toRoutingWorkspaceView(
+      snapshot([candidate({ diagnostics })]),
+      proxyStatus(),
+    );
+
+    expect(view.candidates[0].diagnostics?.circuit).toEqual(diagnostics.circuit);
+  });
+
   it("keeps request eligibility separate from the administrative schedulable switch", () => {
     const excluded = candidate({
       schedulable: true,

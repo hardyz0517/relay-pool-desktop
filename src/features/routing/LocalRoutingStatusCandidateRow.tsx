@@ -14,6 +14,8 @@ import {
 type MathMlIntrinsicProps = Record<string, unknown>;
 
 declare global {
+  // React's JSX namespace needs these MathML elements for the formula view.
+  // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace JSX {
     interface IntrinsicElements {
       math: MathMlIntrinsicProps;
@@ -71,9 +73,14 @@ export function LocalRoutingStatusCandidateRow({
   dragListeners,
 }: LocalRoutingStatusCandidateRowProps) {
   const isSortable = Boolean(dragAttributes || dragListeners);
-  const cooldownUntilMs =
-    candidate.cooldownUntil == null ? null : toTimestampMillis(candidate.cooldownUntil);
-  const cooldown = buildCooldownDisplay(candidate.healthState, cooldownUntilMs, nowMs);
+  const circuit = candidate.diagnostics?.circuit;
+  const circuitState = circuit?.state ?? (candidate.healthState === "cooldown" ? "open" : "closed");
+  const cooldownUntilMs = circuit
+    ? circuit.cooldownUntilMs
+    : candidate.cooldownUntil == null
+      ? null
+      : toTimestampMillis(candidate.cooldownUntil);
+  const cooldown = buildCooldownDisplay(circuitState, cooldownUntilMs, nowMs);
   const displayFacts = buildCandidateDisplayFacts(candidate);
   const scoreStatus = candidate.scoreStatus;
   const participationTone = !candidate.schedulable || scoreStatus === "unavailable"
@@ -165,7 +172,7 @@ export function LocalRoutingStatusCandidateRow({
       />
       <MetricCell
         label="冷却"
-        value={cooldown.label}
+        value={<span className="whitespace-nowrap tabular-nums">{cooldown.label}</span>}
         tone={cooldown.active ? "warning" : "neutral"}
       />
       <MetricCell label="当前并发">

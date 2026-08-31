@@ -110,6 +110,11 @@ export function RoutingPage({
   const cooldownDeadlines = useMemo(
     () =>
       (workspace?.candidates ?? []).flatMap((candidate) => {
+        const circuit = candidate.diagnostics?.circuit;
+        if (circuit) {
+          if (circuit.state !== "open" || circuit.cooldownUntilMs == null || !Number.isFinite(circuit.cooldownUntilMs)) return [];
+          return [{ id: candidate.stationKeyId, untilMs: circuit.cooldownUntilMs }];
+        }
         if (candidate.healthState !== "cooldown" || candidate.cooldownUntil == null) return [];
         const untilMs = toTimestampMillis(candidate.cooldownUntil);
         return Number.isFinite(untilMs) ? [{ id: candidate.stationKeyId, untilMs }] : [];

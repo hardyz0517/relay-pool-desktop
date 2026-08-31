@@ -42,6 +42,7 @@ export type RoutingCandidateView = {
   healthState: RouteHealthState;
   score: number | null;
   scoreDetails: RoutingWorkspaceCandidate["scoreDetails"];
+  diagnostics?: RoutingWorkspaceCandidate["diagnostics"];
   currentConcurrency: number | null;
   lastSuccessAt: string | null;
   lastFailureAt: string | null;
@@ -165,6 +166,7 @@ export function toRoutingWorkspaceView(
       healthState: health,
       score: candidate.score,
       scoreDetails: candidate.scoreDetails,
+      diagnostics: candidate.diagnostics ?? null,
       currentConcurrency:
         matchingRuntime?.stationKeyInFlight == null
           ? null

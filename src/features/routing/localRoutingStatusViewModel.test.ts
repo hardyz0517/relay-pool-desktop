@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RoutingCandidateView } from "@/lib/types/routingWorkspace";
-import { buildCandidateDisplayFacts } from "./localRoutingStatusViewModel";
+import { buildCandidateDisplayFacts, buildCooldownDisplay } from "./localRoutingStatusViewModel";
 
 function candidate(overrides: Partial<RoutingCandidateView> = {}): RoutingCandidateView {
   return {
@@ -47,6 +47,33 @@ function candidate(overrides: Partial<RoutingCandidateView> = {}): RoutingCandid
 }
 
 describe("local routing status view model", () => {
+  it("formats open circuit cooldown as a live countdown", () => {
+    expect(buildCooldownDisplay("open", 301_000, 0)).toEqual({
+      active: true,
+      label: "05:01",
+      remainingSeconds: 301,
+    });
+    expect(buildCooldownDisplay("open", 301_000, 300_500).label).toBe("00:01");
+    expect(buildCooldownDisplay("open", 301_000, 301_500)).toEqual({
+      active: true,
+      label: "00:00",
+      remainingSeconds: 0,
+    });
+  });
+
+  it("labels half-open and closed circuit states explicitly", () => {
+    expect(buildCooldownDisplay("half_open", null, 0)).toEqual({
+      active: true,
+      label: "半开",
+      remainingSeconds: null,
+    });
+    expect(buildCooldownDisplay("closed", null, 0)).toEqual({
+      active: false,
+      label: "-",
+      remainingSeconds: null,
+    });
+  });
+
   it("renders candidate economics from backend facts without legacy multiplier fields", () => {
     const display = buildCandidateDisplayFacts(candidate());
 

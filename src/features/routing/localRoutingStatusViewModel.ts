@@ -6,6 +6,8 @@ export type CooldownDisplay = {
   remainingSeconds: number | null;
 };
 
+export type RoutingCircuitState = "closed" | "open" | "half_open";
+
 export type LatestDecisionDisplay = {
   title: string;
   badge: "历史记录" | "已选中" | "已回退" | "失败" | "不可用" | null;
@@ -65,21 +67,21 @@ const balanceStatusLabels: Record<string, string> = {
 };
 
 export function buildCooldownDisplay(
-  healthState: RoutingCandidateView["healthState"],
+  circuitState: RoutingCircuitState | null | undefined,
   cooldownUntilMs: number | null,
   nowMs: number,
 ): CooldownDisplay {
-  if (healthState !== "cooldown") {
-    return { active: false, label: "无", remainingSeconds: null };
+  if (circuitState === "half_open") {
+    return { active: true, label: "半开", remainingSeconds: null };
+  }
+  if (circuitState !== "open") {
+    return { active: false, label: "-", remainingSeconds: null };
   }
   if (cooldownUntilMs == null || !Number.isFinite(cooldownUntilMs)) {
     return { active: true, label: "冷却中", remainingSeconds: null };
   }
 
-  const remainingSeconds = Math.ceil((cooldownUntilMs - nowMs) / 1000);
-  if (remainingSeconds <= 0) {
-    return { active: true, label: "即将结束", remainingSeconds: 0 };
-  }
+  const remainingSeconds = Math.max(0, Math.ceil((cooldownUntilMs - nowMs) / 1000));
 
   return {
     active: true,

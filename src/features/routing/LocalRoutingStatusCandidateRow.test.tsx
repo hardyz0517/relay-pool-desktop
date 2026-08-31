@@ -116,6 +116,34 @@ describe("ScoreBreakdown", () => {
 });
 
 describe("LocalRoutingStatusCandidateRow concurrency", () => {
+  it("shows the circuit countdown, half-open state, and closed placeholder", () => {
+    const openMarkup = renderToStaticMarkup(
+      <LocalRoutingStatusCandidateRow
+        candidate={candidate({ diagnostics: circuitDiagnostics("open", 301_000) })}
+        order={1}
+        nowMs={0}
+      />,
+    );
+    const halfOpenMarkup = renderToStaticMarkup(
+      <LocalRoutingStatusCandidateRow
+        candidate={candidate({ diagnostics: circuitDiagnostics("half_open", null) })}
+        order={1}
+        nowMs={0}
+      />,
+    );
+    const closedMarkup = renderToStaticMarkup(
+      <LocalRoutingStatusCandidateRow
+        candidate={candidate({ diagnostics: circuitDiagnostics("closed", null) })}
+        order={1}
+        nowMs={0}
+      />,
+    );
+
+    expect(openMarkup).toContain("05:01");
+    expect(halfOpenMarkup).toContain("半开");
+    expect(new DOMParser().parseFromString(closedMarkup, "text/html").body.textContent).toContain("-");
+  });
+
   it("highlights active concurrency with a square green badge", () => {
     const markup = renderToStaticMarkup(
       <LocalRoutingStatusCandidateRow
@@ -199,6 +227,36 @@ function candidate(overrides: Partial<RoutingCandidateView> = {}): RoutingCandid
     previewRejectReasons: [],
     facts: [],
     ...overrides,
+  };
+}
+
+function circuitDiagnostics(
+  state: "closed" | "open" | "half_open",
+  cooldownUntilMs: number | null,
+): NonNullable<RoutingCandidateView["diagnostics"]> {
+  return {
+    circuit: {
+      state,
+      stateRevision: null,
+      lifecycleRevision: null,
+      consecutiveFailures: null,
+      reopenLevel: 0,
+      cooldownUntilMs,
+      cooldownRemainingMs: cooldownUntilMs,
+      halfOpenLeaseInFlight: false,
+      halfOpenLeaseExpiresAtMs: null,
+      recoverySuccesses: null,
+      scoreGateStatus: "not_applicable",
+      scoreGateReason: "test",
+      bestClosedEffectiveScore: null,
+    },
+    effectiveScore: null,
+    baseScore: null,
+    quality: null,
+    attempts: {
+      rawRealAttemptCount: 0,
+      deduplicatedRealRequestCount: 0,
+    },
   };
 }
 
