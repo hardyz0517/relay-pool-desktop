@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "@/components/ui";
+import { queryKeys } from "@/lib/query/queryKeys";
 import type { KeyPoolItem } from "@/lib/types/stationKeys";
 import type { RoutingWorkspaceView } from "@/lib/types/routingWorkspace";
 import { RoutingCandidateOrderPanel } from "./RoutingCandidateOrderPanel";
@@ -53,7 +54,7 @@ afterEach(() => {
 
 describe("RoutingCandidateOrderPanel", () => {
   it("renders the overview order, sorts by score, and persists drag changes", async () => {
-    mocks.reorder.mockResolvedValue([]);
+    mocks.reorder.mockResolvedValue(keyPoolItems());
     mocks.synchronize.mockResolvedValue({ refreshed: true, errors: [] });
     const { host, root, queryClient } = renderPanel();
 
@@ -66,6 +67,32 @@ describe("RoutingCandidateOrderPanel", () => {
       await mocks.dragEnd?.({ active: { id: "key-1" }, over: { id: "key-2" } });
     });
     expect(mocks.reorder).toHaveBeenCalledWith(["key-3", "key-2", "key-1"]);
+
+    await act(async () => root.unmount());
+    queryClient.clear();
+  });
+
+  it("keeps the saved order when an older key-pool request resolves after the drag", async () => {
+    const oldItems = keyPoolItems();
+    const savedItems = [oldItems[1], oldItems[2], oldItems[0]];
+    mocks.reorder.mockResolvedValue(savedItems);
+    mocks.synchronize.mockResolvedValue({ refreshed: true, errors: [] });
+    const { host, root, queryClient } = renderPanel();
+
+    const staleRequest = deferred<KeyPoolItem[]>();
+    const staleFetch = queryClient
+      .fetchQuery({ queryKey: queryKeys.keyPool, queryFn: () => staleRequest.promise })
+      .catch(() => undefined);
+
+    await act(async () => {
+      await mocks.dragEnd?.({ active: { id: "key-2" }, over: { id: "key-3" } });
+    });
+    staleRequest.resolve(oldItems);
+    await act(async () => {
+      await staleFetch;
+    });
+
+    expect(queryClient.getQueryData<KeyPoolItem[]>(queryKeys.keyPool)).toEqual(savedItems);
 
     await act(async () => root.unmount());
     queryClient.clear();
@@ -91,6 +118,14 @@ function renderPanel() {
 
 function keyPoolItems(): KeyPoolItem[] {
   return [{ id: "key-2" }, { id: "key-1" }, { id: "key-3" }] as KeyPoolItem[];
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve;
+  });
+  return { promise, resolve };
 }
 
 function workspace(): RoutingWorkspaceView {

@@ -128,8 +128,12 @@ export function RoutingCandidateOrderPanel({
     setSyncState("saving");
     setSyncError(null);
 
+    let saved: Awaited<ReturnType<typeof reorderKeyPool>>;
     try {
-      const saved = await reorderKeyPool(nextStationKeyIds);
+      // A page activation can leave an older key-pool request in flight. Do not
+      // let that response overwrite the order being persisted by this drag.
+      await queryClient.cancelQueries({ queryKey: queryKeys.keyPool });
+      saved = await reorderKeyPool(nextStationKeyIds);
       queryClient.setQueryData(queryKeys.keyPool, saved);
     } catch (requestError) {
       if (operationId !== saveOperationRef.current || keyPoolVersionAtStart !== keyPoolVersionRef.current) return;
@@ -146,10 +150,27 @@ export function RoutingCandidateOrderPanel({
       setCandidateIds(nextStationKeyIds);
       setSyncState("synced");
     }
-    const [synchronization] = await Promise.all([
-      synchronizeRoutingQueriesAfterMutation(queryClient),
-      queryClient.invalidateQueries({ queryKey: queryKeys.keyPool }),
-    ]);
+
+    let synchronization: Awaited<ReturnType<typeof synchronizeRoutingQueriesAfterMutation>>;
+    try {
+      [synchronization] = await Promise.all([
+        synchronizeRoutingQueriesAfterMutation(queryClient),
+        queryClient.invalidateQueries({ queryKey: queryKeys.keyPool }),
+      ]);
+    } catch (refreshError) {
+      // The mutation already succeeded; keep its response even if a read-model
+      // refresh fails and report the refresh problem separately.
+      queryClient.setQueryData(queryKeys.keyPool, saved);
+      if (operationIsCurrent) {
+        toast.error("候选顺序已保存，但状态刷新失败", readError(refreshError));
+      }
+      return;
+    }
+
+    // The mutation response is authoritative. Re-apply it after invalidation
+    // so a stale refresh response cannot become the final cached order.
+    queryClient.setQueryData(queryKeys.keyPool, saved);
+
     if (!synchronization.refreshed && operationIsCurrent) {
       toast.error("候选顺序已保存，但状态刷新失败", readError(synchronization.errors[0]));
     }
