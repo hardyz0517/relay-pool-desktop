@@ -5,6 +5,11 @@ node_modules/
 dist/
 dist-demo/
 dist-ssr/
+*.tsbuildinfo
+/vite.config.js
+/vite.config.d.ts
+/vite.demo.config.js
+/vite.demo.config.d.ts
 
 # Tauri / Rust build output
 target/
@@ -14,6 +19,8 @@ target-codex-red*/
 /output/
 /src-tauri/output/
 /src-tauri/target-codex-*/
+/src-tauri/target-generation-cutover/
+/src-tauri/target-review/
 
 # Environment and local config
 .env
