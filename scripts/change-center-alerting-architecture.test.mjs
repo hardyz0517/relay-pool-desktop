@@ -103,7 +103,7 @@ function scanLegacyProductionHits() {
     if (!existsSync(absoluteRoot)) continue;
     for (const file of filesUnder(absoluteRoot).filter(isSourceFile)) {
       const relative = relativePath(file);
-      const lines = readFileSync(file, "utf8").split(/\r?\n/u);
+      const lines = productionSource(file).split(/\r?\n/u);
       lines.forEach((line, index) => {
         for (const [rule, pattern] of rules) {
           if (pattern.test(line)) hits.push({ path: relative, line: index + 1, rule, text: line.trim().slice(0, 180) });
@@ -112,6 +112,15 @@ function scanLegacyProductionHits() {
     }
   }
   return dedupeHits(hits);
+}
+
+function productionSource(file) {
+  const source = readFileSync(file, "utf8");
+  if (!file.endsWith(".rs")) return source;
+
+  const testModule = /\r?\n#\[cfg\(test\)\]\r?\nmod tests \{/u;
+  const testModuleIndex = source.search(testModule);
+  return testModuleIndex >= 0 ? source.slice(0, testModuleIndex) : source;
 }
 
 function checkLegacyInventory(hits) {

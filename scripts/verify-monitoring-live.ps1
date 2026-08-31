@@ -50,7 +50,8 @@ $result = [ordered]@{
         "SQLite channel_monitor_executions row",
         "SQLite channel_monitor_target_results row",
         "SQLite channel_monitor_attempts row",
-        "SQLite station_key_health_observations row"
+        "SQLite routing_observations row with source=active_probe and matching execution/target correlation identity",
+        "no direct station-key circuit transition attributed to the active probe"
     )
 }
 

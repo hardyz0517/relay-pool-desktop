@@ -1,0 +1,444 @@
+{
+  "schemaVersion": 2,
+  "updatedAt": "2026-08-31",
+  "readOwnerVersion": "routing-v3-circuit-read-v1",
+  "rollbackFloor": "v3-read-side-cutover",
+  "items": [
+    {
+      "id": "R3LR-001",
+      "owner": "routing_health_snapshot production reads",
+      "consumer": "routing workspace, routing protection, Key Pool, and runtime overlay",
+      "classification": "legacy_ui_read",
+      "replacement": "mutable routing_circuit_state_v3 plus CircuitPersistenceGate snapshot",
+      "earliestRemovalPhase": "P2",
+      "rollbackFloor": "v3-read-side-cutover",
+      "compatibilityClass": "code_only",
+      "status": "removed",
+      "deletionCondition": "All production station-key availability reads use the versioned V3 circuit read model and never fall back to routing_health_snapshot.",
+      "verificationCommand": "node scripts/routing-v3-legacy-retirement.test.mjs",
+      "evidence": [
+        "src-tauri/src/application/queries/routing_workspace.rs",
+        "src-tauri/src/application/queries/routing_protection.rs",
+        "src-tauri/src/application/queries/key_pool.rs"
+      ]
+    },
+    {
+      "id": "R3LR-002",
+      "owner": "station_key_health_observations and routing_health_snapshot writers",
+      "consumer": "request terminal, active monitoring, and manual station-key connectivity paths",
+      "classification": "legacy_write",
+      "replacement": "V3 circuit event and direct canonical RoutingObservation ingestion",
+      "earliestRemovalPhase": "P4",
+      "rollbackFloor": "v3-read-side-cutover",
+      "compatibilityClass": "code_only",
+      "status": "removed",
+      "deletionCondition": "Request, monitoring, and manual connectivity production paths preserve V3 circuit, quality, capability, terminal, and operation contracts without old health side writes.",
+      "verificationCommand": "cargo test --locked --manifest-path src-tauri/Cargo.toml --test monitoring_write_path -- --test-threads=1",
+      "evidence": [
+        "src-tauri/src/application/request_finalization/mod.rs",
+        "src-tauri/src/application/monitoring/write_path.rs",
+        "src-tauri/src/commands/station_key_connectivity.rs"
+      ]
+    },
+    {
+      "id": "R3LR-003",
+      "owner": "CircuitPersistenceGate",
+      "consumer": "Proxy fail-closed admission and V3 circuit read model",
+      "classification": "v3_required",
+      "replacement": null,
+      "earliestRemovalPhase": null,
+      "rollbackFloor": "not_removable",
+      "compatibilityClass": "runtime_safety",
+      "status": "retained",
+      "deletionCondition": "Not removable while durable circuit admission can become unavailable.",
+      "verificationCommand": "node scripts/routing-v3-legacy-retirement.test.mjs",
+      "evidence": [
+        "src-tauri/src/application/station_key_circuit.rs",
+        "src-tauri/src/application/queries/station_key_circuit_read.rs"
+      ]
+    },
+    {
+      "id": "R3LR-004",
+      "owner": "unsupported_model capability verdict",
+      "consumer": "V3 planning snapshot capability admission",
+      "classification": "v3_required",
+      "replacement": null,
+      "earliestRemovalPhase": null,
+      "rollbackFloor": "not_removable",
+      "compatibilityClass": "durable_capability",
+      "status": "retained",
+      "deletionCondition": "May only move through an additive capability-schema migration with restart durability and planner parity.",
+      "verificationCommand": "cargo test --locked --manifest-path src-tauri/Cargo.toml --test routing_health_verdict_persistence -- --test-threads=1",
+      "evidence": [
+        "src-tauri/src/application/operational_facts/planning_snapshot.rs",
+        "src-tauri/src/persistence/stores/routing_health_verdict_store.rs"
+      ]
+    },
+    {
+      "id": "R3LR-005",
+      "owner": "endpoint_health_snapshot",
+      "consumer": "independent station endpoint ping diagnostics",
+      "classification": "v3_required",
+      "replacement": null,
+      "earliestRemovalPhase": null,
+      "rollbackFloor": "not_removable",
+      "compatibilityClass": "endpoint_diagnostics",
+      "status": "retained",
+      "deletionCondition": "Not part of station-key circuit retirement; requires a separate endpoint-health design to remove.",
+      "verificationCommand": "node scripts/routing-v3-legacy-retirement.test.mjs",
+      "evidence": [
+        "src-tauri/src/persistence/stores/routing_store.rs"
+      ]
+    },
+    {
+      "id": "R3LR-006",
+      "owner": "probe_state_revision historical evidence decoder",
+      "consumer": "persisted routing observation compatibility decoder",
+      "classification": "migration_read",
+      "replacement": null,
+      "earliestRemovalPhase": null,
+      "rollbackFloor": "not_removable",
+      "compatibilityClass": "historical_decoder",
+      "status": "retained",
+      "deletionCondition": "Retain while supported databases or fixtures can contain the historical evidence field.",
+      "verificationCommand": "node scripts/routing-v3-legacy-retirement.test.mjs",
+      "evidence": [
+        "src-tauri/src/persistence/stores/routing_observation_store.rs"
+      ]
+    },
+    {
+      "id": "R3LR-007",
+      "owner": "capacity-domain service API and production composition",
+      "consumer": "none; process-local capacity registry owns runtime capacity",
+      "classification": "no_consumer",
+      "replacement": "process-local capacity registry",
+      "earliestRemovalPhase": "P5",
+      "rollbackFloor": "v3-read-side-cutover",
+      "compatibilityClass": "table_retained",
+      "status": "removed",
+      "deletionCondition": "No callable production registry, IPC, bridge, planner, or persistence owner depends on the capacity-domain service API; historical schema/import/portable compatibility remains.",
+      "verificationCommand": "node scripts/routing-v3-legacy-retirement.test.mjs",
+      "evidence": [
+        "src-tauri/src/application/app_services.rs",
+        "src-tauri/src/persistence/stores/mod.rs"
+      ]
+    },
+    {
+      "id": "R3LR-008",
+      "owner": "legacy error-rate history command facade and reader",
+      "consumer": "none",
+      "classification": "no_consumer",
+      "replacement": "V3 decision and quality diagnostics",
+      "earliestRemovalPhase": "P5",
+      "rollbackFloor": "v3-read-side-cutover",
+      "compatibilityClass": "code_only",
+      "status": "removed",
+      "deletionCondition": "Command registry, ACL, generated bridge, facades, and frontend contain no error-rate history surface.",
+      "verificationCommand": "pnpm test:contracts",
+      "evidence": [
+        "src-tauri/src/ipc/registry.rs",
+        "src/lib/bridge/generated.ts"
+      ]
+    },
+    {
+      "id": "R3LR-009",
+      "owner": "station-key health and operational-detail legacy IPC",
+      "consumer": "none after V3 workspace and Key Pool cutover",
+      "classification": "legacy_ui_read",
+      "replacement": "routing workspace and Key Pool V3 read models",
+      "earliestRemovalPhase": "P5",
+      "rollbackFloor": "v3-read-side-cutover",
+      "compatibilityClass": "ipc_break",
+      "status": "removed",
+      "deletionCondition": "Registry, source and compiled ACL, DTOs, generated bindings, bridge implementations, and queries expose no retired commands.",
+      "verificationCommand": "pnpm test:contracts",
+      "evidence": [
+        "src-tauri/src/ipc/registry.rs",
+        "src-tauri/generated/command-registry.json",
+        "src/lib/bridge/BackendClient.ts"
+      ]
+    },
+    {
+      "id": "R3LR-010",
+      "owner": "RuntimeRoutingSettings policy and scheduler_config compatibility fields",
+      "consumer": "none after request snapshots use active V3 compiled policy/profile facts",
+      "classification": "legacy_ui_read",
+      "replacement": "active V3 planning snapshot ordering/profile and trace facts",
+      "earliestRemovalPhase": "P5",
+      "rollbackFloor": "v3-read-side-cutover",
+      "compatibilityClass": "internal_contract",
+      "status": "removed",
+      "deletionCondition": "Proxy ordering, trace labels, route facts, failure context, simulation, and settings round trips no longer read V2 runtime shadows.",
+      "verificationCommand": "cargo check --locked --manifest-path src-tauri/Cargo.toml",
+      "evidence": [
+        "src-tauri/src/models/routing.rs",
+        "src-tauri/src/application/routing_engine/request.rs",
+        "src-tauri/src/services/proxy/execution.rs"
+      ]
+    },
+    {
+      "id": "R3LR-011",
+      "owner": "legacy health, error-rate, and capacity-domain schema objects",
+      "consumer": "historical migrations, schema/portable readers, legacy import or upgrade readers, delete cleanup, fixtures, and downgrade window",
+      "classification": "migration_read",
+      "replacement": "append-only DROP migrations after independent qualification",
+      "earliestRemovalPhase": "P6",
+      "rollbackFloor": "forward_only_after_drop",
+      "compatibilityClass": "seven_day_backup_restore_gate",
+      "status": "blocked_by_qualification",
+      "deletionCondition": "At least seven days of V3-only compatibility, 1000-event parity soak, verified backup manifest, isolated restore rehearsal, desktop acceptance, and pre-drop release go decision.",
+      "verificationCommand": "node scripts/routing-v3-legacy-retirement.test.mjs",
+      "evidence": [
+        "docs/plans/2026-08-31-routing-v3-legacy-chain-retirement.md",
+        "src-tauri/src/persistence/legacy_import/validate.rs",
+        "src-tauri/src/persistence/stores/station_catalog.rs",
+        "src-tauri/src/services/data_store/alerting_upgrade.rs",
+        "src-tauri/src/services/portable_migration/catalog.rs"
+      ]
+    },
+    {
+      "id": "R3LR-012",
+      "owner": "RoutingService empty legacy health/probe facades",
+      "consumer": "none",
+      "classification": "no_consumer",
+      "replacement": "V3 circuit read model and StationKeyCircuitStore admission",
+      "earliestRemovalPhase": "P5",
+      "rollbackFloor": "v3-read-side-cutover",
+      "compatibilityClass": "code_only",
+      "status": "removed",
+      "deletionCondition": "No caller uses load_health_protection_statuses, begin_health_protection_probe, or cancel_health_protection_probe.",
+      "verificationCommand": "node scripts/routing-v3-legacy-retirement.test.mjs",
+      "evidence": [
+        "src-tauri/src/application/routing.rs"
+      ]
+    },
+    {
+      "id": "R3LR-013",
+      "owner": "RoutingPolicyStore legacy compare-and-swap mutation",
+      "consumer": "none; RoutingPolicyMutationCoordinator is the sole mutation owner",
+      "classification": "no_consumer",
+      "replacement": "RoutingPolicyMutationCoordinator",
+      "earliestRemovalPhase": "P5",
+      "rollbackFloor": "v3-read-side-cutover",
+      "compatibilityClass": "code_only",
+      "status": "removed",
+      "deletionCondition": "No production or test caller bypasses the V3 mutation coordinator through save_compare_and_swap.",
+      "verificationCommand": "node scripts/routing-v3-legacy-retirement.test.mjs",
+      "evidence": [
+        "src-tauri/src/persistence/stores/routing_policy_store.rs",
+        "src-tauri/src/application/routing_policy.rs"
+      ]
+    },
+    {
+      "id": "R3LR-014",
+      "owner": "RoutingObservationStore unversioned legacy readers, wrapper writer, and duplicate decoder",
+      "consumer": "none; generation-aware V3 reducers and ObservationIngestion use versioned store entry points",
+      "classification": "no_consumer",
+      "replacement": "list_after_v3 and generation-aware list_for_scopes_v3 readers",
+      "earliestRemovalPhase": "P5",
+      "rollbackFloor": "v3-read-side-cutover",
+      "compatibilityClass": "code_only",
+      "status": "removed",
+      "deletionCondition": "Only explicitly versioned readers and the generation-aware writer remain; historical evidence fallback decoding stays in row_to_observation_v3.",
+      "verificationCommand": "node scripts/routing-v3-legacy-retirement.test.mjs",
+      "evidence": [
+        "src-tauri/src/persistence/stores/routing_observation_store.rs"
+      ]
+    },
+    {
+      "id": "R3LR-015",
+      "owner": "test-only hierarchical route planner",
+      "consumer": "none; canonical intelligent planner owns V3 ordering",
+      "classification": "test_only_legacy",
+      "replacement": "routing_engine::intelligent_planner and V3 proxy fallback tests",
+      "earliestRemovalPhase": "P5",
+      "rollbackFloor": "v3-read-side-cutover",
+      "compatibilityClass": "code_only",
+      "status": "removed",
+      "deletionCondition": "eligibility, hierarchical_preview, coordinator, strata builder, and simulation-only test helpers are removed without changing production RoutePlanCandidate.",
+      "verificationCommand": "cargo test --locked --manifest-path src-tauri/Cargo.toml --lib -- --test-threads=1",
+      "evidence": [
+        "src-tauri/src/application/routing_engine/candidate_plan.rs",
+        "src-tauri/src/application/routing_engine/intelligent_planner.rs"
+      ]
+    },
+    {
+      "id": "R3LR-016",
+      "owner": "legacy error-rate reducer and persistence store code",
+      "consumer": "none; historical tables remain for compatibility only",
+      "classification": "no_consumer",
+      "replacement": "V3 quality summaries and consecutive-failure circuit policy",
+      "earliestRemovalPhase": "P5",
+      "rollbackFloor": "v3-read-side-cutover",
+      "compatibilityClass": "table_retained",
+      "status": "removed",
+      "deletionCondition": "Application and store modules contain no reducer/store owner while migrations, portable catalog, and compatibility fixtures retain the schema.",
+      "verificationCommand": "node scripts/routing-v3-legacy-retirement.test.mjs",
+      "evidence": [
+        "src-tauri/src/application/mod.rs",
+        "src-tauri/src/persistence/stores/mod.rs"
+      ]
+    },
+    {
+      "id": "R3LR-017",
+      "owner": "runtime capacity-domain failure target and attempt-budget shadow",
+      "consumer": "none; V3 capacity admission is process-local and provider-capacity failures are attributed to the current key",
+      "classification": "no_consumer",
+      "replacement": "CompositeCapacityRegistry and FailureTarget::CurrentKey",
+      "earliestRemovalPhase": "P5",
+      "rollbackFloor": "v3-read-side-cutover",
+      "compatibilityClass": "code_only",
+      "status": "removed",
+      "deletionCondition": "failure_domains.rs, ProviderCapacity failure targets, commitment parsing, and allow_cross_capacity_domain_fallback in AttemptBudgetProfileV1 remain absent from V3 runtime.",
+      "verificationCommand": "node scripts/routing-v3-legacy-retirement.test.mjs",
+      "evidence": [
+        "src-tauri/src/application/routing_engine/effect_planner.rs",
+        "src-tauri/src/application/routing_policy.rs",
+        "src-tauri/src/services/proxy/error.rs"
+      ]
+    },
+    {
+      "id": "R3LR-018",
+      "owner": "optional admission planning snapshot and missing-snapshot fallback",
+      "consumer": "none; every V3 execution admission has a request planning snapshot",
+      "classification": "runtime_shadow",
+      "replacement": "required AdmissionPlanningInput planning_snapshot reference",
+      "earliestRemovalPhase": "P5",
+      "rollbackFloor": "v3-read-side-cutover",
+      "compatibilityClass": "internal_contract",
+      "status": "removed",
+      "deletionCondition": "AdmissionPlanningInput requires &PlanningSnapshot and the planning_snapshot_required runtime fallback cannot be reintroduced.",
+      "verificationCommand": "node scripts/routing-v3-legacy-retirement.test.mjs",
+      "evidence": [
+        "src-tauri/src/application/routing_engine/admission.rs",
+        "src-tauri/src/services/proxy/execution.rs"
+      ]
+    },
+    {
+      "id": "R3LR-019",
+      "owner": "health-probe planning parameter chain",
+      "consumer": "none; historical evidence decoding uses only the serialized scope type",
+      "classification": "test_only_legacy",
+      "replacement": "V3 circuit admission with attempt-boundary probe fencing",
+      "earliestRemovalPhase": "P5",
+      "rollbackFloor": "v3-read-side-cutover",
+      "compatibilityClass": "test_boundary",
+      "status": "removed",
+      "deletionCondition": "HealthProbeAdmissionMode, load_intelligent_planning_snapshot_with_probe, HealthProtectionProbe, and HealthProtectionReducer remain deleted; V1 profile and historical probe_scope decoder types remain.",
+      "verificationCommand": "node scripts/routing-v3-legacy-retirement.test.mjs",
+      "evidence": [
+        "src-tauri/src/application/routing.rs",
+        "src-tauri/src/application/health_protection.rs"
+      ]
+    },
+    {
+      "id": "R3LR-020",
+      "owner": "test-only automatic scheduler compatibility types",
+      "consumer": "none",
+      "classification": "test_only_legacy",
+      "replacement": "request planning snapshot policy and DispatchAlgorithmProfile",
+      "earliestRemovalPhase": "P5",
+      "rollbackFloor": "v3-read-side-cutover",
+      "compatibilityClass": "code_only",
+      "status": "removed",
+      "deletionCondition": "AutomaticSchedulerSettings, DispatchAlgorithmSettings, SchedulerConfigError, and their isolated tests remain deleted.",
+      "verificationCommand": "node scripts/routing-v3-legacy-retirement.test.mjs",
+      "evidence": [
+        "src-tauri/src/models/routing.rs",
+        "src-tauri/src/application/routing_engine/algorithm_profile.rs"
+      ]
+    },
+    {
+      "id": "R3LR-021",
+      "owner": "probe-discovery planner and UI status",
+      "consumer": "none; no V3 producer can emit probe_discovery",
+      "classification": "legacy_ui_read",
+      "replacement": "typed scored, excluded, candidate_limit, and unavailable statuses",
+      "earliestRemovalPhase": "P5",
+      "rollbackFloor": "v3-read-side-cutover",
+      "compatibilityClass": "cross_layer_contract",
+      "status": "removed",
+      "deletionCondition": "ProbeDiscoveryOnly, RoutingScoreStatus::ProbeDiscovery, probe_discovery DTO/bindings, and frontend reason handling remain absent.",
+      "verificationCommand": "pnpm generate:bindings && node scripts/routing-v3-legacy-retirement.test.mjs",
+      "evidence": [
+        "src-tauri/src/application/operational_facts/planning_snapshot.rs",
+        "src-tauri/src/application/queries/routing_workspace.rs",
+        "src-tauri/src/ipc/dto/routing_health_reads.rs",
+        "src/features/routing/localRoutingStatusViewModel.ts"
+      ]
+    },
+    {
+      "id": "R3LR-022",
+      "owner": "operational candidate legacy health snapshot shadow",
+      "consumer": "none in production planning",
+      "classification": "runtime_shadow",
+      "replacement": "V3 circuit, quality, capability, and balance facts",
+      "earliestRemovalPhase": "P5",
+      "rollbackFloor": "v3-read-side-cutover",
+      "compatibilityClass": "internal_contract",
+      "status": "removed",
+      "deletionCondition": "Operational fact rows, queries, and production assembly contain no success/failure counters, latency aggregate, cooldown, or error-summary health fields; canonical candidate health is test-only.",
+      "verificationCommand": "node scripts/routing-v3-legacy-retirement.test.mjs",
+      "evidence": [
+        "src-tauri/src/models/operational/raw_facts.rs",
+        "src-tauri/src/persistence/stores/operational_facts/queries.rs",
+        "src-tauri/src/application/operational_facts/assembler.rs",
+        "src-tauri/src/models/routing.rs"
+      ]
+    },
+    {
+      "id": "R3LR-023",
+      "owner": "monitoring transient HealthObservation adapter",
+      "consumer": "none after direct V3 observation construction",
+      "classification": "runtime_shadow",
+      "replacement": "monitoring-owned direct RoutingObservation construction and ObservationIngestion",
+      "earliestRemovalPhase": "P5",
+      "rollbackFloor": "v3-read-side-cutover",
+      "compatibilityClass": "code_only",
+      "status": "removed",
+      "deletionCondition": "monitoring/write_path.rs does not import models::health or construct HealthObservation, and models/health.rs remains deleted.",
+      "verificationCommand": "node scripts/routing-v3-legacy-retirement.test.mjs",
+      "evidence": [
+        "src-tauri/src/application/monitoring/write_path.rs",
+        "src-tauri/src/models/mod.rs",
+        "src-tauri/src/models/routing_observation.rs"
+      ]
+    },
+    {
+      "id": "R3LR-024",
+      "owner": "allow_cross_capacity_domain_fallback V1/V2 input compatibility field",
+      "consumer": "supported legacy policy decoder and IPC DTO clients",
+      "classification": "migration_read",
+      "replacement": "none until the V1/V2 input compatibility window closes",
+      "earliestRemovalPhase": "P7",
+      "rollbackFloor": "post-compatibility-release",
+      "compatibilityClass": "input_decoder",
+      "status": "retained_for_decoder",
+      "deletionCondition": "Remove only after supported V1/V2 policy payloads and clients are retired; the field must never be copied into AttemptBudgetProfileV1 or V3 execution.",
+      "verificationCommand": "node scripts/routing-v3-legacy-retirement.test.mjs",
+      "evidence": [
+        "src-tauri/src/models/routing_policy.rs",
+        "src-tauri/src/ipc/dto/routing_mutations.rs",
+        "src-tauri/src/application/routing_policy.rs"
+      ]
+    },
+    {
+      "id": "R3LR-025",
+      "owner": "get_routing_protection_status compatibility command",
+      "consumer": "current desktop routing protection read surface",
+      "classification": "v3_required",
+      "replacement": "versioned V3 circuit read model behind the existing command contract",
+      "earliestRemovalPhase": "P7",
+      "rollbackFloor": "v3-read-side-cutover",
+      "compatibilityClass": "v3_backed_ipc",
+      "status": "retained",
+      "deletionCondition": "Retain through P7 while frontend consumers use the command; any later removal requires a separately versioned replacement and consumer migration.",
+      "verificationCommand": "node scripts/routing-v3-legacy-retirement.test.mjs",
+      "evidence": [
+        "src-tauri/src/commands/routing_health.rs",
+        "src-tauri/src/application/queries/routing_protection.rs",
+        "src-tauri/src/ipc/registry.rs"
+      ]
+    }
+  ]
+}

@@ -50,7 +50,14 @@ const openai = read("src-tauri/src/services/proxy/adapters/openai.rs");
 const execution = read("src-tauri/src/services/proxy/execution.rs");
 // Test fixtures intentionally retain historical capacity-domain regression
 // cases.  Contract assertions describe the production boundary only.
-const executionProduction = execution.split("\n#[cfg(test)]\nmod tests {", 1)[0];
+const executionTestModule = /\r?\n#\[cfg\(test\)\]\r?\nmod tests \{/u;
+const executionTestModuleIndex = execution.search(executionTestModule);
+assert.notEqual(
+  executionTestModuleIndex,
+  -1,
+  "execution.rs test module boundary must remain recognizable",
+);
+const executionProduction = execution.slice(0, executionTestModuleIndex);
 const upstream = read("src-tauri/src/services/proxy/upstream.rs");
 const proxyError = read("src-tauri/src/services/proxy/error.rs");
 

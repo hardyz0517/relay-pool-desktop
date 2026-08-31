@@ -1755,11 +1755,6 @@
         },
         {
             "from": "ipc::dto::settings",
-            "to": "models::routing",
-            "temporary": false
-        },
-        {
-            "from": "ipc::dto::settings",
             "to": "models::settings",
             "temporary": false
         },
@@ -2914,21 +2909,6 @@
             "temporary": false
         },
         {
-            "from": "application::health_transitions",
-            "to": "models::health",
-            "temporary": false
-        },
-        {
-            "from": "application::health_transitions",
-            "to": "persistence::stores::health_observation_store",
-            "temporary": false
-        },
-        {
-            "from": "application::monitoring",
-            "to": "models::health",
-            "temporary": false
-        },
-        {
             "from": "application::monitoring",
             "to": "application::monitoring::commands",
             "temporary": false
@@ -2996,16 +2976,6 @@
         {
             "from": "application::queries::channel_status",
             "to": "services::monitoring::profiles::registry",
-            "temporary": false
-        },
-        {
-            "from": "application::request_finalization",
-            "to": "models::health",
-            "temporary": false
-        },
-        {
-            "from": "application::routing",
-            "to": "models::health",
             "temporary": false
         },
         {
@@ -3086,11 +3056,6 @@
         {
             "from": "lib",
             "to": "services::monitoring::runner",
-            "temporary": false
-        },
-        {
-            "from": "persistence::stores::health_observation_store",
-            "to": "models::health",
             "temporary": false
         },
         {
@@ -3259,31 +3224,6 @@
             "temporary": false
         },
         {
-            "from": "application::operational_facts::balance_projector",
-            "to": "models::operational",
-            "temporary": false
-        },
-        {
-            "from": "application::operational_facts::capability_projector",
-            "to": "models::operational",
-            "temporary": false
-        },
-        {
-            "from": "application::operational_facts::group_projector",
-            "to": "models::operational",
-            "temporary": false
-        },
-        {
-            "from": "application::operational_facts::health_projector",
-            "to": "models::operational",
-            "temporary": false
-        },
-        {
-            "from": "application::operational_facts::multiplier_projector",
-            "to": "models::operational",
-            "temporary": false
-        },
-        {
             "from": "application::operational_facts::target_resolver",
             "to": "models::station_endpoints",
             "temporary": false
@@ -3296,11 +3236,6 @@
         {
             "from": "application::request_finalization",
             "to": "persistence::stores::request_outcome_store",
-            "temporary": false
-        },
-        {
-            "from": "ipc::dto::routing_health_reads",
-            "to": "application::queries::operational_detail",
             "temporary": false
         },
         {
@@ -3396,11 +3331,6 @@
         {
             "from": "services::proxy::execution",
             "to": "application::routing_engine::request",
-            "temporary": false
-        },
-        {
-            "from": "services::proxy::routing_repository",
-            "to": "application::operational_facts::candidate_projector",
             "temporary": false
         },
         {
@@ -3515,11 +3445,6 @@
         },
         {
             "from": "application::command_facades::routing",
-            "to": "application::queries::operational_detail",
-            "temporary": false
-        },
-        {
-            "from": "application::command_facades::routing",
             "to": "application::queries::request_decision_trace",
             "temporary": false
         },
@@ -3539,16 +3464,6 @@
             "temporary": false
         },
         {
-            "from": "application::operational_facts::candidate_projector",
-            "to": "application::operational_facts::pricing_projector",
-            "temporary": false
-        },
-        {
-            "from": "application::operational_facts::candidate_projector",
-            "to": "application::routing_engine::request",
-            "temporary": false
-        },
-        {
             "from": "application::operational_facts::target_resolver",
             "to": "application::routing_engine::capacity",
             "temporary": false
@@ -3556,11 +3471,6 @@
         {
             "from": "application::pricing",
             "to": "application::operational_facts::pricing_projector",
-            "temporary": false
-        },
-        {
-            "from": "application::queries::operational_detail",
-            "to": "application::operational_facts::candidate_projector",
             "temporary": false
         },
         {
@@ -3586,11 +3496,6 @@
         {
             "from": "application::routing",
             "to": "application::operational_facts::target_resolver",
-            "temporary": false
-        },
-        {
-            "from": "application::routing",
-            "to": "application::queries::operational_detail",
             "temporary": false
         },
         {
@@ -3714,38 +3619,13 @@
             "temporary": false
         },
         {
-            "from": "application::queries::routing_workspace",
-            "to": "application::station_key_circuit",
-            "temporary": false
-        },
-        {
             "from": "application::observation_ingestion",
             "to": "persistence::stores::routing_observation_store",
             "temporary": false
         },
         {
             "from": "application::operational_facts::candidate_projection",
-            "to": "application::operational_facts::candidate_projector",
-            "temporary": false
-        },
-        {
-            "from": "application::operational_facts::candidate_projection",
-            "to": "application::operational_facts::pricing_projector",
-            "temporary": false
-        },
-        {
-            "from": "application::operational_facts::candidate_projection",
-            "to": "application::routing_engine::capacity",
-            "temporary": false
-        },
-        {
-            "from": "application::operational_facts::candidate_projection",
             "to": "application::routing_engine::request",
-            "temporary": false
-        },
-        {
-            "from": "application::operational_facts::candidate_projection",
-            "to": "application::routing_engine::routing_health",
             "temporary": false
         },
         {
@@ -3816,11 +3696,6 @@
         {
             "from": "application::routing",
             "to": "persistence::stores::routing_policy_store",
-            "temporary": false
-        },
-        {
-            "from": "application::routing_engine::admission",
-            "to": "application::operational_facts::candidate_projector",
             "temporary": false
         },
         {
@@ -3914,11 +3789,6 @@
             "temporary": false
         },
         {
-            "from": "persistence::stores::settings_store",
-            "to": "models::routing_policy",
-            "temporary": false
-        },
-        {
             "from": "services::proxy::execution",
             "to": "application::routing_engine::admission",
             "temporary": false
@@ -3956,11 +3826,6 @@
         {
             "from": "test_support::routing_loopback",
             "to": "application::routing_policy",
-            "temporary": false
-        },
-        {
-            "from": "application::operational_facts::candidate_projection",
-            "to": "application::routing_engine::admission",
             "temporary": false
         },
         {
@@ -4549,11 +4414,6 @@
             "temporary": false
         },
         {
-            "from": "application::command_facades::settings_stations",
-            "to": "models::station_capacity_domains",
-            "temporary": false
-        },
-        {
             "from": "application::queries::request_decision_trace",
             "to": "observability::decision_trace",
             "temporary": false
@@ -4569,38 +4429,13 @@
             "temporary": false
         },
         {
-            "from": "application::station_capacity_domains",
-            "to": "models::station_capacity_domains",
-            "temporary": false
-        },
-        {
-            "from": "application::station_capacity_domains",
-            "to": "persistence::stores::station_capacity_domain_store",
-            "temporary": false
-        },
-        {
-            "from": "ipc::dto::stations",
-            "to": "models::station_capacity_domains",
-            "temporary": false
-        },
-        {
             "from": "persistence::stores::request_log_store",
             "to": "persistence::stores::request_outcome_store",
             "temporary": false
         },
         {
-            "from": "persistence::stores::station_capacity_domain_store",
-            "to": "models::station_capacity_domains",
-            "temporary": false
-        },
-        {
             "from": "services::proxy::error",
             "to": "application::request_lifecycle::request",
-            "temporary": false
-        },
-        {
-            "from": "services::proxy::error",
-            "to": "application::routing_engine::failure_domains",
             "temporary": false
         },
         {
@@ -5294,11 +5129,6 @@
             "temporary": false
         },
         {
-            "from": "application::error_rate_protection",
-            "to": "models::routing_observation",
-            "temporary": false
-        },
-        {
             "from": "application::health_protection",
             "to": "models::routing_policy",
             "temporary": false
@@ -5374,11 +5204,6 @@
             "temporary": false
         },
         {
-            "from": "application::queries::routing_protection",
-            "to": "persistence::stores::routing_health_verdict_store",
-            "temporary": false
-        },
-        {
             "from": "application::queries::routing_workspace",
             "to": "application::quality_projection",
             "temporary": false
@@ -5415,11 +5240,6 @@
         },
         {
             "from": "application::routing",
-            "to": "persistence::stores::routing_health_verdict_store",
-            "temporary": false
-        },
-        {
-            "from": "application::routing",
             "to": "persistence::stores::routing_quality_store",
             "temporary": false
         },
@@ -5435,27 +5255,12 @@
         },
         {
             "from": "application::routing_diagnostics_reader",
-            "to": "models::routing_policy",
-            "temporary": false
-        },
-        {
-            "from": "application::routing_diagnostics_reader",
             "to": "persistence::stores::request_outcome_store",
             "temporary": false
         },
         {
             "from": "application::routing_diagnostics_reader",
             "to": "persistence::stores::routing_decisions::queries",
-            "temporary": false
-        },
-        {
-            "from": "application::routing_diagnostics_reader",
-            "to": "persistence::stores::routing_error_rate_history_store",
-            "temporary": false
-        },
-        {
-            "from": "application::routing_diagnostics_reader",
-            "to": "persistence::stores::routing_policy_store",
             "temporary": false
         },
         {
@@ -5650,11 +5455,6 @@
         },
         {
             "from": "ipc::dto::routing_health_reads",
-            "to": "application::error_rate_protection",
-            "temporary": false
-        },
-        {
-            "from": "ipc::dto::routing_health_reads",
             "to": "application::queries::routing_protection",
             "temporary": false
         },
@@ -5726,36 +5526,6 @@
         {
             "from": "persistence::stores::monitoring_store",
             "to": "outbound",
-            "temporary": false
-        },
-        {
-            "from": "persistence::stores::request_log_write",
-            "to": "application::health_protection",
-            "temporary": false
-        },
-        {
-            "from": "persistence::stores::routing_error_rate_history_store",
-            "to": "application::error_rate_protection",
-            "temporary": false
-        },
-        {
-            "from": "persistence::stores::routing_error_rate_history_store",
-            "to": "application::health_protection",
-            "temporary": false
-        },
-        {
-            "from": "persistence::stores::routing_health_verdict_store",
-            "to": "application::error_rate_protection",
-            "temporary": false
-        },
-        {
-            "from": "persistence::stores::routing_health_verdict_store",
-            "to": "application::health_protection",
-            "temporary": false
-        },
-        {
-            "from": "persistence::stores::routing_health_verdict_store",
-            "to": "models::routing_policy",
             "temporary": false
         },
         {
@@ -5889,16 +5659,6 @@
             "temporary": false
         },
         {
-            "from": "services::proxy::attempt",
-            "to": "application::health_protection",
-            "temporary": false
-        },
-        {
-            "from": "services::proxy::execution",
-            "to": "application::health_protection",
-            "temporary": false
-        },
-        {
             "from": "services::proxy::execution",
             "to": "application::model_mapping",
             "temporary": false
@@ -6024,18 +5784,8 @@
             "temporary": false
         },
         {
-            "from": "test_support::routing_loopback",
-            "to": "models::station_capacity_domains",
-            "temporary": false
-        },
-        {
             "from": "application::command_facades::local_proxy",
             "to": "application::routing_execution_reader",
-            "temporary": false
-        },
-        {
-            "from": "application::command_facades::routing",
-            "to": "application::error_rate_protection",
             "temporary": false
         },
         {
@@ -6054,11 +5804,6 @@
             "temporary": false
         },
         {
-            "from": "application::error_rate_protection",
-            "to": "application::health_protection",
-            "temporary": false
-        },
-        {
             "from": "application::model_mapping_service",
             "to": "application::model_mapping",
             "temporary": false
@@ -6069,31 +5814,6 @@
             "temporary": false
         },
         {
-            "from": "application::queries::routing_protection",
-            "to": "application::health_protection",
-            "temporary": false
-        },
-        {
-            "from": "application::request_finalization",
-            "to": "application::error_rate_protection",
-            "temporary": false
-        },
-        {
-            "from": "application::request_finalization",
-            "to": "application::health_protection",
-            "temporary": false
-        },
-        {
-            "from": "application::request_lifecycle::attempt",
-            "to": "application::health_protection",
-            "temporary": false
-        },
-        {
-            "from": "application::routing",
-            "to": "application::health_protection",
-            "temporary": false
-        },
-        {
             "from": "application::routing",
             "to": "application::model_mapping",
             "temporary": false
@@ -6101,11 +5821,6 @@
         {
             "from": "application::routing",
             "to": "application::queries::routing_protection",
-            "temporary": false
-        },
-        {
-            "from": "application::routing_diagnostics_reader",
-            "to": "application::error_rate_protection",
             "temporary": false
         },
         {
@@ -6131,11 +5846,6 @@
         {
             "from": "persistence::stores::model_mapping_store",
             "to": "persistence::stores::document_sync_store",
-            "temporary": false
-        },
-        {
-            "from": "persistence::stores::routing_health_verdict_store",
-            "to": "persistence::stores::routing_error_rate_history_store",
             "temporary": false
         },
         {
@@ -6636,6 +6346,56 @@
         {
             "from": "test_support::routing_loopback",
             "to": "background_tasks::routing_generation_cutover_runner",
+            "temporary": false
+        },
+        {
+            "from": "application::queries::key_pool",
+            "to": "application::station_key_circuit",
+            "temporary": false
+        },
+        {
+            "from": "application::queries::key_pool",
+            "to": "persistence::stores::station_key_circuit_store",
+            "temporary": false
+        },
+        {
+            "from": "application::queries::station_key_circuit_read",
+            "to": "application::station_key_circuit",
+            "temporary": false
+        },
+        {
+            "from": "application::queries::station_key_circuit_read",
+            "to": "persistence::stores::station_key_circuit_store",
+            "temporary": false
+        },
+        {
+            "from": "ipc::dto::routing_health_reads",
+            "to": "application::queries::station_key_circuit_read",
+            "temporary": false
+        },
+        {
+            "from": "application::command_facades::routing",
+            "to": "application::queries::station_key_circuit_read",
+            "temporary": false
+        },
+        {
+            "from": "application::queries::key_pool",
+            "to": "application::queries::station_key_circuit_read",
+            "temporary": false
+        },
+        {
+            "from": "application::queries::routing_protection",
+            "to": "application::queries::station_key_circuit_read",
+            "temporary": false
+        },
+        {
+            "from": "application::queries::routing_workspace",
+            "to": "application::queries::station_key_circuit_read",
+            "temporary": false
+        },
+        {
+            "from": "application::routing",
+            "to": "application::queries::station_key_circuit_read",
             "temporary": false
         }
     ],

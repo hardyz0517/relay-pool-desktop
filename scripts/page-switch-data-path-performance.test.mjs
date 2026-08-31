@@ -98,7 +98,6 @@ assert.equal(
 const channelRawReads = [
   "listKeyPoolItems",
   "listRequestLogs",
-  "listStationKeyHealth",
   "listChannelStatusSummaries",
 ];
 assert.ok(

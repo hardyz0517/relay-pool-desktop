@@ -85,9 +85,6 @@ assert.ok(
     !monitoringSource.includes("listChannelMonitorSummaries") &&
     !/Promise\.all\(\[\s*listChannelMonitorSummaries\(\),\s*listStations\(\),\s*listKeyPoolItems\(\),\s*listChannelMonitorTemplates\(\),?\s*\]\)/s.test(
     monitoringSource,
-  ) &&
-    !/Promise\.all\(\[\s*listKeyPoolItems\(\),\s*listRequestLogs\(\),\s*listStationKeyHealth\(\),\s*listChannelMonitorSummaries\(\),?\s*\]\)/s.test(
-      statusSource,
-    ),
+  ),
   "channel tabs should no longer own initial raw fact Promise.all orchestration",
 );

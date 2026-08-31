@@ -80,7 +80,6 @@ for (const required of [
   "loadRoutingWorkspaceSnapshot",
   "loadRoutingRuntimeOverlay",
   "listRecentRouteDecisions",
-  "getStationKeyOperationalDetail",
   "getRequestDecisionTrace",
   "simulateRoute",
 ]) {
@@ -100,7 +99,6 @@ for (const command of [
   "load_routing_workspace_snapshot",
   "load_routing_runtime_overlay",
   "list_recent_route_decisions",
-  "get_station_key_operational_detail",
   "get_request_decision_trace",
   "simulate_route",
 ]) {
@@ -115,7 +113,6 @@ for (const binding of [
   "loadRoutingWorkspaceSnapshot",
   "loadRoutingRuntimeOverlay",
   "listRecentRouteDecisions",
-  "getStationKeyOperationalDetail",
   "getRequestDecisionTrace",
   "simulateRoute",
 ]) {

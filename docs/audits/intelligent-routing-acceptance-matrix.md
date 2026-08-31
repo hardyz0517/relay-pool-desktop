@@ -20,10 +20,10 @@ unstaged and uncommitted.
 | 7 | 6, 12 | `cargo test --locked --manifest-path src-tauri/Cargo.toml --test intelligent_routing_observations -- --test-threads=1`; `cargo test --locked --manifest-path src-tauri/Cargo.toml --test routing_capacity_faults -- --test-threads=1` |
 | 8 | 5, 11 | `cargo test --locked --manifest-path src-tauri/Cargo.toml --test intelligent_routing_dispatch -- --test-threads=1` (unknown-cost neutrality); `cargo test --locked --manifest-path src-tauri/Cargo.toml --test operational_economics_projectors -- --test-threads=1` |
 | 9 | 13, 14 | `cargo test --locked --manifest-path src-tauri/Cargo.toml --test routing_capacity -- --test-threads=1`; `cargo test --locked --manifest-path src-tauri/Cargo.toml --test intelligent_routing_dispatch -- --test-threads=1` |
-| 10 | 12, 15 | `cargo test --locked --manifest-path src-tauri/Cargo.toml --test routing_runtime_state -- --test-threads=1` (affinity TTL/bounds); `cargo test --locked --manifest-path src-tauri/Cargo.toml --test intelligent_routing_coordinator -- --test-threads=1` |
-| 11 | 15 | `cargo test --locked --manifest-path src-tauri/Cargo.toml --test intelligent_routing_coordinator -- --test-threads=1` |
+| 10 | 12, 15 | `cargo test --locked --manifest-path src-tauri/Cargo.toml --test routing_runtime_state -- --test-threads=1` (affinity TTL/bounds); `cargo test --locked --manifest-path src-tauri/Cargo.toml --test routing_v3_execution_ownership -- --test-threads=1` |
+| 11 | 15 | `cargo test --locked --manifest-path src-tauri/Cargo.toml --test routing_v3_execution_ownership -- --test-threads=1` |
 | 12 | 10, 15 | `cargo test --locked --manifest-path src-tauri/Cargo.toml --test intelligent_routing_policy -- --test-threads=1`; `node scripts/routing-dto-completeness.test.mjs` |
-| 13 | 11, 15 | `cargo test --locked --manifest-path src-tauri/Cargo.toml --test intelligent_routing_coordinator -- --test-threads=1`; `node scripts/intelligent-routing-qualification.mjs` |
+| 13 | 11, 15 | `cargo test --locked --manifest-path src-tauri/Cargo.toml --test routing_v3_execution_ownership -- --test-threads=1`; `node scripts/intelligent-routing-qualification.mjs` |
 | 14 | 13, 19 | `node scripts/intelligent-routing-qualification.mjs`; `docs/audits/intelligent-routing-qualification.md` |
 | 15 | 11 | `node scripts/intelligent-routing-architecture.test.mjs --fixtures`; `scripts/fixtures/intelligent-routing-architecture/red-planner-candidate-slice/planner.rs` |
 | 16 | 3, 4, 17 | `node scripts/intelligent-routing-architecture.test.mjs`; `node scripts/routing-single-owner.test.mjs` |
@@ -31,7 +31,7 @@ unstaged and uncommitted.
 | 18 | 8, 17 | `node scripts/routing-cutover-schema.test.mjs`; `node scripts/routing-query-service.test.mjs` |
 | 19 | 6, 7 | `cargo test --locked --manifest-path src-tauri/Cargo.toml --test intelligent_routing_quality_projection -- --test-threads=1`; `cargo test --locked --manifest-path src-tauri/Cargo.toml --test intelligent_routing_observations -- --test-threads=1` |
 | 20 | 4, 14 | `cargo test --locked --manifest-path src-tauri/Cargo.toml --test operational_fact_reader -- --test-threads=1`; `cargo test --locked --manifest-path src-tauri/Cargo.toml --test persistence_runtime -- --test-threads=1` |
-| 21 | 15 | `cargo test --locked --manifest-path src-tauri/Cargo.toml --test intelligent_routing_coordinator -- --test-threads=1` (revision fence) |
+| 21 | 15 | `cargo test --locked --manifest-path src-tauri/Cargo.toml --test routing_v3_execution_ownership -- --test-threads=1` (revision fence) |
 | 22 | 9 | `cargo test --locked --manifest-path src-tauri/Cargo.toml --test routing_lifecycle_reconciliation -- --test-threads=1`; `cargo test --locked --manifest-path src-tauri/Cargo.toml --test routing_production_startup_shutdown -- --test-threads=1` |
 | 23 | 4, 15 | `cargo test --locked --manifest-path src-tauri/Cargo.toml --test operational_fact_reader -- --test-threads=1`; `cargo test --locked --manifest-path src-tauri/Cargo.toml --test routing_decision_store -- --test-threads=1` |
 | 24 | 1, 17 | `node scripts/intelligent-routing-architecture.test.mjs`; `docs/audits/intelligent-routing-boundary-manifest.json` |
@@ -64,7 +64,7 @@ unstaged and uncommitted.
 | 51 | 3, 11 | `cargo test --locked --manifest-path src-tauri/Cargo.toml --test intelligent_routing_dispatch -- --test-threads=1`; `cargo test --locked --manifest-path src-tauri/Cargo.toml --test intelligent_routing_quality_projection -- --test-threads=1` |
 | 52 | 6, 18 | `cargo test --locked --manifest-path src-tauri/Cargo.toml --test intelligent_routing_observations -- --test-threads=1`; `node scripts/monitoring-architecture.test.mjs` |
 | 53 | 6, 7 | `cargo test --locked --manifest-path src-tauri/Cargo.toml --test intelligent_routing_quality_projection -- --test-threads=1`; `cargo test --locked --manifest-path src-tauri/Cargo.toml --test routing_outcome_persistence -- --test-threads=1` |
-| 54 | 12, 15 | `cargo test --locked --manifest-path src-tauri/Cargo.toml --test intelligent_routing_coordinator -- --test-threads=1`; `cargo test --locked --manifest-path src-tauri/Cargo.toml --test routing_capacity_faults -- --test-threads=1` |
+| 54 | 12, 15 | `cargo test --locked --manifest-path src-tauri/Cargo.toml --test routing_v3_execution_ownership -- --test-threads=1`; `cargo test --locked --manifest-path src-tauri/Cargo.toml --test routing_capacity_faults -- --test-threads=1` |
 | 55 | 13, 14 | `cargo test --locked --manifest-path src-tauri/Cargo.toml --test routing_capacity_faults -- --test-threads=1`; `cargo test --locked --manifest-path src-tauri/Cargo.toml --test monitoring_concurrency -- --test-threads=1` |
 | 56 | 19 | `cargo test --locked --manifest-path src-tauri/Cargo.toml --test persistence_fault_matrix -- --test-threads=1`; `node scripts/intelligent-routing-qualification.mjs` |
 | 57 | 14, 19 | `cargo test --locked --manifest-path src-tauri/Cargo.toml --test routing_runtime_state -- --test-threads=1` |

@@ -8,7 +8,6 @@ const failures = [];
 const requiredBackendModules = [
   "src-tauri/src/application/queries/routing_workspace.rs",
   "src-tauri/src/application/queries/routing_runtime.rs",
-  "src-tauri/src/application/queries/operational_detail.rs",
   "src-tauri/src/application/queries/request_decision_trace.rs",
 ];
 
@@ -73,7 +72,6 @@ function checkSingleFrontendRoutingQueryOwner() {
     "loadRoutingWorkspaceSnapshotQuery",
     "loadRoutingRuntimeOverlayQuery",
     "listRecentRouteDecisionsQuery",
-    "getStationKeyOperationalDetailQuery",
     "getRequestDecisionTraceQuery",
     "simulateRouteQuery",
   ]) {
@@ -87,7 +85,6 @@ function checkCommandsAreRegistered() {
     "load_routing_workspace_snapshot",
     "load_routing_runtime_overlay",
     "list_recent_route_decisions",
-    "get_station_key_operational_detail",
     "get_request_decision_trace",
     "simulate_route",
   ]) {

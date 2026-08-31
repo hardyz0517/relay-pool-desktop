@@ -1,6 +1,6 @@
 # 状态监控功能重构升级规范
 
-状态：Implementation cutover complete and locally qualified on `codex/status-monitoring-refactor`，release qualification pending
+状态：Status Monitoring V2 execution/read model retained；旧 health writeback 已由 2026-08-31 Routing V3 retirement 取代；release qualification pending
 日期：2026-07-29
 适用范围：Relay Pool Desktop 状态监控、主动探针、渠道健康、路由健康联动与状态监控 UI
 替代关系：本规范进入实施后，取代 2026-07-05 的 Channel Monitoring Design 作为状态监控升级依据；旧文档继续作为历史记录保留
@@ -14,6 +14,10 @@
 - 删除台账：`docs/audits/status-monitoring-deletion-ledger.md`
 - 后续 legacy 删除票据：`docs/archive/plans/2026-07-29-status-monitoring-legacy-table-removal.md`
 
+> **2026-08-31 Routing V3 取代说明**
+>
+> 本文仍是主动监控执行、协议、调度、持久化事实、时间桶和 UI 的当前入口；其中关于 `HealthObservation`、`HealthTransitionService`、`station_key_health` / `station_key_health_observations` 写回以及“监控直接改变路由健康”的设计已退役，由 `docs/plans/2026-08-31-routing-v3-legacy-chain-retirement.md` 与对应实施审计取代。当前 monitoring write path 只提交 channel-monitor execution/attempt/target facts，并通过 `ObservationIngestion` 直接追加 `source=active_probe` 的 V3 `RoutingObservation`。主动监控不直接修改或打开 station-key circuit；circuit admission/transition 只由 V3 request-attempt 边界拥有。旧 health 表暂留只为 P6 migration/import/schema/portable 兼容，不是当前成功证据或 runtime authority。
+
 ## 1. 执行摘要
 
 本次升级不是 UI 调整，也不是在现有监控实现上追加若干状态判断。它是一次监控领域的系统性重构，目标是建立可长期维护的主动探测、调度、健康事实、时间序列和桌面端状态工作区。
@@ -21,11 +25,11 @@
 明确决策如下：
 
 1. 保留已经成熟的公共基础设施：Tauri IPC 边界、SecretManager、Reqwest/Tokio 网络栈、Persistence Runtime、SQLite 事务、React Query 和现有 Station/Station Key 所有权模型。
-2. 重构监控内核：协议适配、请求画像、语义校验、执行模型、调度器、健康写回、时间桶、保留策略和状态 UI。
+2. 重构监控内核：协议适配、请求画像、语义校验、执行模型、调度器、V3 observation 输出、时间桶、保留策略和状态 UI。
 3. 手动执行和定时执行必须经过同一个 orchestrator，不允许继续存在行为不一致的双路径。
 4. 一个 HTTP 2xx 响应不等于模型可用。成功必须通过协议解析和内容语义校验。
 5. 一次触发必须有一个父级 `MonitorExecution`；每个 Key 形成唯一终态 `MonitorTargetResult`，模型选择和重试形成其下的独立 `ProbeAttempt`。
-6. `station_key_health` 继续是路由和 UI 共同消费的健康摘要，不创建第二套互相冲突的健康宇宙。
+6. channel-monitor target/bucket facts 是监控 UI 的事实；V3 routing quality/circuit read model 是路由事实。两者通过 typed `RoutingObservation` 单向衔接，不共享旧 `station_key_health` mutable summary。
 7. OpenAI、Anthropic、Gemini、xAI/Grok 使用独立、类型化的协议适配器；OpenAI-compatible 只作为明确的方言和兜底能力。
 8. CLI 请求画像是正式能力，但必须可选、版本化、受控和可审计。不得把某个 CLI 版本的请求样本硬编码成永久协议。
 9. 24 小时、7 天和 30 天趋势必须来自固定时间桶，前端不得根据总成功率伪造趋势格。
@@ -58,7 +62,7 @@
 - 用户能够区分鉴权、限流、网络、超时、协议不匹配、内容不匹配和慢响应。
 - 用户能够查看近 60 次、24 小时、7 天和 30 天的可信趋势。
 - 用户能够选择标准 API 或受控 CLI compatibility profile。
-- 用户能够控制探测频率、并发、重试和健康写回策略，降低上游账号风险。
+- 用户能够控制探测频率、并发、重试和 observation eligibility/profile，降低上游账号风险。
 - 主动探测能够向路由健康提供可信事实，但不会因错误探针配置误伤正常路由。
 - 状态监控页面保持浅色、紧凑、高密度的本地桌面工具体验。
 
@@ -86,12 +90,12 @@
 
 ## 5. 设计原则与不变量
 
-### 5.1 单一健康事实
+### 5.1 分离事实与单向 observation
 
-- `Station Key` 是路由健康目标。
-- 主动监控产生 `HealthObservation`，由统一 `HealthTransitionService` 更新 `station_key_health`。
-- 代理真实流量、连通性测试和主动监控不得分别维护互相覆盖的状态机。
-- 每条健康变化必须记录来源、原因、观测时间和关联 execution。
+- `MonitorTargetResult` 与 bucket 是主动监控 UI/统计的事实，V3 routing circuit/quality 是路由事实。
+- 主动监控从 target terminal 直接构造 `RoutingObservation(source=active_probe)`，由 `ObservationIngestion` 持久化。
+- active probe observation 可以参与 V3 quality projection，但不得直接修改、关闭或打开 station-key circuit。
+- 每条 observation 必须记录来源、原因、观测时间、endpoint/lifecycle revision 和关联 execution/target identity。
 
 ### 5.2 HTTP 成功不等于语义成功
 
@@ -111,7 +115,7 @@
 - execution 启动后使用不可变配置快照。
 - monitor 在运行中被编辑，不改变已经开始的 execution。
 - execution 保存配置版本、profile 版本和 request profile hash，不保存秘密。
-- endpoint revision 变化后，旧 execution 不得写回当前健康。
+- endpoint revision 变化后，旧 execution 不得提交当前 target result 或 V3 observation。
 
 ### 5.4 有界资源
 
@@ -133,14 +137,14 @@
 | Monitor Definition | 用户配置的监控定义，描述目标、协议、模型、周期和健康策略 |
 | Monitor Execution | 一次手动、定时或恢复触发的父级执行 |
 | Probe Target | execution 中的一个具体 Station Key |
-| Monitor Target Result | 一个 Probe Target 在 execution 内的唯一终态结论，是统计与健康写回的事实来源 |
+| Monitor Target Result | 一个 Probe Target 在 execution 内的唯一终态结论，是监控统计与 active-probe observation 的事实来源 |
 | Probe Attempt | 对一个 Key、模型和重试序号的一次真实网络尝试 |
 | Protocol Adapter | 负责端点、请求结构、响应解析和错误映射 |
 | Client Profile | 负责标准 API 或 CLI compatibility 请求画像 |
 | Auth Strategy | 负责将秘密放入正确的认证 Header 或参数 |
 | Transport Profile | 负责代理、连接复用、超时和 warm/cold 测量 |
 | Validation Strategy | 负责判断模型是否返回预期语义内容 |
-| Health Observation | target result 或真实代理事实转换出的路由健康证据 |
+| Routing Observation | target result 转换出的 typed V3 active-probe quality evidence；不直接改变 circuit |
 | Status Bucket | 固定时间范围内的统计结果 |
 
 ## 7. 目标架构
@@ -162,9 +166,11 @@ ProtocolAdapter + ClientProfile + AuthStrategy
     |
 ProbeTransport / Reqwest
     |
-ResultRecorder ---- HealthTransitionService
+ResultRecorder ---- SQLite channel-monitor facts ---- Status Read Model / Buckets
     |
-SQLite Write Model ---- Status Read Model / Buckets
+ObservationIngestion ---- routing_observations (source=active_probe)
+    |
+V3 quality projection (no direct circuit mutation)
 ```
 
 ### 7.2 依赖方向
@@ -262,7 +268,7 @@ src-tauri/src/persistence/stores/
 - attempt timeout 小于 execution timeout。
 - retry policy 每个模型最多 3 次 attempt（含首次）；保存配置时必须展示理论最大 attempt 数，并确保至少一次 primary attempt 能在 execution timeout 内完成。
 - profile 必须支持选定 protocol。
-- authoritative 健康写回只允许受信任内置 adapter 和受信任 profile。
+- 历史 `health_policy_mode` 作为兼容配置继续可读；它不授予主动监控直接修改 V3 circuit 的权限。
 
 ### 8.2 MonitorExecution
 
@@ -296,12 +302,12 @@ execution 终态规则：
 - 所有目标都有且只有一个终态 `MonitorTargetResult`，execution 才能 completed。
 - 部分目标持久化或执行失败为 partial。
 - 用户取消为 cancelled。
-- 应用异常退出留下的 running execution 在下次启动标为 interrupted，不自动当作失败写回健康。
+- 应用异常退出留下的 running execution 在下次启动标为 interrupted，不合成失败 `RoutingObservation`。
 - station-wide summary 由全部目标结果计算，不能由最后写入的 Key 决定。
 
 ### 8.3 MonitorTargetResult
 
-`MonitorTargetResult` 表示一个 Station Key 在一次 execution 中的唯一终态。它聚合该目标的 primary、retry 和 fallback attempts，是可用率、固定桶、当前 synthetic 状态和健康写回的直接输入。
+`MonitorTargetResult` 表示一个 Station Key 在一次 execution 中的唯一终态。它聚合该目标的 primary、retry 和 fallback attempts，是可用率、固定桶、当前 synthetic 状态和 V3 active-probe observation 的直接输入。
 
 字段：
 
@@ -649,7 +655,7 @@ profile 不能控制：
 内置 validator：
 
 - `arithmetic_exact`
-- `non_empty_text`，仅用于兼容诊断，不得 authoritative 写回健康
+- `non_empty_text`，仅用于兼容诊断，不得产生可与真实请求等价的 routing quality evidence
 - `json_schema`，后续能力
 - `custom_contains`，高级模式且默认 observe-only
 
@@ -798,77 +804,49 @@ orchestrator 负责：
 - 超时后 remaining execution 标为 interrupted。
 - 启动恢复将遗留 queued/running 标为 interrupted，再重新计算调度，不自动重复网络请求。
 
-## 15. 健康状态机与路由联动
+## 15. V3 RoutingObservation 与路由边界
 
-### 15.1 Observation 而非直接覆盖
+### 15.1 Target terminal 到 typed observation
 
-`ResultRecorder` 将终态 `MonitorTargetResult` 转换为 `HealthObservation`：
+monitoring write path 将终态 `MonitorTargetResult` 直接转换为 `RoutingObservation`：
 
-- source：`synthetic_monitor`、`proxy_request`、`manual_connectivity`
-- station_key_id
-- endpoint_revision
-- protocol/model/profile
-- outcome/failure kind
-- observed_at
-- confidence
-- traffic_equivalence
-- execution_id/target_result_id/decisive_attempt_id
+- `source=active_probe`
+- station/station-key、endpoint revision 与 station-key lifecycle revision
+- requested/effective model 与 comparability key
+- typed outcome、failure code/attribution、latency eligibility
+- event/ingestion time、producer identity/sequence 与 execution/target correlation
+- `cluster_finalized=true`，每个 target terminal 对应一个完成的单 observation cluster
 
-`HealthTransitionService` 是唯一允许修改 `station_key_health` 的业务入口。
+转换不经过 `HealthObservation` adapter，不写 `station_key_health_observations`，也不调用 `HealthTransitionService`。
 
 ### 15.2 Traffic equivalence
 
-探针与真实路由的等价性：
+探针与真实路由的等价性由 V3 typed 值表达：
 
-- `exact`：协议、认证、profile 和路由真实请求一致。
-- `compatible`：协议一致，body 为最小 synthetic challenge。
-- `diagnostic`：cold connect、自定义 contains、未知 profile 等诊断请求。
+- 受信任 `standard_api` 且 protocol/model/request-profile 可比较时使用 `same_model_shape`。
+- CLI compatibility、无法形成稳定 comparability key 或纯诊断请求使用 `endpoint_only`。
+- balance/subscription/quota、cancel/interrupted 和 relay-local failure 按共享 spendability disposition 排除或降权，不伪造上游 Key failure。
 
-只有 exact/compatible observation 默认允许影响路由健康。diagnostic 只进入监控历史。
+traffic equivalence 只影响 quality evidence 的可比性和权重，不能授权 probe 直接改变 circuit。
 
-### 15.3 Writeback mode
+### 15.3 历史 writeback 配置兼容
 
-monitor 配置：
+`health_policy_mode` / writeback mode 作为已持久化定义与旧客户端输入兼容继续可读。它不再表示 monitoring 拥有 station-key health reducer，也不能绕过 `ObservationIngestion` 或调用 circuit mutation。自定义 adapter/profile 的 observation 默认只能形成低可比性 evidence。
 
-- `observe_only`：不写路由健康。
-- `eligible`：满足可信度和阈值后写回，默认。
-- `authoritative`：用于受信任内置协议的明确硬失败；仅高级模式。
+### 15.4 Circuit 不变量
 
-自定义 adapter/profile 默认 observe-only。
+- active probe 成功或失败均不得直接调用 station-key circuit admission/transition API。
+- 429、auth、endpoint failure 等 probe outcome 只作为 typed quality evidence；真实 request attempt boundary 是 V3 circuit transition owner。
+- skipped/cancelled/interrupted/local-budget 不得伪装成可归责 Key failure。
+- endpoint 或 lifecycle revision 不匹配时整个 target finalization 失败关闭，不能留下当前 observation。
+- circuit read model 与 monitoring workspace 各自保有清晰 owner；前端不得从 monitoring success rate 重建 circuit 状态。
 
-### 15.4 状态转换
+### 15.5 多来源投影
 
-健康摘要至少维护：
-
-- current status
-- consecutive successes
-- consecutive failures
-- last success/failure/observation time
-- last failure kind
-- cooldown reason/until
-- source 与 confidence
-- endpoint revision
-
-建议规则：
-
-- available：增加连续成功，清零连续失败。
-- degraded：不视为完全失败；更新慢响应或重试证据。
-- unavailable：增加连续失败，清零连续成功。
-- skipped/cancelled/interrupted：不改变成功失败计数。
-- 达到 failure threshold 后进入 degraded/offline 或 cooldown。
-- 达到 recovery threshold 后才恢复 healthy，避免抖动。
-- auth 和明确 revoked key 可以使用更强转换，但必须确认 observation 的 traffic equivalence。
-- rate limit 使用 Retry-After；没有 Retry-After 时使用有上限退避。
-- endpoint revision 不匹配时拒绝写回。
-
-### 15.5 多来源合并
-
-- 真实代理流量和主动探针都写 observation，不相互直接覆盖。
-- 新鲜真实请求成功可以加速从偶发 synthetic network failure 恢复。
-- synthetic auth failure 不得在 CLI profile 与真实路由 profile 不一致时直接禁用 Key。
-- UI 展示当前综合健康，同时能查看最近一次 synthetic 结果。
-- 合并策略必须是纯函数并有完整状态机测试。
-- 当前散落在 request log、proxy runtime 和 routing store 的健康写入口必须分阶段收敛到同一个 application `HealthTransitionService`；迁移期可以有调用适配器，但不得双写、不得保留两套状态转换规则。
+- proxy request 与 active probe 都可写 V3 `RoutingObservation`，但 source、traffic equivalence 和 failure attribution 必须保真。
+- quality projector 按版本化规则合并 observation；monitoring write path 不持有 reducer 状态。
+- UI 同时可展示 channel-monitor synthetic 结果和独立的 V3 routing 状态，不得让一个 mutable summary 覆盖另一事实域。
+- observation append 必须幂等、immutable，并由 generation-aware projector 消费。
 
 ## 16. 持久化模型
 
@@ -957,18 +935,18 @@ rollup 必须可由 raw target result 重建，不能成为唯一原始事实。
 
 使用 `channel_monitor_rollup_dirty_ranges` 保存待修复维度、bucket range、首次/最近失败时间和有界重试状态；同一维度/range 合并，不允许故障期间无限增长 repair 记录。
 
-### 16.7 health observations
+### 16.7 V3 routing observations
 
-建立统一 `station_key_health_observations` 账本，至少保存：
+主动监控将 routing evidence 写入统一 `routing_observations` ledger，至少保证：
 
-- `id`
-- `source` 与 `source_event_id`
-- `station_key_id`、`endpoint_revision`
-- protocol/model/profile、outcome/failure kind
-- confidence、traffic equivalence、writeback mode/decision/reason
-- observed_at 与 applied_at
+- `id`、`producer_id`、deterministic `producer_sequence` 与 payload hash
+- `source=active_probe`
+- station/station-key、endpoint revision、station-key lifecycle revision
+- requested/effective model、comparability key、traffic equivalence
+- typed outcome、failure code/attribution、latency、event/ingestion time
+- execution/target correlation 与 finalized cluster metadata
 
-`(source, source_event_id)` 唯一；synthetic monitor 的 `source_event_id` 必须是 `target_result_id`，proxy request 使用稳定 attempt identity。所有来源通过同一 service 写 observation 和更新 `station_key_health`，不允许 store 内另藏第二套转换规则。
+`(producer_id, producer_sequence)`、attempt identity 与 observation ID 提供幂等约束，V3 structured row 是 immutable fact。monitoring 通过 `ObservationIngestion` 追加 observation；不得直接写 projection summary、旧 `station_key_health_observations` 或 circuit state。旧表只在 P6 资格完成前作为 migration/import/schema/portable 兼容对象存在。
 
 ### 16.8 probe budget usage
 
@@ -993,12 +971,12 @@ rollup 必须可由 raw target result 重建，不能成为唯一原始事实。
 持久化采用三个明确边界：
 
 1. **Attempt append transaction**：追加一个不可变 attempt 及其脱敏 request observation；以 attempt ID/唯一序号幂等，不修改健康或统计分母。
-2. **Target-finalization transaction**：校验 attempts，写唯一 target result，写以 `target_result_id` 为幂等键的 HealthObservation，并在符合 revision/traffic/writeback policy 时调用统一健康转换。任一步失败均回滚该 target finalization，可安全重试。
+2. **Target-finalization transaction**：校验 attempts，写唯一 target result，并以 execution/target 派生的稳定 identity 通过 `ObservationIngestion` 写 V3 `RoutingObservation`。任一步失败均回滚 target result 与 observation，可安全重试；此事务不修改 circuit。
 3. **Execution-finalization transaction**：校验所有 target result 已终态，以它们计算并更新 execution summary，再更新 monitor schedule。重复执行必须得到同一 summary 和 next due。
 
 Bucket rollup 是派生缓存，不属于 execution 完成事务。execution 完成后异步或增量更新 rollup；失败时写入有界的 dirty-range/rebuild marker，并由 repair worker 重建。rollup 故障不得把已提交 attempt、target result 或 execution 改为失败。
 
-health writeback 失败时 target finalization 回滚，execution 最终为 partial，直到有界重试或后续 repair 以同一 `target_result_id` 完成；不得生成重复 observation 或重复增加连续失败计数。
+V3 observation append 失败时 target finalization 回滚，execution 最终为 partial，直到有界重试以同一 deterministic identity 完成；不得生成重复 observation。quality projection/rollup repair 在事务外按各自 checkpoint 重建，不能反向修改已提交的 monitor facts。
 
 ## 17. 旧数据迁移
 
@@ -1017,7 +995,7 @@ health writeback 失败时 target finalization 回滚，execution 最终为 part
 
 - 每条旧 run 迁移为一个 `legacy_import` execution + target result + attempt，或按可证明的 station-wide 批次分组。
 - outcome 映射保留原值，但增加 `semantic_confidence=legacy_http_only`。
-- legacy 数据只用于历史展示，不回放健康写回。
+- legacy 数据只用于历史展示，不回放为 V3 observation 或 circuit transition。
 - 迁移后新代码只写新表，不进行长期 dual-write。
 
 ### 17.3 模板种植
@@ -1210,7 +1188,7 @@ Current Status | Availability | Last Probe / Latency | Trend | Actions
 - 详情包括 definition、当前配置、execution history、attempt tree、失败分类和 profile。
 - Run Now 返回 execution ID，并订阅/轮询 execution 状态。
 - 已运行时显示正在运行，不发送第二次请求。
-- 编辑 profile、频率或 health writeback 时显示影响范围。
+- 编辑 profile、频率或历史 health-policy compatibility 字段时显示 observation 可比性影响，并明确不会直接改变 circuit。
 - auth/rate-limit/profile-rejected 给出明确但脱敏的处理方向。
 
 ### 21.5 桌面与移动
@@ -1299,7 +1277,7 @@ Current Status | Availability | Last Probe / Latency | Trend | Actions
 - 展开了哪些目标。
 - 每个目标尝试了哪些模型和次数。
 - 为什么重试或 fallback。
-- 为什么写回或没有写回健康。
+- 是否生成 V3 observation、其 comparability/failure attribution 如何确定。
 - 最终 summary 如何计算。
 
 ## 24. 错误处理与降级
@@ -1308,7 +1286,7 @@ Current Status | Availability | Last Probe / Latency | Trend | Actions
 - persistence 暂时失败时保留内存结果并有限次数重试 finalization，但有界且不写临时明文文件。
 - profile/template 无效时 target result 为 `skipped/needs_configuration`，不发出网络请求。
 - bucket rollup 失败不将已提交 attempt、target result 或 execution 改为失败；标记需要重建。
-- health writeback 失败使 execution finalization partial，并可幂等修复。
+- V3 observation append 失败使 execution finalization partial，并可用相同 deterministic identity 幂等重试。
 - UI workspace 查询失败保留上次成功数据并明确 freshness。
 - 内置 profile/parser 版本不兼容时 fail closed，不回退到任意 raw parser。
 
@@ -1397,7 +1375,7 @@ Current Status | Availability | Last Probe / Latency | Trend | Actions
 - 创建 monitor -> 定时触发 -> execution -> attempts -> health -> UI。
 - 手动与定时重叠只产生一个 execution。
 - fallback 后 degraded。
-- 401 停止重试并正确 health writeback。
+- 401 停止重试并生成 typed credential-failure observation，但不直接打开 circuit。
 - 429 Retry-After cooldown。
 - endpoint revision 变化拒绝旧结果。
 - execution deadline 截断 retry/fallback 且不启动超预算 attempt。
@@ -1465,14 +1443,14 @@ Current Status | Availability | Last Probe / Latency | Trend | Actions
 
 退出条件：压力和 paused-time 测试证明无重复执行、无 catch-up storm、无 permit 泄漏。
 
-### Phase 4：统一健康联动
+### Phase 4：Routing V3 observation cutover（2026-08-31 取代原 health writeback 阶段）
 
-- HealthObservation。
-- HealthTransitionService 统一 proxy/monitor 写回规则。
-- endpoint revision 与 traffic equivalence。
-- cooldown/recovery。
+- monitoring 直接构造 `RoutingObservation(source=active_probe)`。
+- `ObservationIngestion` 统一幂等 append，quality projector 统一消费。
+- endpoint/lifecycle revision、traffic equivalence 与 failure attribution 保真。
+- active probe 不直接调用 circuit transition。
 
-退出条件：监控失败阈值真实影响路由，诊断探针不会误伤健康，旧 request-log/proxy/routing 健康入口已全部委托给唯一状态转换服务。
+退出条件：监控 facts 与 V3 observation 同事务提交且可幂等重试；诊断探针不会直接打开 circuit；旧 health writer/adapter 不再有 production caller。
 
 ### Phase 5：Buckets 与 Read Model
 

@@ -47,7 +47,6 @@ const legacySourceAssembly = new Set([
   "routing_outcome_persistence.rs",
   "routing_runtime_state.rs",
   "routing_url_sanitizer_migration.rs",
-  "station_key_health_transitions.rs",
 ]);
 
 async function findRustTests(directory, relativeDirectory = "") {

@@ -28,7 +28,7 @@ $requiredTables = @(
     "channel_monitor_attempts",
     "channel_monitor_bucket_rollups",
     "channel_monitor_probe_budget_usage",
-    "station_key_health_observations"
+    "routing_observations"
 )
 
 $tableResults = @()
@@ -42,9 +42,12 @@ foreach ($table in $requiredTables) {
     }
 }
 
+$missingRequiredTables = @($tableResults | Where-Object { -not $_.exists }).Count
 $cutoffMs = [DateTimeOffset]::UtcNow.AddMinutes(-1 * $MaxRunningAgeMinutes).ToUnixTimeMilliseconds()
 $staleRunning = Invoke-SqliteScalar "SELECT COUNT(*) FROM channel_monitor_executions WHERE status IN ('queued','running') AND COALESCE(started_at_ms, planned_at_ms, created_at_ms) < $cutoffMs;"
 $legacyTableExists = Invoke-SqliteScalar "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'channel_monitor_runs');"
+$legacyHealthObservationTableExists = Invoke-SqliteScalar "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'station_key_health_observations');"
+$activeProbeObservations = Invoke-SqliteScalar "SELECT COUNT(*) FROM routing_observations WHERE source = 'active_probe';"
 $httpOnlyAuthoritative = Invoke-SqliteScalar "SELECT COUNT(*) FROM channel_monitor_target_results WHERE semantic_confidence = 'legacy_http_only' AND health_writeback_decision = 'write';"
 
 $result = [ordered]@{
@@ -53,11 +56,14 @@ $result = [ordered]@{
     databasePath = $resolvedDatabase.Path
     maxRunningAgeMinutes = $MaxRunningAgeMinutes
     tables = $tableResults
+    missingRequiredTableCount = [int64]$missingRequiredTables
     staleRunningExecutions = [int64]$staleRunning
     legacyChannelMonitorRunsTableExists = [bool]([int64]$legacyTableExists)
+    legacyStationKeyHealthObservationsTableExists = [bool]([int64]$legacyHealthObservationTableExists)
+    activeProbeRoutingObservations = [int64]$activeProbeObservations
     legacyHttpOnlyAuthoritativeWritebacks = [int64]$httpOnlyAuthoritative
-    status = if ([int64]$legacyTableExists -eq 0 -and [int64]$staleRunning -eq 0 -and [int64]$httpOnlyAuthoritative -eq 0) { "pass" } else { "fail" }
-    note = "schema 34 and later must not contain channel_monitor_runs; historical rows were backfilled into V2 monitoring facts by schema 10."
+    status = if ([int64]$missingRequiredTables -eq 0 -and [int64]$legacyTableExists -eq 0 -and [int64]$staleRunning -eq 0 -and [int64]$httpOnlyAuthoritative -eq 0) { "pass" } else { "fail" }
+    note = "Monitoring success evidence is channel-monitor facts plus routing_observations(source=active_probe). station_key_health_observations may remain only for the Routing V3 P6 compatibility window and is not active evidence. schema 34 and later must not contain channel_monitor_runs."
 }
 
 $outputDirectory = Split-Path -Parent $OutputPath

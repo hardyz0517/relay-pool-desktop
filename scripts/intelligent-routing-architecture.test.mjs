@@ -100,8 +100,13 @@ function checkPlannerContractBoundary() {
   );
   assert.match(
     admissionSource,
+    /planning_snapshot:\s*&'a\s+PlanningSnapshot/u,
+    "production admission must require a planning snapshot at the type boundary",
+  );
+  assert.doesNotMatch(
+    admissionSource,
     /planning_snapshot_required/u,
-    "production admission must fail closed without a planning snapshot",
+    "production admission must not retain an unreachable missing-snapshot branch",
   );
   assert.doesNotMatch(
     executionSource,
@@ -116,13 +121,15 @@ function checkPlannerContractBoundary() {
 
 function checkObservationAndHealthOwnership() {
   const ingestion = readSource("src-tauri/src/application/observation_ingestion.rs");
-  const transitions = readSource("src-tauri/src/application/health_transitions.rs");
-  const healthStore = readSource("src-tauri/src/persistence/stores/health_observation_store.rs");
   assert.match(ingestion, /RoutingObservationStore/u, "canonical observation ingestion must own the observation store");
   assert.match(ingestion, /producer_sequence/u, "observation ordering must be explicit");
   assert.match(ingestion, /Sha256/u, "observation idempotency must use a payload hash");
-  assert.doesNotMatch(transitions, /update_station_key_status/u, "health transitions must not write legacy status");
-  assert.doesNotMatch(healthStore, /update_station_key_status/u, "health store must not expose a legacy status writer");
+  for (const retired of [
+    "src-tauri/src/application/health_transitions.rs",
+    "src-tauri/src/persistence/stores/health_observation_store.rs",
+  ]) {
+    assert.ok(!existsSync(path.join(root, retired)), `${retired} must stay retired`);
+  }
 }
 
 function checkManifestOwnersAndForbiddenEdges() {

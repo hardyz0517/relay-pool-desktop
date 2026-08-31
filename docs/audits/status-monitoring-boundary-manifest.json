@@ -1,6 +1,6 @@
 {
-  "status": "legacy_monitor_run_compatibility_removed_schema34_external_release_gates_pending",
-  "date": "2026-08-12",
+  "status": "routing_v3_observation_cutover_complete_external_release_gates_pending",
+  "date": "2026-08-31",
   "branch": "codex/status-monitoring-refactor",
   "baseline_commit": "87280a4e1ac836870cbb1b69b7d5d4cfb613cad4",
   "target_architecture": {
@@ -9,7 +9,7 @@
       "MonitorExecution",
       "MonitorTargetResult",
       "ProbeAttempt",
-      "HealthObservation",
+      "RoutingObservation(source=active_probe)",
       "BucketRollup",
       "ChannelStatusWorkspace"
     ],
@@ -17,6 +17,7 @@
       "ui -> bridge dto",
       "commands -> application",
       "application -> models and repository/service ports",
+      "application/monitoring/write_path -> ObservationIngestion and models/routing_observation",
       "services/monitoring/adapters -> protocol domain only",
       "services/monitoring/transport -> outbound client and request budgets",
       "persistence/stores/monitoring -> sqlx and monitoring persistence rows",
@@ -30,9 +31,29 @@
       "models/monitoring -> services",
       "services/monitoring/adapters -> persistence",
       "services/monitoring/adapters -> SecretManager",
+      "application/monitoring -> models/health or HealthTransitionService",
+      "application/monitoring -> station_key_health_observations writer",
+      "active probe -> station-key circuit mutation",
       "ui -> raw channel_monitor_runs statistics",
       "ui -> request_logs to synthesize monitor trends"
     ]
+  },
+  "current_conclusion": {
+    "superseded_by": "docs/plans/2026-08-31-routing-v3-legacy-chain-retirement.md",
+    "current_write_contract": [
+      "MonitoringExecutionCommitter persists channel_monitor_executions, channel_monitor_attempts, channel_monitor_target_results, schedule advancement and rollup dirty ranges in the caller-owned transaction",
+      "each terminal target is converted directly to an immutable RoutingObservation with source=active_probe and appended through ObservationIngestion",
+      "monitoring does not import models::health, call HealthTransitionService, write station_key_health_observations or mutate station-key circuit state",
+      "active-probe observation can feed generation-aware V3 quality projection; request-attempt boundaries remain the only circuit transition owner",
+      "routing health/error-rate/capacity-domain legacy tables remain only for P6 migration/import/delete-cleanup/schema/portable compatibility"
+    ],
+    "retained_monitoring_authority": [
+      "monitor definitions and immutable execution configuration",
+      "probe attempts and one terminal target result per station key",
+      "monitor execution summary and schedule advancement",
+      "bucket rollups, dirty ranges, retention and ChannelStatusWorkspace"
+    ],
+    "historical_evidence_policy": "task0 through task18 entries record the implementation state when those tasks ran; old HealthObservation and HealthTransitionService statements inside those task records are historical evidence, not current target architecture"
   },
   "current_exceptions": [],
   "generated_files": [

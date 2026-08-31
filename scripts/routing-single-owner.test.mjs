@@ -17,7 +17,6 @@ const files = {
   routingHealthTypescript: read("src-tauri/src/ipc/dto/routing_health_reads.typescript.txt"),
   routingEngineMod: read("src-tauri/src/application/routing_engine/mod.rs"),
   routingWorkspaceQuery: read("src-tauri/src/application/queries/routing_workspace.rs"),
-  operationalDetailQuery: read("src-tauri/src/application/queries/operational_detail.rs"),
   routingRuntimeQuery: read("src-tauri/src/application/queries/routing_runtime.rs"),
   requestDecisionTrace: read("src-tauri/src/application/queries/request_decision_trace.rs"),
   policyDocumentRunner: read("src-tauri/src/background_tasks/policy_document_runner.rs"),
@@ -68,7 +67,6 @@ checkDefaultV2ExecutionUsesLeasedController();
 checkCredentialAndEndpointResolveLate();
 checkLegacyRoutingSchedulerDeleted();
 checkRoutingWorkspaceUsesCanonicalFacts();
-checkOperationalDetailUsesProjectionFacts();
 checkDecisionTraceUsesDurableDecisions();
 checkRuntimeOverlayUsesNarrowFacts();
 checkSimulationDtoUsesPlannerProjectionLanguage();
@@ -293,22 +291,6 @@ function checkRoutingWorkspaceUsesCanonicalFacts() {
     file,
     /\bRouteCandidateProjection\b|\bRoutingWorkspaceProjectionCandidate\b|\bworkspace_snapshot_from_projection_candidates\b/u,
     "routing workspace read model must not depend on the legacy RouteCandidateProjection compatibility chain",
-  );
-}
-
-function checkOperationalDetailUsesProjectionFacts() {
-  const file = "src-tauri/src/application/queries/operational_detail.rs";
-  reject(
-    files.operationalDetailQuery,
-    file,
-    /\bCanonicalRoutingCandidate\b|\boperational_detail_from_runtime_candidate\b|\brouting_store\.runtime_candidate\b/u,
-    "operational detail read model must consume RouteCandidateProjection facts, not rebuild runtime-candidate compatibility facts",
-  );
-  require(
-    files.operationalDetailQuery,
-    file,
-    /\boperational_detail_from_projection\b[\s\S]*\bRouteCandidateProjection\b/u,
-    "operational detail read model must keep the canonical projection-backed adapter",
   );
 }
 
@@ -615,8 +597,12 @@ function checkRetiredProtectionAndCapacityDomainStayOutOfProductionRouting() {
       read("src-tauri/src/application/operational_facts/candidate_projector.rs"),
     ],
     [
-      "src-tauri/src/application/routing_engine/eligibility.rs",
-      read("src-tauri/src/application/routing_engine/eligibility.rs"),
+      "src-tauri/src/application/queries/routing_workspace.rs",
+      files.routingWorkspaceQuery,
+    ],
+    [
+      "src-tauri/src/application/queries/routing_protection.rs",
+      files.routingProtectionQuery,
     ],
   ];
   for (const [file, source] of rejectionOwners) {
@@ -651,7 +637,7 @@ function checkRetiredProtectionAndCapacityDomainStayOutOfProductionRouting() {
   }
 
   const retiredErrorRateHistoryPattern =
-    /list_error_rate_history|listErrorRateHistory|HealthProtectionScopeKindDto|ErrorRateHistory(?:Input|Page|Event)Dto/u;
+    /list_error_rate_history|listErrorRateHistory|HealthProtectionScopeKindDto|ErrorRateHistory(?:Input|Page|Event)Dto|list_station_key_health|listStationKeyHealth|get_station_key_health|getStationKeyHealth|get_station_key_operational_detail|getStationKeyOperationalDetail/u;
   for (const [file, source] of [
     ["src-tauri/permissions/main-window.toml", files.mainWindowAcl],
     ["src-tauri/gen/schemas/acl-manifests.json", files.compiledAcl],
@@ -667,7 +653,7 @@ function checkRetiredProtectionAndCapacityDomainStayOutOfProductionRouting() {
       source,
       file,
       retiredErrorRateHistoryPattern,
-      "the retired error-rate history control surface must not remain reachable from the main renderer or generated API",
+      "retired routing diagnostics surfaces must not remain reachable from the main renderer or generated API",
     );
   }
 
