@@ -1,3 +1,7 @@
+import type {
+  RoutingCandidateParticipationReason,
+  RoutingCandidateParticipationStatus,
+} from "@/lib/types/routing";
 import type { RoutingCandidateView, RoutingLatestDecisionView } from "../../lib/types/routingWorkspace";
 
 export type CooldownDisplay = {
@@ -7,6 +11,11 @@ export type CooldownDisplay = {
 };
 
 export type RoutingCircuitState = "closed" | "open" | "half_open";
+
+export type ParticipationDisplay = {
+  label: string;
+  tone: "healthy" | "warning" | "disabled";
+};
 
 export type LatestDecisionDisplay = {
   title: string;
@@ -31,10 +40,6 @@ const previewRejectReasonLabels: Record<string, string> = {
   model_mapping_context_required: "模型映射需要候选上下文",
   model_mapping_profile_not_found: "模型映射配置不存在",
   unsupported_model: "模型被健康能力记录拒绝",
-  model_health_rejected: "模型健康状态阻止路由",
-  scoped_health_rejected: "候选健康状态阻止路由",
-  error_rate_rejected: "密钥熔断器阻止路由",
-  error_rate_probe_discovery: "仅用于熔断恢复探测",
   credential_unavailable: "凭据不可用",
   candidate_disabled: "密钥已停用",
   candidate_unschedulable: "密钥已暂停路由",
@@ -90,6 +95,31 @@ export function buildCooldownDisplay(
   };
 }
 
+export function buildParticipationDisplay(
+  status: RoutingCandidateParticipationStatus | string,
+  reason: RoutingCandidateParticipationReason | string,
+): ParticipationDisplay {
+  const byReason: Record<RoutingCandidateParticipationReason, ParticipationDisplay> = {
+    ready: { label: "可参与", tone: "healthy" },
+    administratively_disabled: { label: "已暂停路由", tone: "disabled" },
+    planner_excluded: { label: "未进入规划", tone: "warning" },
+    planner_unavailable: { label: "规划状态不可用", tone: "disabled" },
+    candidate_limit_exceeded: { label: "候选上限外", tone: "warning" },
+    circuit_persistence_unavailable: { label: "熔断状态不可用", tone: "disabled" },
+    circuit_open_cooldown: { label: "熔断冷却中", tone: "warning" },
+    circuit_recovery_score_gate_passed: { label: "可恢复探测", tone: "warning" },
+    circuit_recovery_score_gate_denied: { label: "恢复评分门未通过", tone: "warning" },
+    circuit_half_open_idle: { label: "半开可探测", tone: "warning" },
+    circuit_half_open_lease_occupied: { label: "半开探测进行中", tone: "warning" },
+  };
+  if (Object.prototype.hasOwnProperty.call(byReason, reason)) {
+    return byReason[reason as RoutingCandidateParticipationReason];
+  }
+  return status === "eligible" || status === "conditionally_eligible"
+    ? { label: "参与状态未知", tone: "disabled" }
+    : { label: "不参与（原因未知）", tone: "disabled" };
+}
+
 export function buildLatestDecisionDisplay(
   proxyRunning: boolean,
   latestDecision: RoutingLatestDecisionView | null,
@@ -133,7 +163,7 @@ export function formatPreviewRejectReason(code: string) {
 }
 
 export function buildCandidateDisplayFacts(candidate: RoutingCandidateView): CandidateDisplayFacts {
-  const rejectReason = candidate.previewRejectReasons[0] ?? null;
+  const rejectReason = candidate.plannerExclusionCodes[0] ?? null;
   const pricingFacts = candidate.facts.filter((fact) => fact.kind === "pricing");
   const multiplierFact =
     pricingFacts.find((fact) => fact.label === "Effective multiplier") ??
@@ -145,7 +175,7 @@ export function buildCandidateDisplayFacts(candidate: RoutingCandidateView): Can
   const formattedBalance = formatBalanceValue(candidate.balanceValue);
   const balanceLabel =
     formattedBalance?.label ??
-    (candidate.previewRejectReasons.includes("balance_depleted")
+    (candidate.plannerExclusionCodes.includes("balance_depleted")
       ? "余额不足"
       : balanceFact
         ? formatBalanceStatus(balanceFact.value)

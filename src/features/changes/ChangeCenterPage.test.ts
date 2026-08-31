@@ -77,6 +77,16 @@ describe("change center activity presentation", () => {
     expect(changeSummary(changeActivity())).toBe("默认组 · 倍率 1 → 0.8");
   });
 
+  it("shows the first effective multiplier when no previous rate was stored", () => {
+    expect(changeSummary(changeActivity({
+      newValueJson: JSON.stringify({
+        groupName: "默认组",
+        oldEffectiveRateMultiplier: null,
+        newEffectiveRateMultiplier: 0.8,
+      }),
+    }))).toBe("默认组 · 倍率 未设置 → 0.8");
+  });
+
   it("places the changed object ahead of its rate transition", () => {
     expect(changeObjectTitle(changeActivity({
       stationId: "station-1",

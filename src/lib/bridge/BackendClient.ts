@@ -116,9 +116,7 @@ import type {
   RoutingRuntimeOverlay,
   RoutingWorkspaceSnapshot,
   RoutingWorkspaceSnapshotInput,
-  StationKeyOperationalDetail,
   StationKeyCapabilities,
-  StationKeyHealth,
   UpdateStationKeyCapabilitiesInput,
   UpsertModelAliasInput,
 } from "@/lib/types/routing";
@@ -315,7 +313,6 @@ export type RoutingDomainClient = {
   listModelAliases(): Promise<ModelAlias[]>;
   upsertModelAlias(input: UpsertModelAliasInput): Promise<ModelAlias>;
   deleteModelAlias(id: string): Promise<void>;
-  listStationKeyHealth(): Promise<StationKeyHealth[]>;
   getRoutingProtectionStatus(input?: import("./generated").RoutingProtectionStatusInputDto): Promise<import("./generated").RoutingProtectionStatusDto>;
   loadRoutingPolicy(): Promise<import("./generated").RoutingPolicySnapshotDto>;
   getRoutingPolicyPublicationStatus(input: import("./generated").RoutingPolicyPublicationStatusInputDto): Promise<import("./generated").RoutingPolicyPublicationStatusDto>;
@@ -323,9 +320,7 @@ export type RoutingDomainClient = {
   loadRoutingWorkspaceSnapshot(input?: RoutingWorkspaceSnapshotInput): Promise<RoutingWorkspaceSnapshot>;
   loadRoutingRuntimeOverlay(): Promise<RoutingRuntimeOverlay>;
   listRecentRouteDecisions(input?: RecentRouteDecisionsInput): Promise<RecentRouteDecisionsPage>;
-  getStationKeyOperationalDetail(stationKeyId: string): Promise<StationKeyOperationalDetail>;
   getRequestDecisionTrace(requestLogId: string): Promise<RequestDecisionTrace>;
-  getStationKeyHealth(stationKeyId: string): Promise<StationKeyHealth>;
   simulateRoute(input: RouteSimulationInput): Promise<RouteSimulationResult>;
   getModelMappingWorkspace(): Promise<ModelMappingWorkspaceDto>;
   getModelMappingDocument(): Promise<ModelMappingDocumentDto>;

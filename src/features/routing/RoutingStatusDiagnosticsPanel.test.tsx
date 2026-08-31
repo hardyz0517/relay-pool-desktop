@@ -32,6 +32,8 @@ function snapshotFixture(): RoutingWorkspaceSnapshot {
         priority: 1,
         schedulable: true,
         healthState: "ready",
+        participationStatus: "excluded",
+        participationReason: "circuit_half_open_lease_occupied",
         score: 0.9,
         scoreStatus: "scored",
         plannerExclusionCodes: [],
@@ -98,6 +100,9 @@ function snapshotFixture(): RoutingWorkspaceSnapshot {
             state: "half_open",
             stateRevision: 7,
             lifecycleRevision: 3,
+            policyRevision: 1,
+            persistenceStatus: "available",
+            stateRowPresent: true,
             consecutiveFailures: null,
             reopenLevel: 2,
             cooldownUntilMs: null,
@@ -124,6 +129,25 @@ function snapshotFixture(): RoutingWorkspaceSnapshot {
         hardRejectionCodes: [],
       },
     ],
+    aggregates: {
+      totalCandidates: 1,
+      schedulableCandidates: 1,
+      eligibleCandidates: 0,
+      conditionallyEligibleCandidates: 0,
+      excludedCandidates: 1,
+      unavailableCandidates: 0,
+      closedCircuits: 0,
+      openCircuits: 0,
+      halfOpenCircuits: 1,
+      persistenceUnavailableCircuits: 0,
+    },
+    circuitReadModelStatus: "available",
+    circuitReadModelCode: null,
+    circuitRevision: {
+      processGateRevision: 0,
+      persistenceHealthRevision: 0,
+      stateFingerprint: "test",
+    },
     readModelStatus: "available",
     plannerEvaluation: "available",
     plannerEvaluationCode: null,
@@ -214,8 +238,11 @@ describe("routing Key circuit diagnostics", () => {
     });
 
     expect(host.textContent).toContain("密钥熔断诊断");
+    expect(host.textContent).toContain("可参与候选");
+    expect(host.textContent).toContain("0/1");
+    expect(host.textContent).toContain("半开探测进行中");
     expect(host.textContent).toContain("运行代际：rg-active-42");
-    expect(host.textContent).toContain("revision：策略 r7 · 质量 r42 · 健康 r39");
+    expect(host.textContent).toContain("revision：策略 r7 · 质量 r42 · 熔断 gate r0 / durable r0");
     expect(host.textContent).toContain("质量投影：陈旧 · 积压 3");
     expect(host.textContent).toContain("投影延迟：1 分 5 秒");
     expect(host.textContent).toContain("有效分 93.00 · 基础分 91.00");
@@ -235,6 +262,35 @@ describe("routing Key circuit diagnostics", () => {
     expect(host.textContent).not.toContain("secret-domain-id");
     expect(host.textContent).not.toContain("容量域");
     expect(host.textContent).not.toContain("lease-id");
+    act(() => root.unmount());
+  });
+
+  it("shows circuit read-model unavailability instead of a healthy fallback", () => {
+    const unavailable = snapshotFixture();
+    unavailable.circuitReadModelStatus = "unavailable";
+    unavailable.aggregates.unavailableCandidates = 1;
+    unavailable.aggregates.persistenceUnavailableCircuits = 1;
+    unavailable.candidates[0].participationStatus = "unavailable";
+    unavailable.candidates[0].participationReason = "circuit_persistence_unavailable";
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    act(() => {
+      root.render(
+        <RoutingStatusDiagnosticsPanel
+          snapshot={unavailable}
+          runtimeOverlay={null}
+          decisions={null}
+          protectionStatus={null}
+          loading={false}
+          developerModeEnabled
+        />,
+      );
+    });
+
+    expect(host.textContent).toContain("熔断读模型暂不可用");
+    expect(host.textContent).toContain("熔断状态不可用");
     act(() => root.unmount());
   });
 

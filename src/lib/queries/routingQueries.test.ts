@@ -5,7 +5,6 @@ import type { BackendClient } from "@/lib/bridge/BackendClient";
 
 import {
   getRequestDecisionTraceQuery,
-  getStationKeyOperationalDetailQuery,
   listRecentRouteDecisionsQuery,
   loadRoutingRuntimeOverlayQuery,
   loadRoutingWorkspaceSnapshotQuery,
@@ -23,7 +22,6 @@ describe("routing query owner", () => {
     listModelAliases: vi.fn(),
     upsertModelAlias: vi.fn(),
     deleteModelAlias: vi.fn(),
-    listStationKeyHealth: vi.fn(),
     getRoutingProtectionStatus: vi.fn(),
     loadRoutingWorkspaceSnapshot: vi.fn(async () => ({
       readModelVersion: "routing_workspace_read_model_v3",
@@ -58,13 +56,28 @@ describe("routing query owner", () => {
       capacityMode: "snapshot_only" as const,
       page: { limit: 50, returned: 0, nextCursor: null },
       candidates: [],
+      aggregates: {
+        totalCandidates: 0,
+        schedulableCandidates: 0,
+        eligibleCandidates: 0,
+        conditionallyEligibleCandidates: 0,
+        excludedCandidates: 0,
+        unavailableCandidates: 0,
+        closedCircuits: 0,
+        openCircuits: 0,
+        halfOpenCircuits: 0,
+        persistenceUnavailableCircuits: 0,
+      },
+      circuitReadModelStatus: "available" as const,
+      circuitReadModelCode: null,
+      circuitRevision: { processGateRevision: 0, persistenceHealthRevision: 0, stateFingerprint: "test" },
       readModelStatus: "available" as const,
       plannerEvaluation: "available" as const,
       plannerEvaluationCode: null,
       availabilityStatus: "all_keys_unavailable" as const,
     })),
     loadRoutingRuntimeOverlay: vi.fn(async () => ({
-      overlayVersion: "routing_runtime_overlay_v2",
+      overlayVersion: "routing_runtime_overlay_v3",
       sampledAtMs: 2,
       revision: 1,
       candidates: [],
@@ -73,15 +86,6 @@ describe("routing query owner", () => {
       pageVersion: "recent_route_decisions_v1",
       decisions: [],
       nextCursor: null,
-      readModelStatus: "available" as const,
-    })),
-    getStationKeyOperationalDetail: vi.fn(async () => ({
-      detailVersion: "station_key_operational_detail_v1",
-      stationKeyId: "key-1",
-      stationId: "station-1",
-      endpointRevision: 1,
-      facts: [],
-      lazyHistoryAvailable: true,
       readModelStatus: "available" as const,
     })),
     getRequestDecisionTrace: vi.fn(async () => ({
@@ -96,7 +100,6 @@ describe("routing query owner", () => {
       timeline: [],
       planningRounds: [],
     })),
-    getStationKeyHealth: vi.fn(),
     loadRoutingPolicy: vi.fn(),
     getRoutingPolicyPublicationStatus: vi.fn(async (input) => ({
       revision: input.revision,
@@ -200,7 +203,6 @@ describe("routing query owner", () => {
   it("routes all routing read models through the routing backend domain", async () => {
     await loadRoutingWorkspaceSnapshotQuery({ limit: 20 });
     await listRecentRouteDecisionsQuery({ limit: 10 });
-    await getStationKeyOperationalDetailQuery("key-1");
     await getRequestDecisionTraceQuery("request-log-1");
     await simulateRouteQuery({
       endpoint: "chat_completions",
@@ -214,7 +216,6 @@ describe("routing query owner", () => {
 
     expect(routing.loadRoutingWorkspaceSnapshot).toHaveBeenCalledWith({ limit: 20 });
     expect(routing.listRecentRouteDecisions).toHaveBeenCalledWith({ limit: 10 });
-    expect(routing.getStationKeyOperationalDetail).toHaveBeenCalledWith("key-1");
     expect(routing.getRequestDecisionTrace).toHaveBeenCalledWith("request-log-1");
     expect(routing.simulateRoute).toHaveBeenCalledTimes(1);
   });

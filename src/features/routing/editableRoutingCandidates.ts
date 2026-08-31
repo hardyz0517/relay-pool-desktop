@@ -6,7 +6,7 @@ function fallbackCandidate(
   item: KeyPoolItem,
   routingGroupScope: RoutingGroupFilter,
 ): RoutingCandidateView {
-  const previewRejectReasons = [
+  const plannerExclusionCodes = [
     ...(!item.enabled ? ["candidate_disabled"] : []),
     ...(!item.schedulable ? ["candidate_unschedulable"] : []),
   ];
@@ -20,26 +20,20 @@ function fallbackCandidate(
     priority: item.priority,
     enabled: item.enabled,
     schedulable: item.schedulable,
-    healthState: item.cooldownUntil
-      ? "cooldown"
-      : item.consecutiveFailures > 0
-        ? "degraded"
-        : "unknown",
+    participationStatus: "unavailable",
+    participationReason: "circuit_persistence_unavailable",
     score: null,
     scoreDetails: null,
     currentConcurrency: null,
     lastSuccessAt: null,
     lastFailureAt: null,
-    cooldownUntil: item.cooldownUntil,
     routingGroupScope,
     routingGroupMatch: true,
-    scoreStatus: previewRejectReasons.length === 0 ? "unavailable" : "excluded",
-    plannerExclusionCodes: previewRejectReasons,
+    scoreStatus: plannerExclusionCodes.length === 0 ? "unavailable" : "excluded",
+    plannerExclusionCodes,
     assessmentSnapshotId: null,
     assessmentDurableRevision: null,
     assessmentRequestContextFingerprint: null,
-    previewEligible: previewRejectReasons.length === 0,
-    previewRejectReasons,
     facts: [],
   };
 }
@@ -67,7 +61,6 @@ export function buildEditableRoutingCandidates(
       ...workspaceCandidate,
       priority: item.priority,
       enabled: item.enabled,
-      cooldownUntil: item.cooldownUntil ?? workspaceCandidate.cooldownUntil,
     };
   });
 }

@@ -14,6 +14,9 @@ describe("routing workspace view", () => {
         state: "half_open" as const,
         stateRevision: 3,
         lifecycleRevision: 2,
+        policyRevision: 1,
+        persistenceStatus: "available" as const,
+        stateRowPresent: true,
         consecutiveFailures: 4,
         reopenLevel: 1,
         cooldownUntilMs: null,
@@ -45,6 +48,8 @@ describe("routing workspace view", () => {
   it("keeps request eligibility separate from the administrative schedulable switch", () => {
     const excluded = candidate({
       schedulable: true,
+      participationStatus: "excluded",
+      participationReason: "planner_excluded",
       scoreStatus: "excluded",
       plannerExclusionCodes: ["group_mismatch"],
       hardRejectionCodes: ["group_mismatch"],
@@ -52,6 +57,8 @@ describe("routing workspace view", () => {
     const paused = candidate({
       stationKeyId: "paused",
       schedulable: false,
+      participationStatus: "excluded",
+      participationReason: "administratively_disabled",
       scoreStatus: "excluded",
       plannerExclusionCodes: ["candidate_unschedulable"],
       hardRejectionCodes: ["candidate_unschedulable"],
@@ -62,13 +69,15 @@ describe("routing workspace view", () => {
     expect(view.candidates[0]).toMatchObject({
       enabled: true,
       schedulable: true,
-      previewEligible: false,
+      participationStatus: "excluded",
+      participationReason: "planner_excluded",
       routingGroupMatch: false,
     });
     expect(view.candidates[1]).toMatchObject({
       enabled: true,
       schedulable: false,
-      previewEligible: false,
+      participationStatus: "excluded",
+      participationReason: "administratively_disabled",
       routingGroupMatch: true,
     });
   });
@@ -107,9 +116,35 @@ describe("routing workspace view", () => {
 
     expect(view.candidates[0]).toMatchObject({
       scoreStatus: "scored",
-      previewEligible: true,
-      previewRejectReasons: [],
+      participationStatus: "eligible",
+      participationReason: "ready",
+      plannerExclusionCodes: [],
       balanceValue: 3.61,
+    });
+  });
+
+  it("uses full-set backend aggregates instead of recounting the current page", () => {
+    const paged = snapshot([candidate()]);
+    paged.aggregates = {
+      totalCandidates: 5,
+      schedulableCandidates: 4,
+      eligibleCandidates: 1,
+      conditionallyEligibleCandidates: 1,
+      excludedCandidates: 3,
+      unavailableCandidates: 0,
+      closedCircuits: 3,
+      openCircuits: 1,
+      halfOpenCircuits: 1,
+      persistenceUnavailableCircuits: 0,
+    };
+
+    const view = toRoutingWorkspaceView(paged, proxyStatus());
+
+    expect(view.summary).toMatchObject({
+      totalCandidateCount: 5,
+      currentPageCandidateCount: 1,
+      participatingCandidateCount: 2,
+      nonParticipatingCandidateCount: 3,
     });
   });
 });
@@ -118,7 +153,7 @@ function runtimeOverlay(
   overrides: Partial<RoutingRuntimeOverlay["candidates"][number]> = {},
 ): RoutingRuntimeOverlay {
   return {
-    overlayVersion: "routing_runtime_overlay_v2",
+    overlayVersion: "routing_runtime_overlay_v3",
     sampledAtMs: 2,
     revision: 1,
     candidates: [
@@ -128,8 +163,6 @@ function runtimeOverlay(
         endpointRevision: 1,
         inFlight: 0,
         stationKeyInFlight: 0,
-        healthState: "ready",
-        cooldownUntil: null,
         ...overrides,
       },
     ],
@@ -146,6 +179,8 @@ function candidate(overrides: Partial<RoutingWorkspaceCandidate> = {}): RoutingW
     priority: 0,
     schedulable: true,
     healthState: "ready",
+    participationStatus: "eligible",
+    participationReason: "ready",
     score: null,
     scoreStatus: "unavailable",
     plannerExclusionCodes: [],
@@ -244,6 +279,25 @@ function snapshot(candidates: RoutingWorkspaceCandidate[]): RoutingWorkspaceSnap
     capacityMode: "snapshot_only",
     page: { limit: 128, returned: candidates.length, nextCursor: null },
     candidates,
+    aggregates: {
+      totalCandidates: candidates.length,
+      schedulableCandidates: candidates.filter((candidate) => candidate.schedulable).length,
+      eligibleCandidates: candidates.filter((candidate) => candidate.participationStatus === "eligible").length,
+      conditionallyEligibleCandidates: candidates.filter((candidate) => candidate.participationStatus === "conditionally_eligible").length,
+      excludedCandidates: candidates.filter((candidate) => candidate.participationStatus === "excluded").length,
+      unavailableCandidates: candidates.filter((candidate) => candidate.participationStatus === "unavailable").length,
+      closedCircuits: candidates.length,
+      openCircuits: 0,
+      halfOpenCircuits: 0,
+      persistenceUnavailableCircuits: 0,
+    },
+    circuitReadModelStatus: "available",
+    circuitReadModelCode: null,
+    circuitRevision: {
+      processGateRevision: 0,
+      persistenceHealthRevision: 0,
+      stateFingerprint: "test",
+    },
     readModelStatus: "available",
     plannerEvaluation: "available",
     plannerEvaluationCode: null,

@@ -116,6 +116,41 @@ describe("ScoreBreakdown", () => {
 });
 
 describe("LocalRoutingStatusCandidateRow concurrency", () => {
+  it("renders backend participation reasons for paused, recovery, and unavailable candidates", () => {
+    const unavailableCircuit = circuitDiagnostics("closed", null);
+    unavailableCircuit.circuit.persistenceStatus = "unavailable";
+    const paused = renderToStaticMarkup(
+      <LocalRoutingStatusCandidateRow
+        candidate={candidate({ participationStatus: "excluded", participationReason: "administratively_disabled" })}
+        order={1}
+        nowMs={0}
+      />,
+    );
+    const recovery = renderToStaticMarkup(
+      <LocalRoutingStatusCandidateRow
+        candidate={candidate({ participationStatus: "conditionally_eligible", participationReason: "circuit_recovery_score_gate_passed" })}
+        order={1}
+        nowMs={0}
+      />,
+    );
+    const unavailable = renderToStaticMarkup(
+      <LocalRoutingStatusCandidateRow
+        candidate={candidate({
+          participationStatus: "unavailable",
+          participationReason: "circuit_persistence_unavailable",
+          diagnostics: unavailableCircuit,
+        })}
+        order={1}
+        nowMs={0}
+      />,
+    );
+
+    expect(paused).toContain("已暂停路由");
+    expect(recovery).toContain("可恢复探测");
+    expect(unavailable).toContain("熔断状态不可用");
+    expect(unavailable).toContain("不可用");
+  });
+
   it("shows the circuit countdown, half-open state, and closed placeholder", () => {
     const openMarkup = renderToStaticMarkup(
       <LocalRoutingStatusCandidateRow
@@ -209,13 +244,13 @@ function candidate(overrides: Partial<RoutingCandidateView> = {}): RoutingCandid
     priority: 1,
     enabled: true,
     schedulable: true,
-    healthState: "ready",
+    participationStatus: "eligible",
+    participationReason: "ready",
     score: null,
     scoreDetails: null,
     currentConcurrency: null,
     lastSuccessAt: null,
     lastFailureAt: null,
-    cooldownUntil: null,
     routingGroupScope: "all_groups",
     routingGroupMatch: true,
     scoreStatus: "scored",
@@ -223,8 +258,6 @@ function candidate(overrides: Partial<RoutingCandidateView> = {}): RoutingCandid
     assessmentSnapshotId: null,
     assessmentDurableRevision: null,
     assessmentRequestContextFingerprint: null,
-    previewEligible: true,
-    previewRejectReasons: [],
     facts: [],
     ...overrides,
   };
@@ -239,6 +272,9 @@ function circuitDiagnostics(
       state,
       stateRevision: null,
       lifecycleRevision: null,
+      policyRevision: null,
+      persistenceStatus: "available",
+      stateRowPresent: false,
       consecutiveFailures: null,
       reopenLevel: 0,
       cooldownUntilMs,

@@ -11,6 +11,7 @@ import type {
 import type { VersionedRoutingDeepLink } from "@/lib/types/routingDeepLinks";
 import { userVisibleProtectionEntries } from "./routingProtectionPresentation";
 import { buildRoutingCandidateDiagnosticsDisplay } from "./routingDiagnosticsPresentation";
+import { buildParticipationDisplay } from "./localRoutingStatusViewModel";
 
 type RoutingStatusDiagnosticsPanelProps = {
   snapshot: RoutingWorkspaceSnapshot | null;
@@ -53,12 +54,6 @@ export function RoutingStatusDiagnosticsPanel({
         candidate.multiplier.multiplier == null &&
         candidate.pricing.comparisonValue == null,
     ).length ?? 0;
-  const availableCount =
-    snapshot?.candidates.filter((candidate) => {
-      const overlay = overlayByKey.get(candidate.stationKeyId);
-      const healthState = overlay?.healthState ?? candidate.healthState;
-      return ["ready", "available"].includes(healthState) && candidate.scoreStatus === "scored";
-    }).length ?? 0;
   useEffect(() => {
     if (!deepLink || !snapshot) return;
     if (deepLink.kind === "station") {
@@ -121,9 +116,17 @@ export function RoutingStatusDiagnosticsPanel({
             路由诊断刷新失败，当前显示的是上一次成功读取的数据：{error}
           </div>
         ) : null}
+        {snapshot.circuitReadModelStatus !== "available" || snapshot.aggregates.persistenceUnavailableCircuits > 0 ? (
+          <div className="rounded-[var(--surface-radius)] border border-warning-border bg-warning-surface px-3 py-2 text-xs text-warning-foreground" role="status">
+            熔断读模型暂不可用{snapshot.circuitReadModelCode ? `：${snapshot.circuitReadModelCode}` : ""}，候选不会按旧健康数据推断为可参与。
+          </div>
+        ) : null}
         <RoutingProjectionStatus snapshot={snapshot} />
         <div className="grid min-w-0 gap-2 text-sm sm:grid-cols-4">
-          <ReadableMetric label="可用候选" value={`${availableCount}/${snapshot.candidates.length}`} />
+          <ReadableMetric
+            label="可参与候选"
+            value={`${snapshot.aggregates.eligibleCandidates + snapshot.aggregates.conditionallyEligibleCandidates}/${snapshot.aggregates.totalCandidates}`}
+          />
           <ReadableMetric label="价格缺口" value={`${unpricedCount}`} tone={unpricedCount > 0 ? "warning" : "healthy"} />
           <ReadableMetric label="实时并发" value={formatRuntimeCapacity(snapshot.candidates, overlayByKey)} />
           <ReadableMetric label="最近决策" value={`${decisions?.decisions.length ?? 0}`} />
@@ -232,9 +235,11 @@ function CandidateLine({
   overlay?: RoutingRuntimeOverlay["candidates"][number];
   highlighted?: boolean;
 }) {
-  const healthState = overlay?.healthState ?? candidate.healthState;
   const inFlight = overlay?.inFlight ?? candidate.capacity.inFlight;
-  const blocked = candidate.scoreStatus !== "scored";
+  const participation = buildParticipationDisplay(
+    candidate.participationStatus,
+    candidate.participationReason,
+  );
   const diagnostics = buildRoutingCandidateDiagnosticsDisplay(candidate);
 
   return (
@@ -248,9 +253,7 @@ function CandidateLine({
         <div className="truncate">价格：{formatPrice(candidate)}</div>
       </div>
       <div className="flex flex-wrap items-center gap-2 md:justify-end">
-        <StatusBadge tone={blocked ? "warning" : ["ready", "available"].includes(healthState) ? "healthy" : healthState === "degraded" ? "warning" : "disabled"}>
-          {blocked ? scoreStatusLabel(candidate.scoreStatus) : healthStateLabel(healthState)}
-        </StatusBadge>
+        <StatusBadge tone={participation.tone}>{participation.label}</StatusBadge>
         <span className="text-xs text-muted-foreground">
           {capacityStatusLabel(candidate.capacity.status)} · 本地在途 {inFlight ?? 0}/{formatConcurrencyLimit(candidate.capacity.maxConcurrency)}
         </span>
@@ -278,8 +281,7 @@ function CandidateLine({
 function RoutingProjectionStatus({ snapshot }: { snapshot: RoutingWorkspaceSnapshot }) {
   const revisionKnown =
     snapshot.policyRevision != null ||
-    snapshot.qualityRevision != null ||
-    snapshot.healthRevision != null;
+    snapshot.qualityRevision != null;
   const projectionKnown =
     snapshot.qualityProjectionBacklog != null ||
     snapshot.qualityProjectionLagSeconds != null ||
@@ -296,7 +298,7 @@ function RoutingProjectionStatus({ snapshot }: { snapshot: RoutingWorkspaceSnaps
         运行代际：{snapshot.runtimeGenerationId ?? "尚未激活"}
       </span>
       <span className="min-w-0 break-words">
-        revision：策略 {formatRevision(snapshot.policyRevision)} · 质量 {formatRevision(snapshot.qualityRevision)} · 健康 {formatRevision(snapshot.healthRevision)}
+        revision：策略 {formatRevision(snapshot.policyRevision)} · 质量 {formatRevision(snapshot.qualityRevision)} · 熔断 gate r{snapshot.circuitRevision.processGateRevision} / durable r{snapshot.circuitRevision.persistenceHealthRevision}
       </span>
       <span className="min-w-0 break-words">
         质量投影：{stale ? "陈旧" : snapshot.qualityStale === false ? "最新" : "状态未知"} · 积压 {formatOptionalCount(snapshot.qualityProjectionBacklog)}
@@ -312,6 +314,7 @@ function CircuitLine({ candidate }: { candidate: RoutingWorkspaceCandidate }) {
   const diagnostics = buildRoutingCandidateDiagnosticsDisplay(candidate);
   if (!diagnostics) return null;
   const circuit = candidate.diagnostics?.circuit;
+  const unavailable = circuit?.persistenceStatus === "unavailable";
   const warning = circuit?.state === "open" || circuit?.state === "half_open";
   return (
     <div className="grid min-w-0 gap-2 rounded-[var(--surface-radius)] border border-border bg-surface px-3 py-2 text-xs md:grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,1.2fr)] md:items-start">
@@ -321,7 +324,7 @@ function CircuitLine({ candidate }: { candidate: RoutingWorkspaceCandidate }) {
       </div>
       <div className="grid min-w-0 gap-1 text-muted-foreground">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <StatusBadge tone={warning ? "warning" : "healthy"}>{diagnostics.circuitState}</StatusBadge>
+          <StatusBadge tone={unavailable ? "disabled" : warning ? "warning" : "healthy"}>{diagnostics.circuitState}</StatusBadge>
         </div>
         <span className="break-words">{diagnostics.circuitDetail}</span>
       </div>
@@ -357,16 +360,6 @@ function capacityStatusLabel(status: RoutingWorkspaceCandidate["capacity"]["stat
   return labels[status];
 }
 
-function scoreStatusLabel(status: RoutingWorkspaceCandidate["scoreStatus"] | undefined) {
-  switch (status) {
-    case "scored": return "已评分";
-    case "candidate_limit": return "候选上限外";
-    case "probe_discovery": return "仅恢复探测";
-    case "unavailable": return "评分暂不可用";
-    default: return "未进入评分";
-  }
-}
-
 function ProtectionSummary({ status }: { status: RoutingProtectionStatus | null }) {
   if (!status) return <div className="text-xs text-muted-foreground">保护状态暂不可用。</div>;
   const active = userVisibleProtectionEntries(status).filter((entry) => entry.state !== "no_protection");
@@ -399,18 +392,6 @@ function protectionStateLabel(state: string) {
     open: "保护开启",
     half_open: "半开探测",
     unavailable: "不可用",
-  };
-  return labels[state] ?? "状态未知";
-}
-
-function healthStateLabel(state: string) {
-  const labels: Record<string, string> = {
-    ready: "可参与",
-    available: "可参与",
-    cooldown: "冷却中",
-    degraded: "降级监控",
-    offline: "离线",
-    unknown: "状态未知",
   };
   return labels[state] ?? "状态未知";
 }

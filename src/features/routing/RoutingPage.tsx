@@ -16,7 +16,6 @@ import {
   routingProtectionStatusQueryOptions,
   routingQueryKeys,
 } from "@/lib/queries/routingQueries";
-import { toTimestampMillis } from "@/lib/time";
 import { useQueryClient } from "@tanstack/react-query";
 import { LocalRoutingEditTab } from "./LocalRoutingEditTab";
 import { LocalRoutingStatusTab } from "./LocalRoutingStatusTab";
@@ -111,13 +110,8 @@ export function RoutingPage({
     () =>
       (workspace?.candidates ?? []).flatMap((candidate) => {
         const circuit = candidate.diagnostics?.circuit;
-        if (circuit) {
-          if (circuit.state !== "open" || circuit.cooldownUntilMs == null || !Number.isFinite(circuit.cooldownUntilMs)) return [];
-          return [{ id: candidate.stationKeyId, untilMs: circuit.cooldownUntilMs }];
-        }
-        if (candidate.healthState !== "cooldown" || candidate.cooldownUntil == null) return [];
-        const untilMs = toTimestampMillis(candidate.cooldownUntil);
-        return Number.isFinite(untilMs) ? [{ id: candidate.stationKeyId, untilMs }] : [];
+        if (circuit?.persistenceStatus !== "available" || circuit.state !== "open" || circuit.cooldownUntilMs == null || !Number.isFinite(circuit.cooldownUntilMs)) return [];
+        return [{ id: candidate.stationKeyId, untilMs: circuit.cooldownUntilMs }];
       }),
     [workspace?.candidates],
   );

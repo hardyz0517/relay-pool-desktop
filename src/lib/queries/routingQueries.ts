@@ -2,7 +2,6 @@ import {
   getRoutingProtectionStatus,
   getRoutingPolicyPublicationStatus,
   getRequestDecisionTrace,
-  getStationKeyOperationalDetail,
   listRecentRouteDecisions,
   loadRoutingRuntimeOverlay,
   loadRoutingPolicy,
@@ -19,7 +18,6 @@ import type {
   RoutingWorkspaceSnapshot,
   RoutingWorkspaceSnapshotInput,
   RoutingPolicyPublicationStatusInput,
-  StationKeyOperationalDetail,
 } from "@/lib/types/routing";
 
 export const routingQueryKeys = {
@@ -33,8 +31,6 @@ export const routingQueryKeys = {
   runtimeOverlay: () => ["routing", "runtimeOverlay"] as const,
   recentDecisions: (input: RecentRouteDecisionsInput = {}) =>
     ["routing", "recentDecisions", input.limit ?? null, input.cursor ?? null] as const,
-  operationalDetail: (stationKeyId: string) =>
-    ["routing", "operationalDetail", stationKeyId] as const,
   decisionTrace: (requestLogId: string) => ["routing", "decisionTrace", requestLogId] as const,
   simulation: (input: RouteSimulationInput) =>
     [
@@ -104,12 +100,6 @@ export function listRecentRouteDecisionsQuery(
   input: RecentRouteDecisionsInput = {},
 ): Promise<RecentRouteDecisionsPage> {
   return listRecentRouteDecisions(input);
-}
-
-export function getStationKeyOperationalDetailQuery(
-  stationKeyId: string,
-): Promise<StationKeyOperationalDetail> {
-  return getStationKeyOperationalDetail(stationKeyId);
 }
 
 export function getRequestDecisionTraceQuery(requestLogId: string): Promise<RequestDecisionTrace> {

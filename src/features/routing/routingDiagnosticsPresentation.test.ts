@@ -70,6 +70,9 @@ describe("routing diagnostics presentation", () => {
           state: "open",
           stateRevision: 4,
           lifecycleRevision: 2,
+          policyRevision: 1,
+          persistenceStatus: "available",
+          stateRowPresent: true,
           consecutiveFailures: 3,
           reopenLevel: 1,
           cooldownUntilMs: 61_000,
@@ -96,5 +99,8 @@ describe("routing diagnostics presentation", () => {
       circuitState: "Open · 冷却剩余 2 分钟",
       scoreGate: "评分门等待冷却结束 · 无同层 Closed 基线",
     });
+
+    candidate.diagnostics!.circuit.persistenceStatus = "unavailable";
+    expect(buildRoutingCandidateDiagnosticsDisplay(candidate)?.circuitState).toBe("熔断状态不可用");
   });
 });

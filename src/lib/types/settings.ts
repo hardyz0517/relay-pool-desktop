@@ -1,79 +1,11 @@
-import type { RoutingGroupFilter, DispatchAlgorithmSettings } from "@/lib/types/routing";
-
-export type RoutingStrategy =
-  | "automatic_balanced"
-  | "priority_fallback"
-  | "stable_first"
-  | "backup_only"
-  | "cheap_first"
-  | "cost_stable_first";
-
 export type CollectorProxyMode = "direct" | "system" | "manual";
-
-export type SchedulerAdvancedFieldKind =
-  | "positiveInteger"
-  | "nonNegativeWeight"
-  | "ratio"
-  | "boolean";
-
-export const SCHEDULER_ADVANCED_FIELD_KINDS = {
-  topK: "positiveInteger",
-  multiplier: "nonNegativeWeight",
-  priority: "nonNegativeWeight",
-  load: "nonNegativeWeight",
-  queue: "nonNegativeWeight",
-  errorRate: "nonNegativeWeight",
-  ttft: "nonNegativeWeight",
-  quotaHeadroom: "nonNegativeWeight",
-  previousResponse: "nonNegativeWeight",
-  sessionSticky: "nonNegativeWeight",
-  multiplierMinConfidence: "ratio",
-  stickyWeighted: "boolean",
-  stickyEscape: "boolean",
-  stickyEscapeTtftMs: "positiveInteger",
-  stickyEscapeErrorRate: "ratio",
-  stickySessionTtlSeconds: "positiveInteger",
-  stickyResponseTtlSeconds: "positiveInteger",
-  stickyMaxWaiting: "positiveInteger",
-  stickyWaitTimeoutSeconds: "positiveInteger",
-  fallbackMaxWaiting: "positiveInteger",
-  fallbackWaitTimeoutSeconds: "positiveInteger",
-} as const satisfies Record<keyof DispatchAlgorithmSettings, SchedulerAdvancedFieldKind>;
-
-export const DEFAULT_SCHEDULER_ADVANCED_SETTINGS: DispatchAlgorithmSettings = {
-  topK: 7,
-  multiplier: 1.0,
-  priority: 1.0,
-  load: 1.0,
-  queue: 0.7,
-  errorRate: 0.8,
-  ttft: 0.5,
-  quotaHeadroom: 0.0,
-  previousResponse: 5.0,
-  sessionSticky: 3.0,
-  multiplierMinConfidence: 0.8,
-  stickyWeighted: false,
-  stickyEscape: true,
-  stickyEscapeTtftMs: 15_000,
-  stickyEscapeErrorRate: 0.5,
-  stickySessionTtlSeconds: 3_600,
-  stickyResponseTtlSeconds: 3_600,
-  stickyMaxWaiting: 3,
-  stickyWaitTimeoutSeconds: 120,
-  fallbackMaxWaiting: 100,
-  fallbackWaitTimeoutSeconds: 30,
-};
 
 export type AppSettings = {
   localProxyPort: number;
   localProxyStartOnLaunch: boolean;
   localKeyMasked: string;
-  defaultRoutingStrategy: RoutingStrategy;
   collectorProxyMode: CollectorProxyMode;
   collectorProxyUrl: string | null;
-  maxRateMultiplier: number | null;
-  defaultRoutingGroupFilter: RoutingGroupFilter;
-  schedulerAdvancedSettings: DispatchAlgorithmSettings;
   lowBalanceThresholdCny: number;
   collectorIntervalMinutes: number;
   balanceIntervalMinutes: number;
@@ -82,7 +14,6 @@ export type AppSettings = {
   pricingRefreshIntervalMinutes: number;
   collectorTimeoutSeconds: number;
   collectorMaxConcurrency: number;
-  allowDepletedFallback: boolean;
   developerModeEnabled: boolean;
   showDecisionExplanation?: boolean;
   dataDir: string;
@@ -123,12 +54,8 @@ export type UpsertCommonLoginPasswordInput = {
 
 export type UpdateSettingsInput = {
   localProxyPort: number;
-  defaultRoutingStrategy: RoutingStrategy;
   collectorProxyMode: CollectorProxyMode;
   collectorProxyUrl: string | null;
-  maxRateMultiplier: number | null;
-  defaultRoutingGroupFilter: RoutingGroupFilter;
-  schedulerAdvancedSettings: DispatchAlgorithmSettings;
   lowBalanceThresholdCny: number;
   collectorIntervalMinutes: number;
   balanceIntervalMinutes: number;
@@ -137,7 +64,6 @@ export type UpdateSettingsInput = {
   pricingRefreshIntervalMinutes: number;
   collectorTimeoutSeconds: number;
   collectorMaxConcurrency: number;
-  allowDepletedFallback: boolean;
   developerModeEnabled: boolean;
   showDecisionExplanation: boolean;
 };
@@ -145,12 +71,8 @@ export type UpdateSettingsInput = {
 export function appSettingsToUpdateInput(settings: AppSettings): UpdateSettingsInput {
   return {
     localProxyPort: settings.localProxyPort,
-    defaultRoutingStrategy: settings.defaultRoutingStrategy,
     collectorProxyMode: settings.collectorProxyMode,
     collectorProxyUrl: settings.collectorProxyUrl,
-    maxRateMultiplier: settings.maxRateMultiplier,
-    defaultRoutingGroupFilter: settings.defaultRoutingGroupFilter,
-    schedulerAdvancedSettings: settings.schedulerAdvancedSettings,
     lowBalanceThresholdCny: settings.lowBalanceThresholdCny,
     collectorIntervalMinutes: settings.collectorIntervalMinutes,
     balanceIntervalMinutes: settings.balanceIntervalMinutes,
@@ -159,7 +81,6 @@ export function appSettingsToUpdateInput(settings: AppSettings): UpdateSettingsI
     pricingRefreshIntervalMinutes: settings.pricingRefreshIntervalMinutes,
     collectorTimeoutSeconds: settings.collectorTimeoutSeconds,
     collectorMaxConcurrency: settings.collectorMaxConcurrency,
-    allowDepletedFallback: settings.allowDepletedFallback,
     developerModeEnabled: settings.developerModeEnabled,
     showDecisionExplanation: settings.showDecisionExplanation ?? false,
   };

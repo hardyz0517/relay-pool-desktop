@@ -35,7 +35,7 @@ describe("station collection issue tags", () => {
     expect(tags.map((tag) => tag.kind)).not.toContain("collection_failed");
   });
 
-  it("does not let isolated authorization metadata override a healthy station", () => {
+  it("shows isolated authorization requirements without degrading core health", () => {
     const tags = issueTagsFor(
       station(),
       snapshot({
@@ -44,7 +44,7 @@ describe("station collection issue tags", () => {
       }),
     );
 
-    expect(tags.map((tag) => tag.kind)).not.toContain("login_required");
+    expect(tags).toContainEqual(expect.objectContaining({ kind: "login_required" }));
   });
 
   it("keeps a station unchecked when only an isolated snapshot exists", () => {
@@ -77,6 +77,18 @@ describe("station collection issue tags", () => {
   it("refines a station warning when the latest core snapshot requires authorization", () => {
     const tags = issueTagsFor(
       station({ status: "warning" }),
+      snapshot({
+        status: "manual_required",
+        summaryJson: { loginRequired: true },
+      }),
+    );
+
+    expect(tags).toContainEqual(expect.objectContaining({ kind: "login_required" }));
+  });
+
+  it("keeps the authorization tag when another core task has a harder failure", () => {
+    const tags = issueTagsFor(
+      station({ status: "error" }),
       snapshot({
         status: "manual_required",
         summaryJson: { loginRequired: true },

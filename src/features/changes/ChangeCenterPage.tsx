@@ -540,7 +540,9 @@ function changeRateTransition(activity: Extract<AlertingActivity, { recordType: 
   const details = parseAuditObject(activity.newValueJson);
   const oldValue = scalarValue(details?.oldEffectiveRateMultiplier);
   const newValue = scalarValue(details?.newEffectiveRateMultiplier);
-  return oldValue && newValue ? { oldValue, newValue } : null;
+  return oldValue != null || newValue != null
+    ? { oldValue: oldValue ?? "未设置", newValue: newValue ?? "未设置" }
+    : null;
 }
 
 export function changeAddedGroupRate(activity: Extract<AlertingActivity, { recordType: "change" }>) {
@@ -592,7 +594,9 @@ export function changeSummary(activity: Extract<AlertingActivity, { recordType: 
   if (activity.eventType === "group_rate_changed") {
     const oldRate = scalarValue(details?.oldEffectiveRateMultiplier);
     const newRate = scalarValue(details?.newEffectiveRateMultiplier);
-    if (oldRate && newRate) return `${groupName ? `${groupName} · ` : ""}倍率 ${oldRate} → ${newRate}`;
+    if (oldRate != null || newRate != null) {
+      return `${groupName ? `${groupName} · ` : ""}倍率 ${oldRate ?? "未设置"} → ${newRate ?? "未设置"}`;
+    }
   }
   if (activity.eventType === "group_added" && groupName) return `${groupName} · 新增分组`;
   if (groupName) return `${groupName} · ${reasonLabel(activity.reasonCode)}`;

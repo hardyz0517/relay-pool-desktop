@@ -3,12 +3,12 @@ import { GripVertical } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useEffect, useState, type ReactNode } from "react";
 import { StatusBadge } from "@/components/ui";
-import { toTimestampMillis } from "@/lib/time";
 import type { RoutingCandidateView as LocalRoutingCandidate } from "@/lib/types/routingWorkspace";
 import { cn } from "@/lib/utils";
 import {
   buildCandidateDisplayFacts,
   buildCooldownDisplay,
+  buildParticipationDisplay,
 } from "./localRoutingStatusViewModel";
 
 type MathMlIntrinsicProps = Record<string, unknown>;
@@ -74,23 +74,15 @@ export function LocalRoutingStatusCandidateRow({
 }: LocalRoutingStatusCandidateRowProps) {
   const isSortable = Boolean(dragAttributes || dragListeners);
   const circuit = candidate.diagnostics?.circuit;
-  const circuitState = circuit?.state ?? (candidate.healthState === "cooldown" ? "open" : "closed");
-  const cooldownUntilMs = circuit
-    ? circuit.cooldownUntilMs
-    : candidate.cooldownUntil == null
-      ? null
-      : toTimestampMillis(candidate.cooldownUntil);
-  const cooldown = buildCooldownDisplay(circuitState, cooldownUntilMs, nowMs);
+  const cooldown = circuit?.persistenceStatus === "unavailable"
+    ? { active: true, label: "不可用", remainingSeconds: null }
+    : buildCooldownDisplay(circuit?.state, circuit?.cooldownUntilMs ?? null, nowMs);
   const displayFacts = buildCandidateDisplayFacts(candidate);
   const scoreStatus = candidate.scoreStatus;
-  const participationTone = !candidate.schedulable || scoreStatus === "unavailable"
-    ? "disabled"
-    : scoreStatus === "scored"
-      ? "healthy"
-      : "warning";
-  const participationLabel = !candidate.schedulable
-    ? "已暂停路由"
-    : scoreStatusLabel(scoreStatus);
+  const participation = buildParticipationDisplay(
+    candidate.participationStatus,
+    candidate.participationReason,
+  );
   const [scoreDialogOpen, setScoreDialogOpen] = useState(false);
 
   return (
@@ -129,7 +121,7 @@ export function LocalRoutingStatusCandidateRow({
         </div>
       </div>
       <MetricCell label="参与状态">
-        <StatusBadge tone={participationTone}>{participationLabel}</StatusBadge>
+        <StatusBadge tone={participation.tone}>{participation.label}</StatusBadge>
         {scoreStatus !== "scored" && displayFacts.rejectReasonLabel ? (
           <div className="mt-1 text-xs text-warning-foreground">
             {displayFacts.rejectReasonLabel}
@@ -253,7 +245,6 @@ function scoreStatusLabel(status: LocalRoutingCandidate["scoreStatus"]) {
   switch (status) {
     case "scored": return "可参与";
     case "candidate_limit": return "候选上限外";
-    case "probe_discovery": return "仅恢复探测";
     case "unavailable": return "评分暂不可用";
     default: return "未进入评分";
   }

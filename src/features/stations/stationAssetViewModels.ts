@@ -259,9 +259,9 @@ function stationCollectionIssueTag(row: StationAssetRow): StationIssueTag | null
     snapshotSummary.loginRequired === true ||
     snapshotSummary.loginStatus === "manual_required";
 
-  // `station.status` is the revision-fenced core collection read model. The
-  // latest snapshot may belong to an isolated task such as published_status.
-  if (row.station.status === "warning" && loginRequired) {
+  // Authorization is actionable even when the affected task (such as
+  // published_status) is independent from the station's core health status.
+  if (loginRequired) {
     return createStationIssueTag("login_required", row.latestSnapshot?.errorMessage ?? "当前登录状态需要重新进行窗口授权");
   }
 

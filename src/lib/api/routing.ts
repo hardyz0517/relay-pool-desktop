@@ -29,10 +29,6 @@ export function deleteModelAlias(id: string) {
   return getActiveBackendClient().routing.deleteModelAlias(id);
 }
 
-export function listStationKeyHealth() {
-  return getActiveBackendClient().routing.listStationKeyHealth();
-}
-
 export function getRoutingProtectionStatus() {
   return getActiveBackendClient().routing.getRoutingProtectionStatus();
 }
@@ -65,16 +61,8 @@ export function listRecentRouteDecisions(input: RecentRouteDecisionsInput = {}) 
   return getActiveBackendClient().routing.listRecentRouteDecisions(input);
 }
 
-export function getStationKeyOperationalDetail(stationKeyId: string) {
-  return getActiveBackendClient().routing.getStationKeyOperationalDetail(stationKeyId);
-}
-
 export function getRequestDecisionTrace(requestLogId: string) {
   return getActiveBackendClient().routing.getRequestDecisionTrace(requestLogId);
-}
-
-export function getStationKeyHealth(stationKeyId: string) {
-  return getActiveBackendClient().routing.getStationKeyHealth(stationKeyId);
 }
 
 export function simulateRoute(input: RouteSimulationInput) {

@@ -6,11 +6,9 @@ import type { BackendClient } from "@/lib/bridge/BackendClient";
 import {
   deleteModelAlias,
   getStationKeyCapabilities,
-  getStationKeyHealth,
   getRoutingProtectionStatus,
   getRoutingPolicyPublicationStatus,
   listModelAliases,
-  listStationKeyHealth,
   simulateRoute,
   updateStationKeyCapabilities,
   upsertModelAlias,
@@ -38,7 +36,6 @@ describe("routing backend cutover", () => {
     listModelAliases: vi.fn(async () => []),
     upsertModelAlias: vi.fn(async (input) => ({ id: "alias-1", createdAt: "now", updatedAt: "now", ...input })),
     deleteModelAlias: vi.fn(async () => undefined),
-    listStationKeyHealth: vi.fn(async () => []),
     getRoutingProtectionStatus: vi.fn(async () => ({
       statusVersion: "routing_protection_status_v1",
       generatedAtMs: 1,
@@ -79,13 +76,28 @@ describe("routing backend cutover", () => {
       capacityMode: "snapshot_only" as const,
       page: { limit: 50, returned: 0, nextCursor: null },
       candidates: [],
+      aggregates: {
+        totalCandidates: 0,
+        schedulableCandidates: 0,
+        eligibleCandidates: 0,
+        conditionallyEligibleCandidates: 0,
+        excludedCandidates: 0,
+        unavailableCandidates: 0,
+        closedCircuits: 0,
+        openCircuits: 0,
+        halfOpenCircuits: 0,
+        persistenceUnavailableCircuits: 0,
+      },
+      circuitReadModelStatus: "available" as const,
+      circuitReadModelCode: null,
+      circuitRevision: { processGateRevision: 0, persistenceHealthRevision: 0, stateFingerprint: "test" },
       readModelStatus: "available" as const,
       plannerEvaluation: "available" as const,
       plannerEvaluationCode: null,
       availabilityStatus: "all_keys_unavailable" as const,
     })),
     loadRoutingRuntimeOverlay: vi.fn(async () => ({
-      overlayVersion: "routing_runtime_overlay_v2",
+      overlayVersion: "routing_runtime_overlay_v3",
       sampledAtMs: 1,
       revision: 1,
       candidates: [],
@@ -94,15 +106,6 @@ describe("routing backend cutover", () => {
       pageVersion: "recent_route_decisions_v1",
       decisions: [],
       nextCursor: null,
-      readModelStatus: "available" as const,
-    })),
-    getStationKeyOperationalDetail: vi.fn(async (stationKeyId: string) => ({
-      detailVersion: "station_key_operational_detail_v1",
-      stationKeyId,
-      stationId: "station-1",
-      endpointRevision: 1,
-      facts: [],
-      lazyHistoryAvailable: true,
       readModelStatus: "available" as const,
     })),
     getRequestDecisionTrace: vi.fn(async (requestLogId: string) => ({
@@ -116,18 +119,6 @@ describe("routing backend cutover", () => {
       legacySummary: null,
       timeline: [],
       planningRounds: [],
-    })),
-    getStationKeyHealth: vi.fn(async (stationKeyId: string) => ({
-      stationKeyId,
-      lastSuccessAt: null,
-      lastFailureAt: null,
-      consecutiveFailures: 0,
-      successCount: 0,
-      failureCount: 0,
-      avgLatencyMs: null,
-      lastErrorSummary: null,
-      cooldownUntil: null,
-      updatedAt: "now",
     })),
     loadRoutingPolicy: vi.fn(async () => ({
       config: {
@@ -250,10 +241,8 @@ describe("routing backend cutover", () => {
     await listModelAliases();
     await upsertModelAlias(alias);
     await deleteModelAlias("alias-1");
-    await listStationKeyHealth();
     await getRoutingProtectionStatus();
     await getRoutingPolicyPublicationStatus({ revision: 7, policyGenerationId: "pg1_fixture" });
-    await getStationKeyHealth("key-1");
     await simulateRoute(routeInput);
 
     expect(routing.getStationKeyCapabilities).toHaveBeenCalledWith("key-1");
@@ -261,13 +250,11 @@ describe("routing backend cutover", () => {
     expect(routing.listModelAliases).toHaveBeenCalledTimes(1);
     expect(routing.upsertModelAlias).toHaveBeenCalledWith(alias);
     expect(routing.deleteModelAlias).toHaveBeenCalledWith("alias-1");
-    expect(routing.listStationKeyHealth).toHaveBeenCalledTimes(1);
     expect(routing.getRoutingProtectionStatus).toHaveBeenCalledWith();
     expect(routing.getRoutingPolicyPublicationStatus).toHaveBeenCalledWith({
       revision: 7,
       policyGenerationId: "pg1_fixture",
     });
-    expect(routing.getStationKeyHealth).toHaveBeenCalledWith("key-1");
     expect(routing.simulateRoute).toHaveBeenCalledWith(routeInput);
   });
 });

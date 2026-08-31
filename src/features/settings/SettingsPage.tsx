@@ -28,7 +28,6 @@ import { DEFAULT_MANUAL_PROXY_URL, withManualProxyDefault } from "@/lib/proxyDef
 import {
   appSettingsToUpdateInput,
   collectorProxyModeLabels,
-  DEFAULT_SCHEDULER_ADVANCED_SETTINGS,
   type AppSettings,
   type CollectorProxyMode,
   type UpdateSettingsInput,
@@ -46,12 +45,8 @@ const fallbackSettings: AppSettings = {
   localProxyPort: 8787,
   localProxyStartOnLaunch: false,
   localKeyMasked: "未读取",
-  defaultRoutingStrategy: "automatic_balanced",
   collectorProxyMode: "direct",
   collectorProxyUrl: null,
-  maxRateMultiplier: null,
-  defaultRoutingGroupFilter: "all_groups",
-  schedulerAdvancedSettings: DEFAULT_SCHEDULER_ADVANCED_SETTINGS,
   lowBalanceThresholdCny: 15,
   collectorIntervalMinutes: 30,
   balanceIntervalMinutes: 5,
@@ -60,7 +55,6 @@ const fallbackSettings: AppSettings = {
   pricingRefreshIntervalMinutes: 60,
   collectorTimeoutSeconds: 60,
   collectorMaxConcurrency: 3,
-  allowDepletedFallback: false,
   developerModeEnabled: false,
   showDecisionExplanation: false,
   dataDir: "仅桌面端可读取",
@@ -754,13 +748,11 @@ function formToInput(form: SettingsFormState, settings: AppSettings): UpdateSett
   return {
     ...appSettingsToUpdateInput(settings),
     localProxyPort: Number(form.localProxyPort),
-    defaultRoutingStrategy: "automatic_balanced",
     collectorProxyMode: form.collectorProxyMode,
     collectorProxyUrl:
       form.collectorProxyMode === "manual" && form.collectorProxyUrl.trim()
         ? form.collectorProxyUrl.trim()
         : null,
-    schedulerAdvancedSettings: settings.schedulerAdvancedSettings,
     developerModeEnabled: form.developerModeEnabled,
     showDecisionExplanation: form.showDecisionExplanation,
   };

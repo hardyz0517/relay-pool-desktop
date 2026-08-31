@@ -246,7 +246,6 @@ export class DemoBackend implements BackendClient {
     resolveRequestMappingTrace: () => this.rejectUnsupported("routing.model_mapping"),
     upsertModelAlias: () => this.rejectUnsupported("routing"),
     deleteModelAlias: (_id: string) => this.rejectUnsupported("routing"),
-    listStationKeyHealth: () => this.rejectUnsupported("routing"),
     getRoutingProtectionStatus: (_input = {}) => this.rejectUnsupported("routing.protection_status"),
     loadRoutingPolicy: () => this.rejectUnsupported("routing.policy"),
     getRoutingPolicyPublicationStatus: () => this.rejectUnsupported("routing.policy_publication"),
@@ -254,11 +253,8 @@ export class DemoBackend implements BackendClient {
     loadRoutingWorkspaceSnapshot: () => this.rejectUnsupported("routing.workspace_snapshot"),
     loadRoutingRuntimeOverlay: () => this.rejectUnsupported("routing.runtime_overlay"),
     listRecentRouteDecisions: () => this.rejectUnsupported("routing.route_decisions"),
-    getStationKeyOperationalDetail: (_stationKeyId: string) =>
-      this.rejectUnsupported("routing.operational_detail"),
     getRequestDecisionTrace: (_requestLogId: string) =>
       this.rejectUnsupported("routing.decision_trace"),
-    getStationKeyHealth: (_stationKeyId: string) => this.rejectUnsupported("routing"),
     simulateRoute: () => this.rejectUnsupported("routing"),
   };
   readonly channels: BackendClient["channels"] = {

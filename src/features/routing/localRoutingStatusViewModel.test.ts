@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { RoutingCandidateView } from "@/lib/types/routingWorkspace";
-import { buildCandidateDisplayFacts, buildCooldownDisplay } from "./localRoutingStatusViewModel";
+import {
+  buildCandidateDisplayFacts,
+  buildCooldownDisplay,
+  buildParticipationDisplay,
+} from "./localRoutingStatusViewModel";
 
 function candidate(overrides: Partial<RoutingCandidateView> = {}): RoutingCandidateView {
   return {
@@ -12,13 +16,13 @@ function candidate(overrides: Partial<RoutingCandidateView> = {}): RoutingCandid
     priority: 1,
     enabled: true,
     schedulable: true,
-    healthState: "ready",
+    participationStatus: "eligible",
+    participationReason: "ready",
     score: null,
     scoreDetails: null,
     currentConcurrency: null,
     lastSuccessAt: null,
     lastFailureAt: null,
-    cooldownUntil: null,
     routingGroupScope: "all_groups",
     routingGroupMatch: true,
     scoreStatus: "scored",
@@ -26,8 +30,6 @@ function candidate(overrides: Partial<RoutingCandidateView> = {}): RoutingCandid
     assessmentSnapshotId: null,
     assessmentDurableRevision: null,
     assessmentRequestContextFingerprint: null,
-    previewEligible: true,
-    previewRejectReasons: [],
     facts: [
       {
         kind: "pricing",
@@ -47,6 +49,28 @@ function candidate(overrides: Partial<RoutingCandidateView> = {}): RoutingCandid
 }
 
 describe("local routing status view model", () => {
+  it("maps backend participation reasons without inferring eligibility", () => {
+    expect(buildParticipationDisplay("eligible", "ready")).toEqual({
+      label: "可参与",
+      tone: "healthy",
+    });
+    expect(buildParticipationDisplay("excluded", "circuit_half_open_lease_occupied")).toEqual({
+      label: "半开探测进行中",
+      tone: "warning",
+    });
+    expect(buildParticipationDisplay("unavailable", "circuit_persistence_unavailable")).toEqual({
+      label: "熔断状态不可用",
+      tone: "disabled",
+    });
+  });
+
+  it("fails closed for an unknown future participation reason", () => {
+    expect(buildParticipationDisplay("eligible", "future_reason")).toEqual({
+      label: "参与状态未知",
+      tone: "disabled",
+    });
+  });
+
   it("formats open circuit cooldown as a live countdown", () => {
     expect(buildCooldownDisplay("open", 301_000, 0)).toEqual({
       active: true,
@@ -120,7 +144,7 @@ describe("local routing status view model", () => {
 
   it("does not show a conflicting normal status when routing rejected the balance", () => {
     const display = buildCandidateDisplayFacts(
-      candidate({ previewRejectReasons: ["balance_depleted"] }),
+      candidate({ plannerExclusionCodes: ["balance_depleted"] }),
     );
 
     expect(display.balanceLabel).toBe("余额不足");
@@ -129,8 +153,7 @@ describe("local routing status view model", () => {
   it("uses backend rejection codes and stays explicit when facts are missing", () => {
     const display = buildCandidateDisplayFacts(
       candidate({
-        previewEligible: false,
-        previewRejectReasons: ["multiplier_over_ceiling"],
+        plannerExclusionCodes: ["multiplier_over_ceiling"],
         facts: [],
       }),
     );
@@ -145,8 +168,7 @@ describe("local routing status view model", () => {
       buildCandidateDisplayFacts(
         candidate({
           schedulable: true,
-          previewEligible: false,
-          previewRejectReasons: ["group_mismatch"],
+          plannerExclusionCodes: ["group_mismatch"],
         }),
       ).rejectReasonLabel,
     ).toBe("分组不匹配");
@@ -154,8 +176,7 @@ describe("local routing status view model", () => {
       buildCandidateDisplayFacts(
         candidate({
           schedulable: false,
-          previewEligible: false,
-          previewRejectReasons: ["candidate_unschedulable"],
+          plannerExclusionCodes: ["candidate_unschedulable"],
         }),
       ).rejectReasonLabel,
     ).toBe("密钥已暂停路由");

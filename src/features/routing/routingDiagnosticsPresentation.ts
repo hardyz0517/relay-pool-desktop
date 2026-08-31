@@ -16,7 +16,7 @@ export type RoutingCandidateDiagnosticsDisplay = {
 };
 
 export function buildRoutingCandidateDiagnosticsDisplay(
-  candidate: RoutingWorkspaceCandidate,
+  candidate: Pick<RoutingWorkspaceCandidate, "diagnostics">,
 ): RoutingCandidateDiagnosticsDisplay | null {
   const diagnostics = candidate.diagnostics;
   if (!diagnostics) return null;
@@ -46,8 +46,10 @@ export function buildRoutingCandidateDiagnosticsDisplay(
     idleRealRoute: quality
       ? formatIdleRealRoute(quality.idleRealRouteSample, quality.lastRealRouteSampleAtMs)
       : "真实流量闲置状态未知",
-    circuitState: formatCircuitState(circuit.state, circuit.cooldownRemainingMs),
-    circuitDetail: `回退层级 ${circuit.reopenLevel} · 连续失败 ${circuit.consecutiveFailures ?? "-"} · 状态 revision ${circuit.stateRevision ?? "未持久化"}`,
+    circuitState: circuit.persistenceStatus === "unavailable"
+      ? "熔断状态不可用"
+      : formatCircuitState(circuit.state, circuit.cooldownRemainingMs),
+    circuitDetail: `回退层级 ${circuit.reopenLevel} · 连续失败 ${circuit.consecutiveFailures ?? "-"} · 状态 revision ${circuit.stateRevision ?? "未持久化"} · 策略 revision ${circuit.policyRevision ?? "未知"}`,
     halfOpenLease: circuit.halfOpenLeaseInFlight
       ? `Half-Open lease 已占用${formatLeaseExpiry(circuit.halfOpenLeaseExpiresAtMs)}`
       : "Half-Open lease 空闲",

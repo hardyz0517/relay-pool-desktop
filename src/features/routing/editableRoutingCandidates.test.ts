@@ -12,7 +12,12 @@ describe("buildEditableRoutingCandidates", () => {
     );
 
     expect(candidates.map((candidate) => candidate.stationKeyId)).toEqual(["key-3", "key-1", "key-2"]);
-    expect(candidates[0]).toMatchObject({ keyName: "key-3", priority: 0 });
+    expect(candidates[0]).toMatchObject({
+      keyName: "key-3",
+      priority: 0,
+      participationStatus: "unavailable",
+      participationReason: "circuit_persistence_unavailable",
+    });
   });
 });
 
@@ -25,8 +30,6 @@ function keyPoolItem(id: string, priority: number): KeyPoolItem {
     enabled: true,
     priority,
     schedulable: true,
-    cooldownUntil: null,
-    consecutiveFailures: 0,
   } as KeyPoolItem;
 }
 
@@ -40,13 +43,13 @@ function workspaceCandidate(stationKeyId: string): RoutingCandidateView {
     priority: 99,
     enabled: true,
     schedulable: true,
-    healthState: "ready",
+    participationStatus: "eligible",
+    participationReason: "ready",
     score: null,
     scoreDetails: null,
     currentConcurrency: null,
     lastSuccessAt: null,
     lastFailureAt: null,
-    cooldownUntil: null,
     routingGroupScope: "all_groups",
     routingGroupMatch: true,
     scoreStatus: "unavailable",
@@ -54,8 +57,6 @@ function workspaceCandidate(stationKeyId: string): RoutingCandidateView {
     assessmentSnapshotId: null,
     assessmentDurableRevision: null,
     assessmentRequestContextFingerprint: null,
-    previewEligible: true,
-    previewRejectReasons: [],
     facts: [],
   };
 }

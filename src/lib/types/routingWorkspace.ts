@@ -1,6 +1,8 @@
 import type { ProxyStatus } from "./proxy";
 import type {
   RouteEndpointKind,
+  RoutingCandidateParticipationReason,
+  RoutingCandidateParticipationStatus,
   RoutingGroupFilter,
   RoutingPlannerEvaluationStatus,
   RoutingScoreStatus,
@@ -8,7 +10,6 @@ import type {
   RoutingWorkspaceCandidate,
   RoutingWorkspaceSnapshot,
 } from "./routing";
-export type RouteHealthState = "ready" | "cooldown" | "degraded" | "offline" | "unknown";
 export type DecisionFact = {
   kind: "capability" | "health" | "model" | "pricing" | "balance" | "policy";
   label: string;
@@ -39,14 +40,14 @@ export type RoutingCandidateView = {
   priority: number;
   enabled: boolean;
   schedulable: boolean;
-  healthState: RouteHealthState;
+  participationStatus: RoutingCandidateParticipationStatus;
+  participationReason: RoutingCandidateParticipationReason;
   score: number | null;
   scoreDetails: RoutingWorkspaceCandidate["scoreDetails"];
   diagnostics?: RoutingWorkspaceCandidate["diagnostics"];
   currentConcurrency: number | null;
   lastSuccessAt: string | null;
   lastFailureAt: string | null;
-  cooldownUntil: string | null;
   routingGroupScope: RoutingGroupFilter;
   routingGroupMatch: boolean;
   scoreStatus: RoutingScoreStatus;
@@ -54,8 +55,6 @@ export type RoutingCandidateView = {
   assessmentSnapshotId: string | null;
   assessmentDurableRevision: number | null;
   assessmentRequestContextFingerprint: string | null;
-  previewEligible: boolean;
-  previewRejectReasons: string[];
   facts: DecisionFact[];
   balanceValue?: number | null;
   balanceCurrency?: string | null;
@@ -77,22 +76,18 @@ export type RoutingWorkspaceView = {
     plannerEvaluationCode: string | null;
   };
   summary: {
-    candidateCount: number;
-    previewEligibleCandidateCount: number;
-    previewExcludedCandidateCount: number;
-    cooldownCandidateCount: number;
+    totalCandidateCount: number;
+    currentPageCandidateCount: number;
+    participatingCandidateCount: number;
+    nonParticipatingCandidateCount: number;
+    openCircuitCandidateCount: number;
+    recoveryEligibleCandidateCount: number;
+    readModelUnavailableCandidateCount: number;
     lastDecisionAt: string | null;
   };
   candidates: RoutingCandidateView[];
   latestDecision: RoutingLatestDecisionView | null;
 };
-
-const healthStates = new Set<RouteHealthState>(["ready", "cooldown", "degraded", "offline", "unknown"]);
-
-function healthState(value: string): RouteHealthState {
-  if (value === "available") return "ready";
-  return healthStates.has(value as RouteHealthState) ? (value as RouteHealthState) : "unknown";
-}
 
 function candidateFacts(candidate: RoutingWorkspaceCandidate, plannerExclusionCodes: string[]): DecisionFact[] {
   const facts: DecisionFact[] = [
@@ -125,27 +120,8 @@ export function toRoutingWorkspaceView(
     (runtimeOverlay?.candidates ?? []).map((candidate) => [candidate.stationKeyId, candidate]),
   );
   const candidates = snapshot.candidates.map((candidate, index) => {
-    const health = healthState(candidate.healthState);
-    // Keep the DTO boundary tolerant of snapshots persisted before the
-    // explicit planner status fields were introduced. New backend payloads
-    // always provide these fields; this is only a one-way read compatibility
-    // adapter for old fixtures/cache entries.
-    const legacyCandidate = candidate as RoutingWorkspaceCandidate & {
-      scoreStatus?: RoutingScoreStatus;
-      plannerExclusionCodes?: string[];
-      previewEligible?: boolean;
-      previewRejectReasons?: string[];
-    };
-    const plannerExclusionCodes = [
-      ...(legacyCandidate.plannerExclusionCodes ?? legacyCandidate.previewRejectReasons ?? []),
-    ];
-    const scoreStatus =
-      legacyCandidate.scoreStatus ??
-      (candidate.score != null || legacyCandidate.previewEligible
-        ? "scored"
-        : plannerExclusionCodes.length > 0
-          ? "excluded"
-          : "unavailable");
+    const plannerExclusionCodes = [...candidate.plannerExclusionCodes];
+    const scoreStatus = candidate.scoreStatus;
     const runtime = runtimeByKey.get(candidate.stationKeyId);
     const matchingRuntime =
       runtime?.stationId === candidate.stationId &&
@@ -163,7 +139,8 @@ export function toRoutingWorkspaceView(
       // conflate that administrative state with request eligibility.
       enabled: true,
       schedulable: candidate.schedulable,
-      healthState: health,
+      participationStatus: candidate.participationStatus,
+      participationReason: candidate.participationReason,
       score: candidate.score,
       scoreDetails: candidate.scoreDetails,
       diagnostics: candidate.diagnostics ?? null,
@@ -173,7 +150,6 @@ export function toRoutingWorkspaceView(
           : Math.max(0, Math.trunc(matchingRuntime.stationKeyInFlight)),
       lastSuccessAt: null,
       lastFailureAt: null,
-      cooldownUntil: matchingRuntime?.cooldownUntil ?? null,
       routingGroupScope: snapshot.routingGroupFilter,
       routingGroupMatch: !plannerExclusionCodes.includes("group_mismatch"),
       scoreStatus,
@@ -181,8 +157,6 @@ export function toRoutingWorkspaceView(
       assessmentSnapshotId: candidate.assessmentSnapshotId ?? null,
       assessmentDurableRevision: candidate.assessmentDurableRevision ?? null,
       assessmentRequestContextFingerprint: candidate.assessmentRequestContextFingerprint ?? null,
-      previewEligible: scoreStatus === "scored",
-      previewRejectReasons: plannerExclusionCodes,
       facts: candidateFacts(candidate, plannerExclusionCodes),
       balanceValue: candidate.balanceValue,
       balanceCurrency: candidate.balanceCurrency,
@@ -205,10 +179,15 @@ export function toRoutingWorkspaceView(
       plannerEvaluationCode: snapshot.plannerEvaluationCode ?? null,
     },
     summary: {
-      candidateCount: candidates.length,
-      previewEligibleCandidateCount: candidates.filter((candidate) => candidate.scoreStatus === "scored").length,
-      previewExcludedCandidateCount: candidates.filter((candidate) => candidate.scoreStatus === "excluded").length,
-      cooldownCandidateCount: candidates.filter((candidate) => candidate.healthState === "cooldown").length,
+      totalCandidateCount: snapshot.aggregates.totalCandidates,
+      currentPageCandidateCount: snapshot.candidates.length,
+      participatingCandidateCount:
+        snapshot.aggregates.eligibleCandidates + snapshot.aggregates.conditionallyEligibleCandidates,
+      nonParticipatingCandidateCount:
+        snapshot.aggregates.excludedCandidates + snapshot.aggregates.unavailableCandidates,
+      openCircuitCandidateCount: snapshot.aggregates.openCircuits,
+      recoveryEligibleCandidateCount: snapshot.aggregates.conditionallyEligibleCandidates,
+      readModelUnavailableCandidateCount: snapshot.aggregates.unavailableCandidates,
       lastDecisionAt: latestDecision?.decidedAt ?? null,
     },
     candidates,

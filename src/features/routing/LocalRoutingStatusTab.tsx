@@ -109,7 +109,7 @@ export function LocalRoutingStatusTab({
       ? "未启用价格倍率硬上限"
       : "高于此倍率不参与自动路由";
   const routingGroupFilterLabel = formatRoutingGroupFilter(workspace.settings.routingGroupFilter);
-  const candidateStatusLabel = `${workspace.summary.previewEligibleCandidateCount} / ${workspace.summary.previewExcludedCandidateCount}`;
+  const candidateStatusLabel = `${workspace.summary.participatingCandidateCount} / ${workspace.summary.nonParticipatingCandidateCount}`;
   const latestDecisionTimeLabel = formatRoutingDecisionTime(latestDecision.decidedAt);
   const candidateHeading =
     workspace.settings.previewKind === "baseline_eligibility" ? "候选基础资格" : "候选资格";
@@ -202,9 +202,9 @@ export function LocalRoutingStatusTab({
             value: candidateStatusLabel,
             detail: "可参与 / 不参与",
             icon: UsersRound,
-            tone: workspace.summary.previewExcludedCandidateCount > 0 ? "warning" : "good",
+            tone: workspace.summary.nonParticipatingCandidateCount > 0 ? "warning" : "good",
             valueClassName:
-              workspace.summary.previewExcludedCandidateCount > 0
+              workspace.summary.nonParticipatingCandidateCount > 0
                 ? "text-[20px] leading-6 text-warning-foreground"
                 : "text-[20px] leading-6 text-success-foreground",
           },

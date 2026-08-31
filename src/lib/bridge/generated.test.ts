@@ -46,8 +46,6 @@ import {
   getStationPublishedStatusWorkspace,
   getStationKeyCapabilities,
   getStationCredentials,
-  getStationKeyHealth,
-  getStationKeyOperationalDetail,
   importRelayPoolToCcswitch,
   inspectLatestUpdateManifest,
   listKeyPoolItems,
@@ -71,7 +69,6 @@ import {
   listRecentRouteDecisions,
   listModelAliases,
   listStationEndpointHealth,
-  listStationKeyHealth,
   listStationKeys,
   listStations,
   listStationGroupBindings,
@@ -133,10 +130,8 @@ const stationInput: CreateStationInputDto = {
 
 const settingsInput = {
   localProxyPort: 8317,
-  defaultRoutingStrategy: "automatic_balanced",
   collectorProxyMode: "direct",
   collectorProxyUrl: null,
-  maxRateMultiplier: null,
   lowBalanceThresholdCny: 10,
   collectorIntervalMinutes: 5,
   balanceIntervalMinutes: 5,
@@ -145,7 +140,6 @@ const settingsInput = {
   pricingRefreshIntervalMinutes: 60,
   collectorTimeoutSeconds: 15,
   collectorMaxConcurrency: 3,
-  allowDepletedFallback: false,
   developerModeEnabled: false,
 } satisfies UpdateSettingsInputDto;
 
@@ -524,14 +518,11 @@ describe("generated settings/stations transport envelopes", () => {
   it("sends routing and health reads through generated envelopes", async () => {
     await getStationKeyCapabilities({ stationKeyId: "key-1" });
     await listModelAliases();
-    await listStationKeyHealth();
     await listStationEndpointHealth();
     await loadRoutingWorkspaceSnapshot({ limit: 25, cursor: null });
     await loadRoutingRuntimeOverlay();
     await listRecentRouteDecisions({ limit: 10, cursor: "cursor-1" });
-    await getStationKeyOperationalDetail({ stationKeyId: "key-1" });
     await getRequestDecisionTrace({ requestLogId: "request-1" });
-    await getStationKeyHealth({ stationKeyId: "key-1" });
     await simulateRoute({
       endpoint: "chat_completions",
       model: "fixture-model",
@@ -562,14 +553,11 @@ describe("generated settings/stations transport envelopes", () => {
     expect(transport.invoke.mock.calls).toEqual([
       ["get_station_key_capabilities", { input: { stationKeyId: "key-1" } }],
       ["list_model_aliases", { input: {} }],
-      ["list_station_key_health", { input: {} }],
       ["list_station_endpoint_health", { input: {} }],
       ["load_routing_workspace_snapshot", { input: { limit: 25, cursor: null } }],
       ["load_routing_runtime_overlay", { input: {} }],
       ["list_recent_route_decisions", { input: { limit: 10, cursor: "cursor-1" } }],
-      ["get_station_key_operational_detail", { input: { stationKeyId: "key-1" } }],
       ["get_request_decision_trace", { input: { requestLogId: "request-1" } }],
-      ["get_station_key_health", { input: { stationKeyId: "key-1" } }],
       [
         "simulate_route",
         {
