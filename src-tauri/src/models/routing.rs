@@ -24,10 +24,8 @@ pub use crate::models::routing_policy::{PricingGroupType, RoutingGroupFilter};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RuntimeRoutingSettings {
-    pub policy: RoutingPolicy,
     pub max_rate_multiplier: Option<f64>,
     pub routing_group_scope: RoutingGroupFilter,
-    pub scheduler_config: DispatchAlgorithmSettings,
     pub allow_depleted_fallback: bool,
     /// Local routing's proxy override. `inherit` delegates to the global
     /// network setting before station-level overrides are applied.
@@ -40,182 +38,14 @@ pub struct RuntimeRoutingSettings {
 impl Default for RuntimeRoutingSettings {
     fn default() -> Self {
         Self {
-            policy: RoutingPolicy::PriorityFallback,
             max_rate_multiplier: None,
             routing_group_scope: RoutingGroupFilter::default(),
-            scheduler_config: DispatchAlgorithmSettings::default(),
             allow_depleted_fallback: false,
             outbound_proxy_mode: "inherit".to_string(),
             outbound_proxy_url: None,
             global_proxy_mode: "direct".to_string(),
             global_proxy_url: None,
         }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-#[cfg(test)]
-pub struct AutomaticSchedulerSettings {
-    pub max_rate_multiplier: Option<f64>,
-    pub routing_group_scope: RoutingGroupFilter,
-    pub advanced: DispatchAlgorithmSettings,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct DispatchAlgorithmSettings {
-    pub top_k: u16,
-    pub multiplier: f64,
-    pub priority: f64,
-    pub load: f64,
-    pub queue: f64,
-    pub error_rate: f64,
-    pub ttft: f64,
-    pub quota_headroom: f64,
-    pub previous_response: f64,
-    pub session_sticky: f64,
-    pub multiplier_min_confidence: f64,
-    pub sticky_weighted: bool,
-    pub sticky_escape: bool,
-    pub sticky_escape_ttft_ms: u64,
-    pub sticky_escape_error_rate: f64,
-    pub sticky_session_ttl_seconds: u64,
-    pub sticky_response_ttl_seconds: u64,
-    pub sticky_max_waiting: u64,
-    pub sticky_wait_timeout_seconds: u64,
-    pub fallback_max_waiting: u64,
-    pub fallback_wait_timeout_seconds: u64,
-}
-
-impl Default for DispatchAlgorithmSettings {
-    fn default() -> Self {
-        Self {
-            top_k: 7,
-            multiplier: 1.0,
-            priority: 1.0,
-            load: 1.0,
-            queue: 0.7,
-            error_rate: 0.8,
-            ttft: 0.5,
-            quota_headroom: 0.0,
-            previous_response: 5.0,
-            session_sticky: 3.0,
-            multiplier_min_confidence: 0.8,
-            sticky_weighted: false,
-            sticky_escape: true,
-            sticky_escape_ttft_ms: 15_000,
-            sticky_escape_error_rate: 0.5,
-            sticky_session_ttl_seconds: 3_600,
-            sticky_response_ttl_seconds: 3_600,
-            sticky_max_waiting: 3,
-            sticky_wait_timeout_seconds: 120,
-            fallback_max_waiting: 100,
-            fallback_wait_timeout_seconds: 30,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum SchedulerConfigError {
-    #[cfg(test)]
-    InvalidMultiplierLimit,
-    InvalidAdvancedSetting(&'static str),
-}
-
-#[cfg(test)]
-impl AutomaticSchedulerSettings {
-    pub fn validate_for_routing(&self) -> Result<(), SchedulerConfigError> {
-        if let Some(max_rate_multiplier) = self.max_rate_multiplier {
-            if !max_rate_multiplier.is_finite() || max_rate_multiplier < 0.0 {
-                return Err(SchedulerConfigError::InvalidMultiplierLimit);
-            }
-        }
-        self.advanced.validate()
-    }
-}
-
-impl DispatchAlgorithmSettings {
-    pub fn validate(&self) -> Result<(), SchedulerConfigError> {
-        if self.top_k == 0 {
-            return Err(SchedulerConfigError::InvalidAdvancedSetting("top_k"));
-        }
-        let weighted_values = [
-            ("multiplier", self.multiplier),
-            ("priority", self.priority),
-            ("load", self.load),
-            ("queue", self.queue),
-            ("error_rate", self.error_rate),
-            ("ttft", self.ttft),
-            ("quota_headroom", self.quota_headroom),
-            ("previous_response", self.previous_response),
-            ("session_sticky", self.session_sticky),
-        ];
-        for (name, value) in weighted_values {
-            if !value.is_finite() || value < 0.0 {
-                return Err(SchedulerConfigError::InvalidAdvancedSetting(name));
-            }
-        }
-        if self.multiplier == 0.0
-            && self.priority == 0.0
-            && self.load == 0.0
-            && self.queue == 0.0
-            && self.error_rate == 0.0
-            && self.ttft == 0.0
-            && self.quota_headroom == 0.0
-        {
-            return Err(SchedulerConfigError::InvalidAdvancedSetting("base_weights"));
-        }
-        if !self.multiplier_min_confidence.is_finite()
-            || !(0.0..=1.0).contains(&self.multiplier_min_confidence)
-        {
-            return Err(SchedulerConfigError::InvalidAdvancedSetting(
-                "multiplier_min_confidence",
-            ));
-        }
-        if !self.sticky_escape_error_rate.is_finite()
-            || !(0.0..=1.0).contains(&self.sticky_escape_error_rate)
-        {
-            return Err(SchedulerConfigError::InvalidAdvancedSetting(
-                "sticky_escape_error_rate",
-            ));
-        }
-        if self.sticky_escape_ttft_ms == 0 {
-            return Err(SchedulerConfigError::InvalidAdvancedSetting(
-                "sticky_escape_ttft_ms",
-            ));
-        }
-        if self.sticky_session_ttl_seconds == 0 {
-            return Err(SchedulerConfigError::InvalidAdvancedSetting(
-                "sticky_session_ttl_seconds",
-            ));
-        }
-        if self.sticky_response_ttl_seconds == 0 {
-            return Err(SchedulerConfigError::InvalidAdvancedSetting(
-                "sticky_response_ttl_seconds",
-            ));
-        }
-        if self.sticky_max_waiting == 0 {
-            return Err(SchedulerConfigError::InvalidAdvancedSetting(
-                "sticky_max_waiting",
-            ));
-        }
-        if self.sticky_wait_timeout_seconds == 0 {
-            return Err(SchedulerConfigError::InvalidAdvancedSetting(
-                "sticky_wait_timeout_seconds",
-            ));
-        }
-        if self.fallback_max_waiting == 0 {
-            return Err(SchedulerConfigError::InvalidAdvancedSetting(
-                "fallback_max_waiting",
-            ));
-        }
-        if self.fallback_wait_timeout_seconds == 0 {
-            return Err(SchedulerConfigError::InvalidAdvancedSetting(
-                "fallback_wait_timeout_seconds",
-            ));
-        }
-        Ok(())
     }
 }
 
@@ -270,6 +100,7 @@ pub struct ModelAlias {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg(test)]
 pub struct StationKeyHealth {
     pub station_key_id: String,
     pub last_success_at: Option<String>,
@@ -389,6 +220,7 @@ pub struct CanonicalRoutingCandidate {
     pub station_name: String,
     pub key_name: String,
     pub capabilities: StationKeyCapabilities,
+    #[cfg(test)]
     pub health: Option<StationKeyHealth>,
     pub balance_snapshot: Option<RuntimeRoutingBalance>,
     pub economic_snapshot: Option<RuntimeRoutingEconomicSnapshot>,
@@ -455,7 +287,6 @@ pub struct RouteSimulationResult {
     pub selected_station_key_id: Option<String>,
     pub selected_station_id: Option<String>,
     pub mapped_model: Option<String>,
-    pub policy: RoutingPolicy,
     pub max_rate_multiplier: Option<f64>,
     pub routing_group_filter: RoutingGroupFilter,
     pub planner_error_code: Option<String>,
@@ -491,19 +322,6 @@ mod automatic_scheduler_contract_tests {
             serde_json::from_str("\"image_generation\"").expect("decode group type");
 
         assert_eq!(group_type, PricingGroupType::ImageGeneration);
-    }
-
-    #[test]
-    fn routeable_settings_allow_unlimited_multiplier_ceiling() {
-        let settings = AutomaticSchedulerSettings {
-            max_rate_multiplier: None,
-            routing_group_scope: RoutingGroupFilter::AllGroups,
-            advanced: DispatchAlgorithmSettings::default(),
-        };
-
-        settings
-            .validate_for_routing()
-            .expect("missing multiplier ceiling should mean unlimited routing");
     }
 
     #[test]

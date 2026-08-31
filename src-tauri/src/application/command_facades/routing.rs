@@ -7,7 +7,6 @@ use crate::{
         error::ApplicationError,
         model_mapping_service::ModelMappingService,
         queries::{
-            operational_detail::StationKeyOperationalDetail,
             request_decision_trace::{
                 RecentRouteDecisionsInput, RecentRouteDecisionsPage, RequestDecisionTrace,
             },
@@ -22,7 +21,7 @@ use crate::{
     models::{
         document_sync::TrustedDocumentSource,
         pricing::BalanceSnapshot,
-        routing::{ModelAlias, RouteSimulationInput, RouteSimulationResult, StationKeyHealth},
+        routing::{ModelAlias, RouteSimulationInput, RouteSimulationResult},
         stations::{EndpointPingResult, StationEndpointHealth},
     },
     outbound::AsyncOutboundClient,
@@ -163,20 +162,34 @@ impl RoutingCommandFacade {
             .routing
             .get_routing_protection_status(now_ms, &[], true)
             .await?;
-        let transport_policy = self.proxy.transport_policy_snapshot();
-        status.timeouts = Some(
-            crate::application::queries::routing_protection::ProxyTimeoutFacts {
-                connect_seconds: transport_policy.connect_timeout.as_secs_f64(),
-                first_byte_seconds: transport_policy.first_byte_timeout.as_secs_f64(),
-                precommit_seconds: transport_policy.request_deadline.as_secs_f64(),
-                buffered_execution_seconds: transport_policy
-                    .buffered_execution_timeout
-                    .as_secs_f64(),
-                stream_idle_seconds: transport_policy.stream_idle_timeout.as_secs_f64(),
-                owner: "transport_policy_store".to_string(),
-            },
-        );
+        status.timeouts = Some(self.get_proxy_timeout_facts());
         Ok(status)
+    }
+
+    pub(crate) async fn get_routing_circuit_status(
+        &self,
+    ) -> Result<
+        crate::application::queries::station_key_circuit_read::StationKeyCircuitReadSnapshot,
+        ApplicationError,
+    > {
+        let now_ms = now_millis_for_services().min(i64::MAX as u128) as i64;
+        self.routing
+            .load_station_key_circuit_read_snapshot(now_ms)
+            .await
+    }
+
+    pub(crate) fn get_proxy_timeout_facts(
+        &self,
+    ) -> crate::application::queries::routing_protection::ProxyTimeoutFacts {
+        let transport_policy = self.proxy.transport_policy_snapshot();
+        crate::application::queries::routing_protection::ProxyTimeoutFacts {
+            connect_seconds: transport_policy.connect_timeout.as_secs_f64(),
+            first_byte_seconds: transport_policy.first_byte_timeout.as_secs_f64(),
+            precommit_seconds: transport_policy.request_deadline.as_secs_f64(),
+            buffered_execution_seconds: transport_policy.buffered_execution_timeout.as_secs_f64(),
+            stream_idle_seconds: transport_policy.stream_idle_timeout.as_secs_f64(),
+            owner: "transport_policy_store".to_string(),
+        }
     }
 
     pub(crate) async fn apply_routing_policy_document_v3(
@@ -187,12 +200,6 @@ impl RoutingCommandFacade {
         ApplicationError,
     > {
         self.policy_mutations.apply_ui(document).await
-    }
-
-    pub(crate) async fn list_station_key_health(
-        &self,
-    ) -> Result<Vec<StationKeyHealth>, ApplicationError> {
-        self.routing_diagnostics.list_station_key_health().await
     }
 
     pub(crate) async fn list_station_endpoint_health(
@@ -223,33 +230,6 @@ impl RoutingCommandFacade {
     ) -> Result<RecentRouteDecisionsPage, ApplicationError> {
         self.routing_diagnostics
             .list_recent_route_decisions(input)
-            .await
-    }
-
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "contract=legacy-error-rate-command-reference; owner=application/command_facades; remove_when=legacy error-rate diagnostics are deleted"
-        )
-    )]
-    pub(crate) async fn list_error_rate_history(
-        &self,
-        before_ms: Option<i64>,
-        limit: usize,
-    ) -> Result<crate::application::error_rate_protection::ErrorRateHistoryPageV1, ApplicationError>
-    {
-        self.routing_diagnostics
-            .list_error_rate_history(before_ms, limit)
-            .await
-    }
-
-    pub(crate) async fn get_station_key_operational_detail(
-        &self,
-        station_key_id: String,
-    ) -> Result<StationKeyOperationalDetail, ApplicationError> {
-        self.routing
-            .get_station_key_operational_detail(station_key_id)
             .await
     }
 
@@ -298,15 +278,6 @@ impl RoutingCommandFacade {
     ) -> Result<Vec<BalanceSnapshot>, ApplicationError> {
         self.routing_diagnostics
             .list_balance_snapshots_for_station(station_id)
-            .await
-    }
-
-    pub(crate) async fn get_station_key_health(
-        &self,
-        station_key_id: String,
-    ) -> Result<StationKeyHealth, ApplicationError> {
-        self.routing_diagnostics
-            .station_key_health_by_id(&station_key_id)
             .await
     }
 

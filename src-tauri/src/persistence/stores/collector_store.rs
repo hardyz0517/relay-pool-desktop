@@ -252,11 +252,26 @@ impl CollectorStore {
     ) -> Result<Option<CollectorSnapshot>, PersistenceError> {
         let row = sqlx::query(
             r#"
-            SELECT id, station_id, endpoint_revision, source, status, fetched_at,
-                   summary_json, normalized_json, raw_json_redacted, error_message, created_at
-            FROM collector_snapshots
-            WHERE station_id = ?1
-            ORDER BY created_at DESC, id DESC
+            SELECT snapshots.id, snapshots.station_id, snapshots.endpoint_revision,
+                   snapshots.source, snapshots.status, snapshots.fetched_at,
+                   snapshots.summary_json, snapshots.normalized_json,
+                   snapshots.raw_json_redacted, snapshots.error_message, snapshots.created_at
+            FROM collector_snapshots AS snapshots
+            LEFT JOIN collector_runs AS runs ON runs.id = snapshots.run_id
+            LEFT JOIN collector_task_state AS task_state
+              ON task_state.station_id = snapshots.station_id
+             AND task_state.task_type = runs.task_type
+             AND task_state.last_run_id = snapshots.run_id
+            WHERE snapshots.station_id = ?1
+            ORDER BY CASE
+                WHEN task_state.last_status = 'manual_required' THEN 0
+                WHEN runs.task_type IN ('balance', 'groups', 'detect', 'full')
+                     AND task_state.last_status = 'failed' THEN 1
+                WHEN runs.task_type IN ('balance', 'groups', 'detect', 'full')
+                     AND task_state.last_status = 'partial' THEN 2
+                ELSE 3
+            END,
+            snapshots.created_at DESC, snapshots.id DESC
             LIMIT 1
             "#,
         )
@@ -454,20 +469,40 @@ impl CollectorStore {
         session: &mut WriteSession,
         station_id: &str,
         endpoint_revision: i64,
+        task_type: &str,
         collector_status: &str,
         collected_at: &str,
         pricing_collected: bool,
     ) -> Result<(), PersistenceError> {
-        let station_status = match collector_status {
-            "success" => "healthy",
-            "partial" | "manual_required" | "needs_confirmation" => "warning",
-            "failed" => "error",
-            _ => {
-                return Err(PersistenceError::InvariantViolation(
-                    "collector terminal status cannot update station state".to_string(),
-                ));
-            }
-        };
+        let task_statuses = sqlx::query(
+            "SELECT task_state.task_type, task_state.last_status, snapshots.summary_json
+             FROM collector_task_state AS task_state
+             JOIN collector_runs AS runs ON runs.id = task_state.last_run_id
+             LEFT JOIN collector_snapshots AS snapshots ON snapshots.id = runs.snapshot_id
+             WHERE task_state.station_id = ?1
+               AND task_state.task_type <> ?2
+               AND runs.parent_run_id IS NULL
+               AND task_state.task_type IN ('balance', 'groups', 'detect', 'full')",
+        )
+        .bind(station_id)
+        .bind(task_type)
+        .fetch_all(session.connection())
+        .await?;
+        let mut statuses = task_statuses
+            .iter()
+            .map(|row| {
+                let status = row.get::<String, _>("last_status");
+                if row.get::<String, _>("task_type") != "full" {
+                    return status;
+                }
+                row.get::<Option<String>, _>("summary_json")
+                    .and_then(|summary| serde_json::from_str::<Value>(&summary).ok())
+                    .map(|summary| project_station_collection_status(&summary, &status))
+                    .unwrap_or(status)
+            })
+            .collect::<Vec<_>>();
+        statuses.push(collector_status.to_string());
+        let station_status = aggregate_station_collection_status(&statuses)?;
         let affected = sqlx::query(
             r#"
             UPDATE stations
@@ -1066,11 +1101,13 @@ impl CollectorStore {
         station_id: &str,
     ) -> Result<Vec<String>, PersistenceError> {
         let rows = sqlx::query_scalar::<_, String>(
-            "SELECT task_type
-             FROM collector_task_state
-             WHERE station_id = ?1
-               AND last_status = 'failed'
-               AND task_type IN ('balance', 'groups', 'detect', 'full')",
+            "SELECT task_state.task_type
+             FROM collector_task_state AS task_state
+             JOIN collector_runs AS runs ON runs.id = task_state.last_run_id
+             WHERE task_state.station_id = ?1
+               AND runs.parent_run_id IS NULL
+               AND task_state.last_status IN ('failed', 'manual_required')
+               AND task_state.task_type IN ('balance', 'groups', 'detect', 'full')",
         )
         .bind(station_id)
         .fetch_all(session.connection())
@@ -1264,6 +1301,65 @@ impl CollectorStore {
         .fetch_one(session.connection())
         .await?;
         Ok(row_to_group_state(&row))
+    }
+}
+
+fn aggregate_station_collection_status(
+    statuses: &[String],
+) -> Result<&'static str, PersistenceError> {
+    if statuses.iter().any(|status| status == "failed") {
+        return Ok("error");
+    }
+    if statuses.iter().any(|status| {
+        matches!(
+            status.as_str(),
+            "partial" | "manual_required" | "needs_confirmation"
+        )
+    }) {
+        return Ok("warning");
+    }
+    if statuses.iter().any(|status| status == "success") {
+        return Ok("healthy");
+    }
+    Err(PersistenceError::InvariantViolation(
+        "collector terminal status cannot update station state".to_string(),
+    ))
+}
+
+pub(crate) fn project_station_collection_status(summary_json: &Value, fallback: &str) -> String {
+    let Some(children) = summary_json.get("childRuns").and_then(Value::as_array) else {
+        return fallback.to_string();
+    };
+    let mut has_core_children = false;
+    let mut has_failed = false;
+    let mut has_manual_required = false;
+    let mut has_partial = false;
+    let mut all_success = true;
+    for child in children.iter().filter(|child| {
+        matches!(
+            child.get("task").and_then(Value::as_str),
+            Some("balance" | "groups" | "detect")
+        )
+    }) {
+        has_core_children = true;
+        match child.get("status").and_then(Value::as_str) {
+            Some("failed") => has_failed = true,
+            Some("manual_required") => has_manual_required = true,
+            Some("partial") => has_partial = true,
+            Some("success") => {}
+            _ => all_success = false,
+        }
+    }
+    if has_failed {
+        "failed".to_string()
+    } else if has_manual_required {
+        "manual_required".to_string()
+    } else if has_partial {
+        "partial".to_string()
+    } else if has_core_children && all_success {
+        "success".to_string()
+    } else {
+        fallback.to_string()
     }
 }
 

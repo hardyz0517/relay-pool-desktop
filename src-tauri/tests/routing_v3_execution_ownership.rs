@@ -5,13 +5,13 @@ fn source(relative: &str) -> String {
 }
 
 #[test]
-fn coordinator_owns_replan_fallback_and_target_fence() {
-    let coordinator = source("src/application/routing_engine/coordinator.rs");
-    assert!(coordinator.contains("TargetFence"));
-    assert!(coordinator.contains("AttemptExecutor"));
-    assert!(coordinator.contains("ReplanLimit"));
-    assert!(coordinator.contains("stale_target"));
-    assert!(coordinator.contains("DecisionTraceRound"));
+fn v3_proxy_execution_owns_bounded_replanning_and_fallback() {
+    let execution = source("src/services/proxy/execution.rs");
+    assert!(execution.contains("MAX_EXECUTION_REPLANS"));
+    assert!(execution.contains("allows_replan"));
+    assert!(execution.contains("execution_replan_limit_exceeded"));
+    assert!(execution.contains("replan_required"));
+    assert!(!execution.contains("routing_engine::coordinator"));
 }
 
 #[test]

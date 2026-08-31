@@ -6,9 +6,8 @@ use crate::{
     commands::error,
     ipc::dto::{
         stations::{
-            ClearStationCapacityDomainInputDto, CreateStationInputDto, DeleteStationInputDto,
-            ReorderStationsInputDto, StationCapacityDomainDto, StationCapacityDomainQueryInputDto,
-            UpdateStationInputDto, UpsertStationCapacityDomainInputDto,
+            CreateStationInputDto, DeleteStationInputDto, ReorderStationsInputDto,
+            UpdateStationInputDto,
         },
         EmptyInputDto, StationDto,
     },
@@ -36,107 +35,6 @@ pub async fn list_stations(
                 .list_stations()
                 .await
                 .map(|stations| stations.into_iter().map(StationDto::from).collect())
-                .map_err(super::public_command_application_error)
-        },
-    )
-    .await
-}
-
-#[tauri::command]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "contract=legacy-capacity-domain-command-reference; owner=commands/stations; remove_when=capacity-domain reference endpoints are deleted"
-    )
-)]
-pub async fn get_station_capacity_domain(
-    facade: State<'_, SettingsStationsCommandFacade>,
-    input: Value,
-
-    runtime_context_registry: tauri::State<
-        '_,
-        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
-    >,
-    runtime_context: Option<serde_json::Value>,
-) -> Result<Option<StationCapacityDomainDto>, error::CommandError> {
-    correlation::in_command_scope_with_runtime_context(
-        "get_station_capacity_domain",
-        runtime_context_registry.inner(),
-        runtime_context,
-        async {
-            let input = StationCapacityDomainQueryInputDto::parse(input)?;
-            facade
-                .get_station_capacity_domain(input.station_id)
-                .await
-                .map(|value| value.map(StationCapacityDomainDto::from))
-                .map_err(super::public_command_application_error)
-        },
-    )
-    .await
-}
-
-#[tauri::command]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "contract=legacy-capacity-domain-command-reference; owner=commands/stations; remove_when=capacity-domain reference endpoints are deleted"
-    )
-)]
-pub async fn upsert_station_capacity_domain(
-    facade: State<'_, SettingsStationsCommandFacade>,
-    input: Value,
-
-    runtime_context_registry: tauri::State<
-        '_,
-        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
-    >,
-    runtime_context: Option<serde_json::Value>,
-) -> Result<StationCapacityDomainDto, error::CommandError> {
-    correlation::in_command_scope_with_runtime_context(
-        "upsert_station_capacity_domain",
-        runtime_context_registry.inner(),
-        runtime_context,
-        async {
-            let input = UpsertStationCapacityDomainInputDto::parse(input)?.into_domain()?;
-            facade
-                .upsert_station_capacity_domain(input)
-                .await
-                .map(StationCapacityDomainDto::from)
-                .map_err(super::public_command_application_error)
-        },
-    )
-    .await
-}
-
-#[tauri::command]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "contract=legacy-capacity-domain-command-reference; owner=commands/stations; remove_when=capacity-domain reference endpoints are deleted"
-    )
-)]
-pub async fn clear_station_capacity_domain(
-    facade: State<'_, SettingsStationsCommandFacade>,
-    input: Value,
-
-    runtime_context_registry: tauri::State<
-        '_,
-        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
-    >,
-    runtime_context: Option<serde_json::Value>,
-) -> Result<(), error::CommandError> {
-    correlation::in_command_scope_with_runtime_context(
-        "clear_station_capacity_domain",
-        runtime_context_registry.inner(),
-        runtime_context,
-        async {
-            let input = ClearStationCapacityDomainInputDto::parse(input)?.into_domain();
-            facade
-                .clear_station_capacity_domain(input)
-                .await
                 .map_err(super::public_command_application_error)
         },
     )

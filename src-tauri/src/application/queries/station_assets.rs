@@ -97,6 +97,7 @@ mod tests {
     fn key() -> KeyPoolItem {
         KeyPoolItem {
             id: "key-1".into(),
+            station_key_lifecycle_revision: 1,
             station_id: "station-1".into(),
             station_name: "Station".into(),
             station_type: "openai".into(),
@@ -128,6 +129,7 @@ mod tests {
             capability_summary: vec![],
             model_scope_summary: "all".into(),
             only_use_as_backup: false,
+            circuit: None,
             cooldown_until: None,
             success_rate: None,
             avg_latency_ms: None,

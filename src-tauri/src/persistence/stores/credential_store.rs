@@ -1953,7 +1953,8 @@ where
 {
     let rows = sqlx::query(
         r#"
-        SELECT k.id, k.station_id, s.name AS station_name, s.station_type,
+        SELECT k.id, key_revision.revision AS station_key_lifecycle_revision,
+               k.station_id, s.name AS station_name, s.station_type,
                s.api_base_url AS station_api_base_url,
                s.endpoint_revision AS station_endpoint_revision,
                s.upstream_api_format AS station_upstream_api_format,
@@ -1975,21 +1976,19 @@ where
                COALESCE(c.model_blocklist_json, '[]') AS model_blocklist_json,
                COALESCE(c.preferred_models_json, '[]') AS preferred_models_json,
                COALESCE(c.only_use_as_backup, 0) AS only_use_as_backup,
-               h.cooldown_until, COALESCE(h.success_count, 0) AS success_count,
-               COALESCE(h.failure_count, 0) AS failure_count, h.avg_latency_ms,
-               COALESCE(h.consecutive_failures, 0) AS consecutive_failures,
-               h.last_error_summary,
+               NULL AS cooldown_until, 0 AS success_count,
+               0 AS failure_count, NULL AS avg_latency_ms,
+               0 AS consecutive_failures, NULL AS last_error_summary,
                COALESCE(eh.status, 'unchecked') AS endpoint_ping_status,
                eh.latency_ms AS endpoint_ping_ms,
                eh.checked_at AS endpoint_ping_checked_at,
                eh.error_summary AS endpoint_ping_error
         FROM station_keys k
         JOIN stations s ON s.id = k.station_id
+        JOIN domain_revisions key_revision
+          ON key_revision.scope = 'station_key:' || k.id
         LEFT JOIN secrets sec ON sec.id = k.api_key_secret_id
         LEFT JOIN station_key_capabilities c ON c.station_key_id = k.id
-        LEFT JOIN routing_health_snapshot h
-               ON h.station_key_id = k.id
-              AND h.endpoint_revision = s.endpoint_revision
         LEFT JOIN endpoint_health_snapshot eh
                ON eh.station_id = s.id
               AND eh.endpoint_revision = s.endpoint_revision
@@ -2019,6 +2018,12 @@ fn row_to_key_pool_item(row: sqlx::sqlite::SqliteRow) -> Result<KeyPoolItem, Per
     let failure_count: i64 = row.get("failure_count");
     Ok(KeyPoolItem {
         id: row.get("id"),
+        station_key_lifecycle_revision: u64::try_from(
+            row.get::<i64, _>("station_key_lifecycle_revision"),
+        )
+        .map_err(|_| {
+            PersistenceError::InvariantViolation("invalid key lifecycle revision".into())
+        })?,
         station_id: row.get("station_id"),
         station_name: row.get("station_name"),
         station_type: row.get("station_type"),
@@ -2064,6 +2069,7 @@ fn row_to_key_pool_item(row: sqlx::sqlite::SqliteRow) -> Result<KeyPoolItem, Per
             preferred_models.len(),
         ),
         only_use_as_backup: i64_to_bool(row.get("only_use_as_backup")),
+        circuit: None,
         cooldown_until: row.get("cooldown_until"),
         success_rate: success_rate(success_count, failure_count),
         avg_latency_ms: row.get("avg_latency_ms"),

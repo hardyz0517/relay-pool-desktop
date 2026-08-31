@@ -379,7 +379,7 @@ async fn run_station_key_connectivity_operation(
     facade: StationKeyConnectivityCommandFacade,
     outbound: AsyncOutboundClient,
     target: StationKeyConnectivityProbeTarget,
-    station_key_id: String,
+    _station_key_id: String,
     station_id: String,
     endpoint_revision: i64,
     model: String,
@@ -415,20 +415,7 @@ async fn run_station_key_connectivity_operation(
     ));
     facade.store_result(context.id, result.clone());
     context.enter_commit_barrier();
-    match facade
-        .record_station_key_connectivity(
-            station_key_id,
-            station_id,
-            endpoint_revision,
-            result.ok,
-            result.duration_ms,
-            result.message.clone(),
-        )
-        .await
-    {
-        Ok(()) => OperationTerminal::Completed,
-        Err(_) => OperationTerminal::ResultUnknown,
-    }
+    OperationTerminal::Completed
 }
 
 async fn collect_station_endpoint_ping(

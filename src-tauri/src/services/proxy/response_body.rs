@@ -209,16 +209,8 @@ fn dual_terminal_finalizing_stream(
     enforce_stream_protocol: bool,
 ) -> ByteStream {
     let request = DownstreamRequestFinalizationLease::new(request_terminal, request_lease);
-    let selected_attempt = selected_attempt.map(|(reservation, context)| {
-        let probe_scope = context.probe_scope.clone();
-        let probe_state_revision = context.probe_state_revision;
-        UpstreamAttemptFinalizationLease::new(
-            reservation,
-            context,
-            probe_scope,
-            probe_state_revision,
-        )
-    });
+    let selected_attempt = selected_attempt
+        .map(|(reservation, context)| UpstreamAttemptFinalizationLease::new(reservation, context));
     finalizing_stream_with_target(
         stream,
         FinalizationState::Lifecycle(record),
@@ -1844,10 +1836,7 @@ data: [DONE]
                 records.lock().expect("attempt lock").push(record);
                 started.notify_waiters();
                 release.notified().await;
-                Ok(AttemptCommitAck {
-                    inserted: true,
-                    health_applied: true,
-                })
+                Ok(AttemptCommitAck { inserted: true })
             })
         }
 
@@ -1942,10 +1931,7 @@ data: [DONE]
                     ));
                 }
                 records.lock().expect("attempt lock").push(record);
-                Ok(AttemptCommitAck {
-                    inserted: true,
-                    health_applied: true,
-                })
+                Ok(AttemptCommitAck { inserted: true })
             })
         }
 
@@ -2055,8 +2041,6 @@ data: [DONE]
                     comparability_key: None,
                     model_alias_revision: 1,
                     started_at_ms: received_at_ms,
-                    probe_scope: None,
-                    probe_state_revision: None,
                 };
                 Some((reservation, context))
             } else {
@@ -2120,8 +2104,6 @@ data: [DONE]
             comparability_key: None,
             model_alias_revision: 1,
             started_at_ms,
-            probe_scope: None,
-            probe_state_revision: None,
         }
     }
 

@@ -1218,6 +1218,7 @@ fn fixture_station_key() -> StationKey {
 fn fixture_key_pool_item() -> KeyPoolItem {
     KeyPoolItem {
         id: "station-key-fixture".into(),
+        station_key_lifecycle_revision: 1,
         station_id: "station-fixture".into(),
         station_name: "Fixture Station".into(),
         station_type: "newapi".into(),
@@ -1249,6 +1250,7 @@ fn fixture_key_pool_item() -> KeyPoolItem {
         capability_summary: vec!["chat_completions".into()],
         model_scope_summary: "all models".into(),
         only_use_as_backup: false,
+        circuit: None,
         cooldown_until: None,
         success_rate: None,
         avg_latency_ms: None,

@@ -5,17 +5,20 @@ export type RoutingGroupFilterDto = "all_groups" | "ungrouped_only" | { group_bi
 export type RoutingStationKeyIdInputDto = { stationKeyId: string };
 export type RoutingWorkspaceSnapshotInputDto = { limit?: number | null; cursor?: string | null };
 export type RecentRouteDecisionsInputDto = { limit?: number | null; cursor?: string | null };
-export type StationKeyOperationalDetailInputDto = { stationKeyId: string };
 export type RequestDecisionTraceInputDto = { requestLogId: string };
 export type RoutingCapacityReadModeDto = "snapshot_only";
 export type RoutingReadModelStatusDto = "available" | "unavailable";
 export type RoutingPlannerEvaluationStatusDto = "available" | "unavailable";
-export type RoutingScoreStatusDto = "scored" | "excluded" | "candidate_limit" | "probe_discovery" | "unavailable";
+export type RoutingScoreStatusDto = "scored" | "excluded" | "candidate_limit" | "unavailable";
 export type RoutingAvailabilityStatusDto = "available" | "capacity_exhausted" | "capacity_state_unavailable" | "all_keys_unavailable";
 export type RoutingCandidateCapacityStatusDto = "available" | "exhausted" | "state_unavailable" | "unknown";
+export type RoutingCandidateParticipationStatusDto = "eligible" | "conditionally_eligible" | "excluded" | "unavailable";
+export type RoutingCandidateParticipationReasonDto = "ready" | "administratively_disabled" | "planner_excluded" | "planner_unavailable" | "candidate_limit_exceeded" | "circuit_persistence_unavailable" | "circuit_open_cooldown" | "circuit_recovery_score_gate_passed" | "circuit_recovery_score_gate_denied" | "circuit_half_open_idle" | "circuit_half_open_lease_occupied";
+export type CircuitReadModelStatusDto = "available" | "unavailable";
+export type CircuitPersistenceStatusDto = "available" | "unavailable";
+export type CircuitReadStateDto = "closed" | "open" | "half_open";
 export type RoutingMonitoringSourceStatusDto = "comparable" | "no_evidence" | "incomparable" | "weight_zero" | "disabled";
 export type RouteDecisionReadModelStatusDto = "available" | "unavailable";
-export type OperationalDetailReadModelStatusDto = "available" | "unavailable";
 export type RequestDecisionTraceStatusDto = "durable_summary" | "runtime_trace" | "legacy_summary" | "trace_unavailable";
 export type RequestDecisionDetailAvailabilityDto = "detailed" | "summary_only" | "unavailable";
 // The last three values are read-only compatibility for pre-v3 trace history.
@@ -144,25 +147,6 @@ export type RecentRouteDecisionsPageDto = {
   decisions: RecentRouteDecisionSummaryDto[];
   nextCursor: string | null;
   readModelStatus: RouteDecisionReadModelStatusDto;
-};
-
-export type OperationalDetailFactDto = {
-  scope: string;
-  name: string;
-  value: string;
-  source: string;
-  freshness: string;
-  reason: string | null;
-};
-
-export type StationKeyOperationalDetailDto = {
-  detailVersion: string;
-  stationKeyId: string;
-  stationId: string;
-  endpointRevision: number;
-  facts: OperationalDetailFactDto[];
-  lazyHistoryAvailable: boolean;
-  readModelStatus: OperationalDetailReadModelStatusDto;
 };
 
 export type LegacyDecisionSummaryDto = {
@@ -346,6 +330,9 @@ export type RoutingCandidateCircuitDiagnosticsDto = {
   state: RoutingCandidateCircuitStateDto;
   stateRevision: number | null;
   lifecycleRevision: number | null;
+  policyRevision: number | null;
+  persistenceStatus: CircuitPersistenceStatusDto;
+  stateRowPresent: boolean;
   consecutiveFailures: number | null;
   reopenLevel: number;
   cooldownUntilMs: number | null;
@@ -377,6 +364,8 @@ export type RoutingWorkspaceCandidateDto = {
   healthState: string;
   score: number | null;
   scoreStatus: RoutingScoreStatusDto;
+  participationStatus: RoutingCandidateParticipationStatusDto;
+  participationReason: RoutingCandidateParticipationReasonDto;
   plannerExclusionCodes: string[];
   assessmentSnapshotId: string | null;
   assessmentDurableRevision: number | null;
@@ -478,6 +467,51 @@ export type RoutingReadPageDto = {
   nextCursor: string | null;
 };
 
+export type RoutingWorkspaceAggregatesDto = {
+  totalCandidates: number;
+  schedulableCandidates: number;
+  eligibleCandidates: number;
+  conditionallyEligibleCandidates: number;
+  excludedCandidates: number;
+  unavailableCandidates: number;
+  closedCircuits: number;
+  openCircuits: number;
+  halfOpenCircuits: number;
+  persistenceUnavailableCircuits: number;
+};
+
+export type CircuitReadSnapshotRevisionDto = {
+  processGateRevision: number;
+  persistenceHealthRevision: number;
+  stateFingerprint: string;
+};
+
+export type StationKeyCircuitReadFactDto = {
+  stationKeyId: string;
+  lifecycleRevision: number;
+  state: CircuitReadStateDto;
+  stateRevision: number | null;
+  policyRevision: number | null;
+  consecutiveFailures: number;
+  reopenLevel: number;
+  cooldownUntilMs: number | null;
+  halfOpenLeaseInFlight: boolean;
+  halfOpenLeaseExpiresAtMs: number | null;
+  recoverySuccesses: number | null;
+  persistenceStatus: CircuitPersistenceStatusDto;
+  stateRowPresent: boolean;
+};
+
+export type RoutingCircuitStatusDto = {
+  statusVersion: string;
+  sourceSchemaVersion: number;
+  generatedAtMs: number;
+  readModelStatus: CircuitReadModelStatusDto;
+  readModelCode: string | null;
+  revision: CircuitReadSnapshotRevisionDto;
+  circuits: StationKeyCircuitReadFactDto[];
+};
+
 export type RoutingWorkspaceSnapshotDto = {
   readModelVersion: string;
   generatedAtMs: number;
@@ -489,9 +523,13 @@ export type RoutingWorkspaceSnapshotDto = {
   page: RoutingReadPageDto;
   candidates: RoutingWorkspaceCandidateDto[];
   readModelStatus: RoutingReadModelStatusDto;
-  plannerEvaluation?: RoutingPlannerEvaluationStatusDto;
-  plannerEvaluationCode?: string | null;
+  plannerEvaluation: RoutingPlannerEvaluationStatusDto;
+  plannerEvaluationCode: string | null;
   availabilityStatus: RoutingAvailabilityStatusDto;
+  aggregates: RoutingWorkspaceAggregatesDto;
+  circuitReadModelStatus: CircuitReadModelStatusDto;
+  circuitReadModelCode: string | null;
+  circuitRevision: CircuitReadSnapshotRevisionDto;
   runtimeGenerationId?: string | null;
   policyRevision?: number | null;
   qualityRevision?: number | null;

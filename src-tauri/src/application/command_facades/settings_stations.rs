@@ -3,15 +3,10 @@ use std::{num::NonZeroUsize, sync::Arc};
 use crate::{
     application::{
         error::ApplicationError, queries::station_assets::StationAssetsQuery,
-        settings::SettingsService, station_capacity_domains::StationCapacityDomainService,
-        stations::StationService,
+        settings::SettingsService, stations::StationService,
     },
     models::{
         settings::{AppSettings, UpdateSettingsInput},
-        station_capacity_domains::{
-            ClearStationCapacityDomainInput, StationCapacityDomain,
-            UpsertStationCapacityDomainInput,
-        },
         stations::{CreateStationInput, Station, UpdateStationInput},
     },
     services::station_collection_coordinator::StationCollectionCoordinator,
@@ -24,14 +19,6 @@ pub(crate) struct SettingsStationsCommandFacade {
     settings: Arc<SettingsService>,
     tray_behavior: Arc<TrayBehaviorState>,
     station_assets: Arc<StationAssetsQuery>,
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "contract=legacy-capacity-domain-command-reference; owner=application/command_facades; remove_when=capacity-domain reference endpoints are deleted"
-        )
-    )]
-    station_capacity_domains: Arc<StationCapacityDomainService>,
     station_collection_coordinator: StationCollectionCoordinator,
 }
 
@@ -40,7 +27,6 @@ impl SettingsStationsCommandFacade {
         stations: Arc<StationService>,
         settings: Arc<SettingsService>,
         station_assets: Arc<StationAssetsQuery>,
-        station_capacity_domains: Arc<StationCapacityDomainService>,
         tray_behavior: Arc<TrayBehaviorState>,
         station_collection_coordinator: StationCollectionCoordinator,
     ) -> Self {
@@ -49,7 +35,6 @@ impl SettingsStationsCommandFacade {
             settings,
             tray_behavior,
             station_assets,
-            station_capacity_domains,
             station_collection_coordinator,
         }
     }
@@ -90,48 +75,6 @@ impl SettingsStationsCommandFacade {
         station_ids: Vec<String>,
     ) -> Result<Vec<Station>, ApplicationError> {
         self.stations.reorder(station_ids).await
-    }
-
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "contract=legacy-capacity-domain-command-reference; owner=application/command_facades; remove_when=capacity-domain reference endpoints are deleted"
-        )
-    )]
-    pub(crate) async fn get_station_capacity_domain(
-        &self,
-        station_id: String,
-    ) -> Result<Option<StationCapacityDomain>, ApplicationError> {
-        self.station_capacity_domains.get(station_id).await
-    }
-
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "contract=legacy-capacity-domain-command-reference; owner=application/command_facades; remove_when=capacity-domain reference endpoints are deleted"
-        )
-    )]
-    pub(crate) async fn upsert_station_capacity_domain(
-        &self,
-        input: UpsertStationCapacityDomainInput,
-    ) -> Result<StationCapacityDomain, ApplicationError> {
-        self.station_capacity_domains.upsert(input).await
-    }
-
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "contract=legacy-capacity-domain-command-reference; owner=application/command_facades; remove_when=capacity-domain reference endpoints are deleted"
-        )
-    )]
-    pub(crate) async fn clear_station_capacity_domain(
-        &self,
-        input: ClearStationCapacityDomainInput,
-    ) -> Result<(), ApplicationError> {
-        self.station_capacity_domains.clear(input).await
     }
 
     pub(crate) async fn get_settings(&self) -> Result<AppSettings, ApplicationError> {
@@ -260,12 +203,8 @@ mod tests {
     fn settings_input() -> UpdateSettingsInput {
         UpdateSettingsInput {
             local_proxy_port: 8787,
-            routing_policy_name: "cost_stable_first".to_string(),
             collector_proxy_mode: "direct".to_string(),
             collector_proxy_url: None,
-            max_rate_multiplier: None,
-            routing_group_scope: None,
-            scheduler_config: None,
             low_balance_threshold_cny: 15.0,
             collector_interval_minutes: 30,
             balance_interval_minutes: 5,
@@ -274,7 +213,6 @@ mod tests {
             pricing_refresh_interval_minutes: 60,
             collector_timeout_seconds: 15,
             collector_max_concurrency: 3,
-            allow_depleted_fallback: false,
             developer_mode_enabled: false,
             show_decision_explanation: false,
             tray_behavior: None,

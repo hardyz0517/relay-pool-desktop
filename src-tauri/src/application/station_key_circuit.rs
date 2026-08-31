@@ -18,6 +18,25 @@ struct CircuitPersistenceGateState {
     revision: u64,
 }
 
+/// Immutable view of the process-local fail-closed fence. Query paths use a
+/// pair of these snapshots around their durable read so they never combine a
+/// circuit row with a gate state that changed while the read was in flight.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct CircuitPersistenceGateSnapshot {
+    pub(crate) global_unavailable: bool,
+    pub(crate) station_keys: BTreeSet<(String, u64)>,
+    pub(crate) revision: u64,
+}
+
+impl CircuitPersistenceGateSnapshot {
+    pub(crate) fn is_active(&self, station_key_id: &str, lifecycle_revision: u64) -> bool {
+        self.global_unavailable
+            || self
+                .station_keys
+                .contains(&(station_key_id.to_string(), lifecycle_revision))
+    }
+}
+
 /// Process-local fail-closed fence shared by request finalization and routing
 /// admission. Durable gate rows survive restarts; this fence covers the period
 /// in which the circuit store itself is unavailable and cannot persist one.
@@ -67,6 +86,18 @@ impl CircuitPersistenceGate {
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .revision
+    }
+
+    pub(crate) fn snapshot(&self) -> CircuitPersistenceGateSnapshot {
+        let state = self
+            .state
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        CircuitPersistenceGateSnapshot {
+            global_unavailable: state.global_unavailable,
+            station_keys: state.station_keys.clone(),
+            revision: state.revision,
+        }
     }
 
     /// Only the supervised health-check owner may call this method. A failure
@@ -653,6 +684,23 @@ mod tests {
 
         assert!(gate.is_active("key-a", 1));
         assert!(gate.is_active("key-b", 42));
+    }
+
+    #[test]
+    fn persistence_gate_snapshot_is_atomic_and_keeps_key_scope() {
+        let gate = CircuitPersistenceGate::default();
+        gate.mark_station_key("key-a", 7);
+
+        let snapshot = gate.snapshot();
+        assert_eq!(snapshot.revision, 1);
+        assert!(!snapshot.global_unavailable);
+        assert!(snapshot.is_active("key-a", 7));
+        assert!(!snapshot.is_active("key-a", 8));
+
+        gate.mark_global_unavailable();
+        assert_eq!(snapshot.revision, 1);
+        assert!(!snapshot.is_active("key-b", 1));
+        assert!(gate.snapshot().is_active("key-b", 1));
     }
 
     #[test]

@@ -3,12 +3,18 @@
 pub(crate) mod assembler;
 #[cfg(test)]
 pub(crate) mod asset_status_projector;
+#[cfg(test)]
 pub(crate) mod balance_projector;
 pub(crate) mod candidate_projection;
+#[cfg(test)]
 pub(crate) mod candidate_projector;
+#[cfg(test)]
 pub(crate) mod capability_projector;
+#[cfg(test)]
 pub(crate) mod group_projector;
+#[cfg(test)]
 pub(crate) mod health_projector;
+#[cfg(test)]
 pub(crate) mod multiplier_projector;
 pub(crate) mod planning_snapshot;
 pub(crate) mod pricing_projector;

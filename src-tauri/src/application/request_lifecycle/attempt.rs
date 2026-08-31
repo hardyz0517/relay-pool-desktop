@@ -1,5 +1,4 @@
 use super::request::AttemptId;
-use crate::application::health_protection::HealthProtectionScope;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AttemptContext {
@@ -17,11 +16,6 @@ pub(crate) struct AttemptContext {
     pub comparability_key: Option<String>,
     pub model_alias_revision: i64,
     pub started_at_ms: i64,
-    /// The exact durable Half-Open scope leased for this attempt.  The
-    /// revision alone is only a fence and cannot identify Credential versus
-    /// Endpoint probes when a request is finalized asynchronously.
-    pub probe_scope: Option<HealthProtectionScope>,
-    pub probe_state_revision: Option<u64>,
 }
 
 #[cfg(any(test, debug_assertions))]
@@ -127,53 +121,7 @@ pub(crate) enum HealthEffect {
     },
     HardFail,
     Neutral,
-    Scoped(DurableHealthEffect),
     Capability(DurableCapabilityEffect),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum DurableHealthScope {
-    Credential {
-        station_key_id: String,
-    },
-    Account {
-        station_id: String,
-    },
-    Group {
-        station_id: String,
-        group_binding_id: String,
-    },
-    Endpoint {
-        station_id: String,
-        endpoint_revision: i64,
-    },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DurableFailureDimension {
-    Credential,
-    AccountLifecycle,
-    GroupSubscription,
-    Balance,
-    Quota,
-    RateLimit,
-    EndpointAvailability,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DurableVerdict {
-    Degraded,
-    Cooldown { retry_after_ms: Option<i64> },
-    Blocked,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct DurableHealthEffect {
-    pub scope: DurableHealthScope,
-    pub dimension: DurableFailureDimension,
-    pub verdict: DurableVerdict,
-    pub evidence_code: String,
-    pub classifier_profile_version: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -215,10 +163,6 @@ pub(crate) struct AttemptTerminalRecord {
     pub terminal: AttemptTerminal,
     pub output_committed: bool,
     pub terminal_at_ms: i64,
-    /// Copied from the context so terminal writers never have to reconstruct
-    /// a probe identity from mutable candidate facts.
-    pub probe_scope: Option<HealthProtectionScope>,
-    pub probe_state_revision: Option<u64>,
 }
 
 #[cfg(any(test, debug_assertions))]
@@ -308,8 +252,6 @@ impl AttemptLifecycle {
             terminal,
             output_committed,
             terminal_at_ms,
-            probe_scope: self.context.probe_scope.clone(),
-            probe_state_revision: self.context.probe_state_revision,
         })
     }
 
@@ -340,8 +282,6 @@ mod tests {
             comparability_key: None,
             model_alias_revision: 1,
             started_at_ms: 1,
-            probe_scope: None,
-            probe_state_revision: None,
         })
     }
 

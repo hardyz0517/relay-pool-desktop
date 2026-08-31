@@ -115,12 +115,8 @@ mod tests {
             .settings
             .update(UpdateSettingsInput {
                 local_proxy_port: port,
-                routing_policy_name: settings.routing_policy_name,
                 collector_proxy_mode: settings.collector_proxy_mode,
                 collector_proxy_url: settings.collector_proxy_url,
-                max_rate_multiplier: Some(settings.max_rate_multiplier),
-                routing_group_scope: Some(settings.routing_group_scope),
-                scheduler_config: Some(settings.scheduler_config),
                 low_balance_threshold_cny: settings.low_balance_threshold_cny,
                 collector_interval_minutes: settings.collector_interval_minutes,
                 balance_interval_minutes: settings.balance_interval_minutes,
@@ -129,7 +125,6 @@ mod tests {
                 pricing_refresh_interval_minutes: settings.pricing_refresh_interval_minutes,
                 collector_timeout_seconds: settings.collector_timeout_seconds,
                 collector_max_concurrency: settings.collector_max_concurrency,
-                allow_depleted_fallback: settings.allow_depleted_fallback,
                 developer_mode_enabled: settings.developer_mode_enabled,
                 show_decision_explanation: settings.show_decision_explanation,
                 tray_behavior: Some(settings.tray_behavior),

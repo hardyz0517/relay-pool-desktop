@@ -60,10 +60,7 @@ impl RequestLifecycleStore for FaultingStore {
         let result = if self.boundary == FaultBoundary::AttemptTerminal {
             Err(write_error(self.fault, "attempt-terminal"))
         } else {
-            Ok(AttemptCommitAck {
-                inserted: true,
-                health_applied: true,
-            })
+            Ok(AttemptCommitAck { inserted: true })
         };
         Box::pin(async move { result })
     }
@@ -95,12 +92,7 @@ impl RequestLifecycleStore for PanicStore {
         &self,
         _record: AttemptTerminalRecord,
     ) -> BoxFuture<'static, Result<AttemptCommitAck, LifecycleWriteError>> {
-        Box::pin(async {
-            Ok(AttemptCommitAck {
-                inserted: true,
-                health_applied: true,
-            })
-        })
+        Box::pin(async { Ok(AttemptCommitAck { inserted: true }) })
     }
 
     fn finish_request(
@@ -135,10 +127,7 @@ impl RequestLifecycleStore for CountingStore {
         let calls = Arc::clone(&self.calls);
         Box::pin(async move {
             calls.fetch_add(1, Ordering::Relaxed);
-            Ok(AttemptCommitAck {
-                inserted: true,
-                health_applied: true,
-            })
+            Ok(AttemptCommitAck { inserted: true })
         })
     }
 
@@ -375,8 +364,6 @@ fn attempt_record() -> AttemptTerminalRecord {
         }),
         output_committed: false,
         terminal_at_ms: 3,
-        probe_scope: None,
-        probe_state_revision: None,
     }
 }
 
@@ -423,7 +410,5 @@ fn attempt_context() -> AttemptContext {
         comparability_key: None,
         model_alias_revision: 1,
         started_at_ms: 2,
-        probe_scope: None,
-        probe_state_revision: None,
     }
 }

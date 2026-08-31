@@ -198,10 +198,7 @@ async fn model_mapping_profile_precedence_rewrites_upstream_model_through_proxy(
 
 #[tokio::test]
 async fn model_mapping_fallback_rewrites_target_before_output_for_json() {
-    let primary = LoopbackUpstream::script(vec![ScriptedResponse::Status {
-        status: 429,
-        reason: "Too Many Requests",
-    }]);
+    let primary = LoopbackUpstream::script(vec![rate_limited_response(); 3]);
     let fallback = LoopbackUpstream::script(vec![ScriptedResponse::Json(
         br#"{"id":"fallback-json","object":"chat.completion","choices":[{"message":{"role":"assistant","content":"json ok"}}]}"#.to_vec(),
     )]);
@@ -248,7 +245,7 @@ async fn model_mapping_fallback_rewrites_target_before_output_for_json() {
         response.body_text()
     );
     assert!(response.body_text().contains("json ok"));
-    primary.wait_for_requests(1);
+    primary.wait_for_requests(3);
     fallback.wait_for_requests(1);
     let primary_body: serde_json::Value =
         serde_json::from_slice(&primary.captured_requests()[0].body).expect("primary body");
@@ -262,7 +259,7 @@ async fn model_mapping_fallback_rewrites_target_before_output_for_json() {
             .request_log_summaries()
             .await
             .first()
-            .is_some_and(|log| log.fallback_count == 1 && log.attempt_count == Some(2))
+            .is_some_and(|log| log.fallback_count == 3 && log.attempt_count == Some(4))
         {
             break;
         }
@@ -270,21 +267,20 @@ async fn model_mapping_fallback_rewrites_target_before_output_for_json() {
     }
     let logs = harness.request_log_summaries().await;
     let log = logs.first().expect("request log");
-    assert_eq!(log.fallback_count, 1);
-    assert_eq!(log.attempt_count, Some(2));
-    let attempts = wait_for_attempt_terminal_summaries(&harness, &log.id, 2).await;
-    assert_eq!(attempts.len(), 2);
-    assert!(!attempts[0].output_committed);
-    assert!(attempts[1].output_committed);
+    assert_eq!(log.fallback_count, 3);
+    assert_eq!(log.attempt_count, Some(4));
+    let attempts = wait_for_attempt_terminal_summaries(&harness, &log.id, 4).await;
+    assert_eq!(attempts.len(), 4);
+    assert!(attempts[..3]
+        .iter()
+        .all(|attempt| !attempt.output_committed));
+    assert!(attempts[3].output_committed);
     harness.stop_proxy().await;
 }
 
 #[tokio::test]
 async fn model_mapping_fallback_rewrites_target_before_output_for_stream() {
-    let primary = LoopbackUpstream::script(vec![ScriptedResponse::Status {
-        status: 429,
-        reason: "Too Many Requests",
-    }]);
+    let primary = LoopbackUpstream::script(vec![rate_limited_response(); 3]);
     let fallback = LoopbackUpstream::script(vec![ScriptedResponse::Raw {
         status: 200,
         reason: "OK",
@@ -342,7 +338,7 @@ data: [DONE]
         response.body_text()
     );
     assert!(response.body_text().contains("stream ok"));
-    primary.wait_for_requests(1);
+    primary.wait_for_requests(3);
     fallback.wait_for_requests(1);
     let primary_body: serde_json::Value =
         serde_json::from_slice(&primary.captured_requests()[0].body).expect("primary body");
@@ -356,7 +352,7 @@ data: [DONE]
             .request_log_summaries()
             .await
             .first()
-            .is_some_and(|log| log.fallback_count == 1 && log.attempt_count == Some(2))
+            .is_some_and(|log| log.fallback_count == 3 && log.attempt_count == Some(4))
         {
             break;
         }
@@ -364,12 +360,14 @@ data: [DONE]
     }
     let logs = harness.request_log_summaries().await;
     let log = logs.first().expect("request log");
-    assert_eq!(log.fallback_count, 1);
-    assert_eq!(log.attempt_count, Some(2));
-    let attempts = wait_for_attempt_terminal_summaries(&harness, &log.id, 2).await;
-    assert_eq!(attempts.len(), 2);
-    assert!(!attempts[0].output_committed);
-    assert!(attempts[1].output_committed);
+    assert_eq!(log.fallback_count, 3);
+    assert_eq!(log.attempt_count, Some(4));
+    let attempts = wait_for_attempt_terminal_summaries(&harness, &log.id, 4).await;
+    assert_eq!(attempts.len(), 4);
+    assert!(attempts[..3]
+        .iter()
+        .all(|attempt| !attempt.output_committed));
+    assert!(attempts[3].output_committed);
     harness.stop_proxy().await;
 }
 
@@ -474,11 +472,8 @@ data: [DONE]
 }
 
 #[tokio::test]
-async fn auth_failure_then_backup_success_persists_dual_terminal_outcome() {
-    let primary = LoopbackUpstream::script(vec![ScriptedResponse::Status {
-        status: 429,
-        reason: "Too Many Requests",
-    }]);
+async fn rate_limit_then_backup_success_persists_all_terminal_outcomes() {
+    let primary = LoopbackUpstream::script(vec![rate_limited_response(); 3]);
     let backup = LoopbackUpstream::script(vec![ScriptedResponse::Json(
         br#"{"id":"chatcmpl-loopback","object":"chat.completion","choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}"#
             .to_vec(),
@@ -514,7 +509,7 @@ async fn auth_failure_then_backup_success_persists_dual_terminal_outcome() {
     assert_eq!(response.status, reqwest::StatusCode::OK);
     assert!(response.body_text().contains("chatcmpl-loopback"));
 
-    primary.wait_for_requests(1);
+    primary.wait_for_requests(3);
     backup.wait_for_requests(1);
     let primary_request = primary.captured_requests().pop().expect("primary request");
     let backup_request = backup.captured_requests().pop().expect("backup request");
@@ -548,27 +543,29 @@ async fn auth_failure_then_backup_success_persists_dual_terminal_outcome() {
         log.station_key_id.as_deref(),
         Some(backup_candidate.station_key_id.as_str())
     );
-    assert_eq!(log.fallback_count, 1);
-    assert_eq!(log.attempt_count, Some(2));
+    assert_eq!(log.fallback_count, 3);
+    assert_eq!(log.attempt_count, Some(4));
     assert_eq!(log.completion_source.as_deref(), Some("upstream"));
 
-    let attempts = wait_for_attempt_terminal_summaries(&harness, &log.id, 2).await;
-    assert_eq!(attempts.len(), 2);
-    assert_eq!(attempts[0].ordinal, 0);
-    assert_eq!(attempts[0].station_key_id, primary_candidate.station_key_id);
-    assert_eq!(attempts[0].terminal_kind, "failed");
-    assert_eq!(attempts[0].failure_kind.as_deref(), Some("RateLimit"));
-    assert_eq!(
-        attempts[0].public_code.as_deref(),
-        Some("upstream_rate_limited")
-    );
-    assert!(!attempts[0].output_committed);
-    assert_eq!(attempts[1].ordinal, 1);
-    assert_eq!(attempts[1].station_key_id, backup_candidate.station_key_id);
-    assert_eq!(attempts[1].terminal_kind, "succeeded");
-    assert!(attempts[1].output_committed);
+    let attempts = wait_for_attempt_terminal_summaries(&harness, &log.id, 4).await;
+    assert_eq!(attempts.len(), 4);
+    for (ordinal, attempt) in attempts[..3].iter().enumerate() {
+        assert_eq!(attempt.ordinal, ordinal as i64);
+        assert_eq!(attempt.station_key_id, primary_candidate.station_key_id);
+        assert_eq!(attempt.terminal_kind, "failed");
+        assert_eq!(attempt.failure_kind.as_deref(), Some("RateLimit"));
+        assert_eq!(
+            attempt.public_code.as_deref(),
+            Some("upstream_rate_limited")
+        );
+        assert!(!attempt.output_committed);
+    }
+    assert_eq!(attempts[3].ordinal, 3);
+    assert_eq!(attempts[3].station_key_id, backup_candidate.station_key_id);
+    assert_eq!(attempts[3].terminal_kind, "succeeded");
+    assert!(attempts[3].output_committed);
 
-    assert_eq!(harness.attempt_cost_count(&log.id).await, 2);
+    assert_eq!(harness.attempt_cost_count(&log.id).await, 4);
     let aggregate = harness
         .cost_aggregate_summary(&log.id)
         .await
@@ -581,7 +578,9 @@ async fn auth_failure_then_backup_success_persists_dual_terminal_outcome() {
         incomplete_attempts,
         serde_json::json!([
             {"request_id": log.id, "ordinal": 0, "status": "missing_usage"},
-            {"request_id": log.id, "ordinal": 1, "status": "pricing_incomplete"}
+            {"request_id": log.id, "ordinal": 1, "status": "missing_usage"},
+            {"request_id": log.id, "ordinal": 2, "status": "missing_usage"},
+            {"request_id": log.id, "ordinal": 3, "status": "pricing_incomplete"}
         ])
     );
 
@@ -726,6 +725,10 @@ async fn group_subscription_failure_is_diagnostic_only_for_v3_routing() {
             br#"{"id":"chatcmpl-group-recovered","object":"chat.completion","choices":[{"message":{"role":"assistant","content":"group recovered"}}]}"#
                 .to_vec(),
         ),
+        ScriptedResponse::Json(
+            br#"{"id":"chatcmpl-group-still-eligible","object":"chat.completion","choices":[{"message":{"role":"assistant","content":"group still eligible"}}]}"#
+                .to_vec(),
+        ),
     ]);
     let unrelated = LoopbackUpstream::script(vec![ScriptedResponse::Json(
         br#"{"id":"chatcmpl-other-group","object":"chat.completion","choices":[{"message":{"role":"assistant","content":"other group works"}}]}"#
@@ -781,28 +784,27 @@ async fn group_subscription_failure_is_diagnostic_only_for_v3_routing() {
         .await;
     assert_eq!(
         rejected_response.status,
-        reqwest::StatusCode::SERVICE_UNAVAILABLE,
+        reqwest::StatusCode::OK,
         "{}",
         rejected_response.body_text()
     );
-    rejected.wait_for_requests(1);
+    assert!(rejected_response.body_text().contains("group recovered"));
+    rejected.wait_for_requests(2);
 
-    for _ in 0..100 {
-        if harness
-            .blocked_group_subscription_verdict_count(&rejected_group)
-            .await
-            == 1
-        {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    }
+    let first_log = wait_for_log_attempt_count(&harness, "success", 2).await;
+    let attempts = wait_for_attempt_terminal_summaries(&harness, &first_log.id, 2).await;
+    assert_eq!(attempts[0].terminal_kind, "failed");
+    assert_eq!(
+        attempts[0].public_code.as_deref(),
+        Some("route_policy_rejected")
+    );
+    assert_eq!(attempts[1].terminal_kind, "succeeded");
     assert_eq!(
         harness
             .blocked_group_subscription_verdict_count(&rejected_group)
             .await,
-        1,
-        "terminal finalization must durably learn the exact rejected group binding"
+        0,
+        "group failures stay in attempt diagnostics and must not revive legacy scoped verdicts"
     );
 
     let next_response = proxy
@@ -815,7 +817,7 @@ async fn group_subscription_failure_is_diagnostic_only_for_v3_routing() {
         )
         .await;
     assert_eq!(next_response.status, reqwest::StatusCode::OK);
-    rejected.wait_for_requests(2);
+    rejected.wait_for_requests(3);
     assert_eq!(
         unrelated.captured_requests().len(),
         0,
@@ -827,10 +829,7 @@ async fn group_subscription_failure_is_diagnostic_only_for_v3_routing() {
 
 #[tokio::test]
 async fn retry_policy_black_box_max_total_attempts_bounds_outbound_and_trace_profile() {
-    let primary = LoopbackUpstream::script(vec![ScriptedResponse::Status {
-        status: 429,
-        reason: "Too Many Requests",
-    }]);
+    let primary = LoopbackUpstream::script(vec![rate_limited_response(); 3]);
     let backup = LoopbackUpstream::script(vec![ScriptedResponse::Json(
         br#"{"id":"should-not-run","object":"chat.completion","choices":[]}"#.to_vec(),
     )]);
@@ -855,12 +854,12 @@ async fn retry_policy_black_box_max_total_attempts_bounds_outbound_and_trace_pro
         )
         .await;
     assert_eq!(response.status, reqwest::StatusCode::TOO_MANY_REQUESTS);
-    primary.wait_for_requests(1);
+    primary.wait_for_requests(3);
     assert_eq!(backup.captured_requests().len(), 0);
 
     let log = wait_for_latest_log(&harness, "failed").await;
-    assert_eq!(log.attempt_count, Some(1));
-    assert_eq!(log.fallback_count, 0);
+    assert_eq!(log.attempt_count, Some(3));
+    assert_eq!(log.fallback_count, 2);
     let lifecycle = harness.request_lifecycle_status(&log.id).await;
     assert_eq!(lifecycle.terminal_kind.as_deref(), Some("failed"));
     assert_eq!(
@@ -868,7 +867,7 @@ async fn retry_policy_black_box_max_total_attempts_bounds_outbound_and_trace_pro
         Some("upstream_rate_limited")
     );
     let trace = harness.decision_trace_event_summaries(&log.id).await;
-    assert_profile_trace(&trace, "profile_total_1_fail_3_recover_2_wait_ms_30000");
+    assert_profile_trace(&trace, "profile_keys_1_fail_3_recover_2_wait_ms_30000");
     assert!(trace.iter().any(|event| {
         event.kind == "canonical_failure"
             && event.detail.as_deref().is_some_and(|detail| {
@@ -876,12 +875,12 @@ async fn retry_policy_black_box_max_total_attempts_bounds_outbound_and_trace_pro
             })
     }));
 
-    assert_eq!(primary.captured_requests().len(), 1);
+    assert_eq!(primary.captured_requests().len(), 3);
     harness.stop_proxy().await;
 }
 
 #[tokio::test]
-async fn retry_policy_never_retries_the_same_key_after_an_overload() {
+async fn retry_policy_retries_the_same_key_before_threshold_after_an_overload() {
     let upstream = LoopbackUpstream::script(vec![
         capacity_response(),
         ScriptedResponse::Json(
@@ -911,14 +910,14 @@ async fn retry_policy_never_retries_the_same_key_after_an_overload() {
             "loopback-same-target-retry",
         )
         .await;
-    assert_eq!(response.status, reqwest::StatusCode::SERVICE_UNAVAILABLE);
-    upstream.wait_for_requests(1);
-    assert_eq!(upstream.captured_requests().len(), 1);
-    let log = wait_for_latest_log(&harness, "failed").await;
-    assert_eq!(log.attempt_count, Some(1));
-    assert_eq!(log.fallback_count, 0);
+    assert_eq!(response.status, reqwest::StatusCode::OK);
+    upstream.wait_for_requests(2);
+    assert_eq!(upstream.captured_requests().len(), 2);
+    let log = wait_for_log_attempt_count(&harness, "success", 2).await;
+    assert_eq!(log.attempt_count, Some(2));
+    assert_eq!(log.fallback_count, 1);
     let trace = harness.decision_trace_event_summaries(&log.id).await;
-    assert_profile_trace(&trace, "profile_total_4_fail_3_recover_2_wait_ms_30000");
+    assert_profile_trace(&trace, "profile_keys_4_fail_3_recover_2_wait_ms_30000");
     assert!(trace
         .iter()
         .all(|event| !event.code.starts_with("capacity_")));
@@ -927,7 +926,7 @@ async fn retry_policy_never_retries_the_same_key_after_an_overload() {
 
 #[tokio::test]
 async fn retry_policy_trace_exposes_only_the_v3_retry_and_circuit_controls() {
-    let upstream = LoopbackUpstream::script(vec![capacity_response()]);
+    let upstream = LoopbackUpstream::script(vec![capacity_response(); 3]);
     let harness = RoutingLoopbackHarness::new().await;
     let candidate = harness
         .seed_candidate(&upstream.base_url, "wait-budget", 0)
@@ -952,17 +951,18 @@ async fn retry_policy_trace_exposes_only_the_v3_retry_and_circuit_controls() {
         )
         .await;
     assert_eq!(response.status, reqwest::StatusCode::SERVICE_UNAVAILABLE);
-    upstream.wait_for_requests(1);
-    assert_eq!(upstream.captured_requests().len(), 1);
+    upstream.wait_for_requests(3);
+    assert_eq!(upstream.captured_requests().len(), 3);
     let log = wait_for_latest_log(&harness, "failed").await;
-    assert_eq!(log.attempt_count, Some(1));
+    assert_eq!(log.attempt_count, Some(3));
+    assert_eq!(log.fallback_count, 2);
     let lifecycle = harness.request_lifecycle_status(&log.id).await;
     assert_eq!(
         lifecycle.terminal_code.as_deref(),
         Some("upstream_overloaded")
     );
     let trace = harness.decision_trace_event_summaries(&log.id).await;
-    assert_profile_trace(&trace, "profile_total_4_fail_3_recover_2_wait_ms_30000");
+    assert_profile_trace(&trace, "profile_keys_4_fail_3_recover_2_wait_ms_30000");
     assert!(trace.iter().all(|event| {
         !event.code.starts_with("capacity_")
             && event
@@ -975,7 +975,7 @@ async fn retry_policy_trace_exposes_only_the_v3_retry_and_circuit_controls() {
 
 #[tokio::test]
 async fn ordinary_overload_tries_the_next_key_without_capacity_domain_branching() {
-    let primary = LoopbackUpstream::script(vec![capacity_response()]);
+    let primary = LoopbackUpstream::script(vec![capacity_response(); 3]);
     let backup = LoopbackUpstream::script(vec![ScriptedResponse::Json(
         br#"{"id":"cross-domain-recovered","object":"chat.completion","choices":[]}"#.to_vec(),
     )]);
@@ -1013,16 +1013,16 @@ async fn ordinary_overload_tries_the_next_key_without_capacity_domain_branching(
         "{}",
         response.body_text()
     );
-    primary.wait_for_requests(1);
+    primary.wait_for_requests(3);
     backup.wait_for_requests(1);
-    assert_eq!(primary.captured_requests().len(), 1);
+    assert_eq!(primary.captured_requests().len(), 3);
     assert_eq!(backup.captured_requests().len(), 1);
 
-    let log = wait_for_log_attempt_count(&harness, "success", 2).await;
-    assert_eq!(log.attempt_count, Some(2));
-    assert_eq!(log.fallback_count, 1);
+    let log = wait_for_log_attempt_count(&harness, "success", 4).await;
+    assert_eq!(log.attempt_count, Some(4));
+    assert_eq!(log.fallback_count, 3);
     let trace = harness.decision_trace_event_summaries(&log.id).await;
-    assert_profile_trace(&trace, "profile_total_4_fail_3_recover_2_wait_ms_30000");
+    assert_profile_trace(&trace, "profile_keys_4_fail_3_recover_2_wait_ms_30000");
     assert!(trace
         .iter()
         .all(|event| !event.code.starts_with("capacity_")));
@@ -1031,7 +1031,7 @@ async fn ordinary_overload_tries_the_next_key_without_capacity_domain_branching(
 
 #[tokio::test]
 async fn legacy_capacity_domain_metadata_does_not_block_v3_failover() {
-    let primary = LoopbackUpstream::script(vec![capacity_response()]);
+    let primary = LoopbackUpstream::script(vec![capacity_response(); 3]);
     let backup = LoopbackUpstream::script(vec![ScriptedResponse::Json(
         br#"{"id":"cross-domain-should-not-run","object":"chat.completion","choices":[]}"#.to_vec(),
     )]);
@@ -1051,10 +1051,10 @@ async fn legacy_capacity_domain_metadata_does_not_block_v3_failover() {
             .await;
     }
     harness
-        .set_candidate_capacity_domain(&primary_candidate, "openai", Some("shared"), None)
+        .seed_legacy_capacity_domain_metadata(&primary_candidate, "openai", Some("shared"), None)
         .await;
     harness
-        .set_candidate_capacity_domain(&backup_candidate, "openai", Some("backup"), None)
+        .seed_legacy_capacity_domain_metadata(&backup_candidate, "openai", Some("backup"), None)
         .await;
     harness.set_retry_policy(4).await;
 
@@ -1070,13 +1070,13 @@ async fn legacy_capacity_domain_metadata_does_not_block_v3_failover() {
         )
         .await;
     assert_eq!(response.status, reqwest::StatusCode::OK);
-    primary.wait_for_requests(1);
+    primary.wait_for_requests(3);
     backup.wait_for_requests(1);
-    let log = wait_for_log_attempt_count(&harness, "success", 2).await;
-    assert_eq!(log.attempt_count, Some(2));
-    assert_eq!(log.fallback_count, 1);
+    let log = wait_for_log_attempt_count(&harness, "success", 4).await;
+    assert_eq!(log.attempt_count, Some(4));
+    assert_eq!(log.fallback_count, 3);
     let trace = harness.decision_trace_event_summaries(&log.id).await;
-    assert_profile_trace(&trace, "profile_total_4_fail_3_recover_2_wait_ms_30000");
+    assert_profile_trace(&trace, "profile_keys_4_fail_3_recover_2_wait_ms_30000");
     assert!(trace
         .iter()
         .all(|event| !event.code.starts_with("capacity_")));
@@ -1090,6 +1090,13 @@ fn capacity_response() -> ScriptedResponse {
         content_type: "application/json",
         body: br#"{"error":{"code":"SERVER_IS_OVERLOADED","type":"server_error","message":"Selected model is at capacity. Please try again later."}}"#
             .to_vec(),
+    }
+}
+
+fn rate_limited_response() -> ScriptedResponse {
+    ScriptedResponse::Status {
+        status: 429,
+        reason: "Too Many Requests",
     }
 }
 

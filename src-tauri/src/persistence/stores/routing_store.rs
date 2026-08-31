@@ -7,9 +7,9 @@ use crate::{
         pricing::BalanceSnapshot,
         proxy::UpstreamApiFormat,
         routing::{
-            CanonicalRoutingCandidate, DispatchAlgorithmSettings, ModelAlias, RoutingPolicy,
-            RuntimeRoutingBalance, RuntimeRoutingEconomicSnapshot, RuntimeRoutingSecret,
-            RuntimeRoutingSettings, StationKeyCapabilities, StationKeyHealth,
+            CanonicalRoutingCandidate, ModelAlias, RuntimeRoutingBalance,
+            RuntimeRoutingEconomicSnapshot, RuntimeRoutingSecret, RuntimeRoutingSettings,
+            StationKeyCapabilities,
         },
         routing_policy::RoutingPolicyConfigV2,
         stations::StationEndpointHealth,
@@ -148,10 +148,8 @@ impl RoutingStore {
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
         Ok(RuntimeRoutingSettings {
-            policy: RoutingPolicy::AutomaticBalanced,
             max_rate_multiplier: config.max_rate_multiplier,
             routing_group_scope: config.routing_group_filter,
-            scheduler_config: DispatchAlgorithmSettings::default(),
             allow_depleted_fallback: config.allow_depleted_fallback,
             outbound_proxy_mode: config.outbound_proxy_mode,
             outbound_proxy_url: config.outbound_proxy_url,
@@ -230,7 +228,6 @@ impl RoutingStore {
         // snapshot is consistent without a wide, multiplicative join.
         let mut secrets = load_runtime_secrets(read).await?;
         let mut capabilities = load_runtime_capabilities(read).await?;
-        let mut health = load_runtime_health(read).await?;
         let mut key_balances = load_latest_key_balances(read).await?;
         let station_balances = load_latest_station_balances(read).await?;
         let station_concurrency_limits = load_latest_station_concurrency_limits(read).await?;
@@ -242,7 +239,6 @@ impl RoutingStore {
                 if let Some(value) = capabilities.remove(&candidate.station_key_id) {
                     candidate.capabilities = value;
                 }
-                candidate.health = health.remove(&candidate.station_key_id);
                 candidate.station_account_concurrency_limit = station_concurrency_limits
                     .get(&candidate.station_id)
                     .copied();
@@ -373,60 +369,6 @@ impl RoutingStore {
         .fetch_all(read.connection())
         .await?;
         Ok(rows.into_iter().map(row_to_balance_snapshot).collect())
-    }
-
-    pub(crate) async fn list_station_key_health(
-        &self,
-        read: &mut ReadSession,
-    ) -> Result<Vec<StationKeyHealth>, PersistenceError> {
-        let rows = sqlx::query(
-            r#"
-            SELECT h.station_key_id, h.last_success_at, h.last_failure_at, h.consecutive_failures,
-                   h.success_count, h.failure_count, h.avg_latency_ms, h.last_error_summary,
-                   h.cooldown_until, h.updated_at
-            FROM routing_health_snapshot h
-            JOIN station_keys k ON k.id = h.station_key_id
-            JOIN stations s ON s.id = k.station_id
-            WHERE h.endpoint_revision = s.endpoint_revision
-            ORDER BY h.updated_at DESC, h.station_key_id ASC
-            "#,
-        )
-        .fetch_all(read.connection())
-        .await?;
-        Ok(rows.into_iter().map(row_to_station_key_health).collect())
-    }
-
-    pub(crate) async fn station_key_health_by_id(
-        &self,
-        read: &mut ReadSession,
-        station_key_id: &str,
-    ) -> Result<StationKeyHealth, PersistenceError> {
-        let exists =
-            sqlx::query_scalar::<_, i64>("SELECT EXISTS(SELECT 1 FROM station_keys WHERE id = ?1)")
-                .bind(station_key_id)
-                .fetch_one(read.connection())
-                .await?;
-        if exists == 0 {
-            return Err(PersistenceError::NotFound);
-        }
-        let row = sqlx::query(
-            r#"
-            SELECT h.station_key_id, h.last_success_at, h.last_failure_at, h.consecutive_failures,
-                   h.success_count, h.failure_count, h.avg_latency_ms, h.last_error_summary,
-                   h.cooldown_until, h.updated_at
-            FROM routing_health_snapshot h
-            JOIN station_keys k ON k.id = h.station_key_id
-            JOIN stations s ON s.id = k.station_id
-            WHERE h.station_key_id = ?1
-              AND h.endpoint_revision = s.endpoint_revision
-            "#,
-        )
-        .bind(station_key_id)
-        .fetch_optional(read.connection())
-        .await?;
-        Ok(row
-            .map(row_to_station_key_health)
-            .unwrap_or_else(|| default_station_key_health(station_key_id)))
     }
 
     pub(crate) async fn list_station_endpoint_health(
@@ -594,49 +536,6 @@ async fn load_runtime_capabilities(
                     only_use_as_backup: i64_to_bool(row.get(11)),
                     routing_tags: parse_json_string_list(row.get(12)),
                     updated_at: row.get(13),
-                },
-            )
-        })
-        .collect())
-}
-
-async fn load_runtime_health(
-    read: &mut ReadSession,
-) -> Result<HashMap<String, StationKeyHealth>, PersistenceError> {
-    let rows = sqlx::query(
-        r#"
-        SELECT h.station_key_id, h.last_success_at, h.last_failure_at,
-               h.consecutive_failures, h.success_count, h.failure_count,
-               h.avg_latency_ms, h.last_error_summary, h.cooldown_until, h.updated_at
-        FROM routing_health_snapshot h
-        JOIN station_keys k ON k.id = h.station_key_id
-        JOIN stations s
-          ON s.id = k.station_id
-         AND s.endpoint_revision = h.endpoint_revision
-        WHERE k.enabled = 1
-          AND s.enabled = 1
-          AND (TRIM(k.api_key) != '' OR k.api_key_secret_id IS NOT NULL)
-        "#,
-    )
-    .fetch_all(read.connection())
-    .await?;
-    Ok(rows
-        .into_iter()
-        .map(|row| {
-            let station_key_id: String = row.get(0);
-            (
-                station_key_id.clone(),
-                StationKeyHealth {
-                    station_key_id,
-                    last_success_at: row.get(1),
-                    last_failure_at: row.get(2),
-                    consecutive_failures: row.get(3),
-                    success_count: row.get(4),
-                    failure_count: row.get(5),
-                    avg_latency_ms: row.get(6),
-                    last_error_summary: row.get(7),
-                    cooldown_until: row.get(8),
-                    updated_at: row.get(9),
                 },
             )
         })
@@ -825,6 +724,7 @@ fn row_to_runtime_candidate(row: sqlx::sqlite::SqliteRow) -> CanonicalRoutingCan
         station_name: row.get(runtime_candidate_column::STATION_NAME),
         key_name: row.get(runtime_candidate_column::KEY_NAME),
         capabilities: default_runtime_capabilities(&station_key_id),
+        #[cfg(test)]
         health: None,
         balance_snapshot: None,
         economic_snapshot: Some(row_to_runtime_economic_snapshot(&row)),
@@ -1118,36 +1018,6 @@ fn row_to_balance_snapshot(row: sqlx::sqlite::SqliteRow) -> BalanceSnapshot {
         collected_at: row.get("collected_at"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
-    }
-}
-
-fn row_to_station_key_health(row: sqlx::sqlite::SqliteRow) -> StationKeyHealth {
-    StationKeyHealth {
-        station_key_id: row.get("station_key_id"),
-        last_success_at: row.get("last_success_at"),
-        last_failure_at: row.get("last_failure_at"),
-        consecutive_failures: row.get("consecutive_failures"),
-        success_count: row.get("success_count"),
-        failure_count: row.get("failure_count"),
-        avg_latency_ms: row.get("avg_latency_ms"),
-        last_error_summary: row.get("last_error_summary"),
-        cooldown_until: row.get("cooldown_until"),
-        updated_at: row.get("updated_at"),
-    }
-}
-
-fn default_station_key_health(station_key_id: &str) -> StationKeyHealth {
-    StationKeyHealth {
-        station_key_id: station_key_id.to_string(),
-        last_success_at: None,
-        last_failure_at: None,
-        consecutive_failures: 0,
-        success_count: 0,
-        failure_count: 0,
-        avg_latency_ms: None,
-        last_error_summary: None,
-        cooldown_until: None,
-        updated_at: "0".to_string(),
     }
 }
 

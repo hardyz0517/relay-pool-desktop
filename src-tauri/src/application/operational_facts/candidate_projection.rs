@@ -1,4 +1,13 @@
 use crate::{
+    application::routing_engine::request::{
+        canonical_v3_ordering_profile, CanonicalRouteRequest, GroupFilterMode, RouteKind,
+        RouteRequestClassifier, RouteRequestFacts, ValidatedLocalRouteSettings,
+    },
+    models::routing::{RoutingGroupFilter, RuntimeRoutingSettings},
+};
+
+#[cfg(test)]
+use crate::{
     application::{
         operational_facts::{
             balance_projector::{project_runtime_balance, BalanceProjectionStatus},
@@ -28,12 +37,7 @@ use crate::{
             },
         },
         routing_engine::{
-            admission::CandidateAdmissionProfile,
-            capacity::ProviderAccountConstraint,
-            request::{
-                CanonicalRouteRequest, GroupFilterMode, OrderingProfile, RouteKind,
-                RouteRequestClassifier, RouteRequestFacts, ValidatedLocalRouteSettings,
-            },
+            admission::CandidateAdmissionProfile, capacity::ProviderAccountConstraint,
             routing_health::health_is_blocked,
         },
     },
@@ -43,9 +47,7 @@ use crate::{
             UnixMillis,
         },
         pricing::ResolvedPricingContext,
-        routing::{
-            CanonicalRoutingCandidate, RoutingGroupFilter, RoutingPolicy, RuntimeRoutingSettings,
-        },
+        routing::CanonicalRoutingCandidate,
     },
 };
 
@@ -72,7 +74,7 @@ pub(crate) fn validated_route_settings(
     settings: &RuntimeRoutingSettings,
 ) -> ValidatedLocalRouteSettings {
     ValidatedLocalRouteSettings {
-        ordering_profile: ordering_profile(&settings.policy),
+        ordering_profile: canonical_v3_ordering_profile(),
         max_rate_multiplier: settings.max_rate_multiplier,
         group_filter_mode: group_filter_mode(&settings.routing_group_scope),
         required_group_stable_key: required_group_stable_key(&settings.routing_group_scope),
@@ -80,16 +82,6 @@ pub(crate) fn validated_route_settings(
         required_tags: Vec::new(),
         allow_depleted_fallback: settings.allow_depleted_fallback,
         affinity_enabled: false,
-    }
-}
-
-pub(crate) fn ordering_profile(policy: &RoutingPolicy) -> OrderingProfile {
-    match policy {
-        RoutingPolicy::CheapFirst | RoutingPolicy::CostStableFirst => OrderingProfile::CostFirst,
-        RoutingPolicy::AutomaticBalanced
-        | RoutingPolicy::PriorityFallback
-        | RoutingPolicy::StableFirst
-        | RoutingPolicy::BackupOnly => OrderingProfile::PriorityFirst,
     }
 }
 
@@ -146,6 +138,7 @@ pub fn route_projection_from_runtime_candidate(
     route_projection_from_runtime_candidate_with_pricing(request, candidate, None)
 }
 
+#[cfg(test)]
 pub(crate) fn route_projection_from_runtime_candidate_with_pricing(
     request: &RouteRequestFacts,
     candidate: CanonicalRoutingCandidate,
@@ -201,6 +194,7 @@ pub(crate) fn route_projection_from_runtime_candidate_with_pricing(
     Ok(project_route_candidate(request, operational))
 }
 
+#[cfg(test)]
 fn group_projection(
     economics: Option<&crate::models::routing::RuntimeRoutingEconomicSnapshot>,
     now: UnixMillis,
@@ -230,6 +224,7 @@ fn group_projection(
     })
 }
 
+#[cfg(test)]
 fn group_status(economics: &crate::models::routing::RuntimeRoutingEconomicSnapshot) -> GroupStatus {
     match economics.group_status.as_deref().map(str::trim) {
         Some("disabled") => GroupStatus::Disabled,
@@ -247,6 +242,7 @@ fn group_status(economics: &crate::models::routing::RuntimeRoutingEconomicSnapsh
     }
 }
 
+#[cfg(test)]
 fn multiplier_projection(
     economics: Option<&crate::models::routing::RuntimeRoutingEconomicSnapshot>,
     now: UnixMillis,
@@ -282,6 +278,7 @@ fn multiplier_projection(
     })
 }
 
+#[cfg(test)]
 fn missing_multiplier(now: UnixMillis) -> MultiplierProjection {
     project_multiplier(MultiplierProjectionInput {
         disabled: false,
@@ -296,6 +293,7 @@ fn missing_multiplier(now: UnixMillis) -> MultiplierProjection {
     })
 }
 
+#[cfg(test)]
 fn multiplier_evidence(
     kind: MultiplierEvidenceKind,
     value: Option<f64>,
@@ -312,6 +310,7 @@ fn multiplier_evidence(
     })
 }
 
+#[cfg(test)]
 fn pricing_context_for_request(
     request: &RouteRequestFacts,
     request_pricing: Option<&ResolvedPricingContext>,
@@ -397,6 +396,7 @@ fn pricing_context_for_request(
     }
 }
 
+#[cfg(test)]
 fn multiplier_pricing_source_chain(
     multiplier: &MultiplierProjection,
     economics: Option<&crate::models::routing::RuntimeRoutingEconomicSnapshot>,
@@ -417,6 +417,7 @@ fn multiplier_pricing_source_chain(
     chain
 }
 
+#[cfg(test)]
 fn observed_at_for_multiplier(
     multiplier: &MultiplierProjection,
     economics: &crate::models::routing::RuntimeRoutingEconomicSnapshot,
@@ -447,6 +448,7 @@ fn observed_at_for_multiplier(
     }
 }
 
+#[cfg(test)]
 fn multiplier_source_label(kind: MultiplierEvidenceKind) -> &'static str {
     match kind {
         MultiplierEvidenceKind::BindingLatestUser => "binding_latest_user",
@@ -458,6 +460,7 @@ fn multiplier_source_label(kind: MultiplierEvidenceKind) -> &'static str {
     }
 }
 
+#[cfg(test)]
 fn revision_refs(
     _economics: &crate::models::routing::RuntimeRoutingEconomicSnapshot,
 ) -> Vec<RecordRevision> {
@@ -466,6 +469,7 @@ fn revision_refs(
     Vec::new()
 }
 
+#[cfg(test)]
 fn capability_projection_set(
     request: &RouteRequestFacts,
     candidate: &CanonicalRoutingCandidate,
@@ -498,6 +502,7 @@ fn capability_projection_set(
     })
 }
 
+#[cfg(test)]
 fn protocol_subject(request: &RouteRequestFacts) -> CapabilitySubject {
     match request.route_kind() {
         RouteKind::ModelCatalog => CapabilitySubject::Protocol(CapabilityProtocol::ChatCompletions),
@@ -505,6 +510,7 @@ fn protocol_subject(request: &RouteRequestFacts) -> CapabilitySubject {
     }
 }
 
+#[cfg(test)]
 fn protocol_supported(request: &RouteRequestFacts, candidate: &CanonicalRoutingCandidate) -> bool {
     if matches!(request.route_kind(), RouteKind::ModelCatalog) {
         return true;
@@ -514,6 +520,7 @@ fn protocol_supported(request: &RouteRequestFacts, candidate: &CanonicalRoutingC
         || candidate.capabilities.supports_embeddings
 }
 
+#[cfg(test)]
 fn model_supported(model: Option<&str>, candidate: &CanonicalRoutingCandidate) -> bool {
     let Some(model) = model else {
         return true;
@@ -534,6 +541,7 @@ fn model_supported(model: Option<&str>, candidate: &CanonicalRoutingCandidate) -
             .any(|allowed| allowed.eq_ignore_ascii_case(model))
 }
 
+#[cfg(test)]
 fn capability_projection(subject: CapabilitySubject, supported: bool) -> CapabilityProjection {
     CapabilityProjection {
         subject,
@@ -558,6 +566,7 @@ fn capability_projection(subject: CapabilitySubject, supported: bool) -> Capabil
     }
 }
 
+#[cfg(test)]
 fn health_projection_set(
     request: &RouteRequestFacts,
     candidate: &CanonicalRoutingCandidate,
@@ -615,6 +624,7 @@ fn health_projection_set(
     })
 }
 
+#[cfg(test)]
 fn effective_health(
     target: HealthProjectionTarget,
     admission: HealthAdmission,
@@ -635,6 +645,7 @@ fn effective_health(
     }
 }
 
+#[cfg(test)]
 fn capacity_projection(candidate: &CanonicalRoutingCandidate) -> CapacityProjection {
     let (scope, limit) = if uses_station_account_capacity(&candidate.station_type) {
         (
@@ -661,6 +672,7 @@ fn capacity_projection(candidate: &CanonicalRoutingCandidate) -> CapacityProject
     }
 }
 
+#[cfg(test)]
 fn uses_station_account_capacity(station_type: &str) -> bool {
     matches!(
         station_type.trim().to_ascii_lowercase().as_str(),
@@ -668,6 +680,7 @@ fn uses_station_account_capacity(station_type: &str) -> bool {
     )
 }
 
+#[cfg(test)]
 fn station_account_max_concurrency(candidate: &CanonicalRoutingCandidate) -> u32 {
     match candidate.station_type.trim().to_ascii_lowercase().as_str() {
         "newapi" => 0,
@@ -689,6 +702,7 @@ fn station_key_max_concurrency(candidate: &CanonicalRoutingCandidate) -> u32 {
     }
 }
 
+#[cfg(test)]
 fn positive_u32(value: i64) -> Option<u32> {
     u32::try_from(value).ok().filter(|value| *value > 0)
 }
@@ -737,10 +751,8 @@ mod tests {
     fn runtime_candidate_projection_does_not_use_timestamp_as_multiplier_revision() {
         let now_ms = 1_800_000_000_000;
         let settings = RuntimeRoutingSettings {
-            policy: RoutingPolicy::CostStableFirst,
             max_rate_multiplier: Some(1.0),
             routing_group_scope: RoutingGroupFilter::GroupBindingId("binding-gpt".to_string()),
-            scheduler_config: Default::default(),
             allow_depleted_fallback: false,
             ..Default::default()
         };
@@ -791,10 +803,8 @@ mod tests {
     fn runtime_candidate_projection_matches_group_type_independently_of_binding_identity() {
         let now_ms = 1_800_000_000_000;
         let settings = RuntimeRoutingSettings {
-            policy: RoutingPolicy::PriorityFallback,
             max_rate_multiplier: None,
             routing_group_scope: RoutingGroupFilter::GroupType(PricingGroupType::Gpt),
-            scheduler_config: Default::default(),
             allow_depleted_fallback: false,
             ..Default::default()
         };
@@ -826,10 +836,8 @@ mod tests {
     fn runtime_candidate_projection_does_not_apply_ceiling_without_multiplier_revision() {
         let now_ms = 1_800_000_000_000;
         let settings = RuntimeRoutingSettings {
-            policy: RoutingPolicy::CostStableFirst,
             max_rate_multiplier: Some(1.0),
             routing_group_scope: RoutingGroupFilter::AllGroups,
-            scheduler_config: Default::default(),
             allow_depleted_fallback: false,
             ..Default::default()
         };
@@ -864,10 +872,8 @@ mod tests {
     fn runtime_candidate_projection_uses_live_health_block_window() {
         let now_ms = 1_800_000_000_000;
         let settings = RuntimeRoutingSettings {
-            policy: RoutingPolicy::PriorityFallback,
             max_rate_multiplier: None,
             routing_group_scope: RoutingGroupFilter::AllGroups,
-            scheduler_config: Default::default(),
             allow_depleted_fallback: false,
             ..Default::default()
         };
@@ -902,10 +908,8 @@ mod tests {
     fn runtime_candidate_projection_uses_token_base_price_over_multiplier_proxy() {
         let now_ms = 1_800_000_000_000;
         let settings = RuntimeRoutingSettings {
-            policy: RoutingPolicy::CostStableFirst,
             max_rate_multiplier: Some(2.0),
             routing_group_scope: RoutingGroupFilter::AllGroups,
-            scheduler_config: Default::default(),
             allow_depleted_fallback: false,
             ..Default::default()
         };

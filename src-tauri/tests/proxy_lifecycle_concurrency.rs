@@ -83,10 +83,7 @@ impl RequestLifecycleStore for RecordingStore {
                 record.context.attempt_id.request_id,
                 record.context.attempt_id.ordinal,
             ));
-            Ok(AttemptCommitAck {
-                inserted: true,
-                health_applied: true,
-            })
+            Ok(AttemptCommitAck { inserted: true })
         })
     }
 
@@ -206,14 +203,10 @@ fn attempt_record(request_id: &str) -> AttemptTerminalRecord {
             comparability_key: None,
             model_alias_revision: 1,
             started_at_ms: 2,
-            probe_scope: None,
-            probe_state_revision: None,
         },
         terminal: AttemptTerminal::Succeeded,
         output_committed: true,
         terminal_at_ms: 3,
-        probe_scope: None,
-        probe_state_revision: None,
     }
 }
 

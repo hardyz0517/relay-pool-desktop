@@ -58,7 +58,31 @@ impl StationCatalogStore {
                    api_key,
                    (SELECT COUNT(*) FROM station_keys WHERE station_keys.station_id = stations.id) AS key_count,
                    enabled, priority, credit_per_cny, balance_raw, balance_cny,
-                   low_balance_threshold_cny, collection_interval_minutes, status, latency_ms,
+                   low_balance_threshold_cny, collection_interval_minutes,
+                   CASE
+                       WHEN enabled = 0 THEN 'disabled'
+                       WHEN EXISTS (
+                           SELECT 1 FROM collector_task_state task_state
+                           JOIN collector_runs runs ON runs.id = task_state.last_run_id
+                           WHERE task_state.station_id = stations.id
+                             AND runs.parent_run_id IS NULL
+                             AND task_state.task_type IN ('balance', 'groups', 'detect', 'full')
+                             AND task_state.last_status = 'failed'
+                       ) THEN 'error'
+                       WHEN EXISTS (
+                           SELECT 1 FROM collector_task_state task_state
+                           JOIN collector_runs runs ON runs.id = task_state.last_run_id
+                           WHERE task_state.station_id = stations.id
+                             AND runs.parent_run_id IS NULL
+                             AND task_state.task_type IN ('balance', 'groups', 'detect', 'full')
+                             AND (
+                                 task_state.last_status = 'manual_required'
+                                 OR (task_state.task_type <> 'full' AND task_state.last_status = 'partial')
+                             )
+                       ) THEN 'warning'
+                       ELSE status
+                   END AS status,
+                   latency_ms,
                    last_checked_at, last_pricing_fetched_at, note, created_at,
                    stations.updated_at AS updated_at,
                    (SELECT masked_value FROM secrets WHERE secrets.id = stations.api_key_secret_id) AS api_key_masked,
@@ -495,7 +519,31 @@ where
                api_key,
                (SELECT COUNT(*) FROM station_keys WHERE station_keys.station_id = stations.id) AS key_count,
                enabled, priority, credit_per_cny, balance_raw, balance_cny,
-               low_balance_threshold_cny, collection_interval_minutes, status, latency_ms,
+                low_balance_threshold_cny, collection_interval_minutes,
+                CASE
+                    WHEN enabled = 0 THEN 'disabled'
+                    WHEN EXISTS (
+                        SELECT 1 FROM collector_task_state task_state
+                        JOIN collector_runs runs ON runs.id = task_state.last_run_id
+                        WHERE task_state.station_id = stations.id
+                          AND runs.parent_run_id IS NULL
+                          AND task_state.task_type IN ('balance', 'groups', 'detect', 'full')
+                          AND task_state.last_status = 'failed'
+                    ) THEN 'error'
+                    WHEN EXISTS (
+                        SELECT 1 FROM collector_task_state task_state
+                        JOIN collector_runs runs ON runs.id = task_state.last_run_id
+                        WHERE task_state.station_id = stations.id
+                          AND runs.parent_run_id IS NULL
+                          AND task_state.task_type IN ('balance', 'groups', 'detect', 'full')
+                          AND (
+                              task_state.last_status = 'manual_required'
+                              OR (task_state.task_type <> 'full' AND task_state.last_status = 'partial')
+                          )
+                    ) THEN 'warning'
+                    ELSE status
+                END AS status,
+                latency_ms,
                last_checked_at, last_pricing_fetched_at, note, created_at, updated_at,
                (SELECT masked_value FROM secrets WHERE secrets.id = stations.api_key_secret_id) AS api_key_masked,
                api_key_secret_id, collector_proxy_mode, collector_proxy_url
@@ -518,7 +566,31 @@ where
                api_key,
                (SELECT COUNT(*) FROM station_keys WHERE station_keys.station_id = stations.id) AS key_count,
                enabled, priority, credit_per_cny, balance_raw, balance_cny,
-               low_balance_threshold_cny, collection_interval_minutes, status, latency_ms,
+                low_balance_threshold_cny, collection_interval_minutes,
+                CASE
+                    WHEN enabled = 0 THEN 'disabled'
+                    WHEN EXISTS (
+                        SELECT 1 FROM collector_task_state task_state
+                        JOIN collector_runs runs ON runs.id = task_state.last_run_id
+                        WHERE task_state.station_id = stations.id
+                          AND runs.parent_run_id IS NULL
+                          AND task_state.task_type IN ('balance', 'groups', 'detect', 'full')
+                          AND task_state.last_status = 'failed'
+                    ) THEN 'error'
+                    WHEN EXISTS (
+                        SELECT 1 FROM collector_task_state task_state
+                        JOIN collector_runs runs ON runs.id = task_state.last_run_id
+                        WHERE task_state.station_id = stations.id
+                          AND runs.parent_run_id IS NULL
+                          AND task_state.task_type IN ('balance', 'groups', 'detect', 'full')
+                          AND (
+                              task_state.last_status = 'manual_required'
+                              OR (task_state.task_type <> 'full' AND task_state.last_status = 'partial')
+                          )
+                    ) THEN 'warning'
+                    ELSE status
+                END AS status,
+                latency_ms,
                last_checked_at, last_pricing_fetched_at, note, created_at, updated_at,
                (SELECT masked_value FROM secrets WHERE secrets.id = stations.api_key_secret_id) AS api_key_masked,
                api_key_secret_id, collector_proxy_mode, collector_proxy_url

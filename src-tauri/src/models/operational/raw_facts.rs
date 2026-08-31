@@ -92,12 +92,6 @@ pub(crate) struct RawOperationalCandidateRow {
     pub(crate) model_blocklist_json: String,
     pub(crate) preferred_models_json: String,
     pub(crate) routing_tags_json: String,
-    pub(crate) success_count: i64,
-    pub(crate) failure_count: i64,
-    pub(crate) consecutive_failures: i64,
-    pub(crate) avg_latency_ms: Option<i64>,
-    pub(crate) last_error_summary: Option<String>,
-    pub(crate) cooldown_until: Option<String>,
     pub(crate) balance_status: Option<String>,
     pub(crate) balance_value: Option<f64>,
 }

@@ -3,8 +3,6 @@ use sqlx::{Executor, Row, Sqlite, SqliteConnection};
 use crate::{
     models::{
         proxy::{normalize_proxy_mode, normalize_proxy_url},
-        routing::{DispatchAlgorithmSettings, RoutingGroupFilter},
-        routing_policy::RoutingPolicyConfigV2,
         secrets::mask_secret,
         settings::{
             AppSettings, UpdateSettingsInput, DEFAULT_COLLECTOR_TIMEOUT_SECONDS,
@@ -155,15 +153,6 @@ impl SettingsStore {
                 .as_deref()
                 .unwrap_or(&current.tray_behavior),
         )?;
-        let scheduler_config = serde_json::to_string(
-            &update
-                .input
-                .scheduler_config
-                .clone()
-                .unwrap_or(current.scheduler_config.clone()),
-        )
-        .map_err(|_| PersistenceError::ConstraintViolation)?;
-
         let values = [
             (
                 "local_proxy_port",
@@ -174,7 +163,6 @@ impl SettingsStore {
                 "collector_proxy_url",
                 collector_proxy_url.unwrap_or_default(),
             ),
-            ("scheduler_advanced_settings_json", scheduler_config),
             (
                 "low_balance_threshold_cny",
                 update.input.low_balance_threshold_cny.to_string(),
@@ -256,7 +244,6 @@ async fn settings_from_connection(
         .map(|pending| pending != data_dir)
         .unwrap_or(false);
 
-    let canonical_policy = canonical_policy_projection(&mut *connection).await?;
     let default_collector_timeout_seconds = DEFAULT_COLLECTOR_TIMEOUT_SECONDS.to_string();
 
     Ok(AppSettings {
@@ -268,9 +255,6 @@ async fn settings_from_connection(
         )
         .await?,
         local_key_masked,
-        // The UI field is a compatibility projection. Runtime routing reads
-        // the versioned routing_policy aggregate directly.
-        routing_policy_name: "automatic_balanced".to_string(),
         collector_proxy_mode: normalize_proxy_mode(
             &read_setting_or_default(&mut *connection, "collector_proxy_mode", "direct").await?,
             false,
@@ -278,13 +262,6 @@ async fn settings_from_connection(
         collector_proxy_url: normalize_proxy_url(Some(
             read_setting_or_default(&mut *connection, "collector_proxy_url", "").await?,
         )),
-        max_rate_multiplier: canonical_policy.max_rate_multiplier,
-        routing_group_scope: canonical_policy.routing_group_filter,
-        scheduler_config: parse_scheduler_settings(
-            &mut *connection,
-            "scheduler_advanced_settings_json",
-        )
-        .await?,
         low_balance_threshold_cny: parse_setting(&mut *connection, "low_balance_threshold_cny")
             .await?,
         collector_interval_minutes: parse_setting(&mut *connection, "collector_interval_minutes")
@@ -325,7 +302,6 @@ async fn settings_from_connection(
             "3",
         )
         .await?,
-        allow_depleted_fallback: canonical_policy.allow_depleted_fallback,
         developer_mode_enabled: parse_setting_or_default(
             &mut *connection,
             "developer_mode_enabled",
@@ -476,39 +452,6 @@ where
     Ok(())
 }
 
-#[derive(Debug, Clone)]
-struct CanonicalPolicyProjection {
-    allow_depleted_fallback: bool,
-    max_rate_multiplier: Option<f64>,
-    routing_group_filter: RoutingGroupFilter,
-}
-
-async fn canonical_policy_projection(
-    connection: &mut SqliteConnection,
-) -> Result<CanonicalPolicyProjection, PersistenceError> {
-    let config_json = sqlx::query_scalar::<_, String>(
-        "SELECT config_json FROM routing_policy WHERE singleton_key = 1",
-    )
-    .fetch_optional(&mut *connection)
-    .await?;
-    let Some(config_json) = config_json else {
-        return Ok(CanonicalPolicyProjection {
-            allow_depleted_fallback: false,
-            max_rate_multiplier: None,
-            routing_group_filter: RoutingGroupFilter::AllGroups,
-        });
-    };
-    let config = serde_json::from_str::<serde_json::Value>(&config_json)
-        .map_err(|_| invalid_persisted_setting())?;
-    let config = RoutingPolicyConfigV2::from_stored_value(&config)
-        .map_err(|_| invalid_persisted_setting())?;
-    Ok(CanonicalPolicyProjection {
-        allow_depleted_fallback: config.allow_depleted_fallback,
-        max_rate_multiplier: config.max_rate_multiplier,
-        routing_group_filter: config.routing_group_filter,
-    })
-}
-
 fn validate_settings(input: &UpdateSettingsInput) -> Result<(), PersistenceError> {
     if input.local_proxy_port == 0
         || input.low_balance_threshold_cny < 0.0
@@ -548,22 +491,6 @@ fn validate_tray_behavior_setting(value: &str) -> Result<String, PersistenceErro
 
 fn invalid_persisted_setting() -> PersistenceError {
     PersistenceError::InvariantViolation("invalid persisted setting".to_string())
-}
-
-async fn parse_scheduler_settings(
-    connection: &mut SqliteConnection,
-    key: &str,
-) -> Result<DispatchAlgorithmSettings, PersistenceError> {
-    let value = read_setting_or_default(&mut *connection, key, "").await?;
-    if value.trim().is_empty() {
-        return Ok(DispatchAlgorithmSettings::default());
-    }
-    let settings: DispatchAlgorithmSettings =
-        serde_json::from_str(&value).map_err(|_| invalid_persisted_setting())?;
-    settings
-        .validate()
-        .map_err(|_| invalid_persisted_setting())?;
-    Ok(settings)
 }
 
 #[cfg_attr(

@@ -123,7 +123,8 @@ impl KeyPoolCommandFacade {
         &self,
         station_key_ids: Vec<String>,
     ) -> Result<Vec<KeyPoolItem>, ApplicationError> {
-        self.credentials.reorder_key_pool(station_key_ids).await
+        self.credentials.reorder_key_pool(station_key_ids).await?;
+        self.key_pool.load_all().await
     }
 
     pub(crate) async fn get_station_key_capabilities(

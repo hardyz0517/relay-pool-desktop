@@ -10,15 +10,9 @@ pub(crate) mod outcome_orchestrator;
 
 use futures_util::future::BoxFuture;
 
-#[cfg(test)]
-use crate::application::error_rate_protection::ErrorRateProtectionService;
-
 use crate::{
     application::request_lifecycle::{
-        attempt::{
-            AttemptTerminal, AttemptTerminalRecord, DurableCapabilityEffect,
-            DurableFailureDimension, DurableHealthScope, DurableVerdict, HealthEffect,
-        },
+        attempt::{AttemptTerminal, AttemptTerminalRecord, DurableCapabilityEffect, HealthEffect},
         ports::{
             AttemptCommitAck, AttemptCostCommitAck, AttemptCostCommitRecord, LifecycleWriteError,
             RequestCommitAck, RequestCostAggregateCommitAck, RequestCostAggregateCommitRecord,
@@ -30,14 +24,8 @@ use crate::{
     },
     application::{
         clock::{Clock, SystemClock},
-        health_protection::HealthProtectionScope,
-        health_transitions::HealthTransitionService,
         observation_ingestion::ObservationIngestion,
         station_key_circuit::CircuitPersistenceGate,
-    },
-    models::health::{
-        HealthObservation, HealthObservationOutcome, HealthObservationSource, HealthWritebackMode,
-        TrafficEquivalence,
     },
     models::routing_observation::{
         FailureAttribution, ObservationOrder, ObservationOutcome, ObservationRetryDisposition,
@@ -64,8 +52,7 @@ use crate::{
         },
         stores::request_terminal_outbox::RequestTerminalOutboxStore,
         stores::routing_health_verdict_store::{
-            DurableHealthVerdict, FailureDimension, RoutingHealthVerdictStore,
-            ScopedHealthObservation, ScopedHealthSubject, UnsupportedModelObservation,
+            RoutingHealthVerdictStore, UnsupportedModelObservation,
         },
         stores::routing_policy_store::RoutingPolicyStore,
         stores::station_key_circuit_store::{CircuitTerminalInput, StationKeyCircuitStore},
@@ -76,7 +63,6 @@ use crate::{
 pub(crate) struct RequestFinalizationService {
     runtime: PersistenceHandle,
     clock: Arc<dyn Clock>,
-    health: HealthTransitionService,
     observations: ObservationIngestion,
     circuit_persistence_gate: Arc<CircuitPersistenceGate>,
     circuit_persistence_backlog: Arc<Mutex<CircuitPersistenceBacklog>>,
@@ -117,24 +103,8 @@ impl RequestFinalizationService {
         Self {
             runtime,
             clock: Arc::new(SystemClock),
-            health: HealthTransitionService::new(),
             observations: ObservationIngestion::new(),
             circuit_persistence_gate,
-            circuit_persistence_backlog: Arc::new(Mutex::new(CircuitPersistenceBacklog::default())),
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn new_with_error_rate(
-        runtime: PersistenceHandle,
-        error_rate: ErrorRateProtectionService,
-    ) -> Self {
-        Self {
-            runtime,
-            clock: Arc::new(SystemClock),
-            health: HealthTransitionService::new(),
-            observations: ObservationIngestion::with_error_rate(error_rate),
-            circuit_persistence_gate: CircuitPersistenceGate::shared(),
             circuit_persistence_backlog: Arc::new(Mutex::new(CircuitPersistenceBacklog::default())),
         }
     }
@@ -154,7 +124,6 @@ impl RequestFinalizationService {
             .finish_attempt(&mut session, &write)
             .await
             .map_err(map_persistence_error)?;
-        let mut health_applied = false;
         if outcome.inserted {
             let circuit_policy = RoutingPolicyStore
                 .load_circuit_policy_parameters(session.connection())
@@ -197,57 +166,13 @@ impl RequestFinalizationService {
                 )
                 .await
                 .map_err(map_persistence_error)?;
-            let is_probe_outcome = matches!(
-                write.health_update,
-                AttemptHealthUpdate::ProbeSuccess | AttemptHealthUpdate::ProbeFailure { .. }
-            );
-            if !is_probe_outcome {
-                apply_durable_attempt_effect(&mut session, &write)
-                    .await
-                    .map_err(map_persistence_error)?;
-                if let Some(observation) = attempt_health_observation(&write) {
-                    health_applied = self
-                        .health
-                        .record_observation(&mut session, observation)
-                        .await
-                        .map_err(map_persistence_error)?
-                        .health_applied;
-                } else if matches!(write.health_update, AttemptHealthUpdate::Neutral) {
-                    if let (Some(probe_state_revision), Some(scope)) =
-                        (write.probe_state_revision, write.probe_scope.clone())
-                    {
-                        RoutingHealthVerdictStore
-                            .cancel_health_protection_probe(
-                                session.connection(),
-                                &crate::application::health_protection::HealthProtectionProbe {
-                                    scope,
-                                    state_revision: probe_state_revision,
-                                },
-                                write.terminal_at_ms.max(0),
-                            )
-                            .await
-                            .map_err(map_persistence_error)?;
-                    }
-                }
-            }
-            if is_probe_outcome {
-                if matches!(write.health_update, AttemptHealthUpdate::ProbeSuccess) {
-                    if let Some(scope) = write.probe_scope.clone() {
-                        apply_probe_recovery(&mut session, &write, &scope)
-                            .await
-                            .map_err(map_persistence_error)?;
-                    }
-                } else {
-                    apply_durable_attempt_effect(&mut session, &write)
-                        .await
-                        .map_err(map_persistence_error)?;
-                }
-            }
+            apply_durable_attempt_effect(&mut session, &write)
+                .await
+                .map_err(map_persistence_error)?;
         }
         session.commit().await.map_err(map_persistence_error)?;
         Ok(AttemptCommitAck {
             inserted: outcome.inserted,
-            health_applied,
         })
     }
 
@@ -335,7 +260,6 @@ impl RequestFinalizationService {
     pub(crate) async fn reconcile_startup_interrupted_request_lifecycle(
         &self,
     ) -> Result<StartupReconciliationReport, LifecycleWriteError> {
-        self.ensure_scoped_health_projection().await?;
         let mut total = StartupReconciliationReport::empty();
         loop {
             let now_ms = self.clock.now_utc().timestamp_millis();
@@ -470,24 +394,6 @@ impl RequestFinalizationService {
                 return Ok(report);
             }
         }
-    }
-
-    async fn ensure_scoped_health_projection(&self) -> Result<(), LifecycleWriteError> {
-        let now_ms = self.clock.now_utc().timestamp_millis();
-        let mut session = self
-            .runtime
-            .begin_write()
-            .await
-            .map_err(map_persistence_error)?;
-        RoutingHealthVerdictStore
-            .ensure_current_projection(session.connection(), now_ms)
-            .await
-            .map_err(map_persistence_error)?;
-        RoutingHealthVerdictStore
-            .ensure_health_protection_state(session.connection(), now_ms)
-            .await
-            .map_err(map_persistence_error)?;
-        session.commit().await.map_err(map_persistence_error)
     }
 }
 
@@ -626,9 +532,7 @@ impl RequestLifecycleStore for RequestFinalizationService {
 fn circuit_retry_disposition(value: Option<&str>, success: bool) -> &'static str {
     if success {
         "end"
-    } else if matches!(value, Some("RetrySameTarget")) {
-        "retry_same_target"
-    } else if matches!(value, Some("TryNextCandidate")) {
+    } else if matches!(value, Some("RetrySameTarget" | "TryNextCandidate")) {
         "retryable_before_commit"
     } else {
         "stop_request"
@@ -640,148 +544,6 @@ fn failure_counts_toward_key_circuit(public_code: Option<&str>) -> bool {
         public_code,
         Some("upstream_insufficient_balance" | "upstream_model_unavailable")
     )
-}
-
-fn attempt_health_observation(record: &AttemptTerminalWrite) -> Option<HealthObservation> {
-    let outcome = match record.health_update {
-        AttemptHealthUpdate::Success => HealthObservationOutcome::Success,
-        AttemptHealthUpdate::ProbeSuccess | AttemptHealthUpdate::ProbeFailure { .. } => {
-            return None
-        }
-        AttemptHealthUpdate::ObserveFailure => HealthObservationOutcome::ObserveFailure,
-        AttemptHealthUpdate::Cooldown { .. } => HealthObservationOutcome::Cooldown,
-        AttemptHealthUpdate::HardFail => HealthObservationOutcome::HardFail,
-        AttemptHealthUpdate::Neutral => return None,
-    };
-    let source_event_id = format!("proxy:{}:{}", record.request_id, record.ordinal);
-    Some(HealthObservation {
-        id: format!("health-observation-{source_event_id}"),
-        station_key_id: record.station_key_id.clone(),
-        target_result_id: None,
-        source: HealthObservationSource::ProxyRequest,
-        source_event_id,
-        observed_at_ms: record.terminal_at_ms,
-        endpoint_revision: record.endpoint_revision,
-        outcome,
-        failure_kind: record.failure_kind.clone(),
-        latency_ms: Some(record.terminal_at_ms.saturating_sub(record.started_at_ms)),
-        retry_after_ms: match record.health_update {
-            AttemptHealthUpdate::Cooldown { retry_after_ms } => retry_after_ms,
-            _ => None,
-        },
-        error_summary: record.sanitized_detail.clone(),
-        writeback_mode: HealthWritebackMode::Authoritative,
-        traffic_equivalence: TrafficEquivalence::RealUserTraffic,
-    })
-}
-
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "contract=legacy-routing-observation-mapper; owner=application/request_finalization; remove_when=v3 attempt ledger is the sole terminal observation mapper"
-    )
-)]
-fn routing_observation(record: &AttemptTerminalWrite) -> Option<RoutingObservation> {
-    let boundary_crossed = attempt_boundary_crossed(record);
-    let outcome = match record.health_update {
-        AttemptHealthUpdate::Success | AttemptHealthUpdate::ProbeSuccess => {
-            ObservationOutcome::Success
-        }
-        AttemptHealthUpdate::ObserveFailure => ObservationOutcome::EndpointFailure,
-        AttemptHealthUpdate::Cooldown { .. } => ObservationOutcome::RateLimited,
-        AttemptHealthUpdate::ProbeFailure { .. } => ObservationOutcome::EndpointFailure,
-        AttemptHealthUpdate::HardFail => ObservationOutcome::EndpointFailure,
-        // Neutral means no scoped health verdict, not “no routing sample”.
-        // Upstream failures such as 429 still count toward the Key's quality
-        // and circuit; only local/downstream failures are excluded later via
-        // boundary_crossed/failure attribution.
-        AttemptHealthUpdate::Neutral if record.terminal_kind == "succeeded" => {
-            ObservationOutcome::Success
-        }
-        AttemptHealthUpdate::Neutral if record.terminal_kind == "abandoned" => {
-            ObservationOutcome::Cancelled
-        }
-        AttemptHealthUpdate::Neutral => ObservationOutcome::EndpointFailure,
-    };
-    let event_at_ms = record.terminal_at_ms.max(0);
-    let (response_origin, failure_attribution) = if record.terminal_kind == "succeeded" {
-        (ResponseOrigin::Upstream, FailureAttribution::Key)
-    } else if !boundary_crossed {
-        let attribution = if matches!(
-            record.failure_blame.as_deref(),
-            Some("Downstream") | Some("downstream")
-        ) {
-            FailureAttribution::Client
-        } else {
-            FailureAttribution::Local
-        };
-        (ResponseOrigin::Relay, attribution)
-    } else if matches!(
-        record.failure_blame.as_deref(),
-        Some("Upstream") | Some("upstream")
-    ) {
-        (ResponseOrigin::Upstream, FailureAttribution::Key)
-    } else {
-        (ResponseOrigin::Unknown, FailureAttribution::Key)
-    };
-    let retry_disposition = match record.retry_disposition.as_deref() {
-        Some(value)
-            if value.eq_ignore_ascii_case("trynextcandidate")
-                || value.eq_ignore_ascii_case("retry_same_target") =>
-        {
-            ObservationRetryDisposition::RetryableBeforeCommit
-        }
-        Some(value) if value.eq_ignore_ascii_case("stoprequest") => {
-            ObservationRetryDisposition::StopRequest
-        }
-        _ => ObservationRetryDisposition::End,
-    };
-    Some(RoutingObservation {
-        id: format!(
-            "routing-observation-{}-{}",
-            record.request_id, record.ordinal
-        ),
-        order: ObservationOrder {
-            // Producer sequence is scoped by producer_id. A process-global
-            // counter restarts at one and collides with durable observations
-            // after every application restart.
-            producer_id: format!("request-finalization:{}", record.request_id),
-            producer_sequence: u64::from(record.ordinal),
-            event_at_ms,
-            ingested_at_ms: event_at_ms,
-        },
-        scope: ObservationScope {
-            station_id: Some(record.station_id.clone()),
-            station_key_id: Some(record.station_key_id.clone()),
-            model: None,
-            endpoint_revision: Some(record.endpoint_revision),
-        },
-        source: ObservationSource::RealRequest,
-        traffic_equivalence: crate::models::routing_observation::TrafficEquivalence::ExactRequest,
-        outcome,
-        latency_ms: u32::try_from(record.terminal_at_ms.saturating_sub(record.started_at_ms)).ok(),
-        evidence_mass_basis_points: 10_000,
-        comparability_key: record.comparability_key.clone(),
-        correlation_id: record.request_id.clone(),
-        attempt_index: record.ordinal,
-        station_key_lifecycle_revision: u64::try_from(record.credential_revision.max(1))
-            .unwrap_or(1),
-        cluster_finalized: true,
-        cluster_expected_attempt_count: 1,
-        boundary_crossed,
-        event_time_status: crate::models::routing_observation::EventTimeStatus::Valid,
-        response_origin,
-        failure_code: record
-            .public_code
-            .clone()
-            .or_else(|| record.failure_kind.clone()),
-        failure_attribution,
-        recovery_origin: RecoveryOrigin::Normal,
-        retry_disposition,
-        probe_state_revision: record.probe_state_revision,
-        probe_scope: record.probe_scope.clone(),
-    })
 }
 
 fn routing_observation_from_finalized(
@@ -918,92 +680,6 @@ fn attempt_boundary_crossed(record: &AttemptTerminalWrite) -> bool {
     )
 }
 
-/// A successful real-request probe is also a recovery for the explicit
-/// durable scoped verdict that admitted it.  The error-rate reducer owns the
-/// Half-Open transition through `RoutingObservation`; this helper clears the
-/// separate scoped-verdict projection without ever guessing an identity from
-/// the opaque commitment.
-async fn apply_probe_recovery(
-    session: &mut crate::persistence::WriteSession,
-    write: &AttemptTerminalWrite,
-    scope: &crate::application::health_protection::HealthProtectionScope,
-) -> Result<(), PersistenceError> {
-    use crate::application::health_protection::HealthProtectionScopeKind;
-
-    let (subject, dimension, expected_scope) = match scope.kind {
-        HealthProtectionScopeKind::Credential => {
-            let subject = ScopedHealthSubject::credential(
-                write.station_id.clone(),
-                write.station_key_id.clone(),
-                write.credential_revision,
-            )?;
-            // Durable credential verdicts include the station and credential
-            // revision. The error-rate adapter also has a coarser key-only
-            // credential scope; a probe leased against that scope is already
-            // recovered by observation ingestion and must not write a fake
-            // recovery row for the revisioned durable subject.
-            let expected = HealthProtectionScope::new(
-                HealthProtectionScopeKind::Credential,
-                subject.scope().to_string(),
-            )
-            .map_err(|_| PersistenceError::ConstraintViolation)?;
-            (subject, FailureDimension::Credential, expected)
-        }
-        HealthProtectionScopeKind::Endpoint => {
-            let subject =
-                ScopedHealthSubject::endpoint(write.station_id.clone(), write.endpoint_revision)?;
-            let expected = crate::application::error_rate_protection::endpoint_health_scope(
-                &write.station_id,
-                write.endpoint_revision,
-            )
-            .ok_or(PersistenceError::ConstraintViolation)?;
-            (subject, FailureDimension::EndpointAvailability, expected)
-        }
-        // These scopes are not currently leased by the request planner. Keep
-        // the match explicit so adding a new lease type cannot silently clear
-        // a verdict with insufficient identity fields.
-        HealthProtectionScopeKind::Account
-        | HealthProtectionScopeKind::Group
-        | HealthProtectionScopeKind::Model
-        | HealthProtectionScopeKind::CapacityDomain => return Ok(()),
-    };
-    if expected_scope != *scope {
-        if scope.kind == HealthProtectionScopeKind::Credential {
-            return Ok(());
-        }
-        return Err(PersistenceError::InvariantViolation(
-            "probe scope does not match terminal identity".into(),
-        ));
-    }
-    RoutingHealthVerdictStore
-        .apply_observation(
-            session.connection(),
-            &ScopedHealthObservation {
-                observation_id: format!(
-                    "scoped-health-probe-recovery:{}:{}:{}",
-                    write.request_id,
-                    write.ordinal,
-                    dimension.as_str()
-                ),
-                producer_id: format!("request-finalization-probe:{}", write.request_id),
-                producer_sequence: u64::from(write.ordinal),
-                logical_request_id: write.request_id.clone(),
-                attempt_ordinal: u8::try_from(write.ordinal)
-                    .map_err(|_| PersistenceError::ConstraintViolation)?,
-                terminal_kind: "probe_recovery".to_string(),
-                subject,
-                dimension,
-                verdict: None,
-                cooldown_until_ms: None,
-                evidence_code: "probe_success_recovery".to_string(),
-                classifier_profile_version: "probe_recovery_v1".to_string(),
-            },
-            write.terminal_at_ms.max(0),
-        )
-        .await?;
-    Ok(())
-}
-
 fn map_request_start(
     record: RequestStartRecord,
     annotations: crate::application::request_lifecycle::request::RequestLogAnnotations,
@@ -1058,38 +734,13 @@ fn map_attempt_terminal(record: AttemptTerminalRecord) -> AttemptTerminalWrite {
         AttemptTerminal::Failed(failure) => {
             let durable_effect = map_durable_effect(&failure.health);
             let health_update = match failure.health {
-                HealthEffect::Success if record.probe_scope.is_some() => {
-                    AttemptHealthUpdate::ProbeSuccess
-                }
                 HealthEffect::Success => AttemptHealthUpdate::Success,
-                HealthEffect::ObserveFailure if record.probe_scope.is_some() => {
-                    AttemptHealthUpdate::ProbeFailure {
-                        retry_after_ms: None,
-                    }
-                }
                 HealthEffect::ObserveFailure => AttemptHealthUpdate::ObserveFailure,
                 HealthEffect::Cooldown { retry_after_ms } => {
-                    if record.probe_scope.is_some() {
-                        AttemptHealthUpdate::ProbeFailure { retry_after_ms }
-                    } else {
-                        AttemptHealthUpdate::Cooldown { retry_after_ms }
-                    }
-                }
-                HealthEffect::HardFail if record.probe_scope.is_some() => {
-                    AttemptHealthUpdate::ProbeFailure {
-                        retry_after_ms: None,
-                    }
+                    AttemptHealthUpdate::Cooldown { retry_after_ms }
                 }
                 HealthEffect::HardFail => AttemptHealthUpdate::HardFail,
-                HealthEffect::Neutral | HealthEffect::Scoped(_) | HealthEffect::Capability(_) => {
-                    if record.probe_scope.is_some() {
-                        AttemptHealthUpdate::ProbeFailure {
-                            retry_after_ms: None,
-                        }
-                    } else {
-                        AttemptHealthUpdate::Neutral
-                    }
-                }
+                HealthEffect::Neutral | HealthEffect::Capability(_) => AttemptHealthUpdate::Neutral,
             };
             (
                 "failed".to_string(),
@@ -1145,8 +796,6 @@ fn map_attempt_terminal(record: AttemptTerminalRecord) -> AttemptTerminalWrite {
         observed_at_ms: record.terminal_at_ms,
         ingested_at_ms: record.terminal_at_ms,
         terminal_at_ms: record.terminal_at_ms,
-        probe_state_revision: record.probe_state_revision,
-        probe_scope: record.probe_scope.clone(),
     }
 }
 
@@ -1157,245 +806,44 @@ async fn apply_durable_attempt_effect(
     let Some(effect) = &write.durable_effect else {
         return Ok(());
     };
-    match effect {
-        AttemptDurableEffectWrite::UnsupportedModel {
-            station_key_id,
-            model: _,
-            evidence_code,
-            classifier_profile_version,
-        } => {
-            let resolved_model = write
-                .resolved_upstream_model
-                .as_ref()
-                .ok_or(PersistenceError::ConstraintViolation)?;
-            RoutingHealthVerdictStore
-                .apply_unsupported_model(
-                    session.connection(),
-                    &UnsupportedModelObservation {
-                        observation_id: format!(
-                            "capability:{}:{}",
-                            write.request_id, write.ordinal
-                        ),
-                        logical_request_id: write.request_id.clone(),
-                        attempt_ordinal: u8::try_from(write.ordinal)
-                            .map_err(|_| PersistenceError::ConstraintViolation)?,
-                        station_key_id: station_key_id.clone(),
-                        resolved_model: resolved_model.clone(),
-                        credential_revision: write.credential_revision,
-                        endpoint_revision: write.endpoint_revision,
-                        model_alias_revision: write.model_alias_revision,
-                        endpoint_kind: "unknown".to_string(),
-                        protocol_kind: "unknown".to_string(),
-                        // Mapping revision is provenance, never native capability
-                        // identity. The legacy column remains nullable for old
-                        // records, while v2 facts are keyed by native model and
-                        // execution revisions only.
-                        model_mapping_revision: None,
-                        model_resolution_fence: None,
-                        evidence_code: evidence_code.clone(),
-                        classifier_profile_version: classifier_profile_version.clone(),
-                    },
-                    write.terminal_at_ms.max(0),
-                )
-                .await?;
-        }
-        _ => {
-            let (subject, dimension, verdict, retry_after_ms, evidence_code, profile) = match effect
-            {
-                AttemptDurableEffectWrite::Credential {
-                    station_key_id,
-                    dimension,
-                    verdict,
-                    retry_after_ms,
-                    evidence_code,
-                    classifier_profile_version,
-                } => (
-                    ScopedHealthSubject::credential(
-                        &write.station_id,
-                        station_key_id,
-                        write.credential_revision,
-                    )?,
-                    dimension,
-                    verdict,
-                    retry_after_ms,
-                    evidence_code,
-                    classifier_profile_version,
-                ),
-                AttemptDurableEffectWrite::Account {
-                    station_id,
-                    dimension,
-                    verdict,
-                    retry_after_ms,
-                    evidence_code,
-                    classifier_profile_version,
-                } => (
-                    ScopedHealthSubject::account(station_id, write.account_revision)?,
-                    dimension,
-                    verdict,
-                    retry_after_ms,
-                    evidence_code,
-                    classifier_profile_version,
-                ),
-                AttemptDurableEffectWrite::Group {
-                    station_id,
-                    group_binding_id,
-                    dimension,
-                    verdict,
-                    retry_after_ms,
-                    evidence_code,
-                    classifier_profile_version,
-                } => (
-                    ScopedHealthSubject::group(
-                        station_id,
-                        group_binding_id,
-                        write
-                            .group_revision
-                            .filter(|_| write.group_binding_id.as_deref() == Some(group_binding_id))
-                            .ok_or(PersistenceError::ConstraintViolation)?,
-                    )?,
-                    dimension,
-                    verdict,
-                    retry_after_ms,
-                    evidence_code,
-                    classifier_profile_version,
-                ),
-                AttemptDurableEffectWrite::Endpoint {
-                    station_id,
-                    endpoint_revision,
-                    dimension,
-                    verdict,
-                    retry_after_ms,
-                    evidence_code,
-                    classifier_profile_version,
-                } => (
-                    ScopedHealthSubject::endpoint(station_id, *endpoint_revision)?,
-                    dimension,
-                    verdict,
-                    retry_after_ms,
-                    evidence_code,
-                    classifier_profile_version,
-                ),
-                AttemptDurableEffectWrite::UnsupportedModel { .. } => unreachable!(),
-            };
-            let dimension = match dimension.as_str() {
-                "credential" => FailureDimension::Credential,
-                "account_lifecycle" => FailureDimension::AccountLifecycle,
-                "group_subscription" => FailureDimension::GroupSubscription,
-                "balance" => FailureDimension::Balance,
-                "quota" => FailureDimension::Quota,
-                "rate_limit" => FailureDimension::RateLimit,
-                "endpoint_availability" => FailureDimension::EndpointAvailability,
-                _ => return Err(PersistenceError::ConstraintViolation),
-            };
-            let verdict = match verdict.as_str() {
-                "degraded" => DurableHealthVerdict::Degraded,
-                "cooldown" => DurableHealthVerdict::Cooldown,
-                "blocked" => DurableHealthVerdict::Blocked,
-                _ => return Err(PersistenceError::ConstraintViolation),
-            };
-            let cooldown_until_ms = matches!(verdict, DurableHealthVerdict::Cooldown).then(|| {
-                write
-                    .terminal_at_ms
-                    .saturating_add(retry_after_ms.unwrap_or(30_000).max(0))
-            });
-            RoutingHealthVerdictStore
-                .apply_observation(
-                    session.connection(),
-                    &ScopedHealthObservation {
-                        observation_id: format!(
-                            "scoped-health:{}:{}:{}",
-                            write.request_id,
-                            write.ordinal,
-                            dimension.as_str()
-                        ),
-                        producer_id: format!("request-finalization:{}", write.request_id),
-                        producer_sequence: u64::from(write.ordinal),
-                        logical_request_id: write.request_id.clone(),
-                        attempt_ordinal: u8::try_from(write.ordinal)
-                            .map_err(|_| PersistenceError::ConstraintViolation)?,
-                        terminal_kind: write.terminal_kind.clone(),
-                        subject,
-                        dimension,
-                        verdict: Some(verdict),
-                        cooldown_until_ms,
-                        evidence_code: evidence_code.clone(),
-                        classifier_profile_version: profile.clone(),
-                    },
-                    write.terminal_at_ms.max(0),
-                )
-                .await?;
-        }
-    }
+    let AttemptDurableEffectWrite::UnsupportedModel {
+        station_key_id,
+        model: _,
+        evidence_code,
+        classifier_profile_version,
+    } = effect;
+    let resolved_model = write
+        .resolved_upstream_model
+        .as_ref()
+        .ok_or(PersistenceError::ConstraintViolation)?;
+    RoutingHealthVerdictStore
+        .apply_unsupported_model(
+            session.connection(),
+            &UnsupportedModelObservation {
+                observation_id: format!("capability:{}:{}", write.request_id, write.ordinal),
+                logical_request_id: write.request_id.clone(),
+                attempt_ordinal: u8::try_from(write.ordinal)
+                    .map_err(|_| PersistenceError::ConstraintViolation)?,
+                station_key_id: station_key_id.clone(),
+                resolved_model: resolved_model.clone(),
+                credential_revision: write.credential_revision,
+                endpoint_revision: write.endpoint_revision,
+                model_alias_revision: write.model_alias_revision,
+                endpoint_kind: "unknown".to_string(),
+                protocol_kind: "unknown".to_string(),
+                model_mapping_revision: None,
+                model_resolution_fence: None,
+                evidence_code: evidence_code.clone(),
+                classifier_profile_version: classifier_profile_version.clone(),
+            },
+            write.terminal_at_ms.max(0),
+        )
+        .await?;
     Ok(())
 }
 
 fn map_durable_effect(effect: &HealthEffect) -> Option<AttemptDurableEffectWrite> {
-    let dimension = |value: DurableFailureDimension| {
-        match value {
-            DurableFailureDimension::Credential => "credential",
-            DurableFailureDimension::AccountLifecycle => "account_lifecycle",
-            DurableFailureDimension::GroupSubscription => "group_subscription",
-            DurableFailureDimension::Balance => "balance",
-            DurableFailureDimension::Quota => "quota",
-            DurableFailureDimension::RateLimit => "rate_limit",
-            DurableFailureDimension::EndpointAvailability => "endpoint_availability",
-        }
-        .to_string()
-    };
-    let verdict = |value: DurableVerdict| match value {
-        DurableVerdict::Degraded => ("degraded".to_string(), None),
-        DurableVerdict::Cooldown { retry_after_ms } => ("cooldown".to_string(), retry_after_ms),
-        DurableVerdict::Blocked => ("blocked".to_string(), None),
-    };
     match effect {
-        HealthEffect::Scoped(effect) => {
-            let (verdict, retry_after_ms) = verdict(effect.verdict);
-            let dimension = dimension(effect.dimension);
-            Some(match &effect.scope {
-                DurableHealthScope::Credential { station_key_id } => {
-                    AttemptDurableEffectWrite::Credential {
-                        station_key_id: station_key_id.clone(),
-                        dimension,
-                        verdict,
-                        retry_after_ms,
-                        evidence_code: effect.evidence_code.clone(),
-                        classifier_profile_version: effect.classifier_profile_version.clone(),
-                    }
-                }
-                DurableHealthScope::Account { station_id } => AttemptDurableEffectWrite::Account {
-                    station_id: station_id.clone(),
-                    dimension,
-                    verdict,
-                    retry_after_ms,
-                    evidence_code: effect.evidence_code.clone(),
-                    classifier_profile_version: effect.classifier_profile_version.clone(),
-                },
-                DurableHealthScope::Group {
-                    station_id,
-                    group_binding_id,
-                } => AttemptDurableEffectWrite::Group {
-                    station_id: station_id.clone(),
-                    group_binding_id: group_binding_id.clone(),
-                    dimension,
-                    verdict,
-                    retry_after_ms,
-                    evidence_code: effect.evidence_code.clone(),
-                    classifier_profile_version: effect.classifier_profile_version.clone(),
-                },
-                DurableHealthScope::Endpoint {
-                    station_id,
-                    endpoint_revision,
-                } => AttemptDurableEffectWrite::Endpoint {
-                    station_id: station_id.clone(),
-                    endpoint_revision: *endpoint_revision,
-                    dimension,
-                    verdict,
-                    retry_after_ms,
-                    evidence_code: effect.evidence_code.clone(),
-                    classifier_profile_version: effect.classifier_profile_version.clone(),
-                },
-            })
-        }
         HealthEffect::Capability(DurableCapabilityEffect::ConfirmUnsupportedModel {
             station_key_id,
             model,
@@ -1677,17 +1125,10 @@ fn map_persistence_error(error: PersistenceError) -> LifecycleWriteError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::error_rate_protection::{
-        admission_scope, endpoint_health_scope, ErrorRateProtectionAdapter,
-        ErrorRateProtectionConfigV1, ErrorRateProtectionService,
-    };
-    use crate::application::health_protection::{
-        HealthProtectionScope, HealthProtectionScopeKind, HealthProtectionState,
-    };
     use crate::application::request_lifecycle::{
         attempt::{
-            AttemptContext, AttemptFailureKind, ClassifiedAttemptFailure, DurableHealthEffect,
-            FailureBlame, RetryDisposition,
+            AttemptContext, AttemptFailureKind, ClassifiedAttemptFailure, FailureBlame,
+            RetryDisposition,
         },
         delivery::DeliveryTerminal,
         request::{
@@ -1699,8 +1140,6 @@ mod tests {
     use crate::persistence::stores::routing_attempt_store::{
         RoutingAttemptAdmission, RoutingAttemptStore, RoutingGenerationEligibility,
     };
-    use crate::persistence::stores::routing_error_rate_history_store::RoutingErrorRateHistoryStore;
-    use crate::persistence::stores::routing_health_verdict_store::ScopedObservationApplyResult;
     use sqlx::Row;
 
     #[test]
@@ -1717,6 +1156,20 @@ mod tests {
         assert!(failure_counts_toward_key_circuit(Some(
             "upstream_authentication_failed"
         )));
+    }
+
+    #[test]
+    fn retryable_attempt_actions_use_the_v3_circuit_disposition() {
+        assert_eq!(
+            circuit_retry_disposition(Some("RetrySameTarget"), false),
+            "retryable_before_commit"
+        );
+        assert_eq!(
+            circuit_retry_disposition(Some("TryNextCandidate"), false),
+            "retryable_before_commit"
+        );
+        assert_eq!(circuit_retry_disposition(None, false), "stop_request");
+        assert_eq!(circuit_retry_disposition(None, true), "end");
     }
 
     fn context(request_id: &str) -> RequestContextSnapshot {
@@ -1744,14 +1197,10 @@ mod tests {
                 comparability_key: Some("fixture-comparability".to_string()),
                 model_alias_revision: 1,
                 started_at_ms: 1_000,
-                probe_scope: None,
-                probe_state_revision: None,
             },
             terminal: AttemptTerminal::Succeeded,
             output_committed: true,
             terminal_at_ms: 1_100,
-            probe_scope: None,
-            probe_state_revision: None,
         }
     }
 
@@ -1782,6 +1231,98 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         assert_eq!(backlog.records.len(), 1);
         assert_eq!(backlog.overflow_count, 0);
+    }
+
+    #[tokio::test]
+    async fn attempt_terminal_writes_v3_circuit_without_legacy_health_side_effects() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let runtime = PersistenceRuntime::initialize_new(&root.path().join("v3-only.sqlite3"))
+            .await
+            .expect("runtime");
+        let service = RequestFinalizationService::new(runtime.handle());
+        service
+            .start_request(RequestStartRecord {
+                context: context("req-v3-only"),
+            })
+            .await
+            .expect("start request");
+
+        let ack = service
+            .finish_attempt(successful_attempt_record("req-v3-only", "key-v3-only"))
+            .await
+            .expect("finish attempt");
+        assert!(ack.inserted);
+
+        let mut read = runtime.handle().begin_read().await.expect("read");
+        for table in ["station_key_health_observations", "routing_health_snapshot"] {
+            let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+                .fetch_one(read.connection())
+                .await
+                .expect("legacy row count");
+            assert_eq!(count, 0, "{table} must remain unchanged");
+        }
+        let circuit_events: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM routing_circuit_event_v3")
+                .fetch_one(read.connection())
+                .await
+                .expect("circuit events");
+        assert_eq!(circuit_events, 1);
+        drop(read);
+        runtime.close().await.expect("close runtime");
+    }
+
+    #[tokio::test]
+    async fn unsupported_model_keeps_capability_persistence_without_scoped_health_write() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let runtime = PersistenceRuntime::initialize_new(&root.path().join("capability.sqlite3"))
+            .await
+            .expect("runtime");
+        let service = RequestFinalizationService::new(runtime.handle());
+        service
+            .start_request(RequestStartRecord {
+                context: context("req-capability"),
+            })
+            .await
+            .expect("start request");
+        let mut record = successful_attempt_record("req-capability", "key-capability");
+        record.terminal = AttemptTerminal::Failed(ClassifiedAttemptFailure {
+            kind: AttemptFailureKind::CapabilityMismatch,
+            blame: FailureBlame::Upstream,
+            retry: RetryDisposition::TryNextCandidate,
+            health: HealthEffect::Capability(DurableCapabilityEffect::ConfirmUnsupportedModel {
+                station_key_id: "key-capability".to_string(),
+                model: "gpt-test".to_string(),
+                evidence_code: "upstream_model_unavailable".to_string(),
+                classifier_profile_version: "capability-test-v1".to_string(),
+            }),
+            public_code: "upstream_model_unavailable".to_string(),
+            sanitized_detail: Some("model is unavailable".to_string()),
+        });
+
+        service
+            .finish_attempt(record)
+            .await
+            .expect("finish attempt");
+
+        let mut read = runtime.handle().begin_read().await.expect("read");
+        for table in [
+            "routing_capability_model_observations",
+            "routing_capability_model_verdicts",
+        ] {
+            let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+                .fetch_one(read.connection())
+                .await
+                .expect("capability row count");
+            assert_eq!(count, 1, "{table} must retain the capability effect");
+        }
+        let scoped_health_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM routing_health_observations")
+                .fetch_one(read.connection())
+                .await
+                .expect("scoped health row count");
+        assert_eq!(scoped_health_count, 0);
+        drop(read);
+        runtime.close().await.expect("close runtime");
     }
 
     #[test]
@@ -1825,8 +1366,6 @@ mod tests {
                 comparability_key: None,
                 model_alias_revision: 1,
                 started_at_ms: 1_010,
-                probe_scope: None,
-                probe_state_revision: Some(7),
             },
             terminal: AttemptTerminal::Failed(ClassifiedAttemptFailure {
                 kind: AttemptFailureKind::RateLimit,
@@ -1840,8 +1379,6 @@ mod tests {
             }),
             output_committed: false,
             terminal_at_ms: 1_100,
-            probe_scope: None,
-            probe_state_revision: Some(7),
         });
 
         assert_eq!(write.request_id, "req-attempt");
@@ -1868,533 +1405,6 @@ mod tests {
         assert_eq!(write.sanitized_detail.as_deref(), Some("retry later"));
         assert!(!write.output_committed);
         assert_eq!(write.terminal_at_ms, 1_100);
-        assert_eq!(write.probe_state_revision, Some(7));
-    }
-
-    #[test]
-    fn neutral_upstream_failure_still_produces_a_key_sample() {
-        let write = AttemptTerminalWrite {
-            request_id: "request-429".to_string(),
-            ordinal: 0,
-            station_id: "station-1".to_string(),
-            station_key_id: "key-1".to_string(),
-            endpoint_revision: 1,
-            credential_revision: 1,
-            account_revision: 1,
-            group_binding_id: None,
-            group_revision: None,
-            resolved_upstream_model: Some("gpt-test".to_string()),
-            comparability_key: None,
-            model_alias_revision: 1,
-            started_at_ms: 100,
-            terminal_kind: "failed".to_string(),
-            failure_kind: Some("RateLimit".to_string()),
-            failure_blame: Some("Upstream".to_string()),
-            retry_disposition: Some("TryNextCandidate".to_string()),
-            health_effect: "neutral".to_string(),
-            health_cooldown_until_ms: None,
-            health_update: AttemptHealthUpdate::Neutral,
-            durable_effect: None,
-            public_code: Some("upstream_rate_limited".to_string()),
-            sanitized_detail: None,
-            output_committed: false,
-            event_at_ms: 200,
-            observed_at_ms: 200,
-            ingested_at_ms: 200,
-            terminal_at_ms: 200,
-            probe_scope: None,
-            probe_state_revision: None,
-        };
-        let observation = routing_observation(&write).expect("neutral failure observation");
-        assert_eq!(observation.outcome, ObservationOutcome::EndpointFailure);
-        assert!(observation.boundary_crossed);
-        assert_eq!(observation.station_key_lifecycle_revision, 1);
-    }
-
-    #[test]
-    fn routing_observation_sequence_is_scoped_to_request_identity() {
-        let first_write = AttemptTerminalWrite {
-            request_id: "request-first".to_string(),
-            ordinal: 0,
-            station_id: "station-1".to_string(),
-            station_key_id: "key-1".to_string(),
-            endpoint_revision: 1,
-            credential_revision: 1,
-            account_revision: 1,
-            group_binding_id: None,
-            group_revision: None,
-            resolved_upstream_model: Some("gpt-test".to_string()),
-            comparability_key: None,
-            model_alias_revision: 1,
-            started_at_ms: 10,
-            terminal_kind: "success".to_string(),
-            failure_kind: None,
-            failure_blame: None,
-            retry_disposition: None,
-            health_effect: "Success".to_string(),
-            health_cooldown_until_ms: None,
-            health_update: AttemptHealthUpdate::Success,
-            durable_effect: None,
-            public_code: None,
-            sanitized_detail: None,
-            output_committed: true,
-            event_at_ms: 20,
-            observed_at_ms: 20,
-            ingested_at_ms: 20,
-            terminal_at_ms: 20,
-            probe_scope: None,
-            probe_state_revision: None,
-        };
-        let mut second_write = first_write.clone();
-        second_write.request_id = "request-second".to_string();
-
-        let first = routing_observation(&first_write).expect("first routing observation");
-        let second = routing_observation(&second_write).expect("second routing observation");
-
-        assert_eq!(
-            first.order.producer_id,
-            "request-finalization:request-first"
-        );
-        assert_eq!(
-            second.order.producer_id,
-            "request-finalization:request-second"
-        );
-        assert_ne!(first.order.producer_id, second.order.producer_id);
-        assert_eq!(first.order.producer_sequence, 0);
-        assert_eq!(second.order.producer_sequence, 0);
-    }
-
-    #[test]
-    fn probe_mapping_keeps_success_and_failure_as_typed_terminal_updates() {
-        use crate::application::error_rate_protection::admission_scope;
-        use crate::application::health_protection::HealthProtectionScopeKind;
-
-        let probe_scope = admission_scope(HealthProtectionScopeKind::Credential, "key-probe");
-        let base_context = AttemptContext {
-            attempt_id: AttemptId::new("req-probe", 0),
-            station_id: "station-probe".to_string(),
-            station_key_id: "key-probe".to_string(),
-            endpoint_revision: 4,
-            credential_revision: 2,
-            account_revision: 1,
-            group_binding_id: None,
-            group_revision: None,
-            resolved_upstream_model: Some("gpt-probe".to_string()),
-            comparability_key: None,
-            model_alias_revision: 1,
-            started_at_ms: 10,
-            probe_scope: Some(probe_scope.clone()),
-            probe_state_revision: Some(9),
-        };
-
-        let success = map_attempt_terminal(AttemptTerminalRecord {
-            context: base_context.clone(),
-            terminal: AttemptTerminal::Failed(ClassifiedAttemptFailure {
-                kind: AttemptFailureKind::HttpStatus,
-                blame: FailureBlame::Upstream,
-                retry: RetryDisposition::TryNextCandidate,
-                health: HealthEffect::Success,
-                public_code: "upstream_recovered".to_string(),
-                sanitized_detail: None,
-            }),
-            output_committed: false,
-            terminal_at_ms: 20,
-            probe_scope: Some(probe_scope.clone()),
-            probe_state_revision: Some(9),
-        });
-        assert_eq!(success.health_update, AttemptHealthUpdate::ProbeSuccess);
-        assert!(success.durable_effect.is_none());
-
-        let failure = map_attempt_terminal(AttemptTerminalRecord {
-            context: base_context,
-            terminal: AttemptTerminal::Failed(ClassifiedAttemptFailure {
-                kind: AttemptFailureKind::HttpStatus,
-                blame: FailureBlame::Upstream,
-                retry: RetryDisposition::TryNextCandidate,
-                health: HealthEffect::Scoped(DurableHealthEffect {
-                    scope: DurableHealthScope::Credential {
-                        station_key_id: "key-probe".to_string(),
-                    },
-                    dimension: DurableFailureDimension::Credential,
-                    verdict: DurableVerdict::Blocked,
-                    evidence_code: "invalid_api_key".to_string(),
-                    classifier_profile_version: "probe-test-v1".to_string(),
-                }),
-                public_code: "upstream_auth_failed".to_string(),
-                sanitized_detail: Some("credential rejected".to_string()),
-            }),
-            output_committed: false,
-            terminal_at_ms: 21,
-            probe_scope: Some(probe_scope),
-            probe_state_revision: Some(9),
-        });
-        assert_eq!(
-            failure.health_update,
-            AttemptHealthUpdate::ProbeFailure {
-                retry_after_ms: None
-            }
-        );
-        assert!(matches!(
-            failure.durable_effect,
-            Some(AttemptDurableEffectWrite::Credential { .. })
-        ));
-    }
-
-    #[test]
-    fn probe_scope_round_trips_without_reconstructing_identity_from_terminal_fields() {
-        let scope = admission_scope(HealthProtectionScopeKind::Endpoint, "station-probe:4");
-        let encoded = serde_json::to_string(&scope).expect("serialize probe scope");
-        let restored: crate::application::health_protection::HealthProtectionScope =
-            serde_json::from_str(&encoded).expect("restore probe scope");
-        assert_eq!(restored, scope);
-        assert_eq!(restored.kind, HealthProtectionScopeKind::Endpoint);
-    }
-
-    fn scoped_verdict_observation(
-        id: &str,
-        subject: ScopedHealthSubject,
-        dimension: FailureDimension,
-        verdict: Option<DurableHealthVerdict>,
-    ) -> ScopedHealthObservation {
-        ScopedHealthObservation {
-            observation_id: id.to_string(),
-            producer_id: format!("request-finalization-test-{id}"),
-            producer_sequence: 1,
-            logical_request_id: id.to_string(),
-            attempt_ordinal: 0,
-            terminal_kind: "failed".to_string(),
-            subject,
-            dimension,
-            verdict,
-            cooldown_until_ms: None,
-            evidence_code: if verdict.is_some() {
-                "invalid_api_key".to_string()
-            } else {
-                "probe_success_recovery".to_string()
-            },
-            classifier_profile_version: "request-finalization-test-v1".to_string(),
-        }
-    }
-
-    fn probe_write(
-        request_id: &str,
-        scope: HealthProtectionScope,
-        state_revision: u64,
-        health_update: AttemptHealthUpdate,
-        durable_effect: Option<AttemptDurableEffectWrite>,
-    ) -> AttemptTerminalWrite {
-        AttemptTerminalWrite {
-            request_id: request_id.to_string(),
-            ordinal: 0,
-            station_id: "station-probe".to_string(),
-            station_key_id: "key-probe".to_string(),
-            endpoint_revision: 4,
-            credential_revision: 2,
-            account_revision: 1,
-            group_binding_id: None,
-            group_revision: None,
-            resolved_upstream_model: Some("gpt-probe".to_string()),
-            comparability_key: None,
-            model_alias_revision: 1,
-            started_at_ms: 10,
-            terminal_kind: "failed".to_string(),
-            failure_kind: Some("HttpStatus".to_string()),
-            failure_blame: Some("Upstream".to_string()),
-            retry_disposition: Some("TryNextCandidate".to_string()),
-            health_effect: "probe".to_string(),
-            health_cooldown_until_ms: None,
-            health_update,
-            durable_effect,
-            public_code: Some("upstream_probe_result".to_string()),
-            sanitized_detail: None,
-            output_committed: false,
-            event_at_ms: 100_001,
-            observed_at_ms: 100_001,
-            ingested_at_ms: 100_001,
-            terminal_at_ms: 100_001,
-            probe_scope: Some(scope),
-            probe_state_revision: Some(state_revision),
-        }
-    }
-
-    #[tokio::test]
-    async fn probe_success_clears_endpoint_without_clearing_revisioned_credential_verdict() {
-        let root = tempfile::tempdir().expect("tempdir");
-        let path = root.path().join("probe-recovery.sqlite3");
-        let runtime = PersistenceRuntime::initialize_new(&path)
-            .await
-            .expect("initialize runtime");
-        let endpoint_scope = endpoint_health_scope("station-probe", 4).expect("endpoint scope");
-        let credential_scope = admission_scope(HealthProtectionScopeKind::Credential, "key-probe");
-        let endpoint_subject = ScopedHealthSubject::endpoint("station-probe", 4).expect("subject");
-        let credential_subject =
-            ScopedHealthSubject::credential("station-probe", "key-probe", 2).expect("subject");
-        let credential_durable_scope = HealthProtectionScope::new(
-            HealthProtectionScopeKind::Credential,
-            credential_subject.scope().to_string(),
-        )
-        .expect("credential durable scope");
-
-        let mut seed = runtime.begin_write().await.expect("seed write");
-        for (id, subject, dimension) in [
-            (
-                "endpoint-blocked",
-                endpoint_subject.clone(),
-                FailureDimension::EndpointAvailability,
-            ),
-            (
-                "credential-blocked",
-                credential_subject.clone(),
-                FailureDimension::Credential,
-            ),
-        ] {
-            assert_eq!(
-                RoutingHealthVerdictStore
-                    .apply_observation(
-                        seed.connection(),
-                        &scoped_verdict_observation(
-                            id,
-                            subject,
-                            dimension,
-                            Some(DurableHealthVerdict::Blocked),
-                        ),
-                        1000,
-                    )
-                    .await
-                    .expect("seed durable verdict"),
-                ScopedObservationApplyResult::Applied
-            );
-        }
-        seed.commit().await.expect("commit seed");
-
-        let mut recovery = runtime.begin_write().await.expect("recovery write");
-        let endpoint_write = probe_write(
-            "endpoint-probe-success",
-            endpoint_scope.clone(),
-            1,
-            AttemptHealthUpdate::ProbeSuccess,
-            None,
-        );
-        apply_probe_recovery(&mut recovery, &endpoint_write, &endpoint_scope)
-            .await
-            .expect("endpoint recovery");
-        let credential_write = probe_write(
-            "credential-probe-success",
-            credential_scope.clone(),
-            1,
-            AttemptHealthUpdate::ProbeSuccess,
-            None,
-        );
-        apply_probe_recovery(&mut recovery, &credential_write, &credential_scope)
-            .await
-            .expect("credential recovery");
-        recovery.commit().await.expect("commit recovery");
-
-        let mut read = runtime.handle().begin_read().await.expect("read recovery");
-        let active = RoutingHealthVerdictStore
-            .load_active_batch(
-                read.connection(),
-                &[endpoint_subject.clone(), credential_subject.clone()],
-            )
-            .await
-            .expect("active verdicts");
-        assert_eq!(active.len(), 1);
-        assert_eq!(
-            active.values().next().map(|row| row.verdict),
-            Some(DurableHealthVerdict::Blocked)
-        );
-        let statuses = RoutingHealthVerdictStore
-            .load_health_protection_statuses(read.connection(), 100_002)
-            .await
-            .expect("health statuses");
-        assert!(statuses.iter().any(|status| {
-            status.scope == endpoint_scope && status.state == HealthProtectionState::Closed
-        }));
-        assert!(statuses.iter().any(|status| {
-            status.scope == credential_durable_scope && status.state == HealthProtectionState::Open
-        }));
-        drop(read);
-        runtime.close().await.expect("close runtime");
-    }
-
-    #[tokio::test]
-    async fn probe_failure_consumes_reducer_fence_before_reopening_endpoint_verdict() {
-        let root = tempfile::tempdir().expect("tempdir");
-        let path = root.path().join("probe-failure.sqlite3");
-        let runtime = PersistenceRuntime::initialize_new(&path)
-            .await
-            .expect("initialize runtime");
-        let mut policy = runtime.begin_write().await.expect("policy write");
-        let policy_json: String =
-            sqlx::query_scalar("SELECT config_json FROM routing_policy WHERE singleton_key = 1")
-                .fetch_one(policy.connection())
-                .await
-                .expect("load routing policy");
-        let mut policy_value: serde_json::Value =
-            serde_json::from_str(&policy_json).expect("decode routing policy");
-        policy_value["protectionProfile"]["enabled"] = serde_json::Value::Bool(true);
-        sqlx::query("UPDATE routing_policy SET config_json = ?1 WHERE singleton_key = 1")
-            .bind(policy_value.to_string())
-            .execute(policy.connection())
-            .await
-            .expect("enable protection profile");
-        policy.commit().await.expect("commit policy");
-
-        let endpoint_scope = endpoint_health_scope("station-probe", 4).expect("endpoint scope");
-        let endpoint_subject = ScopedHealthSubject::endpoint("station-probe", 4).expect("subject");
-        let mut seed = runtime.begin_write().await.expect("seed write");
-        RoutingHealthVerdictStore
-            .apply_observation(
-                seed.connection(),
-                &scoped_verdict_observation(
-                    "endpoint-blocked",
-                    endpoint_subject.clone(),
-                    FailureDimension::EndpointAvailability,
-                    Some(DurableHealthVerdict::Blocked),
-                ),
-                1000,
-            )
-            .await
-            .expect("seed endpoint verdict");
-        seed.commit().await.expect("commit seed");
-
-        // The reservation must be committed before the terminal write uses it.
-        let mut reserve = runtime.begin_write().await.expect("reserve write");
-        let probe = RoutingHealthVerdictStore
-            .begin_health_protection_probe(reserve.connection(), &endpoint_scope, 100_000)
-            .await
-            .expect("reserve endpoint probe")
-            .expect("cooldown expired");
-        reserve.commit().await.expect("commit reservation");
-
-        let error_rate = ErrorRateProtectionService::from_adapter(
-            ErrorRateProtectionAdapter::new(ErrorRateProtectionConfigV1 {
-                enabled: true,
-                ..Default::default()
-            })
-            .expect("error-rate adapter"),
-        );
-        let service =
-            RequestFinalizationService::new_with_error_rate(runtime.handle(), error_rate.clone());
-        service
-            .start_request(RequestStartRecord {
-                context: context("req-probe-failure"),
-            })
-            .await
-            .expect("start request");
-        let terminal_record = AttemptTerminalRecord {
-            context: AttemptContext {
-                attempt_id: AttemptId::new("req-probe-failure", 0),
-                station_id: "station-probe".to_string(),
-                station_key_id: "key-probe".to_string(),
-                endpoint_revision: 4,
-                credential_revision: 2,
-                account_revision: 1,
-                group_binding_id: None,
-                group_revision: None,
-                resolved_upstream_model: Some("gpt-probe".to_string()),
-                comparability_key: None,
-                model_alias_revision: 1,
-                started_at_ms: 100_000,
-                probe_scope: Some(endpoint_scope.clone()),
-                probe_state_revision: Some(probe.state_revision),
-            },
-            terminal: AttemptTerminal::Failed(ClassifiedAttemptFailure {
-                kind: AttemptFailureKind::HttpStatus,
-                blame: FailureBlame::Upstream,
-                retry: RetryDisposition::TryNextCandidate,
-                health: HealthEffect::Scoped(DurableHealthEffect {
-                    scope: DurableHealthScope::Endpoint {
-                        station_id: "station-probe".to_string(),
-                        endpoint_revision: 4,
-                    },
-                    dimension: DurableFailureDimension::EndpointAvailability,
-                    verdict: DurableVerdict::Blocked,
-                    evidence_code: "endpoint_unavailable".to_string(),
-                    classifier_profile_version: "probe-test-v1".to_string(),
-                }),
-                public_code: "upstream_endpoint_failed".to_string(),
-                sanitized_detail: None,
-            }),
-            output_committed: false,
-            terminal_at_ms: 100_001,
-            probe_scope: Some(endpoint_scope.clone()),
-            probe_state_revision: Some(probe.state_revision),
-        };
-        let write = map_attempt_terminal(terminal_record);
-        assert_eq!(
-            write.health_update,
-            AttemptHealthUpdate::ProbeFailure {
-                retry_after_ms: None
-            }
-        );
-        let mut session = runtime.begin_write().await.expect("terminal write");
-        RequestLogStore
-            .finish_attempt(&mut session, &write)
-            .await
-            .expect("write attempt terminal");
-        let probe_observation = routing_observation(&write).expect("routing probe observation");
-        ObservationIngestion::with_error_rate(error_rate.clone())
-            .append(&mut session, probe_observation)
-            .await
-            .expect("append probe observation");
-        apply_durable_attempt_effect(&mut session, &write)
-            .await
-            .expect("reopen durable endpoint verdict");
-        session.commit().await.expect("commit terminal write");
-
-        let mut read = runtime.handle().begin_read().await.expect("read failure");
-        let status = RoutingHealthVerdictStore
-            .load_health_protection_statuses(read.connection(), 100_002)
-            .await
-            .expect("health statuses")
-            .into_iter()
-            .find(|status| status.scope == endpoint_scope)
-            .expect("endpoint status");
-        assert_eq!(status.state, HealthProtectionState::Open);
-        assert!(!status.half_open_probe_in_flight);
-        let active = RoutingHealthVerdictStore
-            .load_active_batch(read.connection(), &[endpoint_subject])
-            .await
-            .expect("active endpoint verdict");
-        assert_eq!(active.len(), 1);
-        assert_eq!(
-            active.values().next().map(|row| row.verdict),
-            Some(DurableHealthVerdict::Blocked)
-        );
-        let history = RoutingErrorRateHistoryStore
-            .list_page(
-                read.connection(),
-                None,
-                10,
-                &ErrorRateProtectionConfigV1 {
-                    enabled: true,
-                    ..Default::default()
-                },
-                100_002,
-            )
-            .await
-            .expect("probe history");
-        assert_eq!(
-            history.events.last().and_then(|event| event.transition),
-            Some(
-                crate::application::error_rate_protection::HealthProtectionTransitionCode::Reopened
-            )
-        );
-        let evidence: String = sqlx::query_scalar(
-            "SELECT evidence_json FROM routing_observations WHERE id = 'routing-observation-req-probe-failure-0'",
-        )
-        .fetch_one(read.connection())
-        .await
-        .expect("probe evidence");
-        let evidence: serde_json::Value = serde_json::from_str(&evidence).expect("decode evidence");
-        assert_eq!(evidence["probe_state_revision"], probe.state_revision);
-        assert_eq!(
-            evidence["probe_scope"],
-            serde_json::to_value(&endpoint_scope).expect("encode probe scope")
-        );
-        drop(read);
-        runtime.close().await.expect("close runtime");
     }
 
     #[test]

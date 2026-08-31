@@ -2,13 +2,11 @@
 //!
 //! This reader owns only persistence-backed diagnostics queries. It does not
 //! read proxy runtime state, perform outbound I/O, or rebuild routing
-//! candidates. The routing service can continue to expose the same methods
-//! during the caller migration; this type is the narrow replacement owner.
+//! candidates.
 
 use crate::{
     application::{
         error::ApplicationError,
-        error_rate_protection::{ErrorRateHistoryPageV1, ErrorRateProtectionConfigV1},
         queries::request_decision_trace::{
             append_durable_attempt_trace, append_durable_decision_events, decision_cursor,
             decision_trace_from_decision, decision_trace_from_durable_outcome,
@@ -16,27 +14,20 @@ use crate::{
             RequestDecisionTrace,
         },
     },
-    models::{
-        pricing::BalanceSnapshot,
-        routing::{ModelAlias, StationKeyHealth},
-        stations::StationEndpointHealth,
-    },
+    models::{pricing::BalanceSnapshot, routing::ModelAlias, stations::StationEndpointHealth},
     persistence::{
         runtime::PersistenceHandle,
         stores::{
             request_outcome_store::RequestOutcomeStore,
-            routing_decisions::queries::RoutingDecisionQueries,
-            routing_error_rate_history_store::RoutingErrorRateHistoryStore,
-            routing_policy_store::RoutingPolicyStore, routing_store::RoutingStore,
+            routing_decisions::queries::RoutingDecisionQueries, routing_store::RoutingStore,
         },
     },
 };
 
 /// Read-only application owner for durable routing diagnostics.
 ///
-/// `RoutingStore` remains the persistence adapter for station, endpoint, and
-/// balance facts. Legacy error-rate history is read with an immutable query
-/// config and never owns production admission state.
+/// `RoutingStore` remains the persistence adapter for endpoint and balance
+/// facts. V3 circuit state is exposed by its dedicated read owner.
 #[derive(Clone)]
 pub(crate) struct RoutingDiagnosticsReader {
     runtime: PersistenceHandle,
@@ -105,39 +96,6 @@ impl RoutingDiagnosticsReader {
         Ok(decision_trace_from_decision(summary, candidates))
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "contract=legacy-error-rate-diagnostics-reference; owner=application/routing_diagnostics_reader; remove_when=legacy error-rate diagnostics are deleted"
-        )
-    )]
-    pub(crate) async fn list_error_rate_history(
-        &self,
-        before_ms: Option<i64>,
-        limit: usize,
-    ) -> Result<ErrorRateHistoryPageV1, ApplicationError> {
-        let now_ms = chrono::Utc::now().timestamp_millis().max(0);
-        let mut read = self.runtime.begin_read().await?;
-        let policy_enabled = self.load_protection_enabled(&mut read).await?;
-        let mut config = ErrorRateProtectionConfigV1::default();
-        config.enabled = policy_enabled;
-        RoutingErrorRateHistoryStore
-            .list_page(read.connection(), before_ms, limit, &config, now_ms)
-            .await
-            .map_err(ApplicationError::from)
-    }
-
-    pub(crate) async fn list_station_key_health(
-        &self,
-    ) -> Result<Vec<StationKeyHealth>, ApplicationError> {
-        let mut read = self.runtime.begin_read().await?;
-        self.store
-            .list_station_key_health(&mut read)
-            .await
-            .map_err(ApplicationError::from)
-    }
-
     pub(crate) async fn list_model_aliases(&self) -> Result<Vec<ModelAlias>, ApplicationError> {
         let mut read = self.runtime.begin_read().await?;
         self.store
@@ -153,17 +111,6 @@ impl RoutingDiagnosticsReader {
         let mut read = self.runtime.begin_read().await?;
         self.store
             .list_model_alias_pairs(&mut read)
-            .await
-            .map_err(ApplicationError::from)
-    }
-
-    pub(crate) async fn station_key_health_by_id(
-        &self,
-        station_key_id: &str,
-    ) -> Result<StationKeyHealth, ApplicationError> {
-        let mut read = self.runtime.begin_read().await?;
-        self.store
-            .station_key_health_by_id(&mut read, station_key_id)
             .await
             .map_err(ApplicationError::from)
     }
@@ -187,27 +134,5 @@ impl RoutingDiagnosticsReader {
             .list_balance_snapshots_for_station(&mut read, station_id)
             .await
             .map_err(ApplicationError::from)
-    }
-
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "contract=legacy-error-rate-diagnostics-reference; owner=application/routing_diagnostics_reader; remove_when=legacy error-rate diagnostics are deleted"
-        )
-    )]
-    async fn load_protection_enabled(
-        &self,
-        read: &mut crate::persistence::ReadSession,
-    ) -> Result<bool, ApplicationError> {
-        let stored = RoutingPolicyStore
-            .load(read.connection())
-            .await
-            .map_err(ApplicationError::from)?
-            .ok_or(ApplicationError::NotFound)?;
-        let policy =
-            crate::models::routing_policy::RoutingPolicyConfigV2::from_stored_value(&stored.config)
-                .map_err(|_| ApplicationError::ConstraintViolation)?;
-        Ok(policy.protection_profile.enabled)
     }
 }

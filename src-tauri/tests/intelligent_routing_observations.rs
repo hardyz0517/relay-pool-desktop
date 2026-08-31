@@ -18,13 +18,14 @@ fn canonical_observation_writer_owns_taxonomy_and_ordering() {
 }
 
 #[test]
-fn health_transition_has_one_durable_health_writer_and_no_status_writeback() {
-    let transitions = source("src/application/health_transitions.rs");
-    let store = source("src/persistence/stores/health_observation_store.rs");
-    assert_eq!(transitions.matches("upsert_station_key_health").count(), 1);
-    assert!(!transitions.contains("update_station_key_status"));
-    assert!(!store.contains("update_station_key_status"));
-    assert!(!store.contains("UPDATE station_keys\n            SET status"));
+fn legacy_station_key_health_writers_are_retired() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for retired in [
+        "src/application/health_transitions.rs",
+        "src/persistence/stores/health_observation_store.rs",
+    ] {
+        assert!(!root.join(retired).exists(), "{retired} must stay retired");
+    }
 }
 
 #[test]

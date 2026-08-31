@@ -40,14 +40,6 @@ pub(crate) enum PlanningSnapshotBuildError {
 pub(crate) enum PlanningCandidateEligibility {
     AdmittedForScoring,
     Excluded,
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "contract=legacy-probe-discovery; owner=application/operational_facts; remove_when=all probe discovery callers are removed from compatibility planning"
-        )
-    )]
-    ProbeDiscoveryOnly,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -437,9 +429,6 @@ impl PlanningSnapshotBuilder {
                 PlanningCandidateEligibility::AdmittedForScoring => {
                     scoring_candidates.push((candidate, primary_reason));
                 }
-                PlanningCandidateEligibility::ProbeDiscoveryOnly => unreachable!(
-                    "legacy error-rate probe discovery is not a production planner input"
-                ),
                 PlanningCandidateEligibility::Excluded => unreachable!(
                     "excluded candidates are assessed before entering the eligible set"
                 ),
@@ -888,8 +877,6 @@ fn _source_contract<S: OperationalFactSource>() {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::error_rate_protection::admission_scope;
-
     #[test]
     fn builder_type_is_bound_to_the_operational_source() {
         _source_contract::<OperationalFactStore>();
@@ -921,28 +908,6 @@ mod tests {
         assert!(candidate_matches_group_scope(
             &ungrouped,
             &test_request(GroupFilterMode::UngroupedOnly, None),
-        ));
-    }
-
-    #[test]
-    fn legacy_key_only_health_is_not_a_planner_authority_after_scoped_cutover() {
-        let mut candidate = test_candidate(None, None, None);
-        candidate.set_durable_health_for_planning_test(Some("1001"), None);
-        assert!(candidate_hard_eligible(
-            &candidate,
-            &test_request(GroupFilterMode::Any, None),
-            &RoutingPolicyConfigV2::default(),
-            Some("gpt-4.1"),
-        ));
-        candidate.set_durable_health_for_planning_test(
-            None,
-            Some("auth_error: upstream returned HTTP 401"),
-        );
-        assert!(candidate_hard_eligible(
-            &candidate,
-            &test_request(GroupFilterMode::Any, None),
-            &RoutingPolicyConfigV2::default(),
-            Some("gpt-4.1"),
         ));
     }
 

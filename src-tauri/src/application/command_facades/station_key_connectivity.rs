@@ -346,29 +346,6 @@ impl StationKeyConnectivityCommandFacade {
         })
     }
 
-    pub(crate) fn record_station_key_connectivity(
-        &self,
-        station_key_id: String,
-        station_id: String,
-        endpoint_revision: i64,
-        ok: bool,
-        duration_ms: i64,
-        message: String,
-    ) -> impl std::future::Future<Output = Result<(), ApplicationError>> + Send + '_ {
-        async move {
-            self.routing
-                .record_station_key_connectivity(
-                    station_key_id,
-                    station_id,
-                    endpoint_revision,
-                    ok,
-                    duration_ms,
-                    message,
-                )
-                .await
-        }
-    }
-
     pub(crate) fn record_station_endpoint_health(
         &self,
         station_id: String,

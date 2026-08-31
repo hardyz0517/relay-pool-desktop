@@ -16,7 +16,7 @@ use crate::{
         model_mapping::{Action, Matcher, ModelMappingDocumentV1, ModelMappingRule, TargetRef},
         pricing::UpsertBalanceSnapshotInput,
         proxy::RequestLog,
-        routing::{StationKeyHealth, UpdateStationKeyCapabilitiesInput},
+        routing::UpdateStationKeyCapabilitiesInput,
         station_keys::CreateStationKeyInput,
         stations::CreateStationInput,
     },
@@ -296,14 +296,6 @@ impl V2ProxyTestFixture {
             .await
             .expect("balance snapshot");
     }
-
-    pub(crate) async fn station_key_health(&self, station_key_id: &str) -> StationKeyHealth {
-        self.services
-            .routing_diagnostics
-            .station_key_health_by_id(station_key_id)
-            .await
-            .expect("station key health")
-    }
 }
 
 pub(crate) struct SeededV2Candidate {
@@ -383,7 +375,7 @@ impl LoopbackUpstream {
                         let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
                         if let Ok(request) = read_captured_request(&mut stream) {
                             thread_captured.lock().expect("capture lock").push(request);
-                            write_scripted_response(&mut stream, response);
+                            write_scripted_response(&mut stream, response, &thread_stop);
                         }
                         let _ = stream.shutdown(Shutdown::Both);
                         next = responses.next();
@@ -448,7 +440,7 @@ fn read_captured_request(stream: &mut TcpStream) -> Result<CapturedRequest, Stri
     })
 }
 
-fn write_scripted_response(stream: &mut TcpStream, response: ScriptedResponse) {
+fn write_scripted_response(stream: &mut TcpStream, response: ScriptedResponse, stop: &AtomicBool) {
     match response {
         ScriptedResponse::Json(body) => {
             write_response(stream, 200, "OK", "application/json", &body)
@@ -475,7 +467,7 @@ fn write_scripted_response(stream: &mut TcpStream, response: ScriptedResponse) {
             let _ = stream.write_all(header.as_bytes());
             let _ = stream.write_all(&first_chunk);
             let _ = stream.flush();
-            while !release.load(Ordering::Relaxed) {
+            while !release.load(Ordering::Relaxed) && !stop.load(Ordering::Relaxed) {
                 thread::sleep(Duration::from_millis(10));
             }
         }

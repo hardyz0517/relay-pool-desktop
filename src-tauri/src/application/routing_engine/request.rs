@@ -55,7 +55,14 @@ pub(crate) enum RouteKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum OrderingProfile {
     PriorityFirst,
+    #[cfg(test)]
     CostFirst,
+}
+
+pub(crate) const fn canonical_v3_ordering_profile() -> OrderingProfile {
+    // V3 always preserves target rank and availability tier before applying
+    // the configured weighted score inside that layer.
+    OrderingProfile::PriorityFirst
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -157,6 +164,7 @@ impl RouteRequestFacts {
         self.required_group_stable_key.as_deref()
     }
 
+    #[cfg(test)]
     pub(crate) fn preferred_models(&self) -> &[String] {
         &self.preferred_models
     }
@@ -169,6 +177,7 @@ impl RouteRequestFacts {
         self.allow_depleted_fallback
     }
 
+    #[cfg(test)]
     pub(crate) fn affinity_enabled(&self) -> bool {
         self.affinity_enabled
     }

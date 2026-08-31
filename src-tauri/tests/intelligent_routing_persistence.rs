@@ -179,19 +179,19 @@ fn portable_catalog_declares_foundation_tables_and_explicit_json_rules() {
             "catalog missing {table}"
         );
     }
-    assert!(catalog.contains("EXPECTED_USER_TABLE_COUNT_V1: usize = 110"));
+    assert!(catalog.contains("EXPECTED_USER_TABLE_COUNT_V1: usize = 111"));
     assert!(catalog.contains("ROUTING_POLICY_RULES"));
     assert!(catalog.contains("ROUTING_OBSERVATION_RULES"));
     assert!(catalog.contains("ROUTING_QUALITY_RULES"));
 }
 
 #[test]
-fn routing_policy_write_binds_domain_revision_and_history_to_one_transaction() {
-    let store = read_source("src/persistence/stores/routing_policy_store.rs");
-    assert!(store.contains("let mut transaction = connection.begin().await?"));
-    assert!(store.contains("DomainRevisionStore"));
-    assert!(store.contains("routing_policy_history"));
-    assert!(store.contains("transaction.commit().await?"));
+fn routing_policy_write_stages_policy_and_audit_in_one_transaction() {
+    let store = read_source("src/persistence/stores/routing_policy_v3_stage_upgrade.rs");
+    assert!(store.contains("let mut write = runtime.begin_write().await?"));
+    assert!(store.contains("INSERT INTO routing_policy_v3_staged"));
+    assert!(store.contains("INSERT INTO routing_policy_v3_migration_audit"));
+    assert!(store.contains("write.commit().await?"));
 }
 
 #[test]

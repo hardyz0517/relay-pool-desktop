@@ -1,8 +1,5 @@
 use std::sync::Arc;
 
-#[cfg(test)]
-use crate::application::error_rate_protection::ErrorRateProtectionService;
-
 use crate::{
     application::{
         clock::Clock,
@@ -45,8 +42,6 @@ pub(crate) struct MonitoringService {
     store: MonitoringStore,
     definition_store: MonitoringDefinitionRepository,
     budget_store: MonitoringBudgetRepository,
-    #[cfg(test)]
-    error_rate: ErrorRateProtectionService,
 }
 
 impl MonitoringService {
@@ -62,26 +57,6 @@ impl MonitoringService {
             store: MonitoringStore,
             definition_store: MonitoringDefinitionRepository,
             budget_store: MonitoringBudgetRepository,
-            #[cfg(test)]
-            error_rate: ErrorRateProtectionService::disabled(),
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn new_with_error_rate(
-        runtime: PersistenceHandle,
-        clock: Arc<dyn Clock>,
-        ids: Arc<dyn IdGenerator>,
-        error_rate: ErrorRateProtectionService,
-    ) -> Self {
-        Self {
-            runtime,
-            clock,
-            ids,
-            store: MonitoringStore,
-            definition_store: MonitoringDefinitionRepository,
-            budget_store: MonitoringBudgetRepository,
-            error_rate,
         }
     }
 
@@ -391,10 +366,7 @@ impl MonitoringService {
         &self,
         execution: BufferedExecution,
     ) -> Result<ExecutionSummaryRow, ApplicationError> {
-        #[cfg(not(test))]
         let committer = MonitoringExecutionCommitter::new();
-        #[cfg(test)]
-        let committer = MonitoringExecutionCommitter::new_with_error_rate(self.error_rate.clone());
         self.runtime
             .write(|write| Box::pin(async move { committer.commit(write, &execution).await }))
             .await

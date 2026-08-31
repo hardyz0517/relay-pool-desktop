@@ -13,7 +13,6 @@ use crate::{
         credentials::{
             CredentialError, CredentialService, CredentialVault, EncryptedSecret, SecretBytes,
         },
-        error_rate_protection::ErrorRateProtectionService,
         ids::IdGenerator,
         operational_facts::{
             candidate_projection::{
@@ -49,7 +48,7 @@ use crate::{
     },
     models::{
         remote_keys::{RemoteKeyMatchStatus, RemoteStationKey},
-        routing::{RoutingGroupFilter, RoutingPolicy, RuntimeRoutingSettings},
+        routing::{RoutingGroupFilter, RuntimeRoutingSettings},
         settings::UpdateSettingsInput,
         station_keys::{CreateStationKeyInput, UpdateStationKeyInput},
         stations::{CreateStationInput, UpdateStationInput},
@@ -141,8 +140,6 @@ async fn proxy_group_subscription_failure_does_not_create_a_routing_exclusion() 
             comparability_key: None,
             model_alias_revision: 1,
             started_at_ms: 1,
-            probe_scope: None,
-            probe_state_revision: None,
         },
         failure_from_provider_signal(
             ProviderErrorSemanticSignal::ConfirmedGroupSubscriptionInvalid {
@@ -206,8 +203,6 @@ async fn proxy_model_not_found_excludes_only_that_key_model_commitment_until_rev
             comparability_key: None,
             model_alias_revision: 1,
             started_at_ms: 1,
-            probe_scope: None,
-            probe_state_revision: None,
         },
         failure_from_provider_signal(
             ProviderErrorSemanticSignal::ConfirmedModelNotFound {
@@ -250,8 +245,6 @@ async fn persist_proxy_failure(
             terminal: AttemptTerminal::Failed(classified_attempt_failure_from_canonical(&failure)),
             output_committed: false,
             terminal_at_ms: 10,
-            probe_scope: None,
-            probe_state_revision: None,
         })
         .await
         .expect("proxy terminal persists");
@@ -429,12 +422,8 @@ async fn settings_update_preserves_typed_defaults_and_validates_bounds() {
     let settings = service
         .update(UpdateSettingsInput {
             local_proxy_port: 8788,
-            routing_policy_name: "priority_fallback".to_string(),
             collector_proxy_mode: "direct".to_string(),
             collector_proxy_url: None,
-            max_rate_multiplier: Some(Some(3.5)),
-            routing_group_scope: None,
-            scheduler_config: None,
             low_balance_threshold_cny: 8.0,
             collector_interval_minutes: 15,
             balance_interval_minutes: 5,
@@ -443,7 +432,6 @@ async fn settings_update_preserves_typed_defaults_and_validates_bounds() {
             pricing_refresh_interval_minutes: 60,
             collector_timeout_seconds: 15,
             collector_max_concurrency: 2,
-            allow_depleted_fallback: true,
             developer_mode_enabled: true,
             show_decision_explanation: true,
             tray_behavior: Some("disabled".to_string()),
@@ -453,8 +441,6 @@ async fn settings_update_preserves_typed_defaults_and_validates_bounds() {
 
     assert_eq!(settings.local_proxy_port, 8788);
     // Deprecated routing settings are ignored after the policy aggregate cutover.
-    assert_eq!(settings.max_rate_multiplier, None);
-    assert!(!settings.allow_depleted_fallback);
     assert_eq!(settings.tray_behavior, "disabled");
     assert_eq!(settings.collector_max_concurrency, 2);
 
@@ -1147,10 +1133,8 @@ async fn routing_service_loads_v2_runtime_candidates_and_workflow_queries() {
             untrusted_headers: Vec::new(),
         },
         validated_route_settings(&RuntimeRoutingSettings {
-            policy: RoutingPolicy::CostStableFirst,
             max_rate_multiplier: Some(2.0),
             routing_group_scope: RoutingGroupFilter::AllGroups,
-            scheduler_config: Default::default(),
             allow_depleted_fallback: false,
             ..Default::default()
         }),
@@ -1168,10 +1152,6 @@ async fn routing_service_loads_v2_runtime_candidates_and_workflow_queries() {
         .list_model_alias_pairs()
         .await
         .expect("alias pairs");
-    let health = diagnostics
-        .station_key_health_by_id("routing-key")
-        .await
-        .expect("health by id");
     let balances = diagnostics
         .list_balance_snapshots_for_station(&station.id)
         .await
@@ -1181,7 +1161,6 @@ async fn routing_service_loads_v2_runtime_candidates_and_workflow_queries() {
         alias_pairs,
         vec![("gpt-test".to_string(), "gpt-5".to_string())]
     );
-    assert_eq!(health.consecutive_failures, 2);
     assert_eq!(balances.len(), 1);
     assert_eq!(balances[0].scope, "station");
     assert_eq!(candidates.len(), 1);
@@ -1292,12 +1271,8 @@ fn remote_key_row(
 fn settings_input() -> UpdateSettingsInput {
     UpdateSettingsInput {
         local_proxy_port: 8787,
-        routing_policy_name: "cost_stable_first".to_string(),
         collector_proxy_mode: "direct".to_string(),
         collector_proxy_url: None,
-        max_rate_multiplier: None,
-        routing_group_scope: None,
-        scheduler_config: None,
         low_balance_threshold_cny: 15.0,
         collector_interval_minutes: 30,
         balance_interval_minutes: 5,
@@ -1306,7 +1281,6 @@ fn settings_input() -> UpdateSettingsInput {
         pricing_refresh_interval_minutes: 60,
         collector_timeout_seconds: 15,
         collector_max_concurrency: 3,
-        allow_depleted_fallback: false,
         developer_mode_enabled: false,
         show_decision_explanation: false,
         tray_behavior: None,

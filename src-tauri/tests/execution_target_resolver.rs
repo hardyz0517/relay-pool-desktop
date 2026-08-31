@@ -51,10 +51,6 @@ mod application {
     }
 
     pub(crate) mod routing_engine {
-        pub(crate) mod failure_domains {
-            pub(crate) use crate::failure_domains::*;
-        }
-
         pub(crate) mod capacity {
             use std::{
                 collections::BTreeMap,
@@ -182,8 +178,6 @@ mod models {
     }
 }
 
-#[path = "../src/application/routing_engine/failure_domains.rs"]
-mod failure_domains;
 #[path = "../src/models/station_endpoints.rs"]
 mod station_endpoints;
 #[path = "../src/application/operational_facts/target_resolver.rs"]

@@ -143,12 +143,6 @@ pub(crate) struct OperationalCandidateFact {
     model_blocklist: Vec<String>,
     preferred_models: Vec<String>,
     routing_tags: Vec<String>,
-    success_count: i64,
-    failure_count: i64,
-    consecutive_failures: i64,
-    avg_latency_ms: Option<i64>,
-    last_error_summary: Option<String>,
-    cooldown_until: Option<String>,
     balance_status: Option<String>,
     balance_value: Option<f64>,
 }
@@ -239,36 +233,6 @@ impl OperationalCandidateFact {
     pub(crate) fn routing_tags(&self) -> &[String] {
         &self.routing_tags
     }
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "contract=legacy-operational-health-count; owner=application/operational_facts; remove_when=legacy health count accessors are removed from compatibility projections"
-        )
-    )]
-    pub(crate) fn success_count(&self) -> i64 {
-        self.success_count
-    }
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "contract=legacy-operational-health-count; owner=application/operational_facts; remove_when=legacy health count accessors are removed from compatibility projections"
-        )
-    )]
-    pub(crate) fn failure_count(&self) -> i64 {
-        self.failure_count
-    }
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "contract=legacy-operational-health-latency; owner=application/operational_facts; remove_when=legacy health count accessors are removed from compatibility projections"
-        )
-    )]
-    pub(crate) fn avg_latency_ms(&self) -> Option<i64> {
-        self.avg_latency_ms
-    }
     pub(crate) fn balance_status(&self) -> Option<&str> {
         self.balance_status.as_deref()
     }
@@ -323,25 +287,9 @@ impl OperationalCandidateFact {
             model_blocklist: Vec::new(),
             preferred_models: Vec::new(),
             routing_tags: Vec::new(),
-            success_count: 0,
-            failure_count: 0,
-            consecutive_failures: 0,
-            avg_latency_ms: None,
-            last_error_summary: None,
-            cooldown_until: None,
             balance_status: None,
             balance_value: Some(1.0),
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn set_durable_health_for_planning_test(
-        &mut self,
-        cooldown_until: Option<&str>,
-        last_error_summary: Option<&str>,
-    ) {
-        self.cooldown_until = cooldown_until.map(ToString::to_string);
-        self.last_error_summary = last_error_summary.map(ToString::to_string);
     }
 
     #[cfg(test)]
@@ -517,12 +465,6 @@ pub(crate) fn assemble_operational_fact_bundle(
                     "preferred_models_json",
                 )?,
                 routing_tags: parse_json_string_list(&row.routing_tags_json, "routing_tags_json")?,
-                success_count: row.success_count.max(0),
-                failure_count: row.failure_count.max(0),
-                consecutive_failures: row.consecutive_failures.max(0),
-                avg_latency_ms: row.avg_latency_ms.filter(|value| *value >= 0),
-                last_error_summary: row.last_error_summary,
-                cooldown_until: row.cooldown_until,
                 balance_status: row.balance_status,
                 balance_value: row.balance_value.filter(|value| value.is_finite()),
             })

@@ -12,6 +12,7 @@ pub enum OperationalValidationError {
         field: &'static str,
         value: i64,
     },
+    #[cfg(test)]
     InvalidTimestamp {
         field: &'static str,
         value: i64,
@@ -33,6 +34,7 @@ impl fmt::Display for OperationalValidationError {
             Self::InvalidRevision { field, value } => {
                 write!(formatter, "{field} revision must be positive, got {value}")
             }
+            #[cfg(test)]
             Self::InvalidTimestamp { field, value } => {
                 write!(
                     formatter,
@@ -92,7 +94,9 @@ impl EndpointId {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[cfg(test)]
 pub struct ModelName(String);
+#[cfg(test)]
 impl ModelName {
     pub fn new(value: impl Into<String>) -> Result<Self, OperationalValidationError> {
         let value = value.into();
@@ -159,8 +163,10 @@ impl EndpointRevision {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[cfg(test)]
 pub struct UnixMillis(i64);
 
+#[cfg(test)]
 impl UnixMillis {
     pub fn new(value: i64) -> Result<Self, OperationalValidationError> {
         if value < 0 {

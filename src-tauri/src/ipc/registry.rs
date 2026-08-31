@@ -18,7 +18,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "09b8caa845912198d6c6a1c29237fb1c1ba9436c4480020b048f171275578ca8";
+    "922ccdae2cc6609f65ed955c05270b8a80da81f4e01a11f54b19a2f29d2c28e2";
 
 #[cfg_attr(
     not(test),
@@ -162,8 +162,9 @@ macro_rules! ipc_command_registry {
             restore_model_mapping_revision => $crate::commands::model_mapping::restore_model_mapping_revision,
             simulate_model_mapping => $crate::commands::model_mapping::simulate_model_mapping,
             resolve_request_mapping_trace => $crate::commands::model_mapping::resolve_request_mapping_trace,
-            list_station_key_health => $crate::commands::routing_health::list_station_key_health,
             get_routing_protection_status => $crate::commands::routing_health::get_routing_protection_status,
+            get_routing_circuit_status => $crate::commands::routing_health::get_routing_circuit_status,
+            get_proxy_timeout_facts => $crate::commands::routing_health::get_proxy_timeout_facts,
             load_routing_policy => $crate::commands::routing_health::load_routing_policy,
             get_routing_policy_publication_status => $crate::commands::routing_health::get_routing_policy_publication_status,
             apply_routing_policy_document => $crate::commands::routing_health::apply_routing_policy_document,
@@ -171,7 +172,6 @@ macro_rules! ipc_command_registry {
             load_routing_workspace_snapshot => $crate::commands::routing_health::load_routing_workspace_snapshot,
             load_routing_runtime_overlay => $crate::commands::routing_health::load_routing_runtime_overlay,
             list_recent_route_decisions => $crate::commands::routing_health::list_recent_route_decisions,
-            get_station_key_operational_detail => $crate::commands::routing_health::get_station_key_operational_detail,
             get_request_decision_trace => $crate::commands::routing_health::get_request_decision_trace,
             list_channel_monitors => $crate::commands::channel_monitoring::list_channel_monitors,
             load_channel_status_workspace => $crate::commands::channel_status::load_channel_status_workspace,
@@ -193,7 +193,6 @@ macro_rules! ipc_command_registry {
             delete_channel_monitor_template => $crate::commands::channel_monitoring::delete_channel_monitor_template,
             run_channel_monitor_now => $crate::commands::channel_monitoring::run_channel_monitor_now,
             cancel_channel_monitor_execution => $crate::commands::channel_monitoring::cancel_channel_monitor_execution,
-            get_station_key_health => $crate::commands::routing_health::get_station_key_health,
             get_operation_status => $crate::commands::operations::get_operation_status,
             cancel_operation => $crate::commands::operations::cancel_operation,
             start_station_key_connectivity_operation => $crate::commands::station_key_connectivity::start_station_key_connectivity_operation,
@@ -846,11 +845,12 @@ fn command_contract(name: &str) -> CommandContract {
         "resolve_request_mapping_trace" => {
             migrated_read("ResolveRequestMappingTraceInputDto", "ModelMappingTraceDto")
         }
-        "list_station_key_health" => migrated_read("EmptyInputDto", "Vec<StationKeyHealthDto>"),
         "get_routing_protection_status" => migrated_read(
             "RoutingProtectionStatusInputDto",
             "RoutingProtectionStatusDto",
         ),
+        "get_routing_circuit_status" => migrated_read("EmptyInputDto", "RoutingCircuitStatusDto"),
+        "get_proxy_timeout_facts" => migrated_read("EmptyInputDto", "ProxyTimeoutFactsDto"),
         "load_routing_policy" => migrated_read("EmptyInputDto", "RoutingPolicySnapshotDto"),
         "get_routing_policy_publication_status" => migrated_read(
             "RoutingPolicyPublicationStatusInputDto",
@@ -876,15 +876,8 @@ fn command_contract(name: &str) -> CommandContract {
             "RecentRouteDecisionsInputDto",
             "RecentRouteDecisionsPageDto",
         ),
-        "get_station_key_operational_detail" => migrated_read(
-            "StationKeyOperationalDetailInputDto",
-            "StationKeyOperationalDetailDto",
-        ),
         "get_request_decision_trace" => {
             migrated_read("RequestDecisionTraceInputDto", "RequestDecisionTraceDto")
-        }
-        "get_station_key_health" => {
-            migrated_read("RoutingStationKeyIdInputDto", "StationKeyHealthDto")
         }
         "get_operation_status" => migrated_read("OperationIdInputDto", "OperationSnapshotDto"),
         "cancel_operation" => migrated_mutation(
@@ -1165,12 +1158,8 @@ fn pilot_serialization_fixture() -> String {
         local_proxy_port: 8787,
         local_proxy_start_on_launch: false,
         local_key_masked: "sk-fixture-...redacted".into(),
-        routing_policy_name: "automatic_balanced".into(),
         collector_proxy_mode: "direct".into(),
         collector_proxy_url: None,
-        max_rate_multiplier: None,
-        routing_group_scope: Default::default(),
-        scheduler_config: Default::default(),
         low_balance_threshold_cny: 15.0,
         collector_interval_minutes: 30,
         balance_interval_minutes: 5,
@@ -1179,7 +1168,6 @@ fn pilot_serialization_fixture() -> String {
         pricing_refresh_interval_minutes: 60,
         collector_timeout_seconds: 15,
         collector_max_concurrency: 3,
-        allow_depleted_fallback: false,
         developer_mode_enabled: false,
         show_decision_explanation: false,
         tray_behavior: "close_to_tray".into(),
@@ -1188,15 +1176,14 @@ fn pilot_serialization_fixture() -> String {
         data_dir_change_requires_restart: false,
     });
     let update_settings = super::dto::settings::UpdateSettingsInputDto::parse(serde_json::json!({
-        "localProxyPort": 8787, "defaultRoutingStrategy": "automatic_balanced",
+        "localProxyPort": 8787,
         "collectorProxyMode": "direct", "collectorProxyUrl": null,
-        "maxRateMultiplier": null, "defaultRoutingGroupFilter": "all_groups",
-        "schedulerAdvancedSettings": null, "lowBalanceThresholdCny": 15.0,
+        "lowBalanceThresholdCny": 15.0,
         "collectorIntervalMinutes": 30, "balanceIntervalMinutes": 5,
         "groupRateIntervalMinutes": 20, "publishedStatusIntervalMinutes": 5,
         "pricingRefreshIntervalMinutes": 60,
         "collectorTimeoutSeconds": 15,
-        "collectorMaxConcurrency": 3, "allowDepletedFallback": false,
+        "collectorMaxConcurrency": 3,
         "developerModeEnabled": false
     }))
     .expect("settings fixture input");
@@ -1641,12 +1628,16 @@ export function deleteModelAlias(input: DeleteModelAliasInputDto): Promise<void>
   return invokeCommand<void>("delete_model_alias", { input });
 }
 
-export function listStationKeyHealth(input: EmptyInputDto = {}): Promise<StationKeyHealthDto[]> {
-  return invokeCommand<StationKeyHealthDto[]>("list_station_key_health", { input });
-}
-
 export function getRoutingProtectionStatus(input: RoutingProtectionStatusInputDto = {}): Promise<RoutingProtectionStatusDto> {
   return invokeCommand<RoutingProtectionStatusDto>("get_routing_protection_status", { input });
+}
+
+export function getRoutingCircuitStatus(input: EmptyInputDto = {}): Promise<RoutingCircuitStatusDto> {
+  return invokeCommand<RoutingCircuitStatusDto>("get_routing_circuit_status", { input });
+}
+
+export function getProxyTimeoutFacts(input: EmptyInputDto = {}): Promise<ProxyTimeoutFactsDto> {
+  return invokeCommand<ProxyTimeoutFactsDto>("get_proxy_timeout_facts", { input });
 }
 
 export function loadRoutingPolicy(input: EmptyInputDto = {}): Promise<RoutingPolicySnapshotDto> {
@@ -1677,16 +1668,8 @@ export function listRecentRouteDecisions(input: RecentRouteDecisionsInputDto = {
   return invokeCommand<RecentRouteDecisionsPageDto>("list_recent_route_decisions", { input });
 }
 
-export function getStationKeyOperationalDetail(input: StationKeyOperationalDetailInputDto): Promise<StationKeyOperationalDetailDto> {
-  return invokeCommand<StationKeyOperationalDetailDto>("get_station_key_operational_detail", { input });
-}
-
 export function getRequestDecisionTrace(input: RequestDecisionTraceInputDto): Promise<RequestDecisionTraceDto> {
   return invokeCommand<RequestDecisionTraceDto>("get_request_decision_trace", { input });
-}
-
-export function getStationKeyHealth(input: RoutingStationKeyIdInputDto): Promise<StationKeyHealthDto> {
-  return invokeCommand<StationKeyHealthDto>("get_station_key_health", { input });
 }
 
 export function getOperationStatus(input: OperationIdInputDto): Promise<OperationSnapshotDto> {
@@ -2367,14 +2350,19 @@ mod tests {
             ),
             ("list_model_aliases", "EmptyInputDto", "Vec<ModelAliasDto>"),
             (
-                "list_station_key_health",
-                "EmptyInputDto",
-                "Vec<StationKeyHealthDto>",
-            ),
-            (
                 "get_routing_protection_status",
                 "RoutingProtectionStatusInputDto",
                 "RoutingProtectionStatusDto",
+            ),
+            (
+                "get_routing_circuit_status",
+                "EmptyInputDto",
+                "RoutingCircuitStatusDto",
+            ),
+            (
+                "get_proxy_timeout_facts",
+                "EmptyInputDto",
+                "ProxyTimeoutFactsDto",
             ),
             (
                 "get_routing_policy_publication_status",
@@ -2402,19 +2390,9 @@ mod tests {
                 "RecentRouteDecisionsPageDto",
             ),
             (
-                "get_station_key_operational_detail",
-                "StationKeyOperationalDetailInputDto",
-                "StationKeyOperationalDetailDto",
-            ),
-            (
                 "get_request_decision_trace",
                 "RequestDecisionTraceInputDto",
                 "RequestDecisionTraceDto",
-            ),
-            (
-                "get_station_key_health",
-                "RoutingStationKeyIdInputDto",
-                "StationKeyHealthDto",
             ),
             (
                 "simulate_route",
@@ -2839,9 +2817,7 @@ mod tests {
             "clearAlertingIncidents",
             "getStationKeyCapabilities",
             "listModelAliases",
-            "listStationKeyHealth",
             "listStationEndpointHealth",
-            "getStationKeyHealth",
             "simulateRoute",
         ] {
             assert!(

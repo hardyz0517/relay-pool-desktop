@@ -2,54 +2,14 @@
 pub mod budgets;
 #[path = "../src/persistence/stores/monitoring/executions.rs"]
 pub mod executions;
-#[path = "../src/persistence/stores/health_observation_store.rs"]
-pub mod health_observation_store;
-#[path = "../src/application/health_transitions.rs"]
-pub mod health_transitions;
-#[path = "../src/models/health.rs"]
-pub mod model_health;
 #[path = "../src/persistence/error.rs"]
 pub mod persistence_error;
 #[path = "../src/persistence/stores/monitoring/retention.rs"]
 pub mod retention;
 
-mod models {
-    pub(crate) mod health {
-        pub(crate) use crate::model_health::*;
-    }
-}
-
 mod persistence {
-    pub(crate) struct WriteSession {
-        connection: *mut sqlx::SqliteConnection,
-    }
-
-    impl WriteSession {
-        pub(crate) fn new(connection: &mut sqlx::SqliteConnection) -> Self {
-            Self { connection }
-        }
-
-        pub(crate) fn connection(&mut self) -> &mut sqlx::SqliteConnection {
-            // SAFETY: test-local wrapper is created from one mutable connection
-            // borrow and is used synchronously by the included application code.
-            unsafe { &mut *self.connection }
-        }
-    }
-
     pub(crate) mod error {
         pub(crate) use crate::persistence_error::*;
-    }
-
-    pub(crate) mod stores {
-        pub(crate) mod health_observation_store {
-            pub(crate) use crate::health_observation_store::*;
-        }
-
-        pub(crate) mod monitoring {
-            pub(crate) mod retention {
-                pub(crate) use crate::retention::*;
-            }
-        }
     }
 }
 
@@ -57,34 +17,18 @@ use budgets::MonitoringBudgetRepository;
 use executions::{
     FinalizeTargetRow, MonitoringExecutionRepository, NewAttemptRow, NewExecutionRow,
 };
-use health_transitions::HealthTransitionService;
-use model_health::{
-    HealthObservation, HealthObservationOutcome, HealthObservationSource, HealthWritebackMode,
-    TrafficEquivalence,
-};
 use persistence::error::PersistenceError;
 use retention::MonitoringRetentionRepository;
 use sqlx::{Connection, Row, SqliteConnection};
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("src/persistence/migrations");
 
-async fn record_observation(
-    service: &HealthTransitionService,
-    connection: &mut SqliteConnection,
-    observation: HealthObservation,
-) -> Result<health_transitions::HealthTransitionAck, PersistenceError> {
-    let mut write = persistence::WriteSession::new(connection);
-    service.record_observation(&mut write, observation).await
-}
-
 #[tokio::test]
-async fn transaction_rollback_covers_attempt_target_health_execution_rollup_and_budget_phases() {
+async fn transaction_rollback_covers_attempt_target_execution_rollup_and_budget_phases() {
     let mut connection = ready_connection().await;
     let executions = MonitoringExecutionRepository;
     let retention = MonitoringRetentionRepository;
     let budgets = MonitoringBudgetRepository;
-    let health = HealthTransitionService::new();
-
     let mut tx = connection.begin().await.expect("begin fault tx");
     executions
         .insert_execution(&mut tx, &execution("execution-rollback", "running", 1))
@@ -106,13 +50,6 @@ async fn transaction_rollback_covers_attempt_target_health_execution_rollup_and_
         )
         .await
         .expect("target finalization");
-    record_observation(
-        &health,
-        &mut *tx,
-        observation("observation-rollback", Some("target-rollback"), 1_120),
-    )
-    .await
-    .expect("health observation");
     executions
         .finalize_execution_and_advance_schedule(
             &mut tx,
@@ -177,11 +114,9 @@ async fn transaction_rollback_covers_attempt_target_health_execution_rollup_and_
 }
 
 #[tokio::test]
-async fn commit_outcome_unknown_replay_is_idempotent_for_budget_and_health_observation() {
+async fn commit_outcome_unknown_replay_is_idempotent_for_budget() {
     let mut connection = ready_connection().await;
     let budgets = MonitoringBudgetRepository;
-    let health = HealthTransitionService::new();
-
     for _ in 0..2 {
         let mut tx = connection.begin().await.expect("begin replay tx");
         assert!(budgets
@@ -198,13 +133,6 @@ async fn commit_outcome_unknown_replay_is_idempotent_for_budget_and_health_obser
             )
             .await
             .expect("budget replay"));
-        record_observation(
-            &health,
-            &mut *tx,
-            observation("observation-replay", None, 1_000),
-        )
-        .await
-        .expect("health replay");
         tx.commit().await.expect("commit replay tx");
     }
 
@@ -215,19 +143,6 @@ async fn commit_outcome_unknown_replay_is_idempotent_for_budget_and_health_obser
         .fetch_one(&mut connection)
         .await
         .expect("budget count"),
-        1
-    );
-    assert_eq!(
-        count(&mut connection, "station_key_health_observations").await,
-        1
-    );
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>(
-            "SELECT success_count FROM routing_health_snapshot WHERE station_key_id = 'key-1'"
-        )
-        .fetch_one(&mut connection)
-        .await
-        .expect("health success count"),
         1
     );
 }
@@ -508,25 +423,6 @@ fn target(
         technical_health_effect: "positive".to_string(),
         disposition_profile_version: "v1".to_string(),
         created_at_ms: 1_120,
-    }
-}
-
-fn observation(id: &str, target_result_id: Option<&str>, observed_at_ms: i64) -> HealthObservation {
-    HealthObservation {
-        id: id.to_string(),
-        station_key_id: "key-1".to_string(),
-        target_result_id: target_result_id.map(str::to_string),
-        source: HealthObservationSource::SyntheticMonitor,
-        source_event_id: "execution-1".to_string(),
-        observed_at_ms,
-        endpoint_revision: 1,
-        outcome: HealthObservationOutcome::Success,
-        failure_kind: None,
-        latency_ms: Some(120),
-        retry_after_ms: None,
-        error_summary: None,
-        writeback_mode: HealthWritebackMode::Authoritative,
-        traffic_equivalence: TrafficEquivalence::SyntheticStandard,
     }
 }
 

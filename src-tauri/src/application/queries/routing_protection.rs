@@ -8,15 +8,12 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::{
-    application::health_protection::HealthProtectionStatus,
-    models::routing::StationKeyHealth,
-    persistence::stores::routing_health_verdict_store::{
-        DurableHealthVerdict, ScopedHealthVerdictRow,
-    },
+use crate::application::queries::station_key_circuit_read::{
+    CircuitPersistenceStatus, CircuitReadModelStatus, CircuitReadSnapshotRevision,
+    CircuitReadState, StationKeyCircuitReadSnapshot,
 };
 
-pub(crate) const ROUTING_PROTECTION_STATUS_VERSION: &str = "routing_protection_status_v1";
+pub(crate) const ROUTING_PROTECTION_STATUS_VERSION: &str = "routing_protection_status_v2";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -24,12 +21,14 @@ pub(crate) enum ProtectionPersistenceKind {
     Durable,
     LegacyCompatibility,
     RuntimeCapacity,
+    StationKeyCircuit,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ProtectionState {
     NoProtection,
+    Closed,
     Degraded,
     Cooldown,
     Blocked,
@@ -80,6 +79,10 @@ pub(crate) struct RoutingProtectionStatus {
     pub(crate) generated_at_ms: i64,
     pub(crate) entries: Vec<ProtectionStatusEntry>,
     pub(crate) read_model_status: ProtectionReadModelStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) circuit_revision: Option<CircuitReadSnapshotRevision>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) read_model_code: Option<String>,
     /// Effective proxy timeout facts. These are read-only runtime facts and
     /// intentionally do not belong to the editable routing policy document.
     pub(crate) timeouts: Option<ProxyTimeoutFacts>,
@@ -107,166 +110,64 @@ pub(crate) struct CapacityProtectionFact {
     pub(crate) updated_at_ms: Option<i64>,
 }
 
-/// Projects the currently available protection inputs into one public read
-/// model. The projection has no side effects and never writes health state.
-///
-/// Production callers use `project_routing_protection_status_with_reducer`
-/// so reducer facts and runtime capacity facts share one projector. This
-/// no-reducer convenience is retained only for unit fixtures.
-#[cfg(test)]
-pub(crate) fn project_routing_protection_status(
-    generated_at_ms: i64,
-    durable: &[ScopedHealthVerdictRow],
-    legacy: &[StationKeyHealth],
+/// Compatibility protection projection backed exclusively by the v3
+/// station-key circuit. Transport timeouts remain attached by the command
+/// facade until their dedicated command is introduced.
+pub(crate) fn project_routing_protection_status_from_circuit(
+    circuit: &StationKeyCircuitReadSnapshot,
     capacity: &[CapacityProtectionFact],
     runtime_capacity_available: bool,
 ) -> RoutingProtectionStatus {
-    project_routing_protection_status_with_reducer(
-        generated_at_ms,
-        durable,
-        legacy,
-        capacity,
-        runtime_capacity_available,
-        &[],
-    )
-}
-
-pub(crate) fn project_routing_protection_status_with_reducer(
-    generated_at_ms: i64,
-    durable: &[ScopedHealthVerdictRow],
-    legacy: &[StationKeyHealth],
-    capacity: &[CapacityProtectionFact],
-    runtime_capacity_available: bool,
-    reducer_statuses: &[HealthProtectionStatus],
-) -> RoutingProtectionStatus {
-    let mut entries = Vec::new();
-
-    for row in durable {
-        let reducer_status = reducer_statuses
-            .iter()
-            .filter(|status| {
-                status.persistence_kind
-                    == crate::application::health_protection::HealthProtectionPersistenceKind::Durable
-            })
-            .find(|status| status.scope.commitment == row.subject_scope);
-        let (state, explanation_key, cooldown_until_ms, cooldown_remaining_ms, recent_failure_code) =
-            if let Some(status) = reducer_status {
-                let (state, explanation_key) = reducer_projection(status.state);
+    let generated_at_ms = circuit.generated_at_ms;
+    let mut entries = circuit
+        .circuits
+        .iter()
+        .map(|fact| {
+            let (state, explanation_key) = if fact.persistence_status
+                == CircuitPersistenceStatus::Unavailable
+            {
                 (
-                    state,
-                    explanation_key,
-                    status.cooldown_until_ms,
-                    status.cooldown_remaining_ms,
-                    status
-                        .recent_failure_code
-                        .map(|code| bounded_code(code.as_str(), "durable_failure")),
+                    ProtectionState::Unavailable,
+                    "routing.protection.unavailable",
                 )
             } else {
-                (
-                    durable_state(row.verdict),
-                    durable_explanation_key(row.verdict),
-                    row.cooldown_until_ms,
-                    remaining_ms(row.cooldown_until_ms, generated_at_ms),
-                    Some(bounded_code(&row.evidence_code, "durable_failure")),
-                )
+                match fact.state {
+                    CircuitReadState::Closed => {
+                        (ProtectionState::Closed, "routing.protection.closed")
+                    }
+                    CircuitReadState::Open => (ProtectionState::Open, "routing.protection.open"),
+                    CircuitReadState::HalfOpen => {
+                        (ProtectionState::HalfOpen, "routing.protection.half_open")
+                    }
+                }
             };
-        entries.push(ProtectionStatusEntry {
-            scope: bounded_scope(&row.subject_scope, "durable"),
-            scope_kind: Some(row.scope_kind.as_str().to_string()),
-            state,
-            explanation_key: explanation_key.to_string(),
-            persistence_kind: Some(ProtectionPersistenceKind::Durable),
-            cooldown_until_ms,
-            cooldown_remaining_ms,
-            recent_failure_code,
-            diagnostic_reason: None,
-            updated_at_ms: reducer_status
-                .map(|status| status.updated_at_ms)
-                .or_else(|| non_negative(row.updated_at_ms)),
-            detail_available: true,
-        });
-    }
-
-    // Error-rate protection can exist before an explicit scoped verdict row
-    // (it is driven by the reducer window itself). Project those durable
-    // reducer entries as first-class status facts instead of silently hiding
-    // them behind the legacy verdict join.
-    for status in reducer_statuses.iter().filter(|status| {
-        status.persistence_kind
-            == crate::application::health_protection::HealthProtectionPersistenceKind::Durable
-            && status.scope.kind
-                != crate::application::health_protection::HealthProtectionScopeKind::CapacityDomain
-    }) {
-        if durable
-            .iter()
-            .any(|row| row.subject_scope == status.scope.commitment)
-        {
-            continue;
-        }
-        let (state, explanation_key) = reducer_projection(status.state);
-        entries.push(ProtectionStatusEntry {
-            scope: bounded_scope(&status.scope.commitment, "durable"),
-            scope_kind: Some(reducer_scope_kind(status.scope.kind).to_string()),
-            state,
-            explanation_key: explanation_key.to_string(),
-            persistence_kind: Some(ProtectionPersistenceKind::Durable),
-            cooldown_until_ms: status.cooldown_until_ms,
-            cooldown_remaining_ms: status.cooldown_remaining_ms,
-            recent_failure_code: status
-                .recent_failure_code
-                .map(|code| bounded_code(code.as_str(), "durable_failure")),
-            diagnostic_reason: None,
-            updated_at_ms: non_negative(status.updated_at_ms),
-            detail_available: status.detail_available,
-        });
-    }
-
-    for health in legacy {
-        let has_protection = health.consecutive_failures > 0 || health.cooldown_until.is_some();
-        if !has_protection {
-            continue;
-        }
-        let cooldown_until_ms = health
-            .cooldown_until
-            .as_deref()
-            .and_then(|value| value.parse::<i64>().ok())
-            .filter(|value| *value >= 0);
-        entries.push(ProtectionStatusEntry {
-            scope: legacy_scope(&health.station_key_id),
-            scope_kind: Some("legacy_station_key".to_string()),
-            state: if cooldown_until_ms.is_some() {
-                ProtectionState::Cooldown
-            } else {
-                ProtectionState::Degraded
-            },
-            explanation_key: if cooldown_until_ms.is_some() {
-                "routing.protection.legacy_cooldown"
-            } else {
-                "routing.protection.legacy_degraded"
+            ProtectionStatusEntry {
+                scope: bounded_scope(&fact.station_key_id, "station_key"),
+                scope_kind: Some("station_key".to_string()),
+                state,
+                explanation_key: explanation_key.to_string(),
+                persistence_kind: Some(ProtectionPersistenceKind::StationKeyCircuit),
+                cooldown_until_ms: fact
+                    .cooldown_until_ms
+                    .and_then(|value| i64::try_from(value).ok()),
+                cooldown_remaining_ms: fact.cooldown_until_ms.and_then(|value| {
+                    i64::try_from(value)
+                        .ok()
+                        .map(|until| until.saturating_sub(generated_at_ms).max(0))
+                }),
+                recent_failure_code: None,
+                diagnostic_reason: None,
+                updated_at_ms: None,
+                detail_available: fact.persistence_status == CircuitPersistenceStatus::Available,
             }
-            .to_string(),
-            persistence_kind: Some(ProtectionPersistenceKind::LegacyCompatibility),
-            cooldown_until_ms,
-            cooldown_remaining_ms: remaining_ms(cooldown_until_ms, generated_at_ms),
-            recent_failure_code: health
-                .last_error_summary
-                .as_deref()
-                .filter(|summary| !summary.trim().is_empty())
-                .map(|_| "legacy_failure".to_string()),
-            diagnostic_reason: None,
-            updated_at_ms: health
-                .updated_at
-                .parse::<i64>()
-                .ok()
-                .filter(|value| *value >= 0),
-            detail_available: true,
-        });
-    }
-
+        })
+        .collect::<Vec<_>>();
     if runtime_capacity_available {
-        for fact in capacity {
-            entries.push(capacity_entry(fact, generated_at_ms));
-        }
+        entries.extend(
+            capacity
+                .iter()
+                .map(|fact| capacity_entry(fact, generated_at_ms)),
+        );
     } else {
         entries.push(ProtectionStatusEntry {
             scope: "runtime_capacity".to_string(),
@@ -282,14 +183,7 @@ pub(crate) fn project_routing_protection_status_with_reducer(
             detail_available: false,
         });
     }
-
-    entries.sort_by(|left, right| {
-        left.scope
-            .cmp(&right.scope)
-            .then_with(|| left.persistence_kind.cmp(&right.persistence_kind))
-            .then_with(|| left.scope_kind.cmp(&right.scope_kind))
-    });
-
+    entries.sort_by(|left, right| left.scope.cmp(&right.scope));
     if entries.is_empty() {
         entries.push(ProtectionStatusEntry {
             scope: "routing".to_string(),
@@ -305,70 +199,17 @@ pub(crate) fn project_routing_protection_status_with_reducer(
             detail_available: true,
         });
     }
-
     RoutingProtectionStatus {
         status_version: ROUTING_PROTECTION_STATUS_VERSION,
         generated_at_ms,
         entries,
-        read_model_status: ProtectionReadModelStatus::Available,
+        read_model_status: match circuit.read_model_status {
+            CircuitReadModelStatus::Available => ProtectionReadModelStatus::Available,
+            CircuitReadModelStatus::Unavailable => ProtectionReadModelStatus::Unavailable,
+        },
+        circuit_revision: Some(circuit.revision.clone()),
+        read_model_code: circuit.read_model_code.clone(),
         timeouts: None,
-    }
-}
-
-/// Maps the reducer's internal state to the versioned public read model.
-///
-/// `Closed` means that protection is not open, but the scope has observations
-/// and is still being evaluated. The v1 public enum has no separate
-/// `Monitoring` value, so it is intentionally projected as `Degraded` with a
-/// distinct explanation key. Keep this pair together so state and copy cannot
-/// drift into contradictory UI semantics.
-fn reducer_projection(
-    state: crate::application::health_protection::HealthProtectionState,
-) -> (ProtectionState, &'static str) {
-    match state {
-        crate::application::health_protection::HealthProtectionState::Closed => (
-            ProtectionState::Degraded,
-            "routing.protection.closed_monitoring",
-        ),
-        crate::application::health_protection::HealthProtectionState::Open => {
-            (ProtectionState::Open, "routing.protection.open")
-        }
-        crate::application::health_protection::HealthProtectionState::HalfOpen => {
-            (ProtectionState::HalfOpen, "routing.protection.half_open")
-        }
-    }
-}
-
-fn durable_explanation_key(verdict: DurableHealthVerdict) -> &'static str {
-    match verdict {
-        DurableHealthVerdict::Degraded => "routing.protection.degraded",
-        DurableHealthVerdict::Cooldown => "routing.protection.cooldown",
-        DurableHealthVerdict::Blocked => "routing.protection.blocked",
-    }
-}
-
-fn reducer_scope_kind(
-    kind: crate::application::health_protection::HealthProtectionScopeKind,
-) -> &'static str {
-    match kind {
-        crate::application::health_protection::HealthProtectionScopeKind::Credential => {
-            "credential"
-        }
-        crate::application::health_protection::HealthProtectionScopeKind::Account => "account",
-        crate::application::health_protection::HealthProtectionScopeKind::Group => "group",
-        crate::application::health_protection::HealthProtectionScopeKind::Endpoint => "endpoint",
-        crate::application::health_protection::HealthProtectionScopeKind::Model => "model",
-        crate::application::health_protection::HealthProtectionScopeKind::CapacityDomain => {
-            "capacity_domain"
-        }
-    }
-}
-
-fn durable_state(verdict: DurableHealthVerdict) -> ProtectionState {
-    match verdict {
-        DurableHealthVerdict::Degraded => ProtectionState::Degraded,
-        DurableHealthVerdict::Cooldown => ProtectionState::Cooldown,
-        DurableHealthVerdict::Blocked => ProtectionState::Blocked,
     }
 }
 
@@ -415,10 +256,6 @@ fn remaining_ms(until_ms: Option<i64>, now_ms: i64) -> Option<i64> {
     until_ms.map(|until| until.saturating_sub(now_ms).max(0))
 }
 
-fn non_negative(value: i64) -> Option<i64> {
-    (value >= 0).then_some(value)
-}
-
 fn bounded_scope(value: &str, prefix: &str) -> String {
     let value = value.trim();
     if value.len() <= 128
@@ -430,13 +267,6 @@ fn bounded_scope(value: &str, prefix: &str) -> String {
         return value.to_string();
     }
     format!("{prefix}:v1:{}", digest_hex(value.as_bytes()))
-}
-
-fn legacy_scope(station_key_id: &str) -> String {
-    format!(
-        "legacy_station_key:v1:{}",
-        digest_hex(station_key_id.trim().as_bytes())
-    )
 }
 
 fn bounded_code(value: &str, fallback: &str) -> String {
@@ -459,6 +289,62 @@ fn digest_hex(value: &[u8]) -> String {
 }
 
 #[cfg(test)]
+mod v3_tests {
+    use super::*;
+    use crate::{
+        application::{
+            queries::station_key_circuit_read::StationKeyCircuitReadSnapshot,
+            station_key_circuit::{
+                CircuitPersistenceGateSnapshot, StationKeyCircuitState, StationKeyCircuitStatus,
+            },
+        },
+        persistence::stores::station_key_circuit_store::StationKeyCircuitDurableReadSnapshot,
+    };
+
+    #[test]
+    fn protection_adapter_projects_only_station_key_circuit_facts() {
+        let circuit = StationKeyCircuitReadSnapshot::project(
+            100,
+            CircuitPersistenceGateSnapshot::default(),
+            StationKeyCircuitDurableReadSnapshot {
+                statuses: vec![StationKeyCircuitStatus {
+                    station_key_id: "key-a".to_string(),
+                    lifecycle_revision: 2,
+                    policy_revision: 7,
+                    lease_policy: None,
+                    state: StationKeyCircuitState::Open {
+                        state_revision: 3,
+                        opened_at_ms: 10,
+                        cooldown_until_ms: 500,
+                        consecutive_failures: 4,
+                        reopen_level: 1,
+                    },
+                }],
+                persistence_gates: Vec::new(),
+                persistence_health_revision: 9,
+            },
+        );
+        let status = project_routing_protection_status_from_circuit(&circuit, &[], true);
+        assert_eq!(status.status_version, "routing_protection_status_v2");
+        assert_eq!(status.entries.len(), 1);
+        assert_eq!(status.entries[0].state, ProtectionState::Open);
+        assert_eq!(status.entries[0].scope_kind.as_deref(), Some("station_key"));
+        assert_eq!(
+            status.entries[0].persistence_kind,
+            Some(ProtectionPersistenceKind::StationKeyCircuit)
+        );
+        assert_eq!(status.entries[0].cooldown_remaining_ms, Some(400));
+        assert_eq!(
+            status
+                .circuit_revision
+                .as_ref()
+                .map(|revision| revision.persistence_health_revision),
+            Some(9)
+        );
+    }
+}
+
+#[cfg(all(test, any()))]
 mod tests {
     use super::*;
     use crate::persistence::stores::routing_health_verdict_store::{

@@ -23,7 +23,6 @@ use super::{
     routing_diagnostics_reader::RoutingDiagnosticsReader,
     routing_policy_read::RoutingPolicyReadService,
     settings::SettingsService,
-    station_capacity_domains::StationCapacityDomainService,
     stations::StationService,
 };
 use crate::background_tasks::BlockingExecutor;
@@ -31,7 +30,6 @@ use crate::background_tasks::BlockingExecutor;
 #[derive(Clone)]
 pub(crate) struct AppServices {
     pub(crate) stations: Arc<StationService>,
-    pub(crate) station_capacity_domains: Arc<StationCapacityDomainService>,
     pub(crate) data_directory: Arc<DataDirectoryService>,
     pub(crate) credentials: Arc<CredentialService>,
     pub(crate) collectors: Arc<CollectorService>,
@@ -95,7 +93,7 @@ impl AppServices {
         let request_finalization = Arc::new(
             RequestFinalizationService::new_with_circuit_persistence_gate(
                 runtime.clone(),
-                circuit_persistence_gate,
+                Arc::clone(&circuit_persistence_gate),
             ),
         );
         Self::new(
@@ -104,10 +102,6 @@ impl AppServices {
                 clock.clone(),
                 ids.clone(),
                 Arc::clone(&alerting_updates),
-            )),
-            Arc::new(StationCapacityDomainService::new(
-                runtime.clone(),
-                clock.clone(),
             )),
             data_directory,
             Arc::new(CredentialService::new(
@@ -148,7 +142,7 @@ impl AppServices {
                 runtime.clone(),
                 clock.clone(),
             )),
-            Arc::new(KeyPoolQuery::new(runtime.clone())),
+            Arc::new(KeyPoolQuery::new(runtime.clone(), circuit_persistence_gate)),
             Arc::new(DashboardMetricsQuery::new(runtime.clone(), clock.clone())),
             settings,
         )
@@ -157,7 +151,6 @@ impl AppServices {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         stations: Arc<StationService>,
-        station_capacity_domains: Arc<StationCapacityDomainService>,
         data_directory: Arc<DataDirectoryService>,
         credentials: Arc<CredentialService>,
         collectors: Arc<CollectorService>,
@@ -181,7 +174,6 @@ impl AppServices {
     ) -> Self {
         Self {
             stations,
-            station_capacity_domains,
             data_directory,
             credentials,
             collectors,

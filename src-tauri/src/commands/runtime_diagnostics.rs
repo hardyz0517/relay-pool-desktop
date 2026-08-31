@@ -349,12 +349,8 @@ mod tests {
                 .settings
                 .update(UpdateSettingsInput {
                     local_proxy_port: 8787,
-                    routing_policy_name: "cost_stable_first".to_string(),
                     collector_proxy_mode: "direct".to_string(),
                     collector_proxy_url: None,
-                    max_rate_multiplier: None,
-                    routing_group_scope: None,
-                    scheduler_config: None,
                     low_balance_threshold_cny: 15.0,
                     collector_interval_minutes: 30,
                     balance_interval_minutes: 5,
@@ -363,7 +359,6 @@ mod tests {
                     pricing_refresh_interval_minutes: 60,
                     collector_timeout_seconds: 15,
                     collector_max_concurrency: 3,
-                    allow_depleted_fallback: false,
                     developer_mode_enabled: true,
                     show_decision_explanation: false,
                     tray_behavior: None,

@@ -35,6 +35,7 @@ pub struct StationKey {
 #[serde(rename_all = "camelCase")]
 pub struct KeyPoolItem {
     pub id: String,
+    pub station_key_lifecycle_revision: u64,
     pub station_id: String,
     pub station_name: String,
     pub station_type: String,
@@ -66,6 +67,7 @@ pub struct KeyPoolItem {
     pub capability_summary: Vec<String>,
     pub model_scope_summary: String,
     pub only_use_as_backup: bool,
+    pub circuit: Option<KeyPoolCircuitSnapshot>,
     pub cooldown_until: Option<String>,
     pub success_rate: Option<f64>,
     pub avg_latency_ms: Option<i64>,
@@ -77,6 +79,34 @@ pub struct KeyPoolItem {
     pub endpoint_ping_error: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KeyPoolCircuitState {
+    Closed,
+    Open,
+    HalfOpen,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KeyPoolCircuitPersistenceStatus {
+    Available,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeyPoolCircuitSnapshot {
+    pub state: KeyPoolCircuitState,
+    pub state_revision: Option<u64>,
+    pub policy_revision: Option<u64>,
+    pub consecutive_failures: u16,
+    pub reopen_level: u32,
+    pub cooldown_until_ms: Option<u64>,
+    pub half_open_lease_in_flight: bool,
+    pub persistence_status: KeyPoolCircuitPersistenceStatus,
 }
 
 #[derive(Debug, Clone, Deserialize)]

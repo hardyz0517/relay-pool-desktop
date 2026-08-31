@@ -69,7 +69,6 @@ pub(crate) struct AttemptBudgetProfileV1 {
     pub(crate) max_total_attempts: u32,
     pub(crate) max_same_target_capacity_retries: u32,
     pub(crate) capacity_retry_wait_budget_ms: u64,
-    pub(crate) allow_cross_capacity_domain_fallback: bool,
     pub(crate) consecutive_failure_threshold: u32,
     pub(crate) circuit_recovery_success_threshold: u16,
     pub(crate) circuit_recovery_wait_ms: u64,
@@ -95,8 +94,6 @@ impl AttemptBudgetProfileV1 {
                 retry_failover.max_same_target_capacity_retries,
             ),
             capacity_retry_wait_budget_ms: retry_failover.capacity_retry_wait_budget_millis(),
-            allow_cross_capacity_domain_fallback: retry_failover
-                .allow_cross_capacity_domain_fallback,
             consecutive_failure_threshold: u32::from(
                 crate::models::routing_policy::DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD,
             ),
@@ -132,7 +129,6 @@ impl AttemptBudgetProfileV1 {
             max_total_attempts: retry.max_total_attempts(),
             max_same_target_capacity_retries: 0,
             capacity_retry_wait_budget_ms: 0,
-            allow_cross_capacity_domain_fallback: false,
             consecutive_failure_threshold: u32::from(retry.consecutive_failure_threshold),
             circuit_recovery_success_threshold: u16::from(
                 circuit_breaker.recovery_success_threshold,
@@ -721,7 +717,6 @@ mod tests {
         assert_eq!(compiled.attempt_budget.max_total_attempts, 4);
         assert_eq!(compiled.attempt_budget.max_same_target_capacity_retries, 2);
         assert_eq!(compiled.attempt_budget.capacity_retry_wait_budget_ms, 2_000);
-        assert!(compiled.attempt_budget.allow_cross_capacity_domain_fallback);
     }
 
     #[test]

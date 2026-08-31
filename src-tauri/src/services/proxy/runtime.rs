@@ -1202,12 +1202,7 @@ mod tests {
             &self,
             _record: AttemptTerminalRecord,
         ) -> BoxFuture<'static, Result<AttemptCommitAck, LifecycleWriteError>> {
-            Box::pin(async {
-                Ok(AttemptCommitAck {
-                    inserted: true,
-                    health_applied: true,
-                })
-            })
+            Box::pin(async { Ok(AttemptCommitAck { inserted: true }) })
         }
 
         fn finish_request(
@@ -1321,7 +1316,6 @@ mod tests {
                     candidates: Vec::new(),
                     targets: Default::default(),
                     profiles: Default::default(),
-                    legacy_candidates: Vec::new(),
                 })
             })
         }
@@ -1846,7 +1840,7 @@ data: [DONE]
         let body: serde_json::Value = response.json().await.expect("usage json");
         runtime.stop(started.port).await.unwrap();
 
-        assert_eq!(status, StatusCode::OK);
+        assert_eq!(status, StatusCode::OK, "response body: {body}");
         assert_eq!(body["remaining"], 12.5);
         assert_eq!(body["stations"], 1);
         assert_eq!(upstream.captured_count(), 0);
@@ -1887,7 +1881,7 @@ data: [DONE]
         let body: serde_json::Value = response.json().await.expect("models json");
         runtime.stop(started.port).await.unwrap();
 
-        assert_eq!(status, StatusCode::OK);
+        assert_eq!(status, StatusCode::OK, "response body: {body}");
         let ids = body["data"]
             .as_array()
             .expect("model data")
@@ -1902,8 +1896,16 @@ data: [DONE]
     }
 
     #[tokio::test]
-    async fn v2_buffered_alias_rewrites_model_and_falls_back_before_output() {
+    async fn v2_buffered_alias_retries_same_key_until_threshold_then_falls_back() {
         let upstream = LoopbackUpstream::script(vec![
+            ScriptedResponse::Status {
+                status: 429,
+                reason: "Too Many Requests",
+            },
+            ScriptedResponse::Status {
+                status: 429,
+                reason: "Too Many Requests",
+            },
             ScriptedResponse::Status {
                 status: 429,
                 reason: "Too Many Requests",
@@ -1942,26 +1944,42 @@ data: [DONE]
         let body: serde_json::Value = response.json().await.expect("chat json");
         runtime.stop(started.port).await.unwrap();
 
-        assert_eq!(status, StatusCode::OK);
+        assert_eq!(status, StatusCode::OK, "response body: {body}");
         assert_eq!(body["id"], "chatcmpl-v2-fallback");
-        upstream.wait_for_requests(2);
+        upstream.wait_for_requests(4);
         let captured = upstream.captured_requests();
         assert_eq!(captured[0].path_and_query, "/v1/chat/completions");
-        assert_eq!(captured[1].path_and_query, "/v1/chat/completions");
+        assert_eq!(captured[3].path_and_query, "/v1/chat/completions");
+        assert_eq!(
+            captured[0].header("authorization"),
+            Some("Bearer sk-v2-first")
+        );
+        assert_eq!(
+            captured[1].header("authorization"),
+            Some("Bearer sk-v2-first")
+        );
+        assert_eq!(
+            captured[2].header("authorization"),
+            Some("Bearer sk-v2-first")
+        );
+        assert_eq!(
+            captured[3].header("authorization"),
+            Some("Bearer sk-v2-second")
+        );
         let authorization_headers = captured
             .iter()
             .filter_map(|request| request.header("authorization"))
             .collect::<std::collections::BTreeSet<_>>();
         assert_eq!(
             authorization_headers,
-            std::collections::BTreeSet::from(["Bearer sk-v2-first", "Bearer sk-v2-second",])
+            std::collections::BTreeSet::from(["Bearer sk-v2-first", "Bearer sk-v2-second"])
         );
         let upstream_body: serde_json::Value =
-            serde_json::from_slice(&captured[1].body).expect("upstream body");
+            serde_json::from_slice(&captured[3].body).expect("upstream body");
         assert_eq!(upstream_body["model"], "mapped-model");
         let logs = fixture.request_logs().await;
         assert_eq!(logs.len(), 1);
-        assert_eq!(logs[0].fallback_count, 1);
+        assert_eq!(logs[0].fallback_count, 3);
     }
 
     #[tokio::test]
@@ -2028,7 +2046,10 @@ data: [DONE]
         );
         let logs = fixture.request_logs().await;
         assert_eq!(logs.len(), 1);
-        assert_eq!(logs[0].route_policy.as_deref(), Some("automatic_balanced"));
+        assert_eq!(
+            logs[0].route_policy.as_deref(),
+            Some("routing-v3:policy-r1:dispatch-v2")
+        );
     }
 
     #[tokio::test]
@@ -2166,12 +2187,12 @@ data: [DONE]
         let traces = runtime.decision_traces().await;
         runtime.stop(started.port).await.unwrap();
 
-        assert_eq!(status, StatusCode::OK);
+        assert_eq!(status, StatusCode::OK, "response body: {body}");
         assert_eq!(body["id"], "resp-fallback");
         upstream.wait_for_requests(1);
         let logs = fixture.request_logs().await;
         assert_eq!(logs.len(), 1);
-        assert_eq!(logs[0].fallback_count, 1);
+        assert_eq!(logs[0].fallback_count, 3);
 
         assert_eq!(traces.len(), 1);
         assert_eq!(traces[0].profile_version, "DecisionTraceProfileV1");
@@ -2186,6 +2207,10 @@ data: [DONE]
                 "attempt_start",
                 "canonical_failure",
                 "attempt_start",
+                "canonical_failure",
+                "attempt_start",
+                "canonical_failure",
+                "attempt_start",
                 "request_terminal",
             ]
         );
@@ -2197,6 +2222,10 @@ data: [DONE]
         assert_eq!(
             codes,
             vec![
+                "attempt_start",
+                "upstream_transport_failure",
+                "attempt_start",
+                "upstream_transport_failure",
                 "attempt_start",
                 "upstream_transport_failure",
                 "attempt_start",

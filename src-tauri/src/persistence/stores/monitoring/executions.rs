@@ -120,6 +120,36 @@ pub(crate) struct TriggeredExecutionRow {
 pub(crate) struct MonitoringExecutionRepository;
 
 impl MonitoringExecutionRepository {
+    pub(crate) async fn assert_current_target_endpoint(
+        &self,
+        connection: &mut SqliteConnection,
+        station_key_id: &str,
+        station_id: &str,
+        endpoint_revision: i64,
+    ) -> Result<(), PersistenceError> {
+        let exists = sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT EXISTS(
+                SELECT 1
+                FROM station_keys k
+                JOIN stations s ON s.id = k.station_id
+                WHERE k.id = ?1
+                  AND k.station_id = ?2
+                  AND s.endpoint_revision = ?3
+            )
+            "#,
+        )
+        .bind(station_key_id)
+        .bind(station_id)
+        .bind(endpoint_revision)
+        .fetch_one(connection)
+        .await?;
+        if exists == 0 {
+            return Err(PersistenceError::NotFound);
+        }
+        Ok(())
+    }
+
     pub(crate) async fn insert_execution(
         &self,
         connection: &mut SqliteConnection,

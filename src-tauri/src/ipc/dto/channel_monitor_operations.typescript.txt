@@ -1,10 +1,3 @@
-export type StationKeyHealthDto = {
-  stationKeyId: string; lastSuccessAt: string | null; lastFailureAt: string | null;
-  consecutiveFailures: number; successCount: number; failureCount: number;
-  avgLatencyMs: number | null; lastErrorSummary: string | null; cooldownUntil: string | null;
-  updatedAt: string;
-};
-
 export type ChannelStatusTimezoneSourceDto = "iana" | "utc_fallback";
 export type ChannelStatusBucketKindDto = "hour" | "day";
 export type ChannelStatusBucketStateDto =

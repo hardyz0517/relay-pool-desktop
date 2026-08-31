@@ -96,7 +96,7 @@ pub(crate) enum CatalogError {
 // The v1 catalog describes the post-alerting-cutover user schema. Historical
 // `change_events` is intentionally absent; the six alerting tables below are
 // the durable replacement and must be recognized by portable migration.
-pub(crate) const EXPECTED_USER_TABLE_COUNT_V1: usize = 110;
+pub(crate) const EXPECTED_USER_TABLE_COUNT_V1: usize = 111;
 
 pub(crate) fn migration_data_catalog() -> &'static [TableCatalog] {
     TABLES

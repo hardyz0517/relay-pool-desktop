@@ -1,5 +1,3 @@
-#[path = "../src/application/error_rate_protection.rs"]
-mod application_error_rate_protection;
 #[path = "../src/application/health_protection.rs"]
 mod application_health_protection;
 #[path = "../src/persistence/stores/domain_revision_store.rs"]
@@ -10,15 +8,10 @@ mod model_routing_observation;
 mod model_routing_policy;
 #[path = "../src/persistence/error.rs"]
 mod persistence_error;
-#[path = "../src/persistence/stores/routing_error_rate_history_store.rs"]
-mod routing_error_rate_history_store;
 
 mod application {
     pub(crate) mod health_protection {
         pub(crate) use crate::application_health_protection::*;
-    }
-    pub(crate) mod error_rate_protection {
-        pub(crate) use crate::application_error_rate_protection::*;
     }
 }
 
@@ -45,9 +38,6 @@ mod persistence {
     pub(crate) mod stores {
         pub(crate) mod domain_revision_store {
             pub(crate) use crate::domain_revision_store::*;
-        }
-        pub(crate) mod routing_error_rate_history_store {
-            pub(crate) use crate::routing_error_rate_history_store::*;
         }
         pub(crate) mod routing_health_verdict_store {
             pub(crate) use crate::routing_health_verdict_store::*;

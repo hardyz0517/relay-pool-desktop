@@ -212,10 +212,7 @@ impl RequestLifecycleStore for AckGatedStore {
                 ));
             }
             release.notified().await;
-            Ok(AttemptCommitAck {
-                inserted: true,
-                health_applied: true,
-            })
+            Ok(AttemptCommitAck { inserted: true })
         })
     }
 
@@ -259,8 +256,6 @@ async fn request_terminal_waits_for_selected_attempt_durable_ack() {
         Some(UpstreamAttemptFinalizationLease::new(
             attempt_reservation,
             attempt_context(&context),
-            None,
-            None,
         )),
         None,
     );
@@ -329,8 +324,6 @@ async fn attempt_ack_failure_records_interrupted_request_terminal_and_releases_r
         Some(UpstreamAttemptFinalizationLease::new(
             attempt_reservation,
             attempt_context(&context),
-            None,
-            None,
         )),
         None,
     );
@@ -449,8 +442,6 @@ fn attempt_context(context: &RequestContextSnapshot) -> AttemptContext {
         comparability_key: None,
         model_alias_revision: 1,
         started_at_ms: context.received_at_ms,
-        probe_scope: None,
-        probe_state_revision: None,
     }
 }
 

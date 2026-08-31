@@ -32,9 +32,6 @@ pub(crate) enum FailureTarget {
         station_id: String,
         endpoint_revision: i64,
     },
-    ProviderCapacity {
-        domain_commitment: String,
-    },
     ProviderProtocol {
         protocol: ProviderProtocolKind,
     },

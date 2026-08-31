@@ -1,5 +1,3 @@
-use crate::application::health_protection::HealthProtectionScope;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RequestStartWrite {
     pub request_id: String,
@@ -26,50 +24,14 @@ pub(crate) struct RequestRouteSelectionWrite {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AttemptHealthUpdate {
     Success,
-    ProbeSuccess,
     ObserveFailure,
     Cooldown { retry_after_ms: Option<i64> },
-    ProbeFailure { retry_after_ms: Option<i64> },
     HardFail,
     Neutral,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum AttemptDurableEffectWrite {
-    Credential {
-        station_key_id: String,
-        dimension: String,
-        verdict: String,
-        retry_after_ms: Option<i64>,
-        evidence_code: String,
-        classifier_profile_version: String,
-    },
-    Account {
-        station_id: String,
-        dimension: String,
-        verdict: String,
-        retry_after_ms: Option<i64>,
-        evidence_code: String,
-        classifier_profile_version: String,
-    },
-    Group {
-        station_id: String,
-        group_binding_id: String,
-        dimension: String,
-        verdict: String,
-        retry_after_ms: Option<i64>,
-        evidence_code: String,
-        classifier_profile_version: String,
-    },
-    Endpoint {
-        station_id: String,
-        endpoint_revision: i64,
-        dimension: String,
-        verdict: String,
-        retry_after_ms: Option<i64>,
-        evidence_code: String,
-        classifier_profile_version: String,
-    },
     UnsupportedModel {
         station_key_id: String,
         model: String,
@@ -111,8 +73,6 @@ pub(crate) struct AttemptTerminalWrite {
     /// Stable persistence receive time captured before retrying the write.
     pub ingested_at_ms: i64,
     pub terminal_at_ms: i64,
-    pub probe_scope: Option<HealthProtectionScope>,
-    pub probe_state_revision: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

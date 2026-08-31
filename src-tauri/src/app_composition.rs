@@ -149,7 +149,6 @@ pub(crate) fn compose_settings_stations_command_facade(
         Arc::clone(&services.stations),
         Arc::clone(&services.settings),
         Arc::clone(&services.station_assets),
-        Arc::clone(&services.station_capacity_domains),
         tray_behavior,
         station_collection_coordinator,
     )

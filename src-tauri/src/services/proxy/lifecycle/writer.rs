@@ -707,10 +707,7 @@ mod tests {
                     "attempt:{}:{}",
                     record.context.attempt_id.request_id, record.context.attempt_id.ordinal
                 ));
-                Ok(AttemptCommitAck {
-                    inserted: true,
-                    health_applied: true,
-                })
+                Ok(AttemptCommitAck { inserted: true })
             })
         }
 
@@ -830,12 +827,7 @@ mod tests {
             &self,
             _record: AttemptTerminalRecord,
         ) -> BoxFuture<'static, Result<AttemptCommitAck, LifecycleWriteError>> {
-            Box::pin(async {
-                Ok(AttemptCommitAck {
-                    inserted: true,
-                    health_applied: true,
-                })
-            })
+            Box::pin(async { Ok(AttemptCommitAck { inserted: true }) })
         }
 
         fn finish_request(
@@ -938,14 +930,10 @@ mod tests {
                 comparability_key: None,
                 model_alias_revision: 1,
                 started_at_ms: 2,
-                probe_scope: None,
-                probe_state_revision: None,
             },
             terminal: AttemptTerminal::Succeeded,
             output_committed: true,
             terminal_at_ms: 3,
-            probe_scope: None,
-            probe_state_revision: None,
         });
         assert!(
             attempt_ack

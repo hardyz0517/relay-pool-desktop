@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::models::proxy::UpstreamApiFormat;
 
-pub(crate) const ROUTING_RUNTIME_OVERLAY_VERSION: &str = "routing_runtime_overlay_v2";
+pub(crate) const ROUTING_RUNTIME_OVERLAY_VERSION: &str = "routing_runtime_overlay_v3";
 
 pub(crate) trait RoutingRuntimeActivity: Send + Sync {
     fn active_for_station<'a>(
@@ -33,8 +33,6 @@ pub(crate) struct RoutingRuntimeCandidateOverlay {
     pub(crate) endpoint_revision: i64,
     pub(crate) in_flight: Option<i64>,
     pub(crate) station_key_in_flight: Option<i64>,
-    pub(crate) health_state: String,
-    pub(crate) cooldown_until: Option<String>,
 }
 
 /// Narrow runtime facts consumed by the overlay read model. This boundary
@@ -47,8 +45,6 @@ pub struct RoutingRuntimeCandidateFact {
     pub(crate) endpoint_revision: i64,
     pub(crate) in_flight: Option<i64>,
     pub(crate) station_key_in_flight: Option<i64>,
-    pub(crate) health_state: String,
-    pub(crate) cooldown_until: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,8 +91,6 @@ pub(crate) fn runtime_overlay_from_candidates(
                 endpoint_revision: candidate.endpoint_revision,
                 in_flight: candidate.in_flight,
                 station_key_in_flight: candidate.station_key_in_flight,
-                health_state: candidate.health_state,
-                cooldown_until: candidate.cooldown_until,
             })
             .collect(),
     }

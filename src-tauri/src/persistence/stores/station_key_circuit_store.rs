@@ -19,6 +19,34 @@ const MAX_COOLDOWN_MS: u64 = 24 * 60 * 60 * 1_000;
 pub(crate) const SHARED_CIRCUIT_PERSISTENCE_GATE_KEY: &str = "__routing_circuit_store__";
 pub(crate) const SHARED_CIRCUIT_PERSISTENCE_GATE_REVISION: u64 = 1;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DurableCircuitPersistenceGate {
+    pub(crate) station_key_id: String,
+    pub(crate) lifecycle_revision: u64,
+    pub(crate) updated_at_ms: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct StationKeyCircuitDurableReadSnapshot {
+    pub(crate) statuses: Vec<StationKeyCircuitStatus>,
+    pub(crate) persistence_gates: Vec<DurableCircuitPersistenceGate>,
+    pub(crate) persistence_health_revision: u64,
+}
+
+impl StationKeyCircuitDurableReadSnapshot {
+    pub(crate) fn persistence_gate_active(
+        &self,
+        station_key_id: &str,
+        lifecycle_revision: u64,
+    ) -> bool {
+        self.persistence_gates.iter().any(|gate| {
+            (gate.station_key_id == station_key_id && gate.lifecycle_revision == lifecycle_revision)
+                || (gate.station_key_id == SHARED_CIRCUIT_PERSISTENCE_GATE_KEY
+                    && gate.lifecycle_revision == SHARED_CIRCUIT_PERSISTENCE_GATE_REVISION)
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct CircuitTerminalResult {
     /// True only when this terminal event advanced the reducer state. A
@@ -348,6 +376,50 @@ impl StationKeyCircuitStore {
         .fetch_all(&mut *connection)
         .await?;
         rows.into_iter().map(row_to_status).collect()
+    }
+
+    /// Loads all mutable circuit and persistence-gate facts from the caller's
+    /// read transaction. The process-local gate is intentionally sampled by
+    /// the application layer before and after this method.
+    pub(crate) async fn load_read_snapshot(
+        &self,
+        connection: &mut SqliteConnection,
+    ) -> Result<StationKeyCircuitDurableReadSnapshot, PersistenceError> {
+        let statuses = self.list_statuses(connection).await?;
+        let gate_rows = sqlx::query(
+            "SELECT station_key_id, station_key_lifecycle_revision, updated_at_ms
+             FROM routing_circuit_persistence_gate_v3
+             WHERE status = 'persistence_unavailable'
+             ORDER BY station_key_id ASC, station_key_lifecycle_revision ASC",
+        )
+        .fetch_all(&mut *connection)
+        .await?;
+        let persistence_gates = gate_rows
+            .into_iter()
+            .map(|row| {
+                Ok(DurableCircuitPersistenceGate {
+                    station_key_id: row.get("station_key_id"),
+                    lifecycle_revision: positive_u64(
+                        row.get::<i64, _>("station_key_lifecycle_revision"),
+                    )?,
+                    updated_at_ms: positive_u64(row.get::<i64, _>("updated_at_ms"))?,
+                })
+            })
+            .collect::<Result<Vec<_>, PersistenceError>>()?;
+        let persistence_health_revision = positive_u64(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT check_revision
+                 FROM routing_circuit_persistence_health_v3
+                 WHERE singleton_key = 1",
+            )
+            .fetch_one(&mut *connection)
+            .await?,
+        )?;
+        Ok(StationKeyCircuitDurableReadSnapshot {
+            statuses,
+            persistence_gates,
+            persistence_health_revision,
+        })
     }
 
     pub(crate) async fn ensure_state(

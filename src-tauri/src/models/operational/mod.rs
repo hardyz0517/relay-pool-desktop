@@ -1,5 +1,8 @@
+#[cfg(test)]
 pub mod capability;
+#[cfg(test)]
 pub mod economics;
+#[cfg(test)]
 pub mod health;
 pub mod identity;
 pub mod provenance;
@@ -8,10 +11,9 @@ pub(crate) mod raw_facts;
 #[cfg(test)]
 use serde::{Deserialize, Serialize};
 
-pub use capability::CapabilityVerdict;
 #[cfg(test)]
 pub use capability::{
-    CapabilityDimension, CapabilityEvidence, RequestModelCapabilityAssessment,
+    CapabilityDimension, CapabilityEvidence, CapabilityVerdict, RequestModelCapabilityAssessment,
     StationKeyCapabilityFacts,
 };
 #[cfg(test)]
@@ -21,23 +23,24 @@ pub use economics::{
     BalanceFacts, CurrencyCode, Money, MoneyAmount, PricingUnit, RequestCostBasis,
     RequestPricingAssessment,
 };
+#[cfg(test)]
 pub use economics::{BalanceScope, PriceConfidence, RateMultiplier};
-#[cfg(not(test))]
-pub use health::HealthState;
 #[cfg(test)]
 pub use health::{
     EndpointHealthFact, EndpointHealthTarget, HealthFact, HealthState, ModelHealthFact,
     ModelHealthTarget, StationAccountHealthFact, StationAccountHealthTarget, StationKeyHealthFact,
     StationKeyHealthTarget,
 };
+pub use identity::OperationalValidationError;
 pub use identity::SanitizedOrigin;
 pub use identity::{EndpointFacts, OutboundPolicyRef};
 pub use identity::{
-    EndpointId, EndpointRef, EndpointRevision, ModelName, RecordRevision, StationId, StationKeyId,
+    EndpointId, EndpointRef, EndpointRevision, RecordRevision, StationId, StationKeyId,
 };
 #[cfg(test)]
 pub use identity::{EvidenceHash, StationAccountRef};
-pub use identity::{OperationalValidationError, UnixMillis};
+#[cfg(test)]
+pub use identity::{ModelName, UnixMillis};
 #[cfg(test)]
 pub use provenance::{EvidenceConfidence, EvidenceCoverage};
 #[cfg(test)]

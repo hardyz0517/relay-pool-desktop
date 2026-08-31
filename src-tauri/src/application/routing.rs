@@ -45,12 +45,8 @@ use crate::{
     application::{
         credentials::SecretRef,
         error::ApplicationError,
-        health_transitions::HealthTransitionService,
         operational_facts::{
-            candidate_projection::{
-                route_projection_from_runtime_candidate_with_pricing,
-                route_request_facts_for_read_model, validated_route_settings,
-            },
+            candidate_projection::{route_request_facts_for_read_model, validated_route_settings},
             planning_snapshot::{PlanningBuildResult, PlanningSnapshotBuilder},
             pricing_projector::{
                 pricing_context_from_resolution, request_cost_comparison_context, PricingRouteKind,
@@ -58,12 +54,8 @@ use crate::{
             target_resolver::ExecutionTargetRef,
         },
         queries::{
-            operational_detail::{
-                operational_detail_from_projection, unavailable_operational_detail,
-                StationKeyOperationalDetail,
-            },
             routing_protection::{
-                project_routing_protection_status_with_reducer, CapacityProtectionFact,
+                project_routing_protection_status_from_circuit, CapacityProtectionFact,
                 RoutingProtectionStatus,
             },
             routing_runtime::{
@@ -77,16 +69,13 @@ use crate::{
                 RoutingWorkspaceRevisionSnapshot, RoutingWorkspaceSnapshot,
                 RoutingWorkspaceSnapshotInput,
             },
+            station_key_circuit_read::StationKeyCircuitReadSnapshot,
         },
         routing_policy::RoutingPolicyAggregate,
         station_key_circuit::CircuitPersistenceGate,
     },
     models::{
         document_sync::TrustedDocumentSource,
-        health::{
-            HealthObservation, HealthObservationOutcome, HealthObservationSource,
-            HealthWritebackMode, TrafficEquivalence,
-        },
         pricing::{BalanceSnapshot, ResolvedPricingContext},
         routing::{
             CanonicalRoutingCandidate, RouteCandidateExplanation, RouteEndpointKind,
@@ -106,6 +95,9 @@ use crate::{
         canonical_json, decode_strict_json, PolicyDocumentCoordinator, PolicyDocumentError,
     },
 };
+
+#[cfg(test)]
+use crate::application::operational_facts::candidate_projection::route_projection_from_runtime_candidate_with_pricing;
 
 #[derive(Debug, Clone)]
 pub struct CanonicalRoutingCandidateWithPricing {
@@ -258,136 +250,14 @@ impl RoutingService {
         capacity: &[CapacityProtectionFact],
         runtime_capacity_available: bool,
     ) -> Result<RoutingProtectionStatus, ApplicationError> {
-        let mut read = self.runtime.begin_read().await?;
-        let durable =
-            crate::persistence::stores::routing_health_verdict_store::RoutingHealthVerdictStore
-                .load_active_all(read.connection())
-                .await
-                .map_err(ApplicationError::from)?;
-        let protection_enabled = self.load_protection_enabled(&mut read).await?;
-        let reducer_statuses = if protection_enabled {
-            crate::persistence::stores::routing_health_verdict_store::RoutingHealthVerdictStore
-                .load_health_protection_statuses(read.connection(), generated_at_ms.max(0))
-                .await
-                .map_err(ApplicationError::from)?
-        } else {
-            Vec::new()
-        };
-        let legacy = self
-            .store
-            .list_station_key_health(&mut read)
-            .await
-            .map_err(ApplicationError::from)?;
-        Ok(project_routing_protection_status_with_reducer(
-            generated_at_ms.max(0),
-            &durable,
-            &legacy,
+        let circuit = self
+            .load_station_key_circuit_read_snapshot(generated_at_ms)
+            .await?;
+        Ok(project_routing_protection_status_from_circuit(
+            &circuit,
             capacity,
             runtime_capacity_available,
-            &reducer_statuses,
         ))
-    }
-
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "contract=legacy-health-read-port; owner=application/routing; remove_when=v3 station-key circuit query is the sole production health read"
-        )
-    )]
-    pub(crate) async fn load_health_protection_statuses(
-        &self,
-        _now_ms: i64,
-    ) -> Result<Vec<crate::application::health_protection::HealthProtectionStatus>, ApplicationError>
-    {
-        Ok(Vec::new())
-    }
-
-    async fn load_protection_enabled(
-        &self,
-        read: &mut crate::persistence::ReadSession,
-    ) -> Result<bool, ApplicationError> {
-        let _ = read;
-        Ok(false)
-    }
-
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "contract=legacy-health-probe-api; owner=application/routing; remove_when=v3 station-key circuit store owns all Half-Open leases"
-        )
-    )]
-    pub(crate) async fn begin_health_protection_probe(
-        &self,
-        _scope: crate::application::health_protection::HealthProtectionScope,
-        _now_ms: i64,
-    ) -> Result<
-        Option<crate::application::health_protection::HealthProtectionProbe>,
-        ApplicationError,
-    > {
-        Ok(None)
-    }
-
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "contract=legacy-health-probe-api; owner=application/routing; remove_when=v3 station-key circuit store owns all Half-Open leases"
-        )
-    )]
-    pub(crate) async fn cancel_health_protection_probe(
-        &self,
-        _probe: crate::application::health_protection::HealthProtectionProbe,
-        _now_ms: i64,
-    ) -> Result<bool, ApplicationError> {
-        Ok(false)
-    }
-
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "contract=v3-circuit-compat-api; owner=application/routing; remove_when=proxy execution calls the durable circuit store through its narrow port"
-        )
-    )]
-    pub(crate) async fn admit_station_key_circuit(
-        &self,
-        station_key_id: String,
-        lifecycle_revision: u64,
-        policy_revision: u64,
-        now_ms: u64,
-        deadline_at_ms: u64,
-        score_gate_passed: bool,
-        attempt_id: String,
-        consecutive_failure_threshold: u16,
-        recovery_success_threshold: u16,
-        recovery_wait_ms: u64,
-    ) -> Result<crate::application::station_key_circuit::CircuitAdmissionResult, ApplicationError>
-    {
-        let store = crate::persistence::stores::station_key_circuit_store::StationKeyCircuitStore;
-        self.runtime
-            .write(|write| {
-                Box::pin(async move {
-                    store
-                        .admit(
-                            write.connection(),
-                            &station_key_id,
-                            lifecycle_revision,
-                            policy_revision,
-                            now_ms,
-                            deadline_at_ms,
-                            score_gate_passed,
-                            &attempt_id,
-                            consecutive_failure_threshold,
-                            recovery_success_threshold,
-                            recovery_wait_ms,
-                        )
-                        .await
-                })
-            })
-            .await
-            .map_err(ApplicationError::from)
     }
 
     /// Atomically commits the durable Key-circuit admission and the v3
@@ -571,6 +441,36 @@ impl RoutingService {
         }
     }
 
+    /// Versioned read-only circuit snapshot for non-Proxy consumers. A gate
+    /// revision change retries the whole durable read once; a second change
+    /// is reported as unavailable instead of returning a torn snapshot.
+    pub(crate) async fn load_station_key_circuit_read_snapshot(
+        &self,
+        generated_at_ms: i64,
+    ) -> Result<StationKeyCircuitReadSnapshot, ApplicationError> {
+        for attempt in 0..2 {
+            let process_before = self.circuit_persistence_gate.snapshot();
+            let mut read = self.runtime.begin_read().await?;
+            let durable =
+                crate::persistence::stores::station_key_circuit_store::StationKeyCircuitStore
+                    .load_read_snapshot(read.connection())
+                    .await
+                    .map_err(ApplicationError::from)?;
+            let process_after = self.circuit_persistence_gate.snapshot();
+            if process_before.revision == process_after.revision {
+                return Ok(StationKeyCircuitReadSnapshot::project(
+                    generated_at_ms,
+                    process_after,
+                    durable,
+                ));
+            }
+            if attempt == 1 {
+                return Err(ApplicationError::Unavailable);
+            }
+        }
+        Err(ApplicationError::Unavailable)
+    }
+
     pub(crate) async fn load_routing_generation_admission_guard(
         &self,
     ) -> Result<crate::models::routing_generation::RoutingGenerationAdmissionGuard, ApplicationError>
@@ -578,41 +478,6 @@ impl RoutingService {
         let mut read = self.runtime.begin_read().await?;
         crate::persistence::stores::routing_generation_store::RoutingGenerationStore
             .load_admission_guard(read.connection())
-            .await
-            .map_err(ApplicationError::from)
-    }
-
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "contract=v3-circuit-compat-api; owner=application/routing; remove_when=proxy execution calls the durable circuit store through its narrow port"
-        )
-    )]
-    pub(crate) async fn mark_station_key_circuit_boundary(
-        &self,
-        station_key_id: String,
-        lifecycle_revision: u64,
-        attempt_id: String,
-        lease_revision: u64,
-        now_ms: u64,
-    ) -> Result<bool, ApplicationError> {
-        let store = crate::persistence::stores::station_key_circuit_store::StationKeyCircuitStore;
-        self.runtime
-            .write(|write| {
-                Box::pin(async move {
-                    store
-                        .mark_boundary_crossed(
-                            write.connection(),
-                            &station_key_id,
-                            lifecycle_revision,
-                            &attempt_id,
-                            lease_revision,
-                            now_ms,
-                        )
-                        .await
-                })
-            })
             .await
             .map_err(ApplicationError::from)
     }
@@ -729,32 +594,9 @@ impl RoutingService {
         runtime: RuntimeOverlaySnapshot,
         context: PlanningRequestContext,
     ) -> Result<Option<PlanningSnapshot>, ApplicationError> {
-        self.load_intelligent_planning_snapshot_with_probe(
-            request,
-            runtime,
-            context,
-            None,
-            crate::application::health_protection::HealthProbeAdmissionMode::Normal,
-        )
-        .await
-    }
-
-    pub(crate) async fn load_intelligent_planning_snapshot_with_probe(
-        &self,
-        request: &crate::application::routing_engine::request::RouteRequestFacts,
-        runtime: RuntimeOverlaySnapshot,
-        context: PlanningRequestContext,
-        health_probe: Option<crate::application::health_protection::HealthProtectionProbe>,
-        health_probe_mode: crate::application::health_protection::HealthProbeAdmissionMode,
-    ) -> Result<Option<PlanningSnapshot>, ApplicationError> {
         tokio::time::timeout_at(
             tokio::time::Instant::from_std(context.deadline()),
-            self.load_intelligent_planning_snapshot_within_deadline(
-                request,
-                runtime,
-                health_probe,
-                health_probe_mode,
-            ),
+            self.load_intelligent_planning_snapshot_within_deadline(request, runtime),
         )
         .await
         .map_err(|_| ApplicationError::DeadlineExceeded)?
@@ -764,16 +606,9 @@ impl RoutingService {
         &self,
         request: &crate::application::routing_engine::request::RouteRequestFacts,
         runtime: RuntimeOverlaySnapshot,
-        health_probe: Option<crate::application::health_protection::HealthProtectionProbe>,
-        health_probe_mode: crate::application::health_protection::HealthProbeAdmissionMode,
     ) -> Result<Option<PlanningSnapshot>, ApplicationError> {
         Ok(self
-            .load_intelligent_planning_build_result_within_deadline(
-                request,
-                runtime,
-                health_probe,
-                health_probe_mode,
-            )
+            .load_intelligent_planning_build_result_within_deadline(request, runtime)
             .await?
             .map(|result| result.snapshot))
     }
@@ -782,18 +617,10 @@ impl RoutingService {
         &self,
         request: &crate::application::routing_engine::request::RouteRequestFacts,
         runtime: RuntimeOverlaySnapshot,
-        health_probe: Option<crate::application::health_protection::HealthProtectionProbe>,
-        health_probe_mode: crate::application::health_protection::HealthProbeAdmissionMode,
     ) -> Result<Option<PlanningBuildResult>, ApplicationError> {
         let mut read = self.runtime.begin_read().await?;
-        self.load_intelligent_planning_build_result_in_read(
-            &mut read,
-            request,
-            runtime,
-            health_probe,
-            health_probe_mode,
-        )
-        .await
+        self.load_intelligent_planning_build_result_in_read(&mut read, request, runtime)
+            .await
     }
 
     async fn load_intelligent_planning_build_result_in_read(
@@ -801,8 +628,6 @@ impl RoutingService {
         read: &mut crate::persistence::ReadSession,
         request: &crate::application::routing_engine::request::RouteRequestFacts,
         runtime: RuntimeOverlaySnapshot,
-        _health_probe: Option<crate::application::health_protection::HealthProtectionProbe>,
-        _health_probe_mode: crate::application::health_protection::HealthProbeAdmissionMode,
     ) -> Result<Option<PlanningBuildResult>, ApplicationError> {
         let stored =
             crate::persistence::stores::routing_policy_v3_stage_upgrade::load_effective_active_in(
@@ -967,6 +792,7 @@ impl RoutingService {
     /// Read-model-only compatibility projection. This path is intentionally
     /// unavailable to proxy execution; production routing consumes the
     /// immutable PlanningSnapshot instead.
+    #[cfg(test)]
     pub(crate) async fn load_workspace_candidates_with_request_pricing(
         &self,
         request: &crate::application::routing_engine::request::RouteRequestFacts,
@@ -1098,7 +924,6 @@ impl RoutingService {
             planning_result,
             quality_summaries,
             attempt_diagnostics,
-            circuit_statuses,
         ) = {
             let mut read = self.runtime.begin_read().await?;
             let settings = self.store.load_execution_settings(&mut read).await?;
@@ -1147,8 +972,6 @@ impl RoutingService {
                         max_concurrency: 1,
                         affinity_station_key_id: None,
                     },
-                    None,
-                    crate::application::health_protection::HealthProbeAdmissionMode::Normal,
                 ),
             )
             .await
@@ -1181,10 +1004,6 @@ impl RoutingService {
             let attempt_diagnostics = RoutingQualityStore
                 .load_attempt_count_diagnostics(read.connection(), &scopes)
                 .await?;
-            let circuit_statuses =
-                crate::persistence::stores::station_key_circuit_store::StationKeyCircuitStore
-                    .list_statuses(read.connection())
-                    .await?;
             (
                 settings,
                 planner_policy_config,
@@ -1194,9 +1013,9 @@ impl RoutingService {
                 planning_result,
                 quality_summaries,
                 attempt_diagnostics,
-                circuit_statuses,
             )
         };
+        let circuit_read_snapshot = self.load_station_key_circuit_read_snapshot(now_ms).await?;
         // Use the immutable planner snapshot as the score source so this
         // read model stays aligned with the actual routing policy semantics.
         let multiplier_by_key = candidates
@@ -1275,10 +1094,6 @@ impl RoutingService {
                 }
                 for assessment in &result.assessments {
                     let status = match (assessment.eligibility, assessment.candidate_set) {
-                        (
-                            crate::application::operational_facts::planning_snapshot::PlanningCandidateEligibility::ProbeDiscoveryOnly,
-                            _,
-                        ) => RoutingScoreStatus::ProbeDiscovery,
                         (
                             crate::application::operational_facts::planning_snapshot::PlanningCandidateEligibility::AdmittedForScoring,
                             crate::application::operational_facts::planning_snapshot::PlanningCandidateSet::WithinLimit,
@@ -1384,7 +1199,7 @@ impl RoutingService {
             &quality_summaries,
             &plan_diagnostics,
             &attempt_diagnostics,
-            &circuit_statuses,
+            &circuit_read_snapshot,
             workspace_revisions,
             &request,
             input,
@@ -1400,24 +1215,6 @@ impl RoutingService {
         let candidates = self.store.load_runtime_candidates(&mut read).await?;
         let mut facts = Vec::with_capacity(candidates.len());
         for candidate in candidates {
-            let cooldown_until = candidate
-                .health
-                .as_ref()
-                .and_then(|health| health.cooldown_until.clone());
-            let health_state = candidate
-                .health
-                .as_ref()
-                .map(|health| {
-                    if health.cooldown_until.is_some() {
-                        "cooldown"
-                    } else if health.consecutive_failures > 0 {
-                        "degraded"
-                    } else {
-                        "ready"
-                    }
-                })
-                .unwrap_or("unknown")
-                .to_string();
             let in_flight = proxy
                 .active_for_station(
                     &candidate.station_type,
@@ -1435,8 +1232,6 @@ impl RoutingService {
                 endpoint_revision: candidate.station_endpoint_revision,
                 in_flight,
                 station_key_in_flight,
-                health_state,
-                cooldown_until,
             });
         }
         Ok(runtime_overlay_from_candidates(
@@ -1445,32 +1240,6 @@ impl RoutingService {
             1,
             1024,
         ))
-    }
-
-    pub(crate) async fn get_station_key_operational_detail(
-        &self,
-        station_key_id: String,
-    ) -> Result<StationKeyOperationalDetail, ApplicationError> {
-        let mut read = self.runtime.begin_read().await?;
-        let settings = self.store.load_execution_settings(&mut read).await?;
-        drop(read);
-        let now_ms = chrono::Utc::now().timestamp_millis();
-        let request = route_request_facts_for_read_model(&settings, now_ms);
-        for row in self
-            .load_workspace_candidates_with_request_pricing(&request)
-            .await?
-        {
-            if row.candidate.station_key_id == station_key_id {
-                let projection = route_projection_from_runtime_candidate_with_pricing(
-                    &request,
-                    row.candidate,
-                    row.pricing_context.as_ref(),
-                )
-                .map_err(|_| ApplicationError::ConstraintViolation)?;
-                return Ok(operational_detail_from_projection(&projection));
-            }
-        }
-        Ok(unavailable_operational_detail(station_key_id))
     }
 
     pub(crate) async fn station_endpoint_probe_target(
@@ -1517,58 +1286,6 @@ impl RoutingService {
             .map_err(Into::into)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn record_station_key_connectivity(
-        &self,
-        station_key_id: String,
-        station_id: String,
-        expected_endpoint_revision: i64,
-        ok: bool,
-        duration_ms: i64,
-        error_summary: String,
-    ) -> Result<(), ApplicationError> {
-        let now_ms = chrono::Utc::now().timestamp_millis();
-        let health = HealthTransitionService::new();
-        self.runtime
-            .write(|write| {
-                Box::pin(async move {
-                    let observation_id =
-                        format!("health-observation-manual-connectivity-{station_key_id}-{now_ms}");
-                    let source_event_id = format!(
-                        "manual-connectivity:{station_id}:{expected_endpoint_revision}:{now_ms}"
-                    );
-                    health
-                        .record_observation(
-                            write,
-                            HealthObservation {
-                                id: observation_id,
-                                station_key_id,
-                                target_result_id: None,
-                                source: HealthObservationSource::ManualConnectivity,
-                                source_event_id,
-                                observed_at_ms: now_ms,
-                                endpoint_revision: expected_endpoint_revision,
-                                outcome: if ok {
-                                    HealthObservationOutcome::Success
-                                } else {
-                                    HealthObservationOutcome::ObserveFailure
-                                },
-                                failure_kind: (!ok).then_some("manual_connectivity".to_string()),
-                                latency_ms: Some(duration_ms),
-                                retry_after_ms: None,
-                                error_summary: (!ok).then_some(error_summary),
-                                writeback_mode: HealthWritebackMode::Authoritative,
-                                traffic_equivalence: TrafficEquivalence::Diagnostic,
-                            },
-                        )
-                        .await
-                        .map(|_| ())
-                })
-            })
-            .await
-            .map_err(Into::into)
-    }
-
     pub(crate) async fn simulate_route(
         &self,
         input: RouteSimulationInput,
@@ -1581,10 +1298,6 @@ impl RoutingService {
         let settings = self.store.load_execution_settings(&mut read).await?;
         drop(read);
 
-        // The simulation accepts the canonical config for contract parity. The
-        // legacy enum remains only for request classification compatibility;
-        // the actual planner policy is loaded from the policy aggregate below.
-        let policy = settings.policy.clone();
         let max_rate_multiplier = input.max_rate_multiplier.or(settings.max_rate_multiplier);
         let routing_group_filter = input
             .routing_group_filter
@@ -1609,13 +1322,14 @@ impl RoutingService {
             )
         }) {
             return Ok(RouteSimulationResult {
-                preview_policy_version: "intelligent_planner_v1".to_string(),
+                preview_policy_version:
+                    crate::application::queries::routing_workspace::ROUTING_PREVIEW_POLICY_VERSION
+                        .to_string(),
                 capacity_mode: "snapshot_only".to_string(),
                 selected_capacity_acquired: false,
                 selected_station_key_id: None,
                 selected_station_id: None,
                 mapped_model: None,
-                policy,
                 max_rate_multiplier,
                 routing_group_filter,
                 planner_error_code: Some("model_mapping_rejected".to_string()),
@@ -1628,13 +1342,13 @@ impl RoutingService {
                 Ok(target) => target.map(|target| target.route_model.clone()),
                 Err(error) => {
                     return Ok(RouteSimulationResult {
-                        preview_policy_version: "intelligent_planner_v1".to_string(),
+                        preview_policy_version: crate::application::queries::routing_workspace::ROUTING_PREVIEW_POLICY_VERSION
+                            .to_string(),
                         capacity_mode: "snapshot_only".to_string(),
                         selected_capacity_acquired: false,
                         selected_station_key_id: None,
                         selected_station_id: None,
                         mapped_model: None,
-                        policy,
                         max_rate_multiplier,
                         routing_group_filter,
                         planner_error_code: Some(error.code().to_string()),
@@ -1647,10 +1361,8 @@ impl RoutingService {
             None => None,
         };
         let validated_settings = validated_route_settings(&RuntimeRoutingSettings {
-            policy: policy.clone(),
             max_rate_multiplier,
             routing_group_scope: routing_group_filter.clone(),
-            scheduler_config: settings.scheduler_config.clone(),
             allow_depleted_fallback: settings.allow_depleted_fallback,
             outbound_proxy_mode: settings.outbound_proxy_mode.clone(),
             outbound_proxy_url: settings.outbound_proxy_url.clone(),
@@ -1756,13 +1468,14 @@ impl RoutingService {
                     .unwrap_or_else(|| "Route simulation found no eligible route".to_string())
             });
         Ok(RouteSimulationResult {
-            preview_policy_version: "intelligent_planner_v1".to_string(),
+            preview_policy_version:
+                crate::application::queries::routing_workspace::ROUTING_PREVIEW_POLICY_VERSION
+                    .to_string(),
             capacity_mode: "snapshot_only".to_string(),
             selected_capacity_acquired: false,
             selected_station_key_id,
             selected_station_id,
             mapped_model,
-            policy,
             max_rate_multiplier,
             routing_group_filter,
             planner_error_code,
@@ -2175,14 +1888,6 @@ pub(crate) async fn reconcile_external_routing_policy_document(
     Ok(stored)
 }
 
-#[cfg(test)]
-struct SimulatedRouteCandidateProjection {
-    station_name: String,
-    key_name: String,
-    projection:
-        crate::application::operational_facts::candidate_projector::RouteCandidateProjection,
-}
-
 fn route_kind_from_endpoint(endpoint: &RouteEndpointKind) -> RouteKind {
     match endpoint {
         RouteEndpointKind::Models => RouteKind::ModelCatalog,
@@ -2202,21 +1907,6 @@ fn mapping_endpoint_kind(
         }
         RouteEndpointKind::Responses => crate::models::model_mapping::EndpointKind::Responses,
         RouteEndpointKind::Embeddings => crate::models::model_mapping::EndpointKind::Embeddings,
-    }
-}
-
-#[cfg(test)]
-fn simulation_snapshot_id(candidates: &[SimulatedRouteCandidateProjection]) -> String {
-    let mut parts = candidates
-        .iter()
-        .map(|candidate| candidate.projection.provenance.snapshot_id.as_str())
-        .collect::<Vec<_>>();
-    parts.sort_unstable();
-    parts.dedup();
-    if parts.is_empty() {
-        "empty-simulation-snapshot".to_string()
-    } else {
-        parts.join("|")
     }
 }
 
@@ -2325,175 +2015,21 @@ fn route_explanation_from_canonical_candidate(
 }
 
 #[cfg(test)]
-fn route_explanation_from_projection(
-    candidate: &SimulatedRouteCandidateProjection,
-    mapped_model: Option<String>,
-    routing_group_scope: RoutingGroupFilter,
-    accepted: bool,
-    reasons: Vec<String>,
-    rejection_reasons: Vec<String>,
-    top_k_rank: Option<i64>,
-) -> RouteCandidateExplanation {
-    let projection = &candidate.projection;
-    RouteCandidateExplanation {
-        station_key_id: projection.identity.station_key_id.clone(),
-        station_id: projection.identity.station_id.clone(),
-        station_name: candidate.station_name.clone(),
-        key_name: candidate.key_name.clone(),
-        accepted,
-        reasons,
-        rejection_reasons,
-        mapped_model,
-        group_binding_id: projection
-            .group
-            .as_ref()
-            .map(|group| group.stable_key.clone()),
-        rate_multiplier: projection.multiplier.multiplier,
-        normalization_status: Some(projection.pricing.status_label.clone()),
-        price_confidence: projection.pricing.confidence,
-        estimated_input_price: projection.pricing.estimated_input_price,
-        estimated_output_price: projection.pricing.estimated_output_price,
-        price_currency: projection.pricing.currency.clone(),
-        balance_status: Some(format!("{:?}", projection.balance.status).to_lowercase()),
-        balance_value: None,
-        balance_scope: projection.balance.selected_scope.clone(),
-        balance_collected_at: projection.pricing.observed_at.clone(),
-        economic_freshness: projection.pricing.reason.map(ToString::to_string),
-        economic_reasons: projection
-            .pricing
-            .reason
-            .map(|reason| vec![reason.to_string()])
-            .unwrap_or_default(),
-        routing_group_scope: Some(routing_group_scope),
-        routing_group_match: projection.policy.group_matches,
-        top_k_rank,
-        slot_result: Some("snapshot_only".to_string()),
-    }
-}
-
-#[cfg(test)]
-fn simulation_explanations(
-    candidates: &[SimulatedRouteCandidateProjection],
-    plan: &crate::application::routing_engine::candidate_plan::RoutePlan,
-    mapped_model: Option<String>,
-    routing_group_scope: RoutingGroupFilter,
-) -> Vec<RouteCandidateExplanation> {
-    let ordered =
-        crate::application::routing_engine::hierarchical_preview::ordered_plan_candidates(plan);
-    candidates
-        .iter()
-        .map(|candidate| {
-            let rank = ordered
-                .iter()
-                .position(|planned| {
-                    planned.station_key_id == candidate.projection.identity.station_key_id
-                })
-                .map(|index| index as i64 + 1);
-            simulation_explanation(
-                candidate,
-                plan,
-                rank,
-                mapped_model.clone(),
-                routing_group_scope.clone(),
-            )
-        })
-        .collect()
-}
-
-#[cfg(test)]
-fn simulation_explanation(
-    candidate: &SimulatedRouteCandidateProjection,
-    plan: &crate::application::routing_engine::candidate_plan::RoutePlan,
-    top_k_rank: Option<i64>,
-    mapped_model: Option<String>,
-    routing_group_scope: RoutingGroupFilter,
-) -> RouteCandidateExplanation {
-    let projection = &candidate.projection;
-    let rejection_reasons = plan
-        .rejections
-        .iter()
-        .filter(|rejection| rejection.station_key_id == projection.identity.station_key_id)
-        .map(|rejection| rejection.code.to_string())
-        .chain(
-            projection
-                .hard_rejection_codes
-                .iter()
-                .map(|code| (*code).to_string()),
-        )
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
-    let accepted = rejection_reasons.is_empty();
-    let mut reasons = Vec::new();
-    if accepted {
-        reasons.push(format!("profile:{:?}", plan.ordering_profile).to_lowercase());
-        reasons.push("snapshot_preview".to_string());
-    }
-    reasons.extend(
-        projection
-            .health
-            .reasons
-            .iter()
-            .map(|reason| (*reason).to_string()),
-    );
-    RouteCandidateExplanation {
-        station_key_id: projection.identity.station_key_id.clone(),
-        station_id: projection.identity.station_id.clone(),
-        station_name: candidate.station_name.clone(),
-        key_name: candidate.key_name.clone(),
-        accepted,
-        reasons,
-        rejection_reasons,
-        mapped_model,
-        group_binding_id: projection
-            .group
-            .as_ref()
-            .map(|group| group.stable_key.clone()),
-        rate_multiplier: projection.multiplier.multiplier,
-        normalization_status: Some(projection.pricing.status_label.clone()),
-        price_confidence: projection.pricing.confidence,
-        estimated_input_price: projection.pricing.estimated_input_price,
-        estimated_output_price: projection.pricing.estimated_output_price,
-        price_currency: projection.pricing.currency.clone(),
-        balance_status: Some(format!("{:?}", projection.balance.status).to_lowercase()),
-        balance_value: None,
-        balance_scope: projection.balance.selected_scope.clone(),
-        balance_collected_at: projection.pricing.observed_at.clone(),
-        economic_freshness: projection.pricing.reason.map(ToString::to_string),
-        economic_reasons: projection
-            .pricing
-            .reason
-            .map(|reason| vec![reason.to_string()])
-            .unwrap_or_default(),
-        routing_group_scope: Some(routing_group_scope),
-        routing_group_match: projection.policy.group_matches,
-        top_k_rank,
-        slot_result: Some("snapshot_only".to_string()),
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use std::time::{Duration, Instant};
 
     use super::*;
-    use crate::application::operational_facts::{
-        candidate_projection::route_projection_from_runtime_candidate,
-        pricing_projector::RoutingCostBasis,
-    };
-    use crate::application::routing_engine::hierarchical_preview::{plan_route, PlanningInput};
-    use crate::application::routing_engine::request::{
-        PlanningRequestContext, PlanningRoundContext, RouteProgress,
-    };
+    use crate::application::operational_facts::pricing_projector::RoutingCostBasis;
+    use crate::application::routing_engine::request::PlanningRequestContext;
     use crate::models::{
         pricing::{PricingStatus, RequestKind},
         proxy::UpstreamApiFormat,
-        routing::{RoutingPolicy, StationKeyCapabilities},
+        routing::StationKeyCapabilities,
         routing_policy::RoutingPolicyDocumentV3,
     };
 
     #[tokio::test]
-    async fn execution_settings_preserve_persisted_routing_policy() {
+    async fn execution_settings_preserve_supported_runtime_defaults() {
         let temp = tempfile::tempdir().expect("tempdir");
         let path = temp.path().join("routing.sqlite3");
         let runtime = crate::persistence::runtime::PersistenceRuntime::initialize_new(&path)
@@ -2502,8 +2038,11 @@ mod tests {
         let service = RoutingService::new(runtime.handle());
 
         let defaults = service.load_execution_settings().await.expect("defaults");
-        assert_eq!(defaults.policy, RoutingPolicy::AutomaticBalanced);
+        assert_eq!(defaults.max_rate_multiplier, None);
+        assert_eq!(defaults.routing_group_scope, RoutingGroupFilter::AllGroups);
         assert!(!defaults.allow_depleted_fallback);
+        assert_eq!(defaults.outbound_proxy_mode, "inherit");
+        assert_eq!(defaults.global_proxy_mode, "direct");
         runtime.close().await.expect("close persistence runtime");
     }
 
@@ -2573,7 +2112,7 @@ mod tests {
         let mut second_config =
             routing_policy_v3_from_stored(&first.config).expect("first policy is v3");
         second_config.affinity_ttl_seconds = 302;
-        let second = service
+        let _second = service
             .apply_routing_policy_document_v3(
                 RoutingPolicyDocumentV3 {
                     format_version:
@@ -2602,85 +2141,10 @@ mod tests {
     }
 
     #[test]
-    fn simulation_explanation_uses_projection_plan_without_legacy_scheduler_fields() {
-        let now_ms = 1_800_000_000_000;
-        let settings = RuntimeRoutingSettings {
-            policy: RoutingPolicy::PriorityFallback,
-            max_rate_multiplier: None,
-            routing_group_scope: RoutingGroupFilter::AllGroups,
-            scheduler_config: Default::default(),
-            allow_depleted_fallback: false,
-            ..Default::default()
-        };
-        let request = route_request_facts_for_read_model(&settings, now_ms);
-        let projected = vec![
-            simulated_projection(
-                runtime_candidate("key-b", "station-b", 20, Some("sk-b")),
-                &request,
-            ),
-            simulated_projection(
-                runtime_candidate("key-a", "station-a", 10, Some("sk-a")),
-                &request,
-            ),
-            simulated_projection(runtime_candidate("missing", "station-c", 5, None), &request),
-        ];
-        let context = PlanningRoundContext {
-            request,
-            progress: RouteProgress::new(now_ms + 30_000).view(),
-            snapshot_id: simulation_snapshot_id(&projected),
-            runtime_overlay_revision: 1,
-        };
-        let projected_route_candidates = projected
-            .iter()
-            .map(|candidate| candidate.projection.clone())
-            .collect::<Vec<_>>();
-        let plan = plan_route(PlanningInput {
-            context: &context,
-            candidates: &projected_route_candidates,
-            affinity_station_key_id: None,
-        })
-        .expect("route plan");
-
-        assert_eq!(plan.selected_station_key_id.as_deref(), Some("key-a"));
-
-        let explanations = simulation_explanations(
-            &projected,
-            &plan,
-            Some("gpt-4o-mini".to_string()),
-            RoutingGroupFilter::AllGroups,
-        );
-        let selected = explanations
-            .iter()
-            .find(|candidate| candidate.station_key_id == "key-a")
-            .expect("selected explanation");
-        assert!(selected.accepted);
-        assert_eq!(selected.top_k_rank, Some(1));
-        assert!(
-            selected
-                .reasons
-                .iter()
-                .any(|reason| reason == "snapshot_preview"),
-            "simulation explanation should expose planner/projection reasons instead of scheduler factors",
-        );
-
-        let rejected = explanations
-            .iter()
-            .find(|candidate| candidate.station_key_id == "missing")
-            .expect("rejected explanation");
-        assert!(!rejected.accepted);
-        assert!(rejected
-            .rejection_reasons
-            .iter()
-            .any(|reason| reason == "credential_missing"));
-    }
-
-    #[test]
     fn local_workspace_candidate_uses_token_pricing_projection() {
         let settings = RuntimeRoutingSettings {
-            policy: RoutingPolicy::CostStableFirst,
             max_rate_multiplier: Some(2.0),
             routing_group_scope: RoutingGroupFilter::AllGroups,
-            scheduler_config: Default::default(),
             allow_depleted_fallback: false,
             ..Default::default()
         };
@@ -2738,21 +2202,6 @@ mod tests {
             projection.pricing.source_chain,
             vec!["model_base_price".to_string()]
         );
-    }
-
-    fn simulated_projection(
-        candidate: CanonicalRoutingCandidate,
-        request: &crate::application::routing_engine::request::RouteRequestFacts,
-    ) -> SimulatedRouteCandidateProjection {
-        let station_name = candidate.station_name.clone();
-        let key_name = candidate.key_name.clone();
-        let projection = route_projection_from_runtime_candidate(request, candidate)
-            .expect("runtime projection");
-        SimulatedRouteCandidateProjection {
-            station_name,
-            key_name,
-            projection,
-        }
     }
 
     fn runtime_candidate(

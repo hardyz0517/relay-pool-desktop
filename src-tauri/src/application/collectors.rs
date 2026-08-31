@@ -39,9 +39,10 @@ use crate::{
         runtime::PersistenceHandle,
         stores::{
             collector_store::{
-                BalanceWrite, CollectorRunFinish, CollectorRunStart, CollectorSnapshotWrite,
-                CollectorStore, CollectorTaskStateWrite, GroupTransition, GroupWrite,
-                RateTransition, RateWrite, StationGroupBindingWrite, StoredCollectorApply,
+                project_station_collection_status, BalanceWrite, CollectorRunFinish,
+                CollectorRunStart, CollectorSnapshotWrite, CollectorStore, CollectorTaskStateWrite,
+                GroupTransition, GroupWrite, RateTransition, RateWrite, StationGroupBindingWrite,
+                StoredCollectorApply,
             },
             station_catalog::StationCatalogStore,
             station_published_status_store::{
@@ -558,10 +559,24 @@ impl CollectorService {
                         )
                         .await?;
                     collectors
+                        .update_task_state(
+                            write,
+                            &CollectorTaskStateWrite {
+                                station_id: request.station_id.clone(),
+                                task_type: request.task_type.clone(),
+                                run_id: run_id.clone(),
+                                status: run_status.clone(),
+                                finished_at: now.clone(),
+                                next_due_at: None,
+                            },
+                        )
+                        .await?;
+                    collectors
                         .update_station_collection_status(
                             write,
                             &request.station_id,
                             request.endpoint_revision,
+                            &request.task_type,
                             &run_status,
                             &now,
                             true,
@@ -919,7 +934,7 @@ impl CollectorService {
                     }
                     for transition in rate_transitions
                         .iter()
-                        .filter(|transition| transition.old_effective_rate_multiplier.is_some())
+                        .filter(|transition| should_emit_rate_change(transition))
                     {
                         alerting_changed |= alerting
                             .record_in_session(
@@ -989,7 +1004,8 @@ impl CollectorService {
                                 write,
                                 &request.station_id,
                                 request.endpoint_revision,
-                                station_collection_status_for_request(&request),
+                                &request.task_type,
+                                &station_collection_status_for_request(&request),
                                 &now,
                                 collector_task_side_effect_policy(&request.task_type)
                                     .refreshes_group_bindings,
@@ -1249,36 +1265,11 @@ fn task_updates_station_collection_status(task_type: &str) -> bool {
 /// Published status is a display-only optional child of Full collection. Its
 /// failure must stay visible in its own source state without degrading the
 /// station's core collector status.
-fn station_collection_status_for_request(request: &CollectorApplyRequest) -> &str {
+fn station_collection_status_for_request(request: &CollectorApplyRequest) -> String {
     if request.task_type != "full" {
-        return &request.status;
+        return request.status.clone();
     }
-
-    let Some(children) = request
-        .summary_json
-        .get("childRuns")
-        .and_then(Value::as_array)
-    else {
-        return &request.status;
-    };
-    let core_children = children
-        .iter()
-        .filter(|child| {
-            matches!(
-                child.get("task").and_then(Value::as_str),
-                Some("balance" | "groups" | "detect")
-            )
-        })
-        .collect::<Vec<_>>();
-    if !core_children.is_empty()
-        && core_children
-            .iter()
-            .all(|child| child.get("status").and_then(Value::as_str) == Some("success"))
-    {
-        "success"
-    } else {
-        &request.status
-    }
+    project_station_collection_status(&request.summary_json, &request.status)
 }
 
 fn validate_station_id(station_id: &str) -> Result<(), ApplicationError> {
@@ -1758,11 +1749,16 @@ fn merge_collector_failed_task_types(
 }
 
 fn apply_collector_task_status(failed: &mut BTreeSet<String>, task_type: &str, status: &str) {
-    if status == "failed" {
+    if matches!(status, "failed" | "manual_required") {
         failed.insert(task_type.to_string());
-    } else if matches!(status, "success" | "partial" | "manual_required") {
+    } else if matches!(status, "success" | "partial") {
         failed.remove(task_type);
     }
+}
+
+fn should_emit_rate_change(transition: &RateTransition) -> bool {
+    transition.old_effective_rate_multiplier.is_some()
+        || transition.new_effective_rate_multiplier.is_some()
 }
 
 #[cfg(test)]
@@ -1832,6 +1828,28 @@ mod tests {
         assert_eq!(summary["groupName"], "stable-group");
         assert_eq!(summary["oldEffectiveRateMultiplier"], 0.2);
         assert_eq!(summary["newEffectiveRateMultiplier"], 0.18);
+    }
+
+    #[test]
+    fn rate_change_events_include_first_effective_rate_but_skip_empty_rate() {
+        assert!(should_emit_rate_change(&RateTransition {
+            group_binding_id: "binding-1".to_string(),
+            group_name: "first group".to_string(),
+            old_effective_rate_multiplier: None,
+            new_effective_rate_multiplier: Some(0.2),
+        }));
+        assert!(should_emit_rate_change(&RateTransition {
+            group_binding_id: "binding-2".to_string(),
+            group_name: "cleared group".to_string(),
+            old_effective_rate_multiplier: Some(0.2),
+            new_effective_rate_multiplier: None,
+        }));
+        assert!(!should_emit_rate_change(&RateTransition {
+            group_binding_id: "binding-3".to_string(),
+            group_name: "empty group".to_string(),
+            old_effective_rate_multiplier: None,
+            new_effective_rate_multiplier: None,
+        }));
     }
 
     #[test]
@@ -2494,8 +2512,9 @@ mod tests {
 
         request.status = "manual_required".to_string();
         request.manual_action_required = true;
-        assert!(
-            merge_collector_failed_task_types(vec!["groups".to_string()], &request,).is_empty()
+        assert_eq!(
+            merge_collector_failed_task_types(vec!["groups".to_string()], &request),
+            vec!["groups".to_string()]
         );
 
         request.task_type = "full".to_string();
@@ -2542,11 +2561,24 @@ mod tests {
         request.summary_json = json!({
             "childRuns": [
                 { "task": "balance", "status": "success" },
+                { "task": "groups", "status": "manual_required" },
+                { "task": "published_status", "status": "success" },
+            ],
+        });
+        request.status = "success".to_string();
+        assert_eq!(
+            station_collection_status_for_request(&request),
+            "manual_required"
+        );
+
+        request.summary_json = json!({
+            "childRuns": [
+                { "task": "balance", "status": "success" },
                 { "task": "groups", "status": "failed" },
                 { "task": "published_status", "status": "failed" },
             ],
         });
-        assert_eq!(station_collection_status_for_request(&request), "partial");
+        assert_eq!(station_collection_status_for_request(&request), "failed");
     }
 
     fn capture_request(station_id: &str, endpoint_revision: i64) -> CaptureSnapshotRequest {
@@ -2665,6 +2697,67 @@ mod tests {
             .expect_err("stale capture must fail closed");
         assert!(matches!(error, ApplicationError::StaleRevision));
         runtime.close().await.expect("close persistence runtime");
+    }
+
+    #[tokio::test]
+    async fn successful_authorization_capture_clears_manual_required_task_state() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let runtime = PersistenceRuntime::initialize_new(
+            &temp.path().join("authorization-capture-recovery.sqlite3"),
+        )
+        .await
+        .expect("runtime");
+        let clock: Arc<dyn Clock> = Arc::new(FixedClock);
+        let ids: Arc<dyn IdGenerator> = Arc::new(SequenceIds::default());
+        let stations = StationService::new(runtime.handle(), clock.clone(), ids.clone());
+        let collectors = CollectorService::new(runtime.handle(), clock, ids);
+        let station = stations
+            .create(CreateStationInput {
+                name: "Authorization Capture Recovery".to_string(),
+                station_type: "sub2api".to_string(),
+                website_url: "https://authorization-recovery.example.test".to_string(),
+                api_base_url: "https://authorization-recovery.example.test/v1".to_string(),
+                api_key: String::new(),
+                collector_proxy_mode: "inherit".to_string(),
+                collector_proxy_url: None,
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
+                note: None,
+            })
+            .await
+            .expect("station");
+
+        let mut expired = capture_request(&station.id, station.endpoint_revision);
+        expired.status = "manual_required".to_string();
+        expired.summary_json = json!({ "loginRequired": true });
+        collectors
+            .record_capture_snapshot(expired)
+            .await
+            .expect("expired authorization capture");
+        assert_eq!(
+            stations.list().await.expect("stations after expiration")[0].status,
+            "warning"
+        );
+
+        let mut recovered = capture_request(&station.id, station.endpoint_revision);
+        recovered.summary_json = json!({ "status": "success", "attempt": "recovered" });
+        collectors
+            .record_capture_snapshot(recovered)
+            .await
+            .expect("recovered authorization capture");
+        assert_eq!(
+            stations.list().await.expect("stations after recovery")[0].status,
+            "healthy"
+        );
+        let latest = collectors
+            .latest_station_snapshot(&station.id)
+            .await
+            .expect("latest snapshot")
+            .expect("recovered snapshot");
+        assert_eq!(latest.status, "success");
+        runtime.close().await.expect("close runtime");
     }
 
     #[tokio::test]
@@ -2976,6 +3069,217 @@ mod tests {
             Some("1700000000000")
         );
         runtime.close().await.expect("close persistence runtime");
+    }
+
+    #[tokio::test]
+    async fn manual_authorization_stays_visible_after_a_later_balance_success() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let runtime =
+            PersistenceRuntime::initialize_new(&temp.path().join("manual-authorization.sqlite3"))
+                .await
+                .expect("runtime");
+        let clock: Arc<dyn Clock> = Arc::new(FixedClock);
+        let ids: Arc<dyn IdGenerator> = Arc::new(SequenceIds::default());
+        let stations = StationService::new(runtime.handle(), clock.clone(), ids.clone());
+        let collectors = CollectorService::new(runtime.handle(), clock, ids);
+        let station = stations
+            .create(CreateStationInput {
+                name: "Manual Authorization".to_string(),
+                station_type: "sub2api".to_string(),
+                website_url: "https://manual-authorization.example.test".to_string(),
+                api_base_url: "https://manual-authorization.example.test/v1".to_string(),
+                api_key: String::new(),
+                collector_proxy_mode: "inherit".to_string(),
+                collector_proxy_url: None,
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
+                note: None,
+            })
+            .await
+            .expect("station");
+
+        let mut authorization = collector_apply_request(
+            "manual-authorization-run",
+            &station,
+            None,
+            "groups",
+            "manual_required",
+        );
+        authorization.summary_json = json!({ "loginRequired": true });
+        authorization.error_code = Some("manual_authorization_required".to_string());
+        authorization.error_message = Some("当前登录状态已失效，请重新进行窗口授权".to_string());
+        collectors
+            .apply_result(authorization)
+            .await
+            .expect("manual authorization apply");
+
+        collectors
+            .apply_result(collector_apply_request(
+                "later-balance-run",
+                &station,
+                None,
+                "balance",
+                "success",
+            ))
+            .await
+            .expect("balance apply");
+
+        let collected_station = stations
+            .station_for_capture(&station.id)
+            .await
+            .expect("collected station");
+        assert_eq!(collected_station.status, "warning");
+        let listed_station = stations
+            .list()
+            .await
+            .expect("listed stations")
+            .into_iter()
+            .find(|listed| listed.id == station.id)
+            .expect("listed station");
+        assert_eq!(listed_station.status, "warning");
+        let latest = collectors
+            .latest_station_snapshot(&station.id)
+            .await
+            .expect("latest station snapshot")
+            .expect("manual snapshot");
+        assert_eq!(latest.status, "manual_required");
+        assert_eq!(latest.summary_json["loginRequired"], true);
+        runtime.close().await.expect("close runtime");
+    }
+
+    #[tokio::test]
+    async fn published_status_authorization_stays_actionable_without_degrading_core_health() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let runtime = PersistenceRuntime::initialize_new(
+            &temp.path().join("published-status-authorization.sqlite3"),
+        )
+        .await
+        .expect("runtime");
+        let clock: Arc<dyn Clock> = Arc::new(FixedClock);
+        let ids: Arc<dyn IdGenerator> = Arc::new(SequenceIds::default());
+        let stations = StationService::new(runtime.handle(), clock.clone(), ids.clone());
+        let collectors = CollectorService::new(runtime.handle(), clock, ids);
+        let station = stations
+            .create(published_status_station_input())
+            .await
+            .expect("station");
+
+        let mut authorization = collector_apply_request(
+            "published-status-authorization-run",
+            &station,
+            None,
+            "published_status",
+            "manual_required",
+        );
+        authorization.summary_json = json!({ "loginRequired": true });
+        authorization.error_message = Some("当前登录状态已失效，请重新进行窗口授权".to_string());
+        collectors
+            .apply_result(authorization)
+            .await
+            .expect("published status authorization apply");
+        collectors
+            .apply_result(collector_apply_request(
+                "balance-after-published-status-authorization",
+                &station,
+                None,
+                "balance",
+                "success",
+            ))
+            .await
+            .expect("balance apply");
+
+        assert_eq!(
+            stations.list().await.expect("listed stations")[0].status,
+            "healthy"
+        );
+        let latest = collectors
+            .latest_station_snapshot(&station.id)
+            .await
+            .expect("latest station snapshot")
+            .expect("authorization snapshot");
+        assert_eq!(latest.status, "manual_required");
+        assert_eq!(latest.summary_json["loginRequired"], true);
+        runtime.close().await.expect("close runtime");
+    }
+
+    #[tokio::test]
+    async fn published_status_only_partial_does_not_degrade_core_collection_status() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let runtime = PersistenceRuntime::initialize_new(
+            &temp.path().join("published-status-isolated.sqlite3"),
+        )
+        .await
+        .expect("runtime");
+        let clock: Arc<dyn Clock> = Arc::new(FixedClock);
+        let ids: Arc<dyn IdGenerator> = Arc::new(SequenceIds::default());
+        let stations = StationService::new(runtime.handle(), clock.clone(), ids.clone());
+        let collectors = CollectorService::new(runtime.handle(), clock, ids);
+        let station = stations
+            .create(CreateStationInput {
+                name: "Published Status Isolated".to_string(),
+                station_type: "sub2api".to_string(),
+                website_url: "https://published-status-isolated.example.test".to_string(),
+                api_base_url: "https://published-status-isolated.example.test/v1".to_string(),
+                api_key: String::new(),
+                collector_proxy_mode: "inherit".to_string(),
+                collector_proxy_url: None,
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
+                note: None,
+            })
+            .await
+            .expect("station");
+
+        let mut full = collector_apply_request(
+            "published-status-partial-run",
+            &station,
+            None,
+            "full",
+            "partial",
+        );
+        full.summary_json = json!({
+            "childRuns": [
+                { "task": "balance", "status": "success" },
+                { "task": "groups", "status": "success" },
+                { "task": "published_status", "status": "manual_required" },
+            ],
+        });
+        collectors.apply_result(full).await.expect("full apply");
+        assert_eq!(
+            stations
+                .station_for_capture(&station.id)
+                .await
+                .expect("station after full")
+                .status,
+            "healthy"
+        );
+
+        collectors
+            .apply_result(collector_apply_request(
+                "later-balance-success-run",
+                &station,
+                None,
+                "balance",
+                "success",
+            ))
+            .await
+            .expect("balance apply");
+        assert_eq!(
+            stations
+                .list()
+                .await
+                .expect("listed stations")
+                .into_iter()
+                .find(|listed| listed.id == station.id)
+                .expect("listed station")
+                .status,
+            "healthy"
+        );
+        runtime.close().await.expect("close runtime");
     }
 
     fn collector_apply_request(
@@ -3306,6 +3610,22 @@ mod tests {
             .expect("group rate records");
         assert_eq!(rates.len(), 1);
         assert_eq!(rates[0].effective_rate_multiplier, Some(0.75));
+        let first_rate_change = {
+            let mut read = runtime.begin_read().await.expect("rate change read");
+            sqlx::query_scalar::<_, String>(
+                "SELECT new_value_json FROM change_event_occurrences
+                 WHERE station_id = ?1 AND event_type = 'group_rate_changed'
+                 ORDER BY observed_at_ms DESC, id DESC LIMIT 1",
+            )
+            .bind(&station.id)
+            .fetch_one(read.connection())
+            .await
+            .expect("first effective rate change")
+        };
+        let first_rate_change: Value =
+            serde_json::from_str(&first_rate_change).expect("rate change json");
+        assert_eq!(first_rate_change["oldEffectiveRateMultiplier"], Value::Null);
+        assert_eq!(first_rate_change["newEffectiveRateMultiplier"], 0.75);
 
         let options = collectors
             .list_station_group_options(&station.id, PageLimit::new(10).expect("bounded options"))

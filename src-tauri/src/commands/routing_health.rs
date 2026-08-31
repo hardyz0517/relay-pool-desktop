@@ -6,13 +6,11 @@ use crate::{
     commands::error,
     ipc::dto::{
         routing_health_reads::{
-            ErrorRateHistoryInputDto, ErrorRateHistoryPageDto, RecentRouteDecisionsInputDto,
-            RecentRouteDecisionsPageDto, RequestDecisionTraceDto, RequestDecisionTraceInputDto,
-            RouteSimulationInputDto, RouteSimulationResultDto, RoutingProtectionStatusDto,
-            RoutingProtectionStatusInputDto, RoutingRuntimeOverlayDto, RoutingStationKeyIdInputDto,
-            RoutingWorkspaceSnapshotDto, RoutingWorkspaceSnapshotInputDto,
-            StationEndpointHealthDto, StationKeyHealthDto, StationKeyOperationalDetailDto,
-            StationKeyOperationalDetailInputDto,
+            ProxyTimeoutFactsDto, RecentRouteDecisionsInputDto, RecentRouteDecisionsPageDto,
+            RequestDecisionTraceDto, RequestDecisionTraceInputDto, RouteSimulationInputDto,
+            RouteSimulationResultDto, RoutingCircuitStatusDto, RoutingProtectionStatusDto,
+            RoutingProtectionStatusInputDto, RoutingRuntimeOverlayDto, RoutingWorkspaceSnapshotDto,
+            RoutingWorkspaceSnapshotInputDto, StationEndpointHealthDto,
         },
         routing_mutations::{
             ApplyRoutingPolicyDocumentInputDto, RoutingDocumentSyncDto,
@@ -42,32 +40,6 @@ fn routing_policy_snapshot(
 }
 
 #[tauri::command]
-pub async fn list_station_key_health(
-    facade: State<'_, RoutingCommandFacade>,
-    input: Value,
-
-    runtime_context_registry: tauri::State<
-        '_,
-        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
-    >,
-    runtime_context: Option<serde_json::Value>,
-) -> Result<Vec<StationKeyHealthDto>, error::CommandError> {
-    correlation::in_command_scope_with_runtime_context(
-        "list_station_key_health",
-        runtime_context_registry.inner(),
-        runtime_context,
-        async {
-            EmptyInputDto::parse(input)?;
-            facade
-                .list_station_key_health()
-                .await
-                .map_err(super::public_command_application_error)
-        },
-    )
-    .await
-}
-
-#[tauri::command]
 pub async fn get_routing_protection_status(
     facade: State<'_, RoutingCommandFacade>,
     input: Value,
@@ -87,6 +59,53 @@ pub async fn get_routing_protection_status(
                 .get_routing_protection_status()
                 .await
                 .map_err(super::public_command_application_error)
+        },
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn get_routing_circuit_status(
+    facade: State<'_, RoutingCommandFacade>,
+    input: Value,
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
+) -> Result<RoutingCircuitStatusDto, error::CommandError> {
+    correlation::in_command_scope_with_runtime_context(
+        "get_routing_circuit_status",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            EmptyInputDto::parse(input)?;
+            facade
+                .get_routing_circuit_status()
+                .await
+                .map_err(super::public_command_application_error)
+        },
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn get_proxy_timeout_facts(
+    facade: State<'_, RoutingCommandFacade>,
+    input: Value,
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
+) -> Result<ProxyTimeoutFactsDto, error::CommandError> {
+    correlation::in_command_scope_with_runtime_context(
+        "get_proxy_timeout_facts",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            EmptyInputDto::parse(input)?;
+            Ok(facade.get_proxy_timeout_facts())
         },
     )
     .await
@@ -276,64 +295,6 @@ pub async fn list_recent_route_decisions(
 }
 
 #[tauri::command]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "contract=legacy-error-rate-command-reference; owner=commands/routing_health; remove_when=legacy error-rate diagnostics are deleted"
-    )
-)]
-pub async fn list_error_rate_history(
-    facade: State<'_, RoutingCommandFacade>,
-    input: Value,
-    runtime_context_registry: tauri::State<
-        '_,
-        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
-    >,
-    runtime_context: Option<serde_json::Value>,
-) -> Result<ErrorRateHistoryPageDto, error::CommandError> {
-    correlation::in_command_scope_with_runtime_context(
-        "list_error_rate_history",
-        runtime_context_registry.inner(),
-        runtime_context,
-        async {
-            let input = ErrorRateHistoryInputDto::parse(input)?;
-            facade
-                .list_error_rate_history(input.before_ms, input.limit.unwrap_or(50))
-                .await
-                .map_err(super::public_command_application_error)
-        },
-    )
-    .await
-}
-
-#[tauri::command]
-pub async fn get_station_key_operational_detail(
-    facade: State<'_, RoutingCommandFacade>,
-    input: Value,
-
-    runtime_context_registry: tauri::State<
-        '_,
-        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
-    >,
-    runtime_context: Option<serde_json::Value>,
-) -> Result<StationKeyOperationalDetailDto, error::CommandError> {
-    correlation::in_command_scope_with_runtime_context(
-        "get_station_key_operational_detail",
-        runtime_context_registry.inner(),
-        runtime_context,
-        async {
-            let input = StationKeyOperationalDetailInputDto::parse(input)?.into_domain();
-            facade
-                .get_station_key_operational_detail(input.station_key_id)
-                .await
-                .map_err(super::public_command_application_error)
-        },
-    )
-    .await
-}
-
-#[tauri::command]
 pub async fn get_request_decision_trace(
     facade: State<'_, RoutingCommandFacade>,
     input: Value,
@@ -378,32 +339,6 @@ pub async fn list_station_endpoint_health(
             EmptyInputDto::parse(input)?;
             facade
                 .list_station_endpoint_health()
-                .await
-                .map_err(super::public_command_application_error)
-        },
-    )
-    .await
-}
-
-#[tauri::command]
-pub async fn get_station_key_health(
-    facade: State<'_, RoutingCommandFacade>,
-    input: Value,
-
-    runtime_context_registry: tauri::State<
-        '_,
-        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
-    >,
-    runtime_context: Option<serde_json::Value>,
-) -> Result<StationKeyHealthDto, error::CommandError> {
-    correlation::in_command_scope_with_runtime_context(
-        "get_station_key_health",
-        runtime_context_registry.inner(),
-        runtime_context,
-        async {
-            let input = RoutingStationKeyIdInputDto::parse(input)?;
-            facade
-                .get_station_key_health(input.station_key_id)
                 .await
                 .map_err(super::public_command_application_error)
         },

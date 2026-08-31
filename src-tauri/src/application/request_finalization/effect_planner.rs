@@ -9,8 +9,7 @@ use crate::application::{
     },
     request_lifecycle::attempt::{
         project_retry_disposition, AttemptFailureKind, ClassifiedAttemptFailure,
-        DurableCapabilityEffect, DurableFailureDimension, DurableHealthEffect, DurableHealthScope,
-        DurableVerdict, FailureBlame, HealthEffect as LifecycleHealthEffect,
+        DurableCapabilityEffect, FailureBlame, HealthEffect as LifecycleHealthEffect,
     },
 };
 
@@ -47,7 +46,6 @@ impl FailureEffectPlan {
         failure: &CanonicalFailure,
     ) -> ClassifiedAttemptFailure {
         let evidence_code = self.public_code.as_str().to_string();
-        let durable_health = durable_health_effect(failure, &evidence_code);
         let durable_capability = match &self.capability {
             CapabilityEffect::ConfirmUnsupportedModel {
                 station_key_id,
@@ -66,7 +64,6 @@ impl FailureEffectPlan {
             retry: project_retry_disposition(self.retry),
             health: durable_capability
                 .map(LifecycleHealthEffect::Capability)
-                .or_else(|| durable_health.map(LifecycleHealthEffect::Scoped))
                 .unwrap_or_else(|| {
                     if matches!(
                         self.class,
@@ -81,91 +78,6 @@ impl FailureEffectPlan {
             sanitized_detail: Some(failure.public.message.to_string()),
         }
     }
-}
-
-fn durable_health_effect(
-    failure: &CanonicalFailure,
-    evidence_code: &str,
-) -> Option<DurableHealthEffect> {
-    // Runtime capacity and concurrency are intentionally never durable.
-    if matches!(
-        failure.class,
-        FailureClass::ProviderCapacity | FailureClass::RuntimeConcurrencyLimited
-    ) {
-        return None;
-    }
-    let (scope, dimension) = match (&failure.target, failure.class) {
-        (FailureTarget::StationKeyCredential { station_key_id }, FailureClass::Authentication) => (
-            DurableHealthScope::Credential {
-                station_key_id: station_key_id.clone(),
-            },
-            DurableFailureDimension::Credential,
-        ),
-        (FailureTarget::StationAccount { station_id }, FailureClass::Authentication) => (
-            DurableHealthScope::Account {
-                station_id: station_id.clone(),
-            },
-            DurableFailureDimension::AccountLifecycle,
-        ),
-        (FailureTarget::StationAccount { station_id }, FailureClass::InsufficientBalance) => (
-            DurableHealthScope::Account {
-                station_id: station_id.clone(),
-            },
-            DurableFailureDimension::Balance,
-        ),
-        (FailureTarget::StationAccount { station_id }, FailureClass::QuotaExhausted) => (
-            DurableHealthScope::Account {
-                station_id: station_id.clone(),
-            },
-            DurableFailureDimension::Quota,
-        ),
-        (FailureTarget::StationAccount { station_id }, FailureClass::RateLimited) => (
-            DurableHealthScope::Account {
-                station_id: station_id.clone(),
-            },
-            DurableFailureDimension::RateLimit,
-        ),
-        (
-            FailureTarget::StationGroup {
-                station_id,
-                group_binding_id,
-            },
-            FailureClass::PolicyRejected,
-        ) => (
-            DurableHealthScope::Group {
-                station_id: station_id.clone(),
-                group_binding_id: group_binding_id.clone(),
-            },
-            DurableFailureDimension::GroupSubscription,
-        ),
-        (
-            FailureTarget::StationEndpoint {
-                station_id,
-                endpoint_revision,
-            },
-            _,
-        ) => (
-            DurableHealthScope::Endpoint {
-                station_id: station_id.clone(),
-                endpoint_revision: *endpoint_revision,
-            },
-            DurableFailureDimension::EndpointAvailability,
-        ),
-        _ => return None,
-    };
-    let verdict = match failure.health {
-        HealthEffect::ObserveFailure => DurableVerdict::Degraded,
-        HealthEffect::Cooldown { retry_after_ms } => DurableVerdict::Cooldown { retry_after_ms },
-        HealthEffect::HardFail => DurableVerdict::Blocked,
-        HealthEffect::Success | HealthEffect::Neutral => return None,
-    };
-    Some(DurableHealthEffect {
-        scope,
-        dimension,
-        verdict,
-        evidence_code: evidence_code.to_string(),
-        classifier_profile_version: failure.classifier_profile_version.to_string(),
-    })
 }
 
 #[cfg(test)]
@@ -247,8 +159,7 @@ fn blame_for_target(target: &FailureTarget) -> FailureBlame {
         | FailureTarget::StationAccount { .. }
         | FailureTarget::StationGroup { .. }
         | FailureTarget::StationEndpoint { .. }
-        | FailureTarget::ProviderProtocol { .. }
-        | FailureTarget::ProviderCapacity { .. } => FailureBlame::Upstream,
+        | FailureTarget::ProviderProtocol { .. } => FailureBlame::Upstream,
     }
 }
 
@@ -273,7 +184,7 @@ mod tests {
     };
 
     #[test]
-    fn group_subscription_signal_has_one_typed_durable_owner() {
+    fn group_subscription_signal_preserves_diagnostics_without_a_scoped_verdict() {
         let failure = failure_from_provider_signal(
             ProviderErrorSemanticSignal::ConfirmedGroupSubscriptionInvalid {
                 station_id: "station-test".to_string(),
@@ -286,15 +197,8 @@ mod tests {
             classified.retry,
             crate::application::request_lifecycle::attempt::RetryDisposition::TryNextCandidate
         );
-        assert!(matches!(
-            classified.health,
-            LifecycleHealthEffect::Scoped(DurableHealthEffect {
-                scope: DurableHealthScope::Group { ref station_id, ref group_binding_id },
-                dimension: DurableFailureDimension::GroupSubscription,
-                verdict: DurableVerdict::Blocked,
-                ..
-            }) if station_id == "station-test" && group_binding_id == "binding-test"
-        ));
+        assert_eq!(classified.health, LifecycleHealthEffect::HardFail);
+        assert_eq!(classified.public_code, "route_policy_rejected");
     }
 
     #[test]

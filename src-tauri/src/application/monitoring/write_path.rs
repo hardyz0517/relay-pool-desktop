@@ -1,19 +1,8 @@
-#[cfg(test)]
-use crate::application::error_rate_protection::ErrorRateProtectionService;
-
 use crate::{
-    application::health_transitions::HealthTransitionService,
     application::observation_ingestion::ObservationIngestion,
     application::spendability::{sample_disposition, SampleExclusionReason, TechnicalHealthEffect},
     models::{
-        health::{
-            HealthObservation, HealthObservationOutcome, HealthObservationSource,
-            HealthWritebackMode as ObservationWritebackMode, TrafficEquivalence,
-        },
-        monitoring::{
-            ClientProfileId, FailureKind, HealthWritebackMode, ProbeOutcome, SemanticConfidence,
-            TriggerKind,
-        },
+        monitoring::{ClientProfileId, FailureKind, ProbeOutcome, SemanticConfidence, TriggerKind},
         routing_observation::{
             FailureAttribution, ObservationOrder, ObservationOutcome, ObservationRetryDisposition,
             ObservationScope, ObservationSource, RecoveryOrigin, ResponseOrigin,
@@ -39,7 +28,6 @@ use super::{
 #[derive(Clone, Debug, Default)]
 pub(crate) struct MonitoringExecutionCommitter {
     executions: MonitoringExecutionRepository,
-    health: HealthTransitionService,
     observations: ObservationIngestion,
     retention: MonitoringRetentionRepository,
 }
@@ -48,18 +36,7 @@ impl MonitoringExecutionCommitter {
     pub(crate) fn new() -> Self {
         Self {
             executions: MonitoringExecutionRepository,
-            health: HealthTransitionService::new(),
             observations: ObservationIngestion::new(),
-            retention: MonitoringRetentionRepository,
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn new_with_error_rate(error_rate: ErrorRateProtectionService) -> Self {
-        Self {
-            executions: MonitoringExecutionRepository,
-            health: HealthTransitionService::new(),
-            observations: ObservationIngestion::with_error_rate(error_rate),
             retention: MonitoringRetentionRepository,
         }
     }
@@ -79,6 +56,17 @@ impl MonitoringExecutionCommitter {
             .filter_map(|target| target_finished_at(execution, target))
             .max()
             .unwrap_or(execution.started_at_ms);
+
+        for target in &execution.plan.target_plans {
+            self.executions
+                .assert_current_target_endpoint(
+                    write.connection(),
+                    &target.station_key_id,
+                    &target.station_id,
+                    target.endpoint_revision,
+                )
+                .await?;
+        }
 
         self.executions
             .insert_execution(
@@ -112,22 +100,15 @@ impl MonitoringExecutionCommitter {
                 .finalize_target(write.connection(), &target_row)
                 .await?;
 
-            let observation = health_observation(execution, target, &target_row);
-            self.health
-                .record_observation(write, observation.clone())
-                .await?;
-            self.observations
-                .append(
-                    write,
-                    routing_observation_from_health(
-                        &observation,
-                        target_plan(&execution.plan, &target.station_key_id)?,
-                        &target_row,
-                        monitor_sequence(&execution.execution_id, &target_row.id),
-                        monitor_producer_id(&execution.execution_id),
-                    ),
-                )
-                .await?;
+            let observation = routing_observation_from_target(
+                execution,
+                target,
+                &target_row,
+                target_plan(&execution.plan, &target.station_key_id)?,
+                monitor_sequence(&execution.execution_id, &target_row.id),
+                monitor_producer_id(&execution.execution_id),
+            );
+            self.observations.append(write, observation).await?;
             self.retention
                 .mark_dirty_range(
                     write.connection(),
@@ -174,61 +155,79 @@ fn monitor_producer_id(execution_id: &str) -> String {
     format!("monitoring_execution:{execution_id}")
 }
 
-fn routing_observation_from_health(
-    observation: &HealthObservation,
-    target_plan: &ProbeTargetPlan,
+fn routing_observation_from_target(
+    execution: &BufferedExecution,
+    target: &RecordedTargetResult,
     target_result: &FinalizeTargetRow,
+    target_plan: &ProbeTargetPlan,
     producer_sequence: u64,
     producer_id: String,
 ) -> RoutingObservation {
-    let outcome = match observation.outcome {
-        HealthObservationOutcome::Success => ObservationOutcome::Success,
-        HealthObservationOutcome::Cooldown => ObservationOutcome::RateLimited,
-        HealthObservationOutcome::HardFail => ObservationOutcome::CredentialFailure,
-        HealthObservationOutcome::ObserveFailure => ObservationOutcome::EndpointFailure,
-        HealthObservationOutcome::Skipped => ObservationOutcome::Cancelled,
-        HealthObservationOutcome::Neutral => ObservationOutcome::Unknown,
+    let disposition = sample_disposition(
+        target
+            .terminal_failure_kind
+            .map(|failure_kind| failure_kind.as_str()),
+    );
+    let observation_id = format!("obs:{}", target_result.id);
+    let outcome = match target.terminal_outcome {
+        ProbeOutcome::Available | ProbeOutcome::Degraded => ObservationOutcome::Success,
+        ProbeOutcome::Skipped => ObservationOutcome::Cancelled,
+        ProbeOutcome::Unavailable => match target.terminal_failure_kind {
+            Some(FailureKind::RateLimit) => ObservationOutcome::RateLimited,
+            Some(FailureKind::Auth) => ObservationOutcome::CredentialFailure,
+            Some(FailureKind::BudgetExceeded) => ObservationOutcome::Unknown,
+            _ => ObservationOutcome::EndpointFailure,
+        },
     };
     let comparability_key = probe_comparability_key(target_plan, target_result);
-    let (response_origin, failure_attribution) = if matches!(
-        observation.outcome,
-        HealthObservationOutcome::Skipped | HealthObservationOutcome::Neutral
-    ) {
-        (ResponseOrigin::Relay, FailureAttribution::Local)
-    } else {
-        (ResponseOrigin::Upstream, FailureAttribution::Key)
-    };
+    let (response_origin, failure_attribution) =
+        if matches!(target.terminal_outcome, ProbeOutcome::Skipped)
+            || matches!(
+                target.terminal_failure_kind,
+                Some(FailureKind::BudgetExceeded)
+            )
+        {
+            (ResponseOrigin::Relay, FailureAttribution::Local)
+        } else {
+            (ResponseOrigin::Upstream, FailureAttribution::Key)
+        };
     RoutingObservation {
-        id: format!("routing-monitor-observation-{}", observation.id),
+        id: format!("routing-monitor-observation-{observation_id}"),
         order: ObservationOrder {
             producer_id,
             producer_sequence,
-            event_at_ms: observation.observed_at_ms.max(0),
-            ingested_at_ms: observation.observed_at_ms.max(0),
+            event_at_ms: target_result
+                .finished_at_ms
+                .unwrap_or(execution.started_at_ms)
+                .max(0),
+            ingested_at_ms: target_result
+                .finished_at_ms
+                .unwrap_or(execution.started_at_ms)
+                .max(0),
         },
         scope: ObservationScope {
             station_id: Some(target_plan.station_id.clone()),
-            station_key_id: Some(observation.station_key_id.clone()),
+            station_key_id: Some(target.station_key_id.clone()),
             model: target_result
                 .effective_model
                 .clone()
                 .or_else(|| Some(target_result.requested_model.clone())),
-            endpoint_revision: Some(observation.endpoint_revision),
+            endpoint_revision: Some(target.endpoint_revision),
         },
         source: ObservationSource::ActiveProbe,
-        traffic_equivalence: match (&observation.traffic_equivalence, &comparability_key) {
-            (TrafficEquivalence::SyntheticStandard, Some(_)) => {
-                RoutingTrafficEquivalence::SameModelShape
-            }
+        traffic_equivalence: match (target_plan.client_profile.id, &comparability_key) {
+            (ClientProfileId::StandardApi, Some(_)) => RoutingTrafficEquivalence::SameModelShape,
             _ => RoutingTrafficEquivalence::EndpointOnly,
         },
         outcome,
-        latency_ms: observation
-            .latency_ms
+        latency_ms: disposition
+            .latency_eligible
+            .then_some(target_result.latency_ms)
+            .flatten()
             .and_then(|value| u32::try_from(value).ok()),
         evidence_mass_basis_points: 5_000,
         comparability_key,
-        correlation_id: observation.id.clone(),
+        correlation_id: observation_id,
         attempt_index: 0,
         station_key_lifecycle_revision: target_plan.station_key_lifecycle_revision,
         cluster_finalized: true,
@@ -236,7 +235,9 @@ fn routing_observation_from_health(
         boundary_crossed: true,
         event_time_status: crate::models::routing_observation::EventTimeStatus::Valid,
         response_origin,
-        failure_code: observation.failure_kind.clone(),
+        failure_code: target
+            .terminal_failure_kind
+            .map(|failure_kind| failure_kind.as_str().to_string()),
         failure_attribution,
         recovery_origin: RecoveryOrigin::Normal,
         retry_disposition: ObservationRetryDisposition::End,
@@ -461,94 +462,6 @@ fn technical_health_effect_str(effect: TechnicalHealthEffect) -> &'static str {
     }
 }
 
-fn health_observation(
-    execution: &BufferedExecution,
-    target: &RecordedTargetResult,
-    target_row: &FinalizeTargetRow,
-) -> HealthObservation {
-    health_observation_from_parts(
-        execution,
-        target,
-        &target_row.id,
-        execution.plan.health_policy.writeback_mode,
-    )
-}
-
-fn health_observation_from_parts(
-    execution: &BufferedExecution,
-    target: &RecordedTargetResult,
-    target_result_id: &str,
-    writeback_mode: HealthWritebackMode,
-) -> HealthObservation {
-    let disposition = sample_disposition(
-        target
-            .terminal_failure_kind
-            .map(|failure_kind| failure_kind.as_str()),
-    );
-    HealthObservation {
-        id: format!("obs:{target_result_id}"),
-        station_key_id: target.station_key_id.clone(),
-        target_result_id: Some(target_result_id.to_string()),
-        source: HealthObservationSource::SyntheticMonitor,
-        source_event_id: target_result_id.to_string(),
-        observed_at_ms: target_finished_at(execution, target).unwrap_or(execution.started_at_ms),
-        endpoint_revision: target.endpoint_revision,
-        outcome: health_outcome(target.terminal_outcome, target.terminal_failure_kind),
-        failure_kind: target
-            .terminal_failure_kind
-            .map(|failure_kind| failure_kind.as_str().to_string()),
-        latency_ms: disposition
-            .latency_eligible
-            .then(|| {
-                target
-                    .decisive_attempt_id
-                    .as_ref()
-                    .and_then(|id| {
-                        execution
-                            .attempts
-                            .iter()
-                            .find(|attempt| attempt_id(&execution.execution_id, attempt) == *id)
-                    })
-                    .map(|attempt| (attempt.finished_at_ms - attempt.started_at_ms).max(0))
-            })
-            .flatten(),
-        retry_after_ms: None,
-        error_summary: target
-            .terminal_failure_kind
-            .map(|failure_kind| failure_kind.as_str().to_string()),
-        writeback_mode: observation_writeback_mode(writeback_mode),
-        traffic_equivalence: observation_traffic_equivalence(
-            target_plan(&execution.plan, &target.station_key_id)
-                .map(|target| target.client_profile.id)
-                .unwrap_or(ClientProfileId::StandardApi),
-        ),
-    }
-}
-
-fn health_outcome(
-    outcome: ProbeOutcome,
-    failure_kind: Option<FailureKind>,
-) -> HealthObservationOutcome {
-    match outcome {
-        ProbeOutcome::Available | ProbeOutcome::Degraded => HealthObservationOutcome::Success,
-        ProbeOutcome::Skipped => HealthObservationOutcome::Skipped,
-        ProbeOutcome::Unavailable => match failure_kind {
-            Some(FailureKind::RateLimit) => HealthObservationOutcome::Cooldown,
-            Some(FailureKind::Auth) => HealthObservationOutcome::HardFail,
-            Some(FailureKind::BudgetExceeded) => HealthObservationOutcome::Neutral,
-            _ => HealthObservationOutcome::ObserveFailure,
-        },
-    }
-}
-
-fn observation_writeback_mode(mode: HealthWritebackMode) -> ObservationWritebackMode {
-    match mode {
-        HealthWritebackMode::Disabled => ObservationWritebackMode::Disabled,
-        HealthWritebackMode::ObserveOnly => ObservationWritebackMode::ObserveOnly,
-        HealthWritebackMode::Authoritative => ObservationWritebackMode::Authoritative,
-    }
-}
-
 fn target_traffic_equivalence(profile: ClientProfileId) -> &'static str {
     match profile {
         ClientProfileId::StandardApi => "standard_api",
@@ -556,16 +469,6 @@ fn target_traffic_equivalence(profile: ClientProfileId) -> &'static str {
         | ClientProfileId::ClaudeCodeCompat
         | ClientProfileId::GeminiCliCompat
         | ClientProfileId::GrokCliCompat => "cli_compat",
-    }
-}
-
-fn observation_traffic_equivalence(profile: ClientProfileId) -> TrafficEquivalence {
-    match profile {
-        ClientProfileId::StandardApi => TrafficEquivalence::SyntheticStandard,
-        ClientProfileId::CodexCliCompat
-        | ClientProfileId::ClaudeCodeCompat
-        | ClientProfileId::GeminiCliCompat
-        | ClientProfileId::GrokCliCompat => TrafficEquivalence::SyntheticCliCompat,
     }
 }
 

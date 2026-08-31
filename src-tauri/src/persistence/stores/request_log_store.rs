@@ -31,7 +31,6 @@ pub(crate) struct RequestRouteSelectionPersistenceResult {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AttemptPersistenceResult {
     pub inserted: bool,
-    pub health_applied: bool,
     pub boundary_crossed: bool,
 }
 
@@ -236,7 +235,6 @@ impl RequestLogStore {
                 RoutingAttemptStore::terminalize(session.connection(), &routing_terminal).await?;
             return Ok(AttemptPersistenceResult {
                 inserted: false,
-                health_applied: false,
                 boundary_crossed: terminal.boundary_crossed,
             });
         }
@@ -279,7 +277,6 @@ impl RequestLogStore {
             // audit row. It must not re-apply circuit, quality, or health
             // effects after the v3 attempt cluster has been finalized.
             inserted: terminal.updated,
-            health_applied: false,
             boundary_crossed: terminal.boundary_crossed,
         })
     }
@@ -888,8 +885,6 @@ mod v2_tests {
             observed_at_ms: 1100,
             ingested_at_ms: 1100,
             terminal_at_ms: 1100,
-            probe_scope: None,
-            probe_state_revision: None,
         }
     }
 
@@ -1183,7 +1178,6 @@ mod v2_tests {
             .await
             .expect("attempt");
         assert!(first_outcome.inserted);
-        assert!(!first_outcome.health_applied);
         first.commit().await.expect("commit");
         let mut duplicate = runtime.begin_write().await.expect("write");
         let duplicate_outcome = store
@@ -1191,7 +1185,6 @@ mod v2_tests {
             .await
             .expect("duplicate");
         assert!(!duplicate_outcome.inserted);
-        assert!(!duplicate_outcome.health_applied);
         duplicate.commit().await.expect("commit");
         let mut read = runtime.begin_read().await.expect("read");
         let row = sqlx::query("SELECT COUNT(*) FROM request_attempts WHERE request_id = ?")

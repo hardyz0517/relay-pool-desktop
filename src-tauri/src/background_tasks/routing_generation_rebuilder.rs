@@ -2391,14 +2391,10 @@ mod tests {
         .execute(write.connection())
         .await
         .expect("insert lifecycle alias");
-        let effective_context = load_snapshot_key_context_batch(
-            write.connection(),
-            &snapshot_id,
-            None,
-            10,
-        )
-        .await
-        .expect("load aliased snapshot context");
+        let effective_context =
+            load_snapshot_key_context_batch(write.connection(), &snapshot_id, None, 10)
+                .await
+                .expect("load aliased snapshot context");
         assert_eq!(effective_context.len(), 1);
         assert_eq!(effective_context[0].lifecycle_revision, 2);
         sqlx::query(

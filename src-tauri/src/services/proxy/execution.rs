@@ -70,8 +70,9 @@ use crate::{
             candidate_plan::{RoutePlanCandidate, RoutePlanPricingSnapshot},
             capacity::{CapacityLease, CompositeCapacityRegistry},
             request::{
-                CanonicalRouteRequest, GroupFilterMode, OrderingProfile, PlanningRequestContext,
-                RouteKind, RouteRequestClassifier, RouteRequestFacts, ValidatedLocalRouteSettings,
+                canonical_v3_ordering_profile, CanonicalRouteRequest, GroupFilterMode,
+                PlanningRequestContext, RouteKind, RouteRequestClassifier, RouteRequestFacts,
+                ValidatedLocalRouteSettings,
             },
             routing_failure::RoutePlanningFailure,
         },
@@ -81,7 +82,7 @@ use crate::{
     models::{
         pricing::BalanceSnapshot,
         proxy::UpstreamApiFormat,
-        routing::{RouteEndpointKind, RoutingGroupFilter, RoutingPolicy},
+        routing::{RouteEndpointKind, RoutingGroupFilter},
     },
     observability::decision_trace::{
         DecisionTraceBuilder, DecisionTraceEvent, DecisionTraceEventKind,
@@ -707,7 +708,7 @@ impl ExecutionEngine {
             }
             let admission_input = AdmissionPlanningInput {
                 execution_candidates: &snapshot.candidates,
-                planning_snapshot: Some(&planning_snapshot),
+                planning_snapshot: &planning_snapshot,
                 root_seed: &root_seed,
                 #[cfg(test)]
                 affinity_station_key_id: planning_snapshot
@@ -720,8 +721,6 @@ impl ExecutionEngine {
                 now_ms: controller_now_ms(request_started_at_ms, precommit_started),
                 max_waiters_per_constraint: 0,
                 circuit_statuses: &circuit_statuses,
-                #[cfg(test)]
-                candidates: &snapshot.legacy_candidates,
             };
             let decision = match controller.next(admission_input) {
                 Ok(decision) => decision,
@@ -729,7 +728,7 @@ impl ExecutionEngine {
                     break;
                 }
                 Err(failure) => {
-                    return Err(controller_failure(failure, &execution_settings.policy));
+                    return Err(controller_failure(failure, &planning_snapshot));
                 }
             };
             let selected = match decision {
@@ -745,7 +744,7 @@ impl ExecutionEngine {
                                         .to_string(),
                                 }],
                             },
-                            &execution_settings.policy,
+                            &planning_snapshot,
                         ));
                     }
                     replan_count += 1;
@@ -771,7 +770,7 @@ impl ExecutionEngine {
                 other => match selected_route_or_failure(other) {
                     Ok(selected) => selected,
                     Err(failure) => {
-                        return Err(controller_failure(failure, &execution_settings.policy));
+                        return Err(controller_failure(failure, &planning_snapshot));
                     }
                 },
             };
@@ -968,7 +967,7 @@ impl ExecutionEngine {
                     &request,
                     &candidate,
                     attempt_index as u16,
-                    &execution_settings.policy,
+                    &planning_snapshot,
                 );
                 let outbound_boundary = Box::pin(async {
                     self.mark_attempt_boundary(
@@ -1010,9 +1009,7 @@ impl ExecutionEngine {
                             candidate.routing_identity(),
                             ActualAttemptTerminal::Succeeded,
                         )
-                        .map_err(|failure| {
-                            controller_failure(failure, &execution_settings.policy)
-                        })?;
+                        .map_err(|failure| controller_failure(failure, &planning_snapshot))?;
                     let first_token_ms = precommit_started.elapsed().as_millis() as i64;
                     self.bind_success_affinity(
                         &request,
@@ -1035,15 +1032,13 @@ impl ExecutionEngine {
                         &candidate,
                         attempt_index as i64,
                         &request,
-                        &execution_settings.policy,
+                        &planning_snapshot,
                         AttemptTimings {
                             request_started_at_ms,
                             upstream_headers_ms,
                             first_token_ms,
                         },
                         comparability_key,
-                        None,
-                        None,
                         capacity_lease,
                     ));
                 }
@@ -1113,7 +1108,6 @@ impl ExecutionEngine {
                         attempt_started_at_ms,
                         false,
                         comparability_key,
-                        None,
                     ))
                     .await?;
                     let terminal_result = match action.kind {
@@ -1135,9 +1129,8 @@ impl ExecutionEngine {
                         RetryActionKind::StopRequest => Ok(()),
                     };
                     if action.allows_replan() {
-                        terminal_result.map_err(|failure| {
-                            controller_failure(failure, &execution_settings.policy)
-                        })?;
+                        terminal_result
+                            .map_err(|failure| controller_failure(failure, &planning_snapshot))?;
                     }
                     last_failure = Some(failure);
                     if !action.allows_replan() {
@@ -1163,8 +1156,7 @@ impl ExecutionEngine {
             )
         });
         failure.context_mut().attempt_count = Some(attempted_count);
-        failure.context_mut().route_policy =
-            Some(routing_policy_label(&execution_settings.policy).to_string());
+        failure.context_mut().route_policy = Some(routing_profile_label(&planning_snapshot));
         record_trace_event(
             &mut decision_trace,
             DecisionTraceEventKind::RequestTerminal,
@@ -1420,7 +1412,7 @@ impl ExecutionEngine {
             }
             let admission_input = AdmissionPlanningInput {
                 execution_candidates: &snapshot.candidates,
-                planning_snapshot: Some(&planning_snapshot),
+                planning_snapshot: &planning_snapshot,
                 root_seed: &root_seed,
                 #[cfg(test)]
                 affinity_station_key_id: None,
@@ -1430,8 +1422,6 @@ impl ExecutionEngine {
                 now_ms: controller_now_ms(request_started_at_ms, precommit_started),
                 max_waiters_per_constraint: 0,
                 circuit_statuses: &circuit_statuses,
-                #[cfg(test)]
-                candidates: &snapshot.legacy_candidates,
             };
             let decision = match controller.next(admission_input) {
                 Ok(decision) => decision,
@@ -1439,10 +1429,7 @@ impl ExecutionEngine {
                     break;
                 }
                 Err(failure) => {
-                    return Err(controller_failure(
-                        failure,
-                        &RoutingPolicy::PriorityFallback,
-                    ));
+                    return Err(controller_failure(failure, &planning_snapshot));
                 }
             };
             let selected = match decision {
@@ -1458,7 +1445,7 @@ impl ExecutionEngine {
                                         .to_string(),
                                 }],
                             },
-                            &RoutingPolicy::PriorityFallback,
+                            &planning_snapshot,
                         ));
                     }
                     replan_count += 1;
@@ -1483,10 +1470,7 @@ impl ExecutionEngine {
                         break;
                     }
                     Err(failure) => {
-                        return Err(controller_failure(
-                            failure,
-                            &RoutingPolicy::PriorityFallback,
-                        ));
+                        return Err(controller_failure(failure, &planning_snapshot));
                     }
                 },
             };
@@ -1690,7 +1674,6 @@ impl ExecutionEngine {
                         attempt_started_at_ms,
                         false,
                         None,
-                        None,
                     ))
                     .await?;
                     return Err(failure);
@@ -1715,7 +1698,6 @@ impl ExecutionEngine {
                                     &candidate,
                                     attempt_started_at_ms,
                                     true,
-                                    None,
                                 ))
                                 .await?;
                                 controller
@@ -1725,10 +1707,7 @@ impl ExecutionEngine {
                                         ActualAttemptTerminal::Succeeded,
                                     )
                                     .map_err(|failure| {
-                                        controller_failure(
-                                            failure,
-                                            &RoutingPolicy::PriorityFallback,
-                                        )
+                                        controller_failure(failure, &planning_snapshot)
                                     })?;
                             }
                             Err(error) => {
@@ -1761,7 +1740,6 @@ impl ExecutionEngine {
                                     attempt_started_at_ms,
                                     true,
                                     None,
-                                    None,
                                 ))
                                 .await?;
                                 failed_count += 1;
@@ -1773,10 +1751,7 @@ impl ExecutionEngine {
                                         ActualAttemptTerminal::FailedBeforeCommit,
                                     )
                                     .map_err(|failure| {
-                                        controller_failure(
-                                            failure,
-                                            &RoutingPolicy::PriorityFallback,
-                                        )
+                                        controller_failure(failure, &planning_snapshot)
                                     })?;
                                 if !ModelsRetryAdapter::allows_next_candidate(&action) {
                                     break;
@@ -1814,7 +1789,6 @@ impl ExecutionEngine {
                                 attempt_started_at_ms,
                                 false,
                                 None,
-                                None,
                             ))
                             .await?;
                             failed_count += 1;
@@ -1826,7 +1800,7 @@ impl ExecutionEngine {
                                     ActualAttemptTerminal::FailedBeforeCommit,
                                 )
                                 .map_err(|failure| {
-                                    controller_failure(failure, &RoutingPolicy::PriorityFallback)
+                                    controller_failure(failure, &planning_snapshot)
                                 })?;
                             if !ModelsRetryAdapter::allows_next_candidate(&action) {
                                 break;
@@ -1871,7 +1845,6 @@ impl ExecutionEngine {
                         attempt_started_at_ms,
                         false,
                         None,
-                        None,
                     ))
                     .await?;
                     failed_count += 1;
@@ -1882,9 +1855,7 @@ impl ExecutionEngine {
                             candidate.routing_identity(),
                             ActualAttemptTerminal::FailedBeforeCommit,
                         )
-                        .map_err(|failure| {
-                            controller_failure(failure, &RoutingPolicy::PriorityFallback)
-                        })?;
+                        .map_err(|failure| controller_failure(failure, &planning_snapshot))?;
                     if !ModelsRetryAdapter::allows_next_candidate(&action) {
                         break;
                     }
@@ -2101,7 +2072,7 @@ impl ExecutionEngine {
         request: &CanonicalProxyRequest,
         candidate: &RoutePlanCandidate,
         attempt_ordinal: u16,
-        policy: &RoutingPolicy,
+        planning_snapshot: &crate::application::routing_engine::planning_snapshot::PlanningSnapshot,
     ) {
         let Some(writer) = self.lifecycle_writer.as_ref() else {
             return;
@@ -2112,7 +2083,7 @@ impl ExecutionEngine {
                 attempt_ordinal,
                 station_key_id: candidate.station_key_id.clone(),
                 station_id: candidate.station_id.clone(),
-                route_policy: routing_policy_label(policy).to_string(),
+                route_policy: routing_profile_label(planning_snapshot),
                 route_reason: format!(
                     "selected {} for {}",
                     candidate.station_key_id,
@@ -2160,43 +2131,12 @@ fn success_attempt_record(
     candidate: &RoutePlanCandidate,
     started_at_ms: i64,
     output_committed: bool,
-    probe_state_revision: Option<u64>,
-) -> AttemptTerminalRecord {
-    success_attempt_record_with_probe(
-        request_id,
-        ordinal,
-        candidate,
-        started_at_ms,
-        output_committed,
-        None,
-        probe_state_revision,
-    )
-}
-
-fn success_attempt_record_with_probe(
-    request_id: &str,
-    ordinal: u16,
-    candidate: &RoutePlanCandidate,
-    started_at_ms: i64,
-    output_committed: bool,
-    probe_scope: Option<crate::application::health_protection::HealthProtectionScope>,
-    probe_state_revision: Option<u64>,
 ) -> AttemptTerminalRecord {
     AttemptTerminalRecord {
-        context: attempt_context(
-            request_id,
-            ordinal,
-            candidate,
-            started_at_ms,
-            None,
-            probe_scope.clone(),
-            probe_state_revision,
-        ),
+        context: attempt_context(request_id, ordinal, candidate, started_at_ms, None),
         terminal: AttemptTerminal::Succeeded,
         output_committed,
         terminal_at_ms: now_millis_for_services() as i64,
-        probe_scope,
-        probe_state_revision,
     }
 }
 
@@ -2209,20 +2149,19 @@ fn failed_attempt_record(
     started_at_ms: i64,
     output_committed: bool,
     comparability_key: Option<String>,
-    probe_state_revision: Option<u64>,
 ) -> AttemptTerminalRecord {
-    failed_attempt_record_with_probe(
-        request_id,
-        ordinal,
-        candidate,
-        failure,
-        action,
-        started_at_ms,
+    AttemptTerminalRecord {
+        context: attempt_context(
+            request_id,
+            ordinal,
+            candidate,
+            started_at_ms,
+            comparability_key,
+        ),
+        terminal: AttemptTerminal::Failed(classified_attempt_failure(failure, action)),
         output_committed,
-        comparability_key,
-        None,
-        probe_state_revision,
-    )
+        terminal_at_ms: now_millis_for_services() as i64,
+    }
 }
 
 fn abandoned_attempt_record(
@@ -2233,52 +2172,12 @@ fn abandoned_attempt_record(
     reason: impl Into<String>,
 ) -> AttemptTerminalRecord {
     AttemptTerminalRecord {
-        context: attempt_context(
-            request_id,
-            ordinal,
-            candidate,
-            started_at_ms,
-            None,
-            None,
-            None,
-        ),
+        context: attempt_context(request_id, ordinal, candidate, started_at_ms, None),
         terminal: AttemptTerminal::Abandoned {
             reason: reason.into(),
         },
         output_committed: false,
         terminal_at_ms: now_millis_for_services() as i64,
-        probe_scope: None,
-        probe_state_revision: None,
-    }
-}
-
-fn failed_attempt_record_with_probe(
-    request_id: &str,
-    ordinal: u16,
-    candidate: &RoutePlanCandidate,
-    failure: &ProxyFailure,
-    action: RetryAction,
-    started_at_ms: i64,
-    output_committed: bool,
-    comparability_key: Option<String>,
-    probe_scope: Option<crate::application::health_protection::HealthProtectionScope>,
-    probe_state_revision: Option<u64>,
-) -> AttemptTerminalRecord {
-    AttemptTerminalRecord {
-        context: attempt_context(
-            request_id,
-            ordinal,
-            candidate,
-            started_at_ms,
-            comparability_key,
-            probe_scope.clone(),
-            probe_state_revision,
-        ),
-        terminal: AttemptTerminal::Failed(classified_attempt_failure(failure, action)),
-        output_committed,
-        terminal_at_ms: now_millis_for_services() as i64,
-        probe_scope,
-        probe_state_revision,
     }
 }
 
@@ -2288,8 +2187,6 @@ fn attempt_context(
     candidate: &RoutePlanCandidate,
     started_at_ms: i64,
     comparability_key: Option<String>,
-    probe_scope: Option<crate::application::health_protection::HealthProtectionScope>,
-    probe_state_revision: Option<u64>,
 ) -> AttemptContext {
     AttemptContext {
         attempt_id: AttemptId::new(request_id, ordinal),
@@ -2304,8 +2201,6 @@ fn attempt_context(
         comparability_key,
         model_alias_revision: candidate.model_alias_revision,
         started_at_ms,
-        probe_scope,
-        probe_state_revision,
     }
 }
 
@@ -2435,11 +2330,9 @@ impl ProxyExecutionResponse {
         candidate: &RoutePlanCandidate,
         fallback_count: i64,
         request: &CanonicalProxyRequest,
-        routing_policy: &RoutingPolicy,
+        planning_snapshot: &crate::application::routing_engine::planning_snapshot::PlanningSnapshot,
         timings: AttemptTimings,
         comparability_key: Option<String>,
-        probe_scope: Option<crate::application::health_protection::HealthProtectionScope>,
-        probe_state_revision: Option<u64>,
         capacity_lease: CapacityLease,
     ) -> Self {
         let (status, headers, body) = prepared.into_parts();
@@ -2460,8 +2353,6 @@ impl ProxyExecutionResponse {
             comparability_key,
             model_alias_revision: candidate.model_alias_revision,
             started_at_ms: timings.request_started_at_ms,
-            probe_scope,
-            probe_state_revision,
         };
         Self {
             status,
@@ -2479,7 +2370,7 @@ impl ProxyExecutionResponse {
                     selected_station_key_id: Some(candidate.station_key_id.clone()),
                     selected_station_id: Some(candidate.station_id.clone()),
                     upstream_base_url: None,
-                    route_policy: Some(routing_policy_label(routing_policy).to_string()),
+                    route_policy: Some(routing_profile_label(planning_snapshot)),
                     route_reason: Some(format!(
                         "selected {} for {}",
                         candidate.station_key_id,
@@ -3013,7 +2904,7 @@ fn route_request_facts(
             untrusted_headers: Vec::new(),
         },
         ValidatedLocalRouteSettings {
-            ordering_profile: ordering_profile(&settings.policy),
+            ordering_profile: canonical_v3_ordering_profile(),
             max_rate_multiplier: settings.max_rate_multiplier,
             group_filter_mode: group_filter_mode(&settings.routing_group_scope),
             required_group_stable_key: required_group_stable_key(&settings.routing_group_scope),
@@ -3080,16 +2971,6 @@ fn nonempty(value: Option<&str>) -> Option<&str> {
             Some(value)
         }
     })
-}
-
-fn ordering_profile(policy: &RoutingPolicy) -> OrderingProfile {
-    match policy {
-        RoutingPolicy::CheapFirst | RoutingPolicy::CostStableFirst => OrderingProfile::CostFirst,
-        RoutingPolicy::AutomaticBalanced
-        | RoutingPolicy::PriorityFallback
-        | RoutingPolicy::StableFirst
-        | RoutingPolicy::BackupOnly => OrderingProfile::PriorityFirst,
-    }
 }
 
 fn group_filter_mode(filter: &crate::models::routing::RoutingGroupFilter) -> GroupFilterMode {
@@ -3206,7 +3087,10 @@ fn selected_route_or_failure(
     }
 }
 
-fn controller_failure(failure: AdmissionFailure, policy: &RoutingPolicy) -> ProxyFailure {
+fn controller_failure(
+    failure: AdmissionFailure,
+    planning_snapshot: &crate::application::routing_engine::planning_snapshot::PlanningSnapshot,
+) -> ProxyFailure {
     if let Some(planning_failure) = route_planning_failure(&failure) {
         let stable_code = planning_failure.stable_code();
         let mut proxy_failure =
@@ -3214,7 +3098,7 @@ fn controller_failure(failure: AdmissionFailure, policy: &RoutingPolicy) -> Prox
         if proxy_failure.code != ProxyFailureCode::RouteNoAvailableKey {
             proxy_failure.internal_detail = Some(stable_code.to_string());
         }
-        proxy_failure.context_mut().route_policy = Some(routing_policy_label(policy).to_string());
+        proxy_failure.context_mut().route_policy = Some(routing_profile_label(planning_snapshot));
         return proxy_failure;
     }
 
@@ -3262,7 +3146,7 @@ fn controller_failure(failure: AdmissionFailure, policy: &RoutingPolicy) -> Prox
         status,
         message,
     );
-    proxy_failure.context_mut().route_policy = Some(routing_policy_label(policy).to_string());
+    proxy_failure.context_mut().route_policy = Some(routing_profile_label(planning_snapshot));
     proxy_failure
 }
 
@@ -3349,15 +3233,13 @@ fn attach_failure_candidate(failure: &mut ProxyFailure, candidate: &RoutePlanCan
     context.candidate_upstream_base_url = None;
 }
 
-fn routing_policy_label(policy: &RoutingPolicy) -> &'static str {
-    match policy {
-        RoutingPolicy::AutomaticBalanced => "automatic_balanced",
-        RoutingPolicy::PriorityFallback => "priority_fallback",
-        RoutingPolicy::StableFirst => "stable_first",
-        RoutingPolicy::BackupOnly => "backup_only",
-        RoutingPolicy::CheapFirst => "cheap_first",
-        RoutingPolicy::CostStableFirst => "cost_stable_first",
-    }
+fn routing_profile_label(
+    snapshot: &crate::application::routing_engine::planning_snapshot::PlanningSnapshot,
+) -> String {
+    format!(
+        "routing-v3:policy-r{}:dispatch-v{}",
+        snapshot.routing_policy_revision, snapshot.profile.version
+    )
 }
 
 fn endpoint_path(endpoint: &crate::models::routing::RouteEndpointKind) -> &'static str {
@@ -3809,19 +3691,20 @@ mod tests {
             limits::{BodyBudget, RequestLease},
             request::{CanonicalProxyRequest, RequestRequirements},
             routing_repository::{
-                admission_profile_from_candidate, route_projection_from_runtime,
-                OperationalRouteSnapshot, RoutingExecutionSettings, RoutingRepository,
+                admission_profile_from_candidate, OperationalRouteSnapshot,
+                RoutingExecutionSettings, RoutingRepository,
             },
             routing_runtime::RoutingRuntimeState,
         },
     };
 
     use super::{
-        actual_terminal_for_action, await_request_deadline, execution_attempt_limit,
-        internal_failure, transform_stream_body, validate_buffered_body, ActualAttemptTerminal,
-        AffinityKind, AffinityLookup, AttemptBudgetProfileV1, AttemptExecutor, ExecutionEngine,
-        ModelsAggregationDisposition, ModelsRetryAdapter, PreparedAttempt, ReplayGateResult,
-        RetryActionContext, RetryActionKind, RetryActionPlanner, TransportPolicySnapshot,
+        actual_terminal_for_action, await_request_deadline, canonical_v3_ordering_profile,
+        execution_attempt_limit, internal_failure, route_request_facts, transform_stream_body,
+        validate_buffered_body, ActualAttemptTerminal, AffinityKind, AffinityLookup,
+        AttemptBudgetProfileV1, AttemptExecutor, ExecutionEngine, ModelsAggregationDisposition,
+        ModelsRetryAdapter, PreparedAttempt, ReplayGateResult, RetryActionContext, RetryActionKind,
+        RetryActionPlanner, TransportPolicySnapshot,
     };
     use crate::services::proxy::request_send::RequestSendPhase;
     use crate::{
@@ -3865,6 +3748,19 @@ mod tests {
 
         assert_eq!(policy.precommit_budget(), Duration::from_secs(60));
         assert_eq!(policy.buffered_budget(), Duration::from_secs(300));
+    }
+
+    #[tokio::test]
+    async fn proxy_request_facts_use_the_canonical_v3_ordering_profile() {
+        let request = canonical_chat_request().await;
+        let facts = route_request_facts(
+            &request,
+            &RoutingExecutionSettings::default(),
+            1_800_000_000_000,
+            Some("gpt-test"),
+        );
+
+        assert_eq!(facts.ordering_profile(), canonical_v3_ordering_profile());
     }
 
     #[test]
@@ -4046,7 +3942,6 @@ mod tests {
             max_total_attempts: 4,
             max_same_target_capacity_retries: 0,
             capacity_retry_wait_budget_ms: 0,
-            allow_cross_capacity_domain_fallback: false,
             consecutive_failure_threshold: 3,
             circuit_recovery_success_threshold: 2,
             circuit_recovery_wait_ms: 30_000,
@@ -4225,6 +4120,10 @@ mod tests {
         assert_eq!(attempts.seen_ids(), ["a", "a"]);
         assert_eq!(response.selected_station_key_id(), Some("a"));
         assert_eq!(response.fallback_count(), 1);
+        assert_eq!(
+            response.lifecycle.annotations.route_policy.as_deref(),
+            Some("routing-v3:policy-r1:dispatch-v2")
+        );
         let admissions = repository.attempt_admissions();
         assert_eq!(
             admissions
@@ -5249,7 +5148,7 @@ mod tests {
 
         fn load_operational_route_snapshot(
             &self,
-            request: RouteRequestFacts,
+            _request: RouteRequestFacts,
             planning_snapshot: PlanningSnapshot,
         ) -> BoxFuture<'static, Result<OperationalRouteSnapshot, RoutingExecutionReadError>>
         {
@@ -5257,16 +5156,11 @@ mod tests {
             Box::pin(async move {
                 let mut targets = BTreeMap::new();
                 let mut profiles = BTreeMap::new();
-                let mut projections = Vec::new();
                 for candidate in candidates {
                     targets.insert(candidate.station_key_id.clone(), target_ref(&candidate));
                     profiles.insert(
                         candidate.station_key_id.clone(),
                         admission_profile_from_candidate(&candidate),
-                    );
-                    projections.push(
-                        route_projection_from_runtime(&request, candidate)
-                            .map_err(RoutingExecutionReadError::Internal)?,
                     );
                 }
                 Ok(OperationalRouteSnapshot {
@@ -5298,7 +5192,6 @@ mod tests {
                     }).collect(),
                     targets,
                     profiles,
-                    legacy_candidates: projections,
                 })
             })
         }
@@ -5338,12 +5231,7 @@ mod tests {
                 .lock()
                 .expect("terminal record lock")
                 .push(record);
-            Box::pin(async {
-                Ok(AttemptCommitAck {
-                    inserted: true,
-                    health_applied: false,
-                })
-            })
+            Box::pin(async { Ok(AttemptCommitAck { inserted: true }) })
         }
 
         fn finish_request(
@@ -5390,12 +5278,7 @@ mod tests {
             &self,
             _record: AttemptTerminalRecord,
         ) -> BoxFuture<'static, Result<AttemptCommitAck, LifecycleWriteError>> {
-            Box::pin(async {
-                Ok(AttemptCommitAck {
-                    inserted: true,
-                    health_applied: true,
-                })
-            })
+            Box::pin(async { Ok(AttemptCommitAck { inserted: true }) })
         }
 
         fn finish_request(

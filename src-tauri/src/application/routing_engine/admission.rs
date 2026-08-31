@@ -192,12 +192,7 @@ impl RouteAdmissionCoordinator {
             });
         }
 
-        let planning_snapshot = input.planning_snapshot.ok_or_else(|| {
-            self.failure(
-                AdmissionFailureKind::ConfigUnstable,
-                "planning_snapshot_required",
-            )
-        })?;
+        let planning_snapshot = input.planning_snapshot;
         self.model_fallback_trigger = planning_snapshot.model_fallback_trigger;
         if let Some(detail) = candidate_population_failure(planning_snapshot) {
             return Err(self.failure(AdmissionFailureKind::NoEligible, detail));
@@ -665,7 +660,7 @@ fn half_open_score_gate(
 #[derive(Debug)]
 pub struct AdmissionPlanningInput<'a> {
     pub execution_candidates: &'a [RoutePlanCandidate],
-    pub planning_snapshot: Option<&'a PlanningSnapshot>,
+    pub planning_snapshot: &'a PlanningSnapshot,
     pub root_seed: &'a [u8],
     #[cfg(test)]
     pub affinity_station_key_id: Option<&'a str>,
@@ -675,8 +670,6 @@ pub struct AdmissionPlanningInput<'a> {
     pub now_ms: i64,
     pub max_waiters_per_constraint: u32,
     pub circuit_statuses: &'a [StationKeyCircuitStatus],
-    #[cfg(test)]
-    pub candidates: &'a [crate::application::operational_facts::candidate_projector::RouteCandidateProjection],
 }
 
 #[derive(Debug)]

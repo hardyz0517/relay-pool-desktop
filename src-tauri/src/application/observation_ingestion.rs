@@ -1,11 +1,6 @@
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
-#[cfg(test)]
-use crate::application::error_rate_protection::ErrorRateProtectionService;
-#[cfg(test)]
-use crate::persistence::stores::routing_health_verdict_store::RoutingHealthVerdictStore;
-
 use crate::{
     models::routing_observation::{
         FailureAttribution, ObservationOutcome, ObservationRetryDisposition, ObservationSource,
@@ -23,8 +18,6 @@ use crate::{
 #[derive(Debug, Clone)]
 pub(crate) struct ObservationIngestion {
     store: RoutingObservationStore,
-    #[cfg(test)]
-    error_rate: ErrorRateProtectionService,
 }
 
 impl Default for ObservationIngestion {
@@ -37,16 +30,6 @@ impl ObservationIngestion {
     pub(crate) fn new() -> Self {
         Self {
             store: RoutingObservationStore,
-            #[cfg(test)]
-            error_rate: ErrorRateProtectionService::disabled(),
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with_error_rate(error_rate: ErrorRateProtectionService) -> Self {
-        Self {
-            store: RoutingObservationStore,
-            error_rate,
         }
     }
 
@@ -71,20 +54,6 @@ impl ObservationIngestion {
         observation
             .validate()
             .map_err(|_| PersistenceError::ConstraintViolation)?;
-        #[cfg(test)]
-        let legacy_projection = {
-            let protection_enabled = routing_policy_protection_enabled(write).await?;
-            (
-                self.error_rate
-                    .health_observation_for_policy(&observation, protection_enabled),
-                self.error_rate.history_event_seed_for_policy(
-                    &observation,
-                    None,
-                    protection_enabled,
-                ),
-                self.error_rate.config_for_policy(protection_enabled),
-            )
-        };
         let append = to_append(&observation)?;
         let received_at_ms = chrono::Utc::now().timestamp_millis().max(0);
         let result = self
@@ -96,58 +65,8 @@ impl ObservationIngestion {
                 received_at_ms,
             )
             .await?;
-        #[cfg(test)]
-        if matches!(result, ObservationAppendResult::Inserted) {
-            let (reducer_input, history_seed, config) = legacy_projection;
-            if let (Some(reducer_input), Some(history_seed)) = (reducer_input, history_seed) {
-                RoutingHealthVerdictStore
-                    .apply_error_rate_observation(
-                        write.connection(),
-                        reducer_input,
-                        history_seed,
-                        &observation.id,
-                        &config,
-                        observation.order.event_at_ms.max(received_at_ms),
-                    )
-                    .await?;
-            }
-        }
         Ok(result)
     }
-}
-
-#[cfg(test)]
-async fn routing_policy_protection_enabled(
-    write: &mut WriteSession,
-) -> Result<bool, PersistenceError> {
-    // The legacy error-rate reducer is a compatibility bridge only. Once the
-    // effective v3 generation is active it must stay disabled even if the old
-    // singleton row still contains `protectionProfile.enabled=true`.
-    let Some(stored) =
-        crate::persistence::stores::routing_policy_v3_stage_upgrade::load_effective_active_in(
-            write.connection(),
-        )
-        .await?
-    else {
-        return Ok(false);
-    };
-    if stored
-        .config
-        .get("version")
-        .and_then(serde_json::Value::as_u64)
-        == Some(u64::from(
-            crate::models::routing_policy::ROUTING_POLICY_CONFIG_VERSION_V3,
-        ))
-    {
-        return Ok(false);
-    }
-    Ok(stored
-        .config
-        .get("protectionProfile")
-        .and_then(serde_json::Value::as_object)
-        .and_then(|profile| profile.get("enabled"))
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false))
 }
 
 fn to_append(
@@ -301,14 +220,8 @@ fn outcome_name(outcome: &ObservationOutcome) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::error_rate_protection::{
-        ErrorRateProtectionAdapter, ErrorRateProtectionConfigV1, ErrorRateProtectionService,
-    };
     use crate::models::routing_observation::EventTimeStatus;
-    use crate::persistence::{
-        runtime::PersistenceRuntime,
-        stores::routing_error_rate_history_store::RoutingErrorRateHistoryStore,
-    };
+    use crate::persistence::runtime::PersistenceRuntime;
     use sqlx::Row;
 
     #[test]
@@ -366,39 +279,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn append_commits_observation_reducer_and_history_as_one_restartable_unit() {
+    async fn append_commits_quality_observation_without_legacy_health_side_effects() {
         let root = tempfile::tempdir().expect("tempdir");
         let path = root.path().join("observation-ingestion.sqlite3");
         let runtime = PersistenceRuntime::initialize_new(&path)
             .await
             .expect("initialize runtime");
-        // The reducer switch is policy-owned. Enable it in this fixture so
-        // the test exercises the enabled transactional path explicitly.
-        let mut policy_write = runtime.begin_write().await.expect("policy write");
-        let policy_json: String =
-            sqlx::query_scalar("SELECT config_json FROM routing_policy WHERE singleton_key = 1")
-                .fetch_one(policy_write.connection())
-                .await
-                .expect("load policy");
-        let mut policy_value: serde_json::Value =
-            serde_json::from_str(&policy_json).expect("decode policy");
-        policy_value["protectionProfile"]["enabled"] = serde_json::Value::Bool(true);
-        sqlx::query("UPDATE routing_policy SET config_json = ?1 WHERE singleton_key = 1")
-            .bind(policy_value.to_string())
-            .execute(policy_write.connection())
-            .await
-            .expect("enable protection profile");
-        policy_write.commit().await.expect("commit policy");
-        let config = ErrorRateProtectionConfigV1 {
-            enabled: true,
-            history_max_events: 16,
-            history_retention_ms: 10_000,
-            ..Default::default()
-        };
-        let service = ErrorRateProtectionService::from_adapter(
-            ErrorRateProtectionAdapter::new(config.clone()).expect("adapter"),
-        );
-        let ingestion = ObservationIngestion::with_error_rate(service);
+        let ingestion = ObservationIngestion::new();
 
         let mut write = runtime.begin_write().await.expect("begin write");
         assert_eq!(
@@ -433,8 +320,8 @@ mod tests {
         .await
         .expect("count history");
         assert_eq!(observation_count, 1);
-        assert_eq!(reducer_count, 1);
-        assert_eq!(history_count, 1);
+        assert_eq!(reducer_count, 0);
+        assert_eq!(history_count, 0);
         let v3 = sqlx::query(
             "SELECT event_id, attempt_id, generation_eligibility, outcome,
                     boundary_crossed, station_key_lifecycle_revision
@@ -459,12 +346,12 @@ mod tests {
             .await
             .expect("reopen runtime");
         let mut reopened_read = reopened.handle().begin_read().await.expect("reopen read");
-        let history = RoutingErrorRateHistoryStore
-            .list_page(reopened_read.connection(), None, 10, &config, 10)
-            .await
-            .expect("read durable history");
-        assert_eq!(history.events.len(), 1);
-        assert_eq!(history.events[0].observed_at_ms, 1);
+        let persisted_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM routing_observations WHERE id = 'ingested-1'")
+                .fetch_one(reopened_read.connection())
+                .await
+                .expect("read durable observation");
+        assert_eq!(persisted_count, 1);
         drop(reopened_read);
         reopened.close().await.expect("close reopened runtime");
     }
@@ -476,14 +363,7 @@ mod tests {
         let runtime = PersistenceRuntime::initialize_new(&path)
             .await
             .expect("initialize runtime");
-        let service = ErrorRateProtectionService::from_adapter(
-            ErrorRateProtectionAdapter::new(ErrorRateProtectionConfigV1 {
-                enabled: true,
-                ..Default::default()
-            })
-            .expect("adapter"),
-        );
-        let ingestion = ObservationIngestion::with_error_rate(service);
+        let ingestion = ObservationIngestion::new();
 
         let mut write = runtime.begin_write().await.expect("begin write");
         ingestion

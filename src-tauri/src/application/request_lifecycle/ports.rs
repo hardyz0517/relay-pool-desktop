@@ -34,7 +34,6 @@ pub(crate) struct RequestRouteSelectionAck {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AttemptCommitAck {
     pub inserted: bool,
-    pub health_applied: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

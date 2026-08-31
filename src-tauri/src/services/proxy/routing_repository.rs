@@ -20,10 +20,7 @@ use crate::application::routing_engine::candidate_plan::RoutePlanCandidate;
 pub(crate) type RoutingExecutionSettings = RuntimeRoutingSettings;
 
 #[cfg(test)]
-pub(crate) use crate::application::operational_facts::candidate_projection::{
-    admission_profile_from_runtime_candidate as admission_profile_from_candidate,
-    route_projection_from_runtime_candidate as route_projection_from_runtime,
-};
+pub(crate) use crate::application::operational_facts::candidate_projection::admission_profile_from_runtime_candidate as admission_profile_from_candidate;
 
 #[derive(Debug, Clone)]
 pub(crate) struct OperationalRouteSnapshot {
@@ -33,9 +30,6 @@ pub(crate) struct OperationalRouteSnapshot {
     pub(crate) candidates: Vec<RoutePlanCandidate>,
     pub(crate) targets: BTreeMap<String, ExecutionTargetRef>,
     pub(crate) profiles: BTreeMap<String, CandidateAdmissionProfile>,
-    #[cfg(test)]
-    pub(crate) legacy_candidates:
-        Vec<crate::application::operational_facts::candidate_projector::RouteCandidateProjection>,
 }
 
 #[derive(Clone)]
@@ -277,8 +271,6 @@ impl RoutingRepository for RoutingExecutionRepository {
                 candidates,
                 targets,
                 profiles,
-                #[cfg(test)]
-                legacy_candidates: Vec::new(),
             })
         })
     }
@@ -390,7 +382,7 @@ mod tests {
         },
         models::{
             pricing::UpsertModelBasePriceInput,
-            routing::{RoutingGroupFilter, RoutingPolicy, RuntimeRoutingSettings},
+            routing::{RoutingGroupFilter, RuntimeRoutingSettings},
         },
         services::proxy::test_support::V2ProxyTestFixture,
     };
@@ -443,10 +435,8 @@ mod tests {
                 untrusted_headers: Vec::new(),
             },
             validated_route_settings(&RuntimeRoutingSettings {
-                policy: RoutingPolicy::CostStableFirst,
                 max_rate_multiplier: Some(2.0),
                 routing_group_scope: RoutingGroupFilter::AllGroups,
-                scheduler_config: Default::default(),
                 allow_depleted_fallback: false,
                 ..Default::default()
             }),

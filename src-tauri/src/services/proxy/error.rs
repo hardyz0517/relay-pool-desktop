@@ -4,8 +4,8 @@ use serde_json::Value;
 use super::request_send::RequestSendPhase;
 
 use crate::application::request_finalization::failure::{
-    BillingState, CanonicalFailure, EvidenceConfidence, FailureClass, FailureTarget, PublicError,
-    PublicErrorCode, ReplaySafety, RequestAcceptance, RetryDisposition,
+    BillingState, CanonicalFailure, EvidenceConfidence, FailureClass, PublicError, PublicErrorCode,
+    ReplaySafety, RequestAcceptance, RetryDisposition,
 };
 use crate::application::request_lifecycle::request::RequestRoutingOutcomeFacts;
 
@@ -295,18 +295,6 @@ impl ProxyFailure {
     /// these facts from the public error projection.
     pub(crate) fn routing_outcome_facts(&self) -> Option<RequestRoutingOutcomeFacts> {
         let canonical = self.canonical()?;
-        let (failure_domain_commitment_version, failure_domain_commitment_digest) = match &canonical
-            .target
-        {
-            FailureTarget::ProviderCapacity { domain_commitment } => {
-                let commitment = crate::application::routing_engine::failure_domains::CapacityDomainCommitment::from_canonical(domain_commitment)?;
-                (
-                    Some(i64::from(commitment.schema_version)),
-                    Some(commitment.digest_hex),
-                )
-            }
-            _ => (None, None),
-        };
         Some(RequestRoutingOutcomeFacts {
             classification: canonical_classification(canonical.class).to_string(),
             confidence: confidence_label(canonical.confidence).to_string(),
@@ -317,8 +305,10 @@ impl ProxyFailure {
             billing_state: billing_label(canonical.billing).to_string(),
             retry_disposition: retry_label(canonical.retry).to_string(),
             effect_summary: effect_summary(canonical).to_string(),
-            failure_domain_commitment_version,
-            failure_domain_commitment_digest,
+            // These columns remain readable for historical attempts, but v3
+            // no longer emits capacity-domain identity on new outcomes.
+            failure_domain_commitment_version: None,
+            failure_domain_commitment_digest: None,
         })
     }
 }
@@ -771,7 +761,7 @@ mod tests {
     }
 
     #[test]
-    fn canonical_failure_outcome_preserves_classification_and_transport_phase() {
+    fn canonical_failure_outcome_omits_retired_capacity_domain_identity() {
         let digest = "b".repeat(64);
         let failure = ProxyFailure::from_canonical(failure_from_provider_signal(
             ProviderErrorSemanticSignal::ProviderCapacity {
@@ -786,10 +776,7 @@ mod tests {
         assert_eq!(facts.classification, "capacity");
         assert_eq!(facts.confidence, "confirmed");
         assert_eq!(facts.send_phase, "response_started");
-        assert_eq!(facts.failure_domain_commitment_version, Some(1));
-        assert_eq!(
-            facts.failure_domain_commitment_digest.as_deref(),
-            Some(digest.as_str())
-        );
+        assert_eq!(facts.failure_domain_commitment_version, None);
+        assert_eq!(facts.failure_domain_commitment_digest, None);
     }
 }

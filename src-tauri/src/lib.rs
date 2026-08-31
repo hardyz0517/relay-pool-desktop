@@ -1,3 +1,5 @@
+#![recursion_limit = "512"]
+
 mod app_composition;
 pub(crate) mod app_runtime_events;
 mod application;
@@ -1160,12 +1162,8 @@ pub fn run() {
                             tauri::async_runtime::block_on(app_services.settings.update(
                                 models::settings::UpdateSettingsInput {
                                     local_proxy_port: settings.local_proxy_port,
-                                    routing_policy_name: settings.routing_policy_name.clone(),
                                     collector_proxy_mode: settings.collector_proxy_mode.clone(),
                                     collector_proxy_url: settings.collector_proxy_url.clone(),
-                                    max_rate_multiplier: Some(settings.max_rate_multiplier),
-                                    routing_group_scope: Some(settings.routing_group_scope.clone()),
-                                    scheduler_config: Some(settings.scheduler_config.clone()),
                                     low_balance_threshold_cny: settings.low_balance_threshold_cny,
                                     collector_interval_minutes: settings.collector_interval_minutes,
                                     balance_interval_minutes: settings.balance_interval_minutes,
@@ -1176,7 +1174,6 @@ pub fn run() {
                                         settings.pricing_refresh_interval_minutes,
                                     collector_timeout_seconds: settings.collector_timeout_seconds,
                                     collector_max_concurrency: settings.collector_max_concurrency,
-                                    allow_depleted_fallback: settings.allow_depleted_fallback,
                                     developer_mode_enabled: true,
                                     show_decision_explanation: settings.show_decision_explanation,
                                     tray_behavior: Some(settings.tray_behavior.clone()),

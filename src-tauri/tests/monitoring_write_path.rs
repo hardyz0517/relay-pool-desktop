@@ -1,17 +1,9 @@
-#[path = "../src/application/error_rate_protection.rs"]
-pub mod application_error_rate_protection;
 #[path = "../src/application/health_protection.rs"]
 pub mod application_health_protection;
 #[path = "../src/application/spendability/mod.rs"]
 pub mod application_spendability;
 #[path = "../src/persistence/stores/domain_revision_store.rs"]
 pub mod domain_revision_store;
-#[path = "../src/persistence/stores/health_observation_store.rs"]
-pub mod health_observation_store;
-#[path = "../src/application/health_transitions.rs"]
-pub mod health_transitions;
-#[path = "../src/models/health.rs"]
-pub mod model_health;
 #[path = "../src/models/monitoring/mod.rs"]
 pub mod model_monitoring;
 #[path = "../src/models/pricing.rs"]
@@ -28,8 +20,6 @@ pub mod monitoring_retention;
 pub mod observation_ingestion;
 #[path = "../src/persistence/error.rs"]
 pub mod persistence_error;
-#[path = "../src/persistence/stores/routing_error_rate_history_store.rs"]
-pub mod routing_error_rate_history_store;
 #[path = "../src/persistence/stores/routing_health_verdict_store.rs"]
 pub mod routing_health_verdict_store;
 #[path = "../src/models/routing_observation.rs"]
@@ -182,10 +172,6 @@ mod persistence_runtime {
 }
 
 mod models {
-    pub(crate) mod health {
-        pub(crate) use crate::model_health::*;
-    }
-
     pub(crate) mod monitoring {
         pub(crate) use crate::model_monitoring::*;
     }
@@ -257,10 +243,6 @@ mod persistence {
     }
 
     pub(crate) mod stores {
-        pub(crate) mod health_observation_store {
-            pub(crate) use crate::health_observation_store::*;
-        }
-
         pub(crate) mod monitoring {
             pub(crate) mod executions {
                 pub(crate) use crate::monitoring_executions::*;
@@ -325,9 +307,6 @@ mod persistence {
         pub(crate) mod routing_policy_store {
             pub(crate) use crate::routing_policy_store::*;
         }
-        pub(crate) mod routing_error_rate_history_store {
-            pub(crate) use crate::routing_error_rate_history_store::*;
-        }
         pub(crate) mod domain_revision_store {
             pub(crate) use crate::domain_revision_store::*;
         }
@@ -357,19 +336,12 @@ mod application {
     pub(crate) mod health_protection {
         pub(crate) use crate::application_health_protection::*;
     }
-    pub(crate) mod error_rate_protection {
-        pub(crate) use crate::application_error_rate_protection::*;
-    }
     pub(crate) mod spendability {
         pub(crate) use crate::application_spendability::*;
     }
 
     pub(crate) mod observation_ingestion {
         pub(crate) use crate::observation_ingestion::*;
-    }
-
-    pub(crate) mod health_transitions {
-        pub(crate) use crate::health_transitions::*;
     }
 
     pub(crate) mod monitoring {
@@ -498,7 +470,7 @@ async fn orchestrator_buffer_commits_v2_facts_without_legacy_run_writes_and_repl
     );
     assert_eq!(
         count(&mut connection, "station_key_health_observations").await,
-        1
+        0
     );
     let routing_observation = sqlx::query(
         "SELECT station_key_lifecycle_revision, traffic_equivalence, comparability_key
@@ -534,15 +506,38 @@ async fn orchestrator_buffer_commits_v2_facts_without_legacy_run_writes_and_repl
         .expect("next due"),
         999
     );
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>(
-            "SELECT success_count FROM routing_health_snapshot WHERE station_key_id = 'key-1'"
-        )
-        .fetch_one(&mut connection)
-        .await
-        .expect("health"),
-        1
+    assert_eq!(count(&mut connection, "routing_health_snapshot").await, 0);
+    assert_eq!(count(&mut connection, "routing_observations").await, 1);
+    assert_eq!(count(&mut connection, "routing_circuit_event_v3").await, 0);
+}
+
+#[tokio::test]
+async fn unavailable_monitoring_result_only_updates_v3_quality_observation() {
+    let mut connection = ready_connection().await;
+    let committer = MonitoringExecutionCommitter::new();
+    let execution = buffered_execution(
+        "execution-unavailable",
+        TriggerKind::Manual,
+        ProbeOutcome::Unavailable,
     );
+
+    commit_execution(&committer, &mut connection, &execution)
+        .await
+        .expect("commit unavailable execution");
+
+    let outcome: String = sqlx::query_scalar(
+        "SELECT outcome_kind FROM routing_observations WHERE source = 'active_probe'",
+    )
+    .fetch_one(&mut connection)
+    .await
+    .expect("quality observation");
+    assert_eq!(outcome, "endpoint_failure");
+    assert_eq!(
+        count(&mut connection, "station_key_health_observations").await,
+        0
+    );
+    assert_eq!(count(&mut connection, "routing_health_snapshot").await, 0);
+    assert_eq!(count(&mut connection, "routing_circuit_event_v3").await, 0);
 }
 
 #[tokio::test]
@@ -594,7 +589,7 @@ async fn scheduled_execution_advances_due_but_manual_execution_does_not() {
 }
 
 #[tokio::test]
-async fn endpoint_revision_stale_health_writeback_rolls_back_v2_target_when_wrapped_in_write_tx() {
+async fn endpoint_revision_stale_quality_write_rolls_back_v2_target_when_wrapped_in_write_tx() {
     let mut connection = ready_connection().await;
     sqlx::query("UPDATE stations SET endpoint_revision = 2 WHERE id = 'station-1'")
         .execute(&mut connection)
