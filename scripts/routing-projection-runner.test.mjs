@@ -10,7 +10,7 @@ assert.match(runner, /MAX_ROUTING_PROJECTION_BATCH/);
 assert.match(runner, /CancellationToken/);
 assert.match(runner, /TaskSpec::new/);
 assert.match(runner, /with_shutdown_timeout/);
-assert.match(runner, /ROUTING_PROJECTION_CURSOR_SCOPE/);
+assert.match(runner, /ROUTING_QUALITY_CURSOR_SCOPE/);
 assert.match(runner, /load_checkpoint_cursor/);
 assert.match(runner, /ingestion_cursor/);
 assert.match(observationStore, /id > \?2/);

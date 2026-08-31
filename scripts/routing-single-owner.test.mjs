@@ -26,6 +26,40 @@ const files = {
   ),
   routingCommandFacade: read("src-tauri/src/application/command_facades/routing.rs"),
   modelMappingService: read("src-tauri/src/application/model_mapping_service.rs"),
+  operationalFactsQuery: read(
+    "src-tauri/src/persistence/stores/operational_facts/queries.rs",
+  ),
+  operationalPlanning: read(
+    "src-tauri/src/application/operational_facts/planning_snapshot.rs",
+  ),
+  enginePlanning: read(
+    "src-tauri/src/application/routing_engine/planning_snapshot.rs",
+  ),
+  candidatePlan: read(
+    "src-tauri/src/application/routing_engine/candidate_plan.rs",
+  ),
+  admission: read("src-tauri/src/application/routing_engine/admission.rs"),
+  targetResolver: read(
+    "src-tauri/src/application/operational_facts/target_resolver.rs",
+  ),
+  openAiAdapter: read("src-tauri/src/services/proxy/adapters/openai.rs"),
+  routingStore: read("src-tauri/src/persistence/stores/routing_store.rs"),
+  routingProtectionQuery: read(
+    "src-tauri/src/application/queries/routing_protection.rs",
+  ),
+  mainWindowAcl: read("src-tauri/permissions/main-window.toml"),
+  compiledAcl: read("src-tauri/gen/schemas/acl-manifests.json"),
+  ipcRegistry: read("src-tauri/src/ipc/registry.rs"),
+  generatedBridge: read("src/lib/bridge/generated.ts"),
+  backendClient: read("src/lib/bridge/BackendClient.ts"),
+  desktopBackend: read("src/lib/bridge/DesktopBackend.ts"),
+  demoBackend: read("src/lib/bridge/DemoBackend.ts"),
+  stationsApi: read("src/lib/api/stations.ts"),
+  stationsTypes: read("src/lib/types/stations.ts"),
+  observationIngestion: read("src-tauri/src/application/observation_ingestion.rs"),
+  monitoringService: read("src-tauri/src/application/monitoring/service.rs"),
+  monitoringWritePath: read("src-tauri/src/application/monitoring/write_path.rs"),
+  requestFinalization: read("src-tauri/src/application/request_finalization/mod.rs"),
 };
 
 checkDefaultV2ExecutionHasOneSelectorOwner();
@@ -38,10 +72,12 @@ checkOperationalDetailUsesProjectionFacts();
 checkDecisionTraceUsesDurableDecisions();
 checkRuntimeOverlayUsesNarrowFacts();
 checkSimulationDtoUsesPlannerProjectionLanguage();
+checkRetryActionTraceCutover();
 checkFrontendDoesNotOwnRoutingTruth();
 checkPolicyMutationControlPlane();
 checkExecutionBridgeBoundary();
 checkModelMappingOwner();
+checkRetiredProtectionAndCapacityDomainStayOutOfProductionRouting();
 
 if (failures.length > 0) {
   console.error(failures.join("\n"));
@@ -156,7 +192,7 @@ function checkApplicationRoutingCommandsUseHierarchicalPreview() {
   require(
     files.applicationRouting,
     file,
-    /\bplan_snapshot_with_budget\b/u,
+    /\bplan_snapshot(?:_with_budget)?\b/u,
     "routing simulation must invoke the intelligent planner",
   );
 }
@@ -375,6 +411,48 @@ function checkFrontendDoesNotOwnRoutingTruth() {
   }
 }
 
+function checkRetryActionTraceCutover() {
+  const executionFile = "src-tauri/src/services/proxy/execution.rs";
+  require(
+    files.execution,
+    executionFile,
+    /enum\s+RetryActionKind\s*\{[\s\S]*RetryCurrentKey,[\s\S]*TryNextKey,[\s\S]*StopRequest,[\s\S]*\}/u,
+    "production retry actions must distinguish current-key retry, next-key failover and stop-request",
+  );
+  reject(
+    files.execution,
+    executionFile,
+    /Self::(?:RetrySameTarget|WaitThenReplan|TryDifferentFailureDomain)\s*=>\s*"/u,
+    "production trace producers must not emit pre-cutover retry action labels",
+  );
+
+  const traceFile = "src-tauri/src/application/queries/request_decision_trace.rs";
+  require(
+    files.requestDecisionTrace,
+    traceFile,
+    /RetryCurrentKey,[\s\S]*TryNextKey,[\s\S]*StopRequest,[\s\S]*Read-only compatibility values[\s\S]*LegacyRetrySameTarget[\s\S]*LegacyWaitThenReplan[\s\S]*LegacyTryDifferentFailureDomain/u,
+    "trace reads must expose current-key and next-key actions while marking pre-cutover values as read-only compatibility",
+  );
+  require(
+    files.routingHealthTypescript,
+    "src-tauri/src/ipc/dto/routing_health_reads.typescript.txt",
+    /RequestDecisionActionDto\s*=\s*"retry_current_key"\s*\|\s*"try_next_key"\s*\|\s*"stop_request"/u,
+    "routing IPC must expose the production current-key, next-key and stop-request actions",
+  );
+  require(
+    files.routingHealthTypescript,
+    "src-tauri/src/ipc/dto/routing_health_reads.typescript.txt",
+    /read-only compatibility for pre-v3 trace history[\s\S]*remainingPrecommitBudgetMs/u,
+    "routing IPC must mark legacy actions as read-only and name the request deadline budget accurately",
+  );
+  reject(
+    files.routingHealthTypescript,
+    "src-tauri/src/ipc/dto/routing_health_reads.typescript.txt",
+    /remainingWaitBudgetMs|failureDomain:\s*string \| null/u,
+    "routing trace IPC must not expose the removed wait-action or failure-domain fields",
+  );
+}
+
 function checkPolicyMutationControlPlane() {
   const runnerFile = "src-tauri/src/background_tasks/policy_document_runner.rs";
   reject(
@@ -444,5 +522,194 @@ function checkModelMappingOwner() {
     "src-tauri/src/application/model_mapping_service.rs",
     /persist_document|persist_document_at_revision|reconcile_model_mapping_document_sync/u,
     "model-mapping persistence and document reconciliation must have one application owner",
+  );
+}
+
+function checkRetiredProtectionAndCapacityDomainStayOutOfProductionRouting() {
+  const capacityDomainFreeFiles = [
+    [
+      "src-tauri/src/persistence/stores/operational_facts/queries.rs",
+      files.operationalFactsQuery,
+    ],
+    [
+      "src-tauri/src/application/operational_facts/planning_snapshot.rs",
+      files.operationalPlanning,
+    ],
+    [
+      "src-tauri/src/application/routing_engine/planning_snapshot.rs",
+      files.enginePlanning,
+    ],
+    [
+      "src-tauri/src/application/routing_engine/candidate_plan.rs",
+      files.candidatePlan,
+    ],
+    ["src-tauri/src/application/routing_engine/admission.rs", files.admission],
+    [
+      "src-tauri/src/application/operational_facts/target_resolver.rs",
+      files.targetResolver,
+    ],
+    ["src-tauri/src/services/proxy/routing_repository.rs", files.repository],
+    ["src-tauri/src/services/proxy/upstream.rs", files.upstream],
+  ];
+  for (const [file, source] of capacityDomainFreeFiles) {
+    reject(
+      source,
+      file,
+      /\b(?:ProviderCapacityDomain|CapacityDomainCommitment|capacity_domain|expected_capacity_domain|trusted_capacity_domain_commitment)\b/u,
+      "production planning, admission, target resolution and execution facts must not read or propagate capacity-domain identity",
+    );
+  }
+
+  reject(
+    files.execution,
+    "src-tauri/src/services/proxy/execution.rs",
+    /\b(?:ProviderCapacityDomain|CapacityDomainCommitment|expected_capacity_domain|trusted_capacity_domain_commitment|allow_cross_capacity_domain_fallback|candidate_health_scopes|acquire_health_probe|load_health_protection_statuses|begin_health_protection_probe|cancel_health_protection_probe)\b/u,
+    "production execution must use only the station-key circuit and must not restore scoped health or capacity-domain fallback",
+  );
+  reject(
+    files.openAiAdapter,
+    "src-tauri/src/services/proxy/adapters/openai.rs",
+    /\bcapacity_domain_commitment\b/u,
+    "the upstream classifier must not accept a capacity-domain commitment",
+  );
+  reject(
+    files.operationalPlanning,
+    "src-tauri/src/application/operational_facts/planning_snapshot.rs",
+    /candidate_scoped_admitted|candidate_model_scoped_admitted|scoped_subjects_for_planning|scoped_admission_verdict/u,
+    "the production planner must not consume the retired scoped health or error-rate breaker",
+  );
+
+  const targetQuery = files.routingStore.match(
+    /const OPERATIONAL_EXECUTION_TARGET_REFS_QUERY_PREFIX:[\s\S]*?impl RoutingStore/u,
+  )?.[0];
+  if (!targetQuery) {
+    fail(
+      "src-tauri/src/persistence/stores/routing_store.rs",
+      "operational execution-target query boundary must remain discoverable",
+    );
+  } else if (/station_capacity_domains|capacity_domain/u.test(targetQuery)) {
+    fail(
+      "src-tauri/src/persistence/stores/routing_store.rs",
+      "execution-target lookup must not join or select station capacity-domain identity",
+    );
+  }
+
+  const runtimeCandidateQuery = files.routingStore.match(
+    /pub\(crate\) async fn load_runtime_candidates[\s\S]*?\n    pub\(crate\) async fn /u,
+  )?.[0];
+  if (!runtimeCandidateQuery) {
+    fail(
+      "src-tauri/src/persistence/stores/routing_store.rs",
+      "runtime-candidate query boundary must remain discoverable",
+    );
+  } else if (/station_capacity_domains|capacity_domain/u.test(runtimeCandidateQuery)) {
+    fail(
+      "src-tauri/src/persistence/stores/routing_store.rs",
+      "runtime-candidate loading must not join, select or map station capacity-domain identity",
+    );
+  }
+
+  const rejectionOwners = [
+    [
+      "src-tauri/src/application/operational_facts/candidate_projector.rs",
+      read("src-tauri/src/application/operational_facts/candidate_projector.rs"),
+    ],
+    [
+      "src-tauri/src/application/routing_engine/eligibility.rs",
+      read("src-tauri/src/application/routing_engine/eligibility.rs"),
+    ],
+  ];
+  for (const [file, source] of rejectionOwners) {
+    reject(
+      source,
+      file,
+      /["']capacity_unavailable["']/u,
+      "production capacity-state failures must use capacity_state_unavailable; the old literal is compatibility-only",
+    );
+  }
+
+  const retiredCommandPattern =
+    /(?:get|upsert|clear)_station_capacity_domain|(?:get|upsert|clear)StationCapacityDomain/u;
+  for (const [file, source] of [
+    ["src-tauri/permissions/main-window.toml", files.mainWindowAcl],
+    ["src-tauri/gen/schemas/acl-manifests.json", files.compiledAcl],
+    ["src-tauri/src/ipc/registry.rs", files.ipcRegistry],
+    ["src-tauri/generated/command-registry.json", read("src-tauri/generated/command-registry.json")],
+    ["src/lib/bridge/generated.ts", files.generatedBridge],
+    ["src/lib/bridge/BackendClient.ts", files.backendClient],
+    ["src/lib/bridge/DesktopBackend.ts", files.desktopBackend],
+    ["src/lib/bridge/DemoBackend.ts", files.demoBackend],
+    ["src/lib/api/stations.ts", files.stationsApi],
+    ["src/lib/types/stations.ts", files.stationsTypes],
+  ]) {
+    reject(
+      source,
+      file,
+      retiredCommandPattern,
+      "the retired capacity-domain control surface must not be reachable from the main renderer or generated API",
+    );
+  }
+
+  const retiredErrorRateHistoryPattern =
+    /list_error_rate_history|listErrorRateHistory|HealthProtectionScopeKindDto|ErrorRateHistory(?:Input|Page|Event)Dto/u;
+  for (const [file, source] of [
+    ["src-tauri/permissions/main-window.toml", files.mainWindowAcl],
+    ["src-tauri/gen/schemas/acl-manifests.json", files.compiledAcl],
+    ["src-tauri/src/ipc/registry.rs", files.ipcRegistry],
+    ["src-tauri/generated/command-registry.json", read("src-tauri/generated/command-registry.json")],
+    ["src-tauri/src/ipc/dto/routing_health_reads.typescript.txt", files.routingHealthTypescript],
+    ["src/lib/bridge/generated.ts", files.generatedBridge],
+    ["src/lib/bridge/BackendClient.ts", files.backendClient],
+    ["src/lib/bridge/DesktopBackend.ts", files.desktopBackend],
+    ["src/lib/bridge/DemoBackend.ts", files.demoBackend],
+  ]) {
+    reject(
+      source,
+      file,
+      retiredErrorRateHistoryPattern,
+      "the retired error-rate history control surface must not remain reachable from the main renderer or generated API",
+    );
+  }
+
+  for (const [file, source] of [
+    ["src-tauri/src/application/queries/routing_workspace.rs", files.routingWorkspaceQuery],
+    ["src-tauri/src/application/queries/routing_protection.rs", files.routingProtectionQuery],
+    ["src-tauri/src/application/routing.rs", files.applicationRouting],
+    ["src-tauri/src/ipc/dto/routing_health_reads.typescript.txt", files.routingHealthTypescript],
+    ["src/lib/bridge/generated.ts", files.generatedBridge],
+  ]) {
+    reject(
+      source,
+      file,
+      /\b(?:RoutingFailureDomain|FailureDomainCandidateFact|ProviderCapacityDomain|failure_domains|failureDomain|capacity_provider_family|capacity_deployment_identity|capacity_region_identity|capacity_domain_revision)\b/u,
+      "production workspace/protection DTOs must not expose capacity-domain identity",
+    );
+  }
+
+  for (const [file, source] of [
+    ["src-tauri/src/application/observation_ingestion.rs", files.observationIngestion],
+    ["src-tauri/src/application/monitoring/service.rs", files.monitoringService],
+    ["src-tauri/src/application/monitoring/write_path.rs", files.monitoringWritePath],
+    ["src-tauri/src/application/request_finalization/mod.rs", files.requestFinalization],
+  ]) {
+    reject(
+      source,
+      file,
+      /pub\(crate\) fn new\([^)]*\)[^{]*\{[\s\S]{0,400}(?:Self::new_with_error_rate|ObservationIngestion::with_error_rate)/u,
+      "production constructors must not compose the retired ErrorRateProtectionService",
+    );
+  }
+
+  require(
+    files.routingWorkspaceQuery,
+    "src-tauri/src/application/queries/routing_workspace.rs",
+    /RoutingAvailabilityStatus[\s\S]*CapacityExhausted[\s\S]*CapacityStateUnavailable[\s\S]*AllKeysUnavailable/u,
+    "workspace diagnostics must distinguish capacity exhaustion, capacity-state failure and all-keys-unavailable",
+  );
+  require(
+    files.routingWorkspaceQuery + "\n" + files.routingHealthTypescript,
+    "routing workspace Rust/TypeScript diagnostics",
+    /RoutingMonitoringSourceStatus[\s\S]*(?:NoEvidence|no_evidence)[\s\S]*(?:Incomparable|incomparable)[\s\S]*(?:WeightZero|weight_zero)/u,
+    "monitoring diagnostics must distinguish no evidence, incomparable evidence and zero source weight",
   );
 }

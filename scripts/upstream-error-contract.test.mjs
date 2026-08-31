@@ -48,6 +48,9 @@ if (process.argv.includes("--catalog-only")) {
 // script outside the ordinary green suite until Task 9 closes every assertion.
 const openai = read("src-tauri/src/services/proxy/adapters/openai.rs");
 const execution = read("src-tauri/src/services/proxy/execution.rs");
+// Test fixtures intentionally retain historical capacity-domain regression
+// cases.  Contract assertions describe the production boundary only.
+const executionProduction = execution.split("\n#[cfg(test)]\nmod tests {", 1)[0];
 const upstream = read("src-tauri/src/services/proxy/upstream.rs");
 const proxyError = read("src-tauri/src/services/proxy/error.rs");
 
@@ -73,8 +76,8 @@ rejectIf(execution, /match\s+failure\.http_status\.as_u16\(\)/u,
   "RED-08: retry/health consumers still classify by HTTP status");
 rejectIf(upstream, /response\.bytes\(\)\.await/u,
   "RED-09: upstream error body is still read without an explicit bound");
-requireMatch(execution, /ProviderCapacityDomain/u,
-  "RED-10: execution has no provider-capacity-domain same-target retry contract");
+rejectIf(executionProduction, /ProviderCapacityDomain|CapacityDomainCommitment|capacity_domain/u,
+  "RED-10: production execution still carries a provider-capacity-domain retry contract");
 
 assert.deepEqual(violations, [], `upstream cutover remains RED:\n- ${violations.join("\n- ")}`);
 

@@ -28,7 +28,11 @@ function relative(file) {
 }
 
 function stripTestModules(source) {
-  return source.replaceAll(/#\[cfg\(test\)\][\s\S]*?(?=\n(?:pub|pub(?:\(crate\))?|mod|use|const|fn|struct|enum|impl)\b|$)/g, "");
+  // All proxy test modules are trailing top-level items. Cut from the first
+  // such module instead of using a non-greedy regex, which would stop at the
+  // first `fn`/`impl` nested inside the module and leak test-only writers.
+  const testModule = source.search(/#\[cfg\(test\)\]\s*mod\s+[A-Za-z0-9_]+\s*\{/u);
+  return testModule >= 0 ? source.slice(0, testModule) : source;
 }
 
 function assertNoMatch(source, pattern, label) {
@@ -81,7 +85,12 @@ assert.match(responseBody, /\bstruct LifecycleBody\b/);
 assert.doesNotMatch(responseBody, /\bstruct FinalizingStream\b/);
 assert.doesNotMatch(responseBody, /AppDatabase|RequestLogStore|rusqlite|sqlx/i);
 
-const execution = await read("src-tauri/src/services/proxy/execution.rs");
+// The execution module contains cfg(test) repository/adapter doubles.  They
+// may implement lifecycle-port methods so the production execution owner can
+// be tested without composing a database writer.  Architecture assertions
+// must inspect only the production portion, otherwise a test double is
+// indistinguishable from a forbidden production write path.
+const execution = stripTestModules(await read("src-tauri/src/services/proxy/execution.rs"));
 assert.doesNotMatch(execution, /CreateRequestLogInput|insert_request_log|finish_request\(/);
 assert.doesNotMatch(execution, /std::net::TcpStream|httparse|ureq/);
 

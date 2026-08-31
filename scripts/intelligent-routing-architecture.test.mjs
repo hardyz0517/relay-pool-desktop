@@ -44,13 +44,59 @@ function checkPlannerContractBoundary() {
   const moduleSource = readSource(engineModule);
   assert.doesNotMatch(moduleSource, /planner_legacy|planner_contract_gate|\bcontroller\b|\bselector\b|routing_snapshot|routing_types/u);
   assert.match(snapshotSource, /fn\s+plan_snapshot\s*\(/u);
-  assert.match(snapshotSource, /weighted_rendezvous/u);
+  assert.doesNotMatch(snapshotSource, /weighted_rendezvous/u);
+  assert.doesNotMatch(snapshotSource, /exploration_share_basis_points/u);
+  assert.match(snapshotSource, /planned\.sort_by[\s\S]*utility\.value\(\)\.cmp/u);
   const admissionSource = readSource(admission);
   const executionSource = readSource(execution);
+  const planningSnapshotSource = readSource(
+    "src-tauri/src/application/operational_facts/planning_snapshot.rs",
+  );
+  const operationalQuerySource = readSource(
+    "src-tauri/src/persistence/stores/operational_facts/queries.rs",
+  );
+  const tiersSource = readSource("src-tauri/src/application/routing_engine/tiers.rs");
+  const factorsSource = readSource("src-tauri/src/application/routing_engine/factors.rs");
   assert.match(
     admissionSource,
-    /pub\s+fn\s+next[\s\S]*?plan_snapshot_with_budget/u,
+    /pub\s+fn\s+next[\s\S]*?plan_snapshot\s*\(/u,
     "production admission must invoke the canonical intelligent planner",
+  );
+  for (const count of [
+    "configured_key_count",
+    "capability_match_count",
+    "candidate_cap_count",
+  ]) {
+    assert.match(
+      planningSnapshotSource,
+      new RegExp(`\\b${count}\\b`, "u"),
+      `planning snapshot must capture ${count}`,
+    );
+  }
+  assert.match(
+    planningSnapshotSource,
+    /candidate_cap_count\s*>\s*options\.candidate_limit\(\)/u,
+    "candidate cap must be checked after request-specific planning evaluation",
+  );
+  assert.doesNotMatch(
+    operationalQuerySource,
+    /candidate_query_limit|LIMIT\s+\?1/u,
+    "operational facts must not apply the candidate cap before capability filtering",
+  );
+  assert.match(
+    tiersSource,
+    /Primary[\s\S]*ConfiguredBackup[\s\S]*DepletedEmergency/u,
+    "production planning must preserve all three availability tiers",
+  );
+  assert.doesNotMatch(
+    factorsSource,
+    /unwrap_or(?:_else)?\([^)]*5_000/u,
+    "missing cost must remain unavailable rather than becoming neutral evidence",
+  );
+  assert.match(
+    admissionSource,
+    /attempt_count[\s\S]*max_attempts/u,
+    "production admission must enforce one request-global attempt budget",
   );
   assert.match(
     admissionSource,
@@ -99,9 +145,9 @@ function checkManifestOwnersAndForbiddenEdges() {
     const pattern = new RegExp(`\\b${escapeRegExp(forbidden).replaceAll("\\ ", "\\\\s+")}\\b`, "iu");
     assert.doesNotMatch(planner, pattern, `planner must not depend on ${forbidden}`);
   }
-  assert.match(readSource("src-tauri/src/application/routing_engine/admission.rs"), /plan_snapshot_with_budget/u);
+  assert.match(readSource("src-tauri/src/application/routing_engine/admission.rs"), /plan_snapshot\s*\(/u);
   const routingApplication = readSource("src-tauri/src/application/routing.rs");
-  assert.match(routingApplication, /load_intelligent_planning_snapshot[\s\S]*plan_snapshot_with_budget/u);
+  assert.match(routingApplication, /load_intelligent_planning_snapshot[\s\S]*plan_snapshot\s*\(/u);
   const simulationBody = routingApplication.split("pub(crate) async fn simulate_route", 1)[1] ?? "";
   assert.doesNotMatch(simulationBody, /load_(?:runtime|workspace_projection)_candidates_with_request_pricing/u, "simulation must not load the read-model candidate projection chain");
   const executionRepository = readSource("src-tauri/src/services/proxy/routing_repository.rs")
@@ -110,7 +156,7 @@ function checkManifestOwnersAndForbiddenEdges() {
   assert.doesNotMatch(executionRepository, /RouteCandidateProjection|load_runtime_candidates_with_request_pricing/u, "production execution repository must not rebuild legacy candidate projections");
   assert.match(executionRepository, /OperationalRouteSnapshot[\s\S]*Vec<RoutePlanCandidate>/u, "execution snapshot must expose an execution-only candidate index");
   assert.doesNotMatch(readSource("src-tauri/src/application/queries/routing_workspace.rs"), /production_policy/u, "workspace read model must not expose legacy policy enum truth");
-  assert.match(readSource("src-tauri/src/application/queries/routing_workspace.rs"), /policy_config: RoutingPolicyConfigV2/u, "workspace read model must expose the active canonical policy config");
+  assert.match(readSource("src-tauri/src/application/queries/routing_workspace.rs"), /policy_config: RoutingPolicyConfigV3/u, "workspace read model must expose the active canonical v3 policy config");
   assert.match(readSource("src/features/routing/LocalRoutingSettingsEditor.tsx"), /useRoutingPolicyDraft/u, "routing editor must use the shared draft/CAS owner");
   assert.doesNotMatch(readSource("src/features/routing/LocalRoutingSettingsEditor.tsx"), /schedulerAdvancedSettings|updateSettings/u);
 }
