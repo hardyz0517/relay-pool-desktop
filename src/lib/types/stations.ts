@@ -56,23 +56,6 @@ export type StationInput = {
   note: string | null;
 };
 
-export type StationCapacityDomain = {
-  stationId: string;
-  providerFamily: string;
-  deploymentIdentity: string | null;
-  regionIdentity: string | null;
-  revision: number;
-  updatedAt: string;
-};
-
-export type UpsertStationCapacityDomainInput = {
-  stationId: string;
-  expectedRevision: number;
-  providerFamily: string;
-  deploymentIdentity: string | null;
-  regionIdentity: string | null;
-};
-
 export type StationUpdateInput = Omit<StationInput, "apiKey"> & {
   id: string;
   apiKey: string | null;

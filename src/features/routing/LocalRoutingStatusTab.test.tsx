@@ -21,17 +21,16 @@ describe("DecisionTraceDetails", () => {
         ordinal: 1,
         kind: "attempt_protocol",
         status: "available",
-        title: "容量重试",
-        summary: "等待后重试同一目标",
+        title: "密钥失败重试",
+        summary: "当前密钥失败，等待后重试",
         detailCode: "capacity_retry",
         detailAvailability: "detailed",
         explanationKey: null,
-        action: "retry_same_target",
+        action: "retry_current_key",
         attemptOrdinal: 2,
         remainingAttempts: 2,
-        remainingWaitBudgetMs: 500,
+        remainingPrecommitBudgetMs: 500,
         policyRevision: 4,
-        failureDomain: "capacity-domain-a",
         routePolicy: null,
         routeReason: null,
         stationKeyId: null,
@@ -48,9 +47,41 @@ describe("DecisionTraceDetails", () => {
     expect(host.textContent).toContain("详细执行证据");
     expect(host.textContent).toContain("当前会话详细轨迹");
     expect(host.textContent).toContain("终态原因：capacity_exhausted");
-    expect(host.textContent).toContain("动作：同目标重试");
+    expect(host.textContent).toContain("动作：重试当前密钥");
     expect(host.textContent).toContain("剩余尝试：2");
-    expect(host.textContent).toContain("故障域：capacity-domain-a");
+    expect(host.textContent).toContain("请求提交前预算：500 ms");
+  });
+
+  it("marks pre-cutover action values as historical compatibility evidence", () => {
+    const trace = baseTrace({
+      timeline: [{
+        ordinal: 1,
+        kind: "fallback",
+        status: "available",
+        title: "legacy retry",
+        summary: "legacy trace evidence",
+        detailCode: "legacy_retry",
+        detailAvailability: "summary_only",
+        explanationKey: null,
+        action: "wait_then_replan",
+        attemptOrdinal: 1,
+        remainingAttempts: 1,
+        remainingPrecommitBudgetMs: null,
+        policyRevision: 2,
+        routePolicy: null,
+        routeReason: null,
+        stationKeyId: null,
+        stationId: null,
+        attemptCount: null,
+        fallbackCount: null,
+        durationMs: null,
+        costStatus: null,
+        estimatedTotalCost: null,
+        costCurrency: null,
+      }],
+    });
+    const host = render(trace);
+    expect(host.textContent).toContain("动作：历史动作：等待后重新规划");
   });
 
   it("shows the legacy terminal summary without fabricating a timeline", () => {

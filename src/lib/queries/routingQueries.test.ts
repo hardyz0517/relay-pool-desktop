@@ -10,6 +10,7 @@ import {
   loadRoutingRuntimeOverlayQuery,
   loadRoutingWorkspaceSnapshotQuery,
   routingPolicyQueryOptions,
+  routingPolicyPublicationQueryOptions,
   routingProtectionStatusQueryOptions,
   routingQueryKeys,
   simulateRouteQuery,
@@ -24,36 +25,43 @@ describe("routing query owner", () => {
     deleteModelAlias: vi.fn(),
     listStationKeyHealth: vi.fn(),
     getRoutingProtectionStatus: vi.fn(),
-    listErrorRateHistory: vi.fn(async () => ({ version: "error_rate_history_v1", enabled: false, detailAvailable: false, events: [], nextBeforeMs: null, droppedEvents: 0 })),
     loadRoutingWorkspaceSnapshot: vi.fn(async () => ({
-      readModelVersion: "routing_workspace_read_model_v1",
+      readModelVersion: "routing_workspace_read_model_v3",
       generatedAtMs: 1,
       policyConfig: {
-        version: 2,
+        version: 3,
         reliabilityWeight: 4000,
         responsivenessWeight: 2500,
         costWeight: 2000,
         preferenceWeight: 1500,
-        maxCandidates: 64,
-        explorationShareBasisPoints: 500,
-         allowDepletedFallback: false,
-         affinityEnabled: false,
-         affinityTtlSeconds: 300,
-         maxRateMultiplier: null,
-         routingGroupFilter: "all_groups" as const,
-         outboundProxyMode: "inherit",
-         outboundProxyUrl: null,
-         retryFailover: { version: 2, maxTotalAttempts: 4, maxSameTargetCapacityRetries: 2, capacityRetryWaitBudgetSeconds: 2, allowCrossCapacityDomainFallback: true },
-         protectionProfile: { version: 2, enabled: false, windowMaxSamples: 64, windowSeconds: 300, minSamples: 5, failureThresholdPercent: 60, halfOpenSuccessesToClose: 2 },
-         timeoutPolicy: { version: 2, connectSeconds: 10, firstByteSeconds: 30, precommitSeconds: 60, bufferedExecutionSeconds: 300, streamIdleSeconds: 90 },
+        allowDepletedFallback: false,
+        affinityEnabled: false,
+        affinityTtlSeconds: 300,
+        maxRateMultiplier: null,
+        routingGroupFilter: "all_groups" as const,
+        outboundProxyMode: "inherit",
+        outboundProxyUrl: null,
+        reliabilitySourceWeights: { realTrafficPercent: 70, monitoringPercent: 30 },
+        reliabilitySampling: {
+          historicalMinimumSamples: 15,
+          recentMinimumSamples: 5,
+          optimisticReliabilityPercent: 95,
+          optimisticLatencyMs: 2_500,
+        },
+        retry: { version: 1, maxRetryCount: 3, consecutiveFailureThreshold: 3 },
+        circuitBreaker: { version: 1, recoverySuccessThreshold: 2, recoveryWaitSeconds: 30 },
+        timeoutPolicy: { version: 2, connectSeconds: 10, firstByteSeconds: 30, precommitSeconds: 60, bufferedExecutionSeconds: 300, streamIdleSeconds: 90 },
       },
-      previewPolicyVersion: "intelligent_planner_v1",
+      previewPolicyVersion: "intelligent_planner_v3",
       maxRateMultiplier: null,
       routingGroupFilter: "all_groups" as const,
       capacityMode: "snapshot_only" as const,
       page: { limit: 50, returned: 0, nextCursor: null },
       candidates: [],
       readModelStatus: "available" as const,
+      plannerEvaluation: "available" as const,
+      plannerEvaluationCode: null,
+      availabilityStatus: "all_keys_unavailable" as const,
     })),
     loadRoutingRuntimeOverlay: vi.fn(async () => ({
       overlayVersion: "routing_runtime_overlay_v2",
@@ -90,6 +98,14 @@ describe("routing query owner", () => {
     })),
     getStationKeyHealth: vi.fn(),
     loadRoutingPolicy: vi.fn(),
+    getRoutingPolicyPublicationStatus: vi.fn(async (input) => ({
+      revision: input.revision,
+      policyGenerationId: input.policyGenerationId ?? "pg1_fixture",
+      status: "staged" as const,
+      failureCode: null,
+      updatedAtMs: 1,
+      terminal: false,
+    })),
     applyRoutingPolicyDocument: vi.fn(),
     simulateRoute: vi.fn(async () => ({
       previewPolicyVersion: "intelligent_planner_v1",
@@ -138,12 +154,17 @@ describe("routing query owner", () => {
       routingQueryKeys.runtimeOverlay(),
     );
     expect(routingQueryKeys.policy()).toEqual(["routing", "policy"]);
-    expect(routingQueryKeys.protectionStatus()).toEqual(["routing", "protectionStatus", null]);
-    expect(routingQueryKeys.protectionStatus({ model: "gpt-5-mini" })).toEqual([
+    expect(routingQueryKeys.policyPublication({ revision: 7 })).toEqual([
       "routing",
-      "protectionStatus",
-      "gpt-5-mini",
+      "policyPublication",
+      7,
+      null,
     ]);
+    expect(routingQueryKeys.policyPublication({
+      revision: 7,
+      policyGenerationId: "pg1_fixture",
+    })).toEqual(["routing", "policyPublication", 7, "pg1_fixture"]);
+    expect(routingQueryKeys.protectionStatus()).toEqual(["routing", "protectionStatus"]);
   });
 
   it("keeps policy and protection reads as shared query owners", async () => {
@@ -155,9 +176,17 @@ describe("routing query owner", () => {
     expect(routing.getRoutingProtectionStatus).toHaveBeenCalledTimes(1);
   });
 
-  it("passes the requested model to the protection read owner", async () => {
-    await routingProtectionStatusQueryOptions({ model: "gpt-5-mini" }).queryFn();
-    expect(routing.getRoutingProtectionStatus).toHaveBeenCalledWith({ model: "gpt-5-mini" });
+  it("queries publication status with both revision and generation fence", async () => {
+    const input = { revision: 7, policyGenerationId: "pg1_fixture" };
+    const options = routingPolicyPublicationQueryOptions(input);
+    expect(options.queryKey).toEqual(routingQueryKeys.policyPublication(input));
+    await options.queryFn();
+    expect(routing.getRoutingPolicyPublicationStatus).toHaveBeenCalledWith(input);
+  });
+
+  it("keeps the protection read unscoped after capacity-domain retirement", async () => {
+    await routingProtectionStatusQueryOptions().queryFn();
+    expect(routing.getRoutingProtectionStatus).toHaveBeenCalledWith();
   });
 
   it("loads runtime overlay without refreshing workspace or history read models", async () => {

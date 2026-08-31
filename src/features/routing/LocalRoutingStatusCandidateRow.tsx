@@ -11,6 +11,28 @@ import {
   buildCooldownDisplay,
 } from "./localRoutingStatusViewModel";
 
+type MathMlIntrinsicProps = Record<string, unknown>;
+
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      math: MathMlIntrinsicProps;
+      mrow: MathMlIntrinsicProps;
+      msub: MathMlIntrinsicProps;
+      msup: MathMlIntrinsicProps;
+      msubsup: MathMlIntrinsicProps;
+      mi: MathMlIntrinsicProps;
+      mn: MathMlIntrinsicProps;
+      mo: MathMlIntrinsicProps;
+      mfrac: MathMlIntrinsicProps;
+      mspace: MathMlIntrinsicProps;
+      mtable: MathMlIntrinsicProps;
+      mtr: MathMlIntrinsicProps;
+      mtd: MathMlIntrinsicProps;
+    }
+  }
+}
+
 type LocalRoutingStatusCandidateRowProps = {
   candidate: LocalRoutingCandidate;
   order: number;
@@ -147,7 +169,10 @@ export function LocalRoutingStatusCandidateRow({
         tone={cooldown.active ? "warning" : "neutral"}
       />
       <MetricCell label="当前并发">
-        <StatusBadge tone="disabled">
+        <StatusBadge
+          tone={candidate.currentConcurrency != null && candidate.currentConcurrency > 0 ? "healthy" : "disabled"}
+          className="rounded-[4px]"
+        >
           {candidate.currentConcurrency == null ? "—" : String(candidate.currentConcurrency)}
         </StatusBadge>
       </MetricCell>
@@ -235,40 +260,41 @@ function formatCandidateScore(
   return score == null ? "—" : `${Math.round(score / 100)} 分`;
 }
 
-function ScoreBreakdown({
+export function ScoreBreakdown({
   details,
 }: {
   details: LocalRoutingCandidate["scoreDetails"];
 }) {
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+
   if (!details) {
     return <div className="p-4 text-sm text-muted-foreground">暂无评分明细。</div>;
   }
 
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const factors = [
     {
       key: "reliability",
       label: "可靠性",
       factor: details.reliability,
-      formula: "窗口分：(成功次数 + 先验成功) / (成功次数 + 失败次数 + 先验总数)；最终分：近24小时分 × 近期权重 + 历史分 × 历史权重",
+      formula: <ReliabilityFormula />,
     },
     {
       key: "responsiveness",
       label: "响应速度",
       factor: details.responsiveness,
-      formula: "窗口速度分：max(0, 1 - 最近延迟 / 延迟上限)（最近延迟取窗口 P95）；最终分：近24小时速度分 × 近期权重 + 历史速度分 × 历史权重",
+      formula: <ResponsivenessFormula />,
     },
     {
       key: "cost",
       label: "成本",
       factor: details.cost,
-      formula: "1 / (1 + 密钥有效倍率)",
+      formula: <CostFormula />,
     },
     {
       key: "preference",
       label: "偏好",
       factor: details.preference,
-      formula: "10,000 - 候选优先级，再应用策略修正",
+      formula: <PreferenceFormula />,
     },
   ] as const;
 
@@ -319,23 +345,27 @@ function ScoreBreakdown({
               {isExpanded ? (
                 <div className="grid gap-3 rounded-[var(--control-radius)] border border-border bg-surface-subtle px-3 py-2 text-xs">
                   <div className="font-medium text-foreground">计算详情</div>
-                  <div><span className="text-muted-foreground">公式：</span>{formula}</div>
-                  {(key === "reliability" || key === "responsiveness") && factor.windowDetails ? (
-                    <ScoreWindowDetails kind={key} details={factor.windowDetails} />
+                  <FormulaBlock>{formula}</FormulaBlock>
+                  {key === "reliability" || key === "responsiveness" ? (
+                    factor.windowDetails ? (
+                      <ScoreWindowDetails kind={key} details={factor.windowDetails} />
+                    ) : (
+                      <UnavailableScoreWindowDetails />
+                    )
                   ) : (
                     <div className="grid gap-1">
                       <div className="text-muted-foreground">输入参数</div>
                       {factor.inputs.length > 0 ? factor.inputs.map((input) => (
                         <div key={input.label} className="flex items-baseline justify-between gap-3">
-                          <span>{input.label}</span>
-                          <span className="font-medium tabular-nums text-foreground">{input.value}</span>
+                          <span className="whitespace-nowrap">{input.label}</span>
+                          <span className="whitespace-nowrap font-medium tabular-nums text-foreground">{input.value}</span>
                         </div>
                       )) : <span className="text-muted-foreground">暂无输入数据</span>}
                     </div>
                   )}
-                  <div className="flex items-baseline justify-between border-t border-border pt-1">
+                  <div className="flex items-baseline justify-between border-t border-border pt-2">
                     <span className="text-muted-foreground">计算结果</span>
-                    <span className="font-semibold tabular-nums text-foreground">{formatBasisPoints(factor.score)}</span>
+                    <span className="font-semibold tabular-nums text-info-foreground">{formatBasisPoints(factor.score)}</span>
                   </div>
                 </div>
               ) : null}
@@ -347,6 +377,135 @@ function ScoreBreakdown({
   );
 }
 
+function FormulaBlock({ children }: { children: ReactNode }) {
+  return (
+    <div className="overflow-x-auto rounded-[var(--control-radius)] border border-border/70 bg-surface px-2.5 py-2.5">
+      <div className="grid min-w-max gap-2 text-[15px] leading-7 text-foreground [font-family:'STIX_Two_Math','Cambria_Math','Times_New_Roman',serif]">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function FormulaLine({ children, ariaLabel }: { children: ReactNode; ariaLabel: string }) {
+  return (
+    <math xmlns="http://www.w3.org/1998/Math/MathML" display="block" aria-label={ariaLabel}>
+      <mrow>{children}</mrow>
+    </math>
+  );
+}
+
+function ReliabilityFormula() {
+  return (
+    <>
+      <FormulaLine ariaLabel="可靠性窗口加权成功率">
+        <msub><mi>R</mi><mrow><mi>s</mi><mo>,</mo><mi>ω</mi></mrow></msub>
+        <mo>=</mo>
+        <mfrac>
+          <mrow>
+            <msub><mo>Σ</mo><mi>i</mi></msub>
+            <mo>(</mo><msub><mi>w</mi><mi>i</mi></msub><mo>·</mo><msub><mi>s</mi><mi>i</mi></msub><mo>)</mo>
+          </mrow>
+          <mrow><msub><mo>Σ</mo><mi>i</mi></msub><msub><mi>w</mi><mi>i</mi></msub></mrow>
+        </mfrac>
+        <mspace width="1em" />
+        <mo>(</mo><msub><mi>n</mi><mrow><mi>s</mi><mo>,</mo><mi>ω</mi></mrow></msub><mo>≥</mo><msub><mi>n</mi><mrow><mi>min</mi><mo>,</mo><mi>ω</mi></mrow></msub><mo>)</mo>
+      </FormulaLine>
+      <FormulaLine ariaLabel="样本不足时采用乐观可靠性">
+        <msub><mi>R</mi><mrow><mi>s</mi><mo>,</mo><mi>ω</mi></mrow></msub>
+        <mo>=</mo>
+        <msub><mi>R</mi><mi>opt</mi></msub>
+        <mspace width="1em" />
+        <mo>(</mo><msub><mi>n</mi><mrow><mi>s</mi><mo>,</mo><mi>ω</mi></mrow></msub><mo>&lt;</mo><msub><mi>n</mi><mrow><mi>min</mi><mo>,</mo><mi>ω</mi></mrow></msub><mo>)</mo>
+      </FormulaLine>
+      <FormulaLine ariaLabel="近期可靠性置信度">
+        <msub><mi>c</mi><mi>s</mi></msub>
+        <mo>=</mo>
+        <mi>min</mi><mo>(</mo><mn>0.9</mn><mo>,</mo>
+        <mfrac>
+          <msub><mi>n</mi><mrow><mi>s</mi><mo>,</mo><mn>24</mn><mi>h</mi></mrow></msub>
+          <mrow><msub><mi>n</mi><mrow><mi>s</mi><mo>,</mo><mn>24</mn><mi>h</mi></mrow></msub><mo>+</mo><mn>20</mn></mrow>
+        </mfrac>
+        <mo>)</mo>
+      </FormulaLine>
+      <FormulaLine ariaLabel="近期和历史可靠性融合">
+        <mi>R</mi><mo>=</mo><msub><mo>Σ</mo><mi>s</mi></msub><msub><mi>λ</mi><mi>s</mi></msub><mo>·</mo>
+        <mo>[</mo><msub><mi>c</mi><mi>s</mi></msub><mo>·</mo><msub><mi>R</mi><mrow><mi>s</mi><mo>,</mo><mn>24</mn><mi>h</mi></mrow></msub>
+        <mo>+</mo><mo>(</mo><mn>1</mn><mo>−</mo><msub><mi>c</mi><mi>s</mi></msub><mo>)</mo><mo>·</mo><msub><mi>R</mi><mrow><mi>s</mi><mo>,</mo><mi>hist</mi></mrow></msub><mo>]</mo>
+      </FormulaLine>
+      <FormulaLine ariaLabel="样本时间衰减权重">
+        <msub><mi>w</mi><mi>i</mi></msub><mo>=</mo><mi>w</mi><mo>(</mo><msub><mi>a</mi><mi>i</mi></msub><mo>)</mo><mo>=</mo>
+        <mo stretchy="true">{"{"}</mo>
+        <mtable rowspacing="0.45em" columnalign="left">
+          <mtr>
+            <mtd><msup><mn>2</mn><mrow><mo>−</mo><mfrac><msub><mi>a</mi><mi>i</mi></msub><mn>72</mn></mfrac></mrow></msup></mtd>
+            <mtd><mrow><mn>0</mn><mo>≤</mo><msub><mi>a</mi><mi>i</mi></msub><mo>≤</mo><mn>24</mn></mrow></mtd>
+          </mtr>
+          <mtr>
+            <mtd><msup><mn>2</mn><mrow><mo>−</mo><mfrac><mn>24</mn><mn>72</mn></mfrac></mrow></msup><mo>·</mo><msup><mn>2</mn><mrow><mo>−</mo><mfrac><mrow><msub><mi>a</mi><mi>i</mi></msub><mo>−</mo><mn>24</mn></mrow><mn>24</mn></mfrac></mrow></msup></mtd>
+            <mtd><mrow><msub><mi>a</mi><mi>i</mi></msub><mo>&gt;</mo><mn>24</mn></mrow></mtd>
+          </mtr>
+        </mtable>
+      </FormulaLine>
+      <FormulaLine ariaLabel="成功状态取零或一">
+        <msub><mi>s</mi><mi>i</mi></msub><mo>∈</mo><mo>{"{"}</mo><mn>0</mn><mo>,</mo><mn>1</mn><mo>{"}"}</mo>
+      </FormulaLine>
+    </>
+  );
+}
+
+function ResponsivenessFormula() {
+  return (
+    <>
+      <FormulaLine ariaLabel="响应速度窗口加权延迟">
+        <msub><mi>L</mi><mrow><mi>s</mi><mo>,</mo><mi>ω</mi></mrow></msub><mo>=</mo>
+        <mfrac>
+          <mrow><msub><mo>Σ</mo><mi>i</mi></msub><mo>(</mo><msub><mi>w</mi><mi>i</mi></msub><mo>·</mo><msub><mi>l</mi><mi>i</mi></msub><mo>)</mo></mrow>
+          <mrow><msub><mo>Σ</mo><mi>i</mi></msub><msub><mi>w</mi><mi>i</mi></msub></mrow>
+        </mfrac>
+        <mspace width="1em" /><mo>(</mo><msubsup><mi>n</mi><mrow><mi>s</mi><mo>,</mo><mi>ω</mi></mrow><mi>L</mi></msubsup><mo>≥</mo><msub><mi>n</mi><mrow><mi>min</mi><mo>,</mo><mi>ω</mi></mrow></msub><mo>)</mo>
+      </FormulaLine>
+      <FormulaLine ariaLabel="样本不足时采用乐观延迟">
+        <msub><mi>L</mi><mrow><mi>s</mi><mo>,</mo><mi>ω</mi></mrow></msub><mo>=</mo><msub><mi>L</mi><mi>opt</mi></msub>
+        <mspace width="1em" /><mo>(</mo><msubsup><mi>n</mi><mrow><mi>s</mi><mo>,</mo><mi>ω</mi></mrow><mi>L</mi></msubsup><mo>&lt;</mo><msub><mi>n</mi><mrow><mi>min</mi><mo>,</mo><mi>ω</mi></mrow></msub><mo>)</mo>
+      </FormulaLine>
+      <FormulaLine ariaLabel="近期响应速度置信度">
+        <msubsup><mi>c</mi><mi>s</mi><mi>L</mi></msubsup><mo>=</mo><mi>min</mi><mo>(</mo><mn>0.9</mn><mo>,</mo>
+        <mfrac><msubsup><mi>n</mi><mrow><mi>s</mi><mo>,</mo><mn>24</mn><mi>h</mi></mrow><mi>L</mi></msubsup><mrow><msubsup><mi>n</mi><mrow><mi>s</mi><mo>,</mo><mn>24</mn><mi>h</mi></mrow><mi>L</mi></msubsup><mo>+</mo><mn>20</mn></mrow></mfrac><mo>)</mo>
+      </FormulaLine>
+      <FormulaLine ariaLabel="近期和历史响应速度融合">
+        <mi>L</mi><mo>=</mo><msub><mo>Σ</mo><mi>s</mi></msub><msub><mi>λ</mi><mi>s</mi></msub><mo>·</mo><mo>[</mo>
+        <msubsup><mi>c</mi><mi>s</mi><mi>L</mi></msubsup><mo>·</mo><msub><mi>L</mi><mrow><mi>s</mi><mo>,</mo><mn>24</mn><mi>h</mi></mrow></msub><mo>+</mo>
+        <mo>(</mo><mn>1</mn><mo>−</mo><msubsup><mi>c</mi><mi>s</mi><mi>L</mi></msubsup><mo>)</mo><mo>·</mo><msub><mi>L</mi><mrow><mi>s</mi><mo>,</mo><mi>hist</mi></mrow></msub><mo>]</mo>
+      </FormulaLine>
+      <FormulaLine ariaLabel="响应速度因子换算">
+        <mi>V</mi><mo>=</mo><mo>⌊</mo><mfrac><mrow><msup><mn>10</mn><mn>4</mn></msup><mo>·</mo><mo>(</mo><mn>120000</mn><mo>−</mo><mi>min</mi><mo>(</mo><mi>L</mi><mo>,</mo><mn>120000</mn><mo>)</mo><mo>)</mo></mrow><mn>120000</mn></mfrac><mo>⌋</mo>
+      </FormulaLine>
+      <FormulaLine ariaLabel="样本时间衰减权重">
+        <msub><mi>w</mi><mi>i</mi></msub><mo>=</mo><mi>w</mi><mo>(</mo><msub><mi>a</mi><mi>i</mi></msub><mo>)</mo>
+      </FormulaLine>
+    </>
+  );
+}
+
+function CostFormula() {
+  return (
+    <FormulaLine ariaLabel="成本因子换算">
+      <mi>C</mi><mo>(</mo><mi>m</mi><mo>)</mo><mo>=</mo><mo>⌊</mo>
+      <mfrac><mrow><msup><mn>10</mn><mn>4</mn></msup><mo>·</mo><msup><mn>10</mn><mn>6</mn></msup></mrow><mrow><msup><mn>10</mn><mn>6</mn></msup><mo>+</mo><mi>round</mi><mo>(</mo><msup><mn>10</mn><mn>6</mn></msup><mo>·</mo><mi>m</mi><mo>)</mo></mrow></mfrac>
+      <mo>⌋</mo>
+    </FormulaLine>
+  );
+}
+
+function PreferenceFormula() {
+  return (
+    <FormulaLine ariaLabel="优先级因子换算">
+      <mi>P</mi><mo>(</mo><mi>p</mi><mo>)</mo><mo>=</mo><msup><mn>10</mn><mn>4</mn></msup><mo>−</mo><mi>clamp</mi><mo>(</mo><mi>p</mi><mo>,</mo><mn>0</mn><mo>,</mo><msup><mn>10</mn><mn>4</mn></msup><mo>)</mo>
+    </FormulaLine>
+  );
+}
+
 function ScoreWindowDetails({
   kind,
   details,
@@ -355,75 +514,288 @@ function ScoreWindowDetails({
   details: NonNullable<NonNullable<LocalRoutingCandidate["scoreDetails"]>["reliability"]["windowDetails"]>;
 }) {
   const isReliability = kind === "reliability";
+  const groups = buildWindowComparisonGroups(kind, details);
   return (
     <div className="grid gap-2">
       <div className="font-medium text-foreground">窗口明细</div>
-      <div className="grid gap-2 md:grid-cols-2">
-        <WindowColumn
-          title="近24小时"
-          count={details.recentObservationCount}
-          effectiveMass={details.recentEffectiveMassBasisPoints}
-          score={isReliability ? details.recentScore : details.recentResponsivenessBasisPoints}
-          weight={isReliability ? details.recentWeightBasisPoints : details.recentResponsivenessWeightBasisPoints}
-          success={isReliability ? details.recentSuccessMassBasisPoints : undefined}
-          failure={isReliability ? details.recentFailureMassBasisPoints : undefined}
-          p95={isReliability ? undefined : details.recentP95LatencyMs}
-        />
-        <WindowColumn
-          title={`历史基线（${details.historicalAgeWindowDays}天，${details.historicalHalfLifeDays}天半衰）`}
-          count={details.historicalObservationCount}
-          effectiveMass={details.historicalEffectiveMassBasisPoints}
-          score={isReliability ? details.historicalScore : details.historicalResponsivenessBasisPoints}
-          weight={isReliability ? details.historicalWeightBasisPoints : details.historicalResponsivenessWeightBasisPoints}
-          success={isReliability ? details.historicalSuccessMassBasisPoints : undefined}
-          failure={isReliability ? details.historicalFailureMassBasisPoints : undefined}
-          p95={isReliability ? undefined : details.historicalP95LatencyMs}
-        />
+      <WindowComparison
+        groups={groups}
+        historicalSubtitle={`24 小时以前，${details.historicalAgeWindowDays} 天窗口`}
+      />
+      <div className="break-words border-t border-border bg-surface-subtle/60 px-2 py-2 text-xs font-medium leading-5 text-muted-foreground">
+        <span className="text-foreground">最终分</span> = {formatBasisPoints(isReliability ? details.recentScore : details.recentResponsivenessBasisPoints)} × {formatBasisPoints(isReliability ? details.recentWeightBasisPoints : details.recentResponsivenessWeightBasisPoints)} + {formatBasisPoints(isReliability ? details.historicalScore : details.historicalResponsivenessBasisPoints)} × {formatBasisPoints(isReliability ? details.historicalWeightBasisPoints : details.historicalResponsivenessWeightBasisPoints)}
       </div>
-      <div className="border-t border-border pt-1 text-muted-foreground">
-        最终分 = {formatBasisPoints(isReliability ? details.recentScore : details.recentResponsivenessBasisPoints)} × {formatBasisPoints(isReliability ? details.recentWeightBasisPoints : details.recentResponsivenessWeightBasisPoints)} + {formatBasisPoints(isReliability ? details.historicalScore : details.historicalResponsivenessBasisPoints)} × {formatBasisPoints(isReliability ? details.historicalWeightBasisPoints : details.historicalResponsivenessWeightBasisPoints)}
-      </div>
+      {isReliability ? (
+        <MonitoringSampleStatus
+          status={details.monitoringSourceStatus}
+          hasSamples={details.recentMonitoringSampleCount + details.historicalMonitoringSampleCount > 0}
+        />
+      ) : (
+        <MonitoringSampleStatus
+          status={details.monitoringSourceStatus}
+          hasSamples={details.recentMonitoringLatencySampleCount + details.historicalMonitoringLatencySampleCount > 0}
+          messagePrefix="响应速度"
+        />
+      )}
     </div>
   );
 }
 
-function WindowColumn({
-  title,
-  count,
-  effectiveMass,
-  score,
-  weight,
-  success,
-  failure,
-  p95,
+type ScoreWindowDetailsSnapshot = NonNullable<NonNullable<LocalRoutingCandidate["scoreDetails"]>["reliability"]["windowDetails"]>;
+
+type WindowComparisonRow = {
+  label: string;
+  recent: ReactNode;
+  historical: ReactNode;
+  wrapValues?: boolean;
+};
+
+type WindowComparisonGroup = {
+  label: string;
+  rows: WindowComparisonRow[];
+};
+
+function buildWindowComparisonGroups(
+  kind: "reliability" | "responsiveness",
+  details: ScoreWindowDetailsSnapshot,
+): WindowComparisonGroup[] {
+  const isReliability = kind === "reliability";
+  const recent = {
+    count: isReliability ? details.recentObservationCount : details.recentLatencySampleCount,
+    realSamples: isReliability ? details.recentRealSampleCount : details.recentRealLatencySampleCount,
+    monitoringSamples: isReliability ? details.recentMonitoringSampleCount : details.recentMonitoringLatencySampleCount,
+    realMinimumMet: isReliability ? details.recentReliabilityMinimumMet : details.recentRealLatencyMinimumMet,
+    monitoringMinimumMet: isReliability ? details.recentMonitoringSampleCount >= details.recentMinimumSamples : details.recentMonitoringLatencyMinimumMet,
+    effectiveMass: isReliability ? details.recentEffectiveMassBasisPoints : details.recentLatencyEffectiveMassBasisPoints,
+    score: isReliability ? details.recentScore : details.recentResponsivenessBasisPoints,
+    weight: isReliability ? details.recentWeightBasisPoints : details.recentResponsivenessWeightBasisPoints,
+    success: details.recentSuccessMassBasisPoints,
+    failure: details.recentFailureMassBasisPoints,
+    weightedLatency: details.recentWeightedLatencyMs,
+    realWeightedLatency: details.recentRealWeightedLatencyMs,
+    monitoringWeightedLatency: details.recentMonitoringWeightedLatencyMs,
+  };
+  const historical = {
+    count: isReliability ? details.historicalObservationCount : details.historicalLatencySampleCount,
+    realSamples: isReliability ? details.historicalRealSampleCount : details.historicalRealLatencySampleCount,
+    monitoringSamples: isReliability ? details.historicalMonitoringSampleCount : details.historicalMonitoringLatencySampleCount,
+    realMinimumMet: isReliability ? details.historicalReliabilityMinimumMet : details.historicalRealLatencyMinimumMet,
+    monitoringMinimumMet: isReliability ? details.historicalMonitoringSampleCount >= details.historicalMinimumSamples : details.historicalMonitoringLatencyMinimumMet,
+    effectiveMass: isReliability ? details.historicalEffectiveMassBasisPoints : details.historicalLatencyEffectiveMassBasisPoints,
+    score: isReliability ? details.historicalScore : details.historicalResponsivenessBasisPoints,
+    weight: isReliability ? details.historicalWeightBasisPoints : details.historicalResponsivenessWeightBasisPoints,
+    success: details.historicalSuccessMassBasisPoints,
+    failure: details.historicalFailureMassBasisPoints,
+    weightedLatency: details.historicalWeightedLatencyMs,
+    realWeightedLatency: details.historicalRealWeightedLatencyMs,
+    monitoringWeightedLatency: details.historicalMonitoringWeightedLatencyMs,
+  };
+  const sampleLabel = isReliability ? "实际流量样本" : "实际流量延迟样本";
+  const monitoringLabel = isReliability ? "监控样本" : "监控延迟样本";
+  const groups: WindowComparisonGroup[] = [
+    {
+      label: "样本",
+      rows: [
+        { label: sampleLabel, recent: recent.realSamples, historical: historical.realSamples },
+        { label: monitoringLabel, recent: recent.monitoringSamples, historical: historical.monitoringSamples },
+        { label: "纳入评分样本合计", recent: recent.count, historical: historical.count },
+      ],
+    },
+  ];
+
+  if (isReliability) {
+    groups.push({
+      label: "结果统计",
+      rows: [
+        { label: "有效样本（衰减后）", recent: formatMass(recent.effectiveMass), historical: formatMass(historical.effectiveMass) },
+        { label: "成功 / 失败", recent: `${formatMass(recent.success)} / ${formatMass(recent.failure)}`, historical: `${formatMass(historical.success)} / ${formatMass(historical.failure)}` },
+      ],
+    });
+  } else {
+    groups.push({
+      label: "结果统计",
+      rows: [
+        { label: "实际流量加权平均延迟", recent: formatLatency(recent.realWeightedLatency), historical: formatLatency(historical.realWeightedLatency) },
+        { label: "监控加权平均延迟", recent: formatLatency(recent.monitoringWeightedLatency), historical: formatLatency(historical.monitoringWeightedLatency) },
+        { label: "加权平均延迟", recent: formatLatency(recent.weightedLatency), historical: formatLatency(historical.weightedLatency) },
+        { label: "有效样本（衰减后）", recent: formatMass(recent.effectiveMass), historical: formatMass(historical.effectiveMass) },
+        { label: "来源权重（实际 / 监控）", recent: `${formatBasisPoints(details.responsivenessRealSourceWeightBasisPoints)} / ${formatBasisPoints(details.responsivenessMonitoringSourceWeightBasisPoints)}`, historical: `${formatBasisPoints(details.responsivenessRealSourceWeightBasisPoints)} / ${formatBasisPoints(details.responsivenessMonitoringSourceWeightBasisPoints)}` },
+      ],
+    });
+  }
+
+  groups.push({
+    label: "样本门槛",
+    rows: [
+      {
+        label: "实际流量门槛",
+        recent: formatWindowThreshold(recent.realSamples, details.recentMinimumSamples, recent.realMinimumMet),
+        historical: formatWindowThreshold(historical.realSamples, details.historicalMinimumSamples, historical.realMinimumMet),
+        wrapValues: true,
+      },
+      {
+        label: "监控门槛",
+        recent: formatWindowThreshold(recent.monitoringSamples, details.recentMinimumSamples, recent.monitoringMinimumMet),
+        historical: formatWindowThreshold(historical.monitoringSamples, details.historicalMinimumSamples, historical.monitoringMinimumMet),
+        wrapValues: true,
+      },
+    ],
+  });
+  groups.push({
+    label: "窗口计算",
+    rows: [
+      { label: "窗口分", recent: formatBasisPoints(recent.score), historical: formatBasisPoints(historical.score) },
+      { label: "采用权重", recent: formatBasisPoints(recent.weight), historical: formatBasisPoints(historical.weight) },
+      { label: "窗口范围", recent: "最近 24 小时", historical: `24 小时以前 · ${details.historicalAgeWindowDays} 天窗口` },
+      { label: "时间衰减半衰期", recent: "—", historical: `${details.historicalHalfLifeDays} 天` },
+    ],
+  });
+  return groups;
+}
+
+function formatWindowThreshold(count: number, minimumSamples: number, minimumMet: boolean) {
+  return (
+    <span className="inline-flex max-w-full flex-wrap items-center justify-center gap-x-1 gap-y-1 text-center">
+      <span className="whitespace-nowrap tabular-nums">{count}/{minimumSamples}</span>
+      <span aria-hidden="true">，</span>
+      <StatusBadge
+        tone={minimumMet ? "healthy" : "warning"}
+        className="h-5 rounded-[4px] px-1.5 text-[11px]"
+      >
+        {minimumMet ? "样本充足" : "样本不足"}
+      </StatusBadge>
+    </span>
+  );
+}
+
+function WindowComparison({
+  groups,
+  historicalSubtitle,
 }: {
-  title: string;
-  count: number;
-  effectiveMass: number;
-  score: number;
-  weight: number;
-  success?: number;
-  failure?: number;
-  p95?: number | null;
+  groups: WindowComparisonGroup[];
+  historicalSubtitle: string;
 }) {
   return (
-    <div className="grid gap-0.5">
-      <div className="font-medium text-foreground">{title}</div>
-      <div className="flex justify-between gap-2"><span>样本</span><span className="tabular-nums text-foreground">{count}</span></div>
-      <div className="flex justify-between gap-2"><span>有效样本（衰减后）</span><span className="tabular-nums text-foreground">{formatMass(effectiveMass)}</span></div>
-      {success !== undefined && failure !== undefined ? (
-        <div className="flex justify-between gap-2"><span>成功 / 失败</span><span className="tabular-nums text-foreground">{formatMass(success)} / {formatMass(failure)}</span></div>
-      ) : null}
-      {p95 !== undefined ? (
-        <div className="flex justify-between gap-2"><span>P95 延迟</span><span className="tabular-nums text-foreground">{p95 == null ? "暂无" : formatLatency(p95)}</span></div>
-      ) : null}
-      <div className="flex justify-between gap-2"><span>窗口分 / 采用权重</span><span className="tabular-nums font-medium text-foreground">{formatBasisPoints(score)} / {formatBasisPoints(weight)}</span></div>
+    <>
+      <div className="hidden border-y border-border/70 md:block">
+        <div className="grid grid-cols-[minmax(164px,1.15fr)_minmax(0,1fr)_minmax(0,1fr)] items-end gap-x-4 px-1 py-2 text-[11px] font-medium text-muted-foreground">
+          <span className="min-w-0">指标</span>
+          <span className="min-w-0 whitespace-nowrap text-center">最近 24 小时</span>
+          <span className="min-w-0 text-center">
+            <span className="block whitespace-nowrap">历史数据</span>
+            <span className="mt-0.5 block break-words text-[10px] font-normal leading-4 text-muted-foreground/75">（{historicalSubtitle}）</span>
+          </span>
+        </div>
+        {groups.map((group) => (
+          <div key={group.label}>
+            <div className="px-1 pb-1 pt-3 text-[11px] font-medium text-muted-foreground/80">{group.label}</div>
+            {group.rows.map((row) => (
+              <div
+                key={row.label}
+                className="grid min-h-9 grid-cols-[minmax(164px,1.15fr)_minmax(0,1fr)_minmax(0,1fr)] items-center gap-x-4 border-t border-border/45 px-1 py-2 text-[13px]"
+              >
+                <span className="whitespace-nowrap text-muted-foreground">{row.label}</span>
+                <span className={cn(
+                  "min-w-0 text-center tabular-nums text-foreground",
+                  row.wrapValues ? "whitespace-normal" : "whitespace-nowrap",
+                )}>{row.recent}</span>
+                <span className={cn(
+                  "min-w-0 text-center tabular-nums text-foreground",
+                  row.wrapValues ? "whitespace-normal" : "whitespace-nowrap",
+                )}>{row.historical}</span>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+      <div className="grid gap-3 md:hidden">
+        <WindowStack title="最近 24 小时" groups={groups} value="recent" />
+        <WindowStack title="历史数据" subtitle={`（${historicalSubtitle}）`} groups={groups} value="historical" />
+      </div>
+    </>
+  );
+}
+
+function WindowStack({
+  title,
+  subtitle,
+  groups,
+  value,
+}: {
+  title: string;
+  subtitle?: string;
+  groups: WindowComparisonGroup[];
+  value: "recent" | "historical";
+}) {
+  return (
+    <div className="border-y border-border/70 py-2">
+      <div className="grid gap-0.5 px-1 pb-1.5">
+        <span className="whitespace-nowrap text-xs font-medium text-foreground">{title}</span>
+        {subtitle ? <span className="break-words text-[10px] text-muted-foreground/75">{subtitle}</span> : null}
+      </div>
+      {groups.map((group) => (
+        <div key={group.label}>
+          <div className="px-1 pb-1 pt-2 text-[11px] font-medium text-muted-foreground/80">{group.label}</div>
+          {group.rows.map((row) => (
+            <div key={row.label} className="grid min-h-9 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-t border-border/45 px-1 py-2 text-[13px]">
+              <span className="whitespace-nowrap text-muted-foreground">{row.label}</span>
+              <span className={cn(
+                "text-right tabular-nums text-foreground",
+                row.wrapValues ? "whitespace-normal" : "whitespace-nowrap",
+              )}>{row[value]}</span>
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MonitoringSampleStatus({
+  status,
+  hasSamples,
+  messagePrefix = "监控样本",
+}: {
+  status: NonNullable<NonNullable<LocalRoutingCandidate["scoreDetails"]>["reliability"]["windowDetails"]>["monitoringSourceStatus"];
+  hasSamples: boolean;
+  messagePrefix?: string;
+}) {
+  if (status === "comparable" && hasSamples) return null;
+  const message = status === "incomparable"
+    ? hasSamples
+      ? "监控样本按整把密钥统计，已按监控来源权重参与评分。"
+      : "监控来源按整把密钥统计，当前窗口暂无有效样本。"
+    : status === "no_evidence"
+      ? "当前没有有效的监控观测。"
+      : status === "weight_zero"
+        ? "监控观测存在，但监控权重为 0，未参与评分。"
+        : status === "disabled"
+          ? "监控来源未启用。"
+          : "监控样本按整把密钥统计，已按监控来源权重参与评分。";
+  return <div className="border-t border-border pt-1 text-muted-foreground">{messagePrefix}说明：{message}</div>;
+}
+
+function UnavailableScoreWindowDetails() {
+  const groups: WindowComparisonGroup[] = [
+    {
+      label: "窗口计算",
+      rows: [{ label: "窗口数据", recent: "暂无按时间窗口划分的数据", historical: "暂无按时间窗口划分的数据" }],
+    },
+  ];
+  return (
+    <div className="grid gap-2">
+      <div className="font-medium text-foreground">窗口明细</div>
+      <WindowComparison groups={groups} historicalSubtitle="24 小时以前" />
     </div>
   );
 }
 
 function formatMass(value: number) {
-  return `${(value / 10_000).toFixed(value % 10_000 === 0 ? 0 : 1)} 次`;
+  const scaled = value / 1_000_000;
+  const formatted = Number.isInteger(scaled)
+    ? scaled.toFixed(0)
+    : scaled.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+  return `${formatted} 次`;
 }
 
 function formatLatency(value: number) {
@@ -448,13 +820,9 @@ function factorSummary(
     return `近24小时成功率 ${formatBasisPoints(windowDetails.recentScore)} · 历史成功率 ${formatBasisPoints(windowDetails.historicalScore)} · 近期/历史权重 ${formatBasisPoints(windowDetails.recentWeightBasisPoints)} / ${formatBasisPoints(windowDetails.historicalWeightBasisPoints)}`;
   }
   if (label === "响应速度" && windowDetails) {
-    return `近24小时 P95 ${formatOptionalLatency(windowDetails.recentP95LatencyMs)} · 历史 P95 ${formatOptionalLatency(windowDetails.historicalP95LatencyMs)} · 近期/历史权重 ${formatBasisPoints(windowDetails.recentResponsivenessWeightBasisPoints)} / ${formatBasisPoints(windowDetails.historicalResponsivenessWeightBasisPoints)}`;
+    return `近24小时加权平均 ${formatLatency(windowDetails.recentWeightedLatencyMs)} · 历史加权平均 ${formatLatency(windowDetails.historicalWeightedLatencyMs)} · 近期/历史权重 ${formatBasisPoints(windowDetails.recentResponsivenessWeightBasisPoints)} / ${formatBasisPoints(windowDetails.historicalResponsivenessWeightBasisPoints)} · 来源权重 ${formatBasisPoints(windowDetails.responsivenessRealSourceWeightBasisPoints)} / ${formatBasisPoints(windowDetails.responsivenessMonitoringSourceWeightBasisPoints)}`;
   }
   return summaryInputs(label, factor);
-}
-
-function formatOptionalLatency(value: number | null) {
-  return value == null ? "暂无" : formatLatency(value);
 }
 
 function summaryInputs(

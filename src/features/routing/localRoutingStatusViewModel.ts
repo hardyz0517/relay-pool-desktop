@@ -31,8 +31,8 @@ const previewRejectReasonLabels: Record<string, string> = {
   unsupported_model: "模型被健康能力记录拒绝",
   model_health_rejected: "模型健康状态阻止路由",
   scoped_health_rejected: "候选健康状态阻止路由",
-  error_rate_rejected: "错误率保护阻止路由",
-  error_rate_probe_discovery: "仅用于恢复探测",
+  error_rate_rejected: "密钥熔断器阻止路由",
+  error_rate_probe_discovery: "仅用于熔断恢复探测",
   credential_unavailable: "凭据不可用",
   candidate_disabled: "密钥已停用",
   candidate_unschedulable: "密钥已暂停路由",
@@ -143,7 +143,11 @@ export function buildCandidateDisplayFacts(candidate: RoutingCandidateView): Can
   const formattedBalance = formatBalanceValue(candidate.balanceValue);
   const balanceLabel =
     formattedBalance?.label ??
-    (balanceFact ? formatBalanceStatus(balanceFact.value) : "后端未提供");
+    (candidate.previewRejectReasons.includes("balance_depleted")
+      ? "余额不足"
+      : balanceFact
+        ? formatBalanceStatus(balanceFact.value)
+        : "后端未提供");
 
   return {
     rejectReasonLabel: rejectReason ? formatPreviewRejectReason(rejectReason) : null,
@@ -175,8 +179,8 @@ function formatMultiplierFactValue(value: string | null | undefined) {
   const numericMultiplier = normalized.match(/^(-?\d+(?:\.\d+)?)x$/i);
   if (!numericMultiplier) return normalized || "后端未提供";
   return `${Number(numericMultiplier[1]).toLocaleString("zh-CN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
+    minimumFractionDigits: 3,
+    maximumFractionDigits: 3,
   })}x`;
 }
 

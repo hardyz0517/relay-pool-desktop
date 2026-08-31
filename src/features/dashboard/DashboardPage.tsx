@@ -41,6 +41,7 @@ import {
 import { alertingCurrentQueryOptions } from "@/lib/queries/alertingQueries";
 import {
   loadRoutingRuntimeOverlayQuery,
+  loadRoutingWorkspaceSnapshotQuery,
   routingQueryKeys,
 } from "@/lib/queries/routingQueries";
 import type { AlertingIncident } from "@/lib/types/alerting";
@@ -135,6 +136,11 @@ export function DashboardPage({
     staleTime: 1_000,
     refetchInterval: proxyRunning ? 1_000 : false,
   });
+  const routingSnapshotQuery = useActivityQuery({
+    queryKey: routingQueryKeys.workspaceSnapshot({ limit: 50 }),
+    queryFn: () => loadRoutingWorkspaceSnapshotQuery({ limit: 50 }),
+    staleTime: 5_000,
+  });
   const stationsQuery = useActivityQuery(stationsQueryOptions());
   const balancesQuery = useActivityQuery(
     currentStationBalanceSnapshotsQueryOptions(),
@@ -169,6 +175,15 @@ export function DashboardPage({
       ]),
     ),
     [routingRuntimeQuery.data],
+  );
+  const routingScoreByKeyId = useMemo(
+    () => new Map(
+      (routingSnapshotQuery.data?.candidates ?? []).map((candidate) => [
+        candidate.stationKeyId,
+        candidate.score,
+      ]),
+    ),
+    [routingSnapshotQuery.data],
   );
   const stations = stationsQuery.data ?? [];
   const balanceSnapshots = balancesQuery.data ?? [];
@@ -500,7 +515,7 @@ export function DashboardPage({
               </p>
             </div>
           ) : (
-            keyPoolItems.slice(0, 5).map((key) => (
+            keyPoolItems.slice(0, 6).map((key) => (
               <ObjectRow
                 key={key.id}
                 icon={<KeyRound className="h-4 w-4" />}
@@ -522,9 +537,9 @@ export function DashboardPage({
                     align: "center",
                   },
                   {
-                    label: "成功率",
-                    value: key.successRate === null ? "-" : `${Math.round(key.successRate * 100)}%`,
-                    tone: key.successRate !== null && key.successRate < 0.9 ? "warning" : "good",
+                    label: "评分",
+                    value: formatDashboardRoutingScore(routingScoreByKeyId.get(key.id)),
+                    tone: routingScoreByKeyId.get(key.id) == null ? "neutral" : "good",
                   },
                 ]}
               />
@@ -765,6 +780,10 @@ function formatAverageDurationDetail(metrics: DashboardPeriodMetrics) {
 
 function formatTokenCount(value: number | null | undefined) {
   return (value ?? 0).toLocaleString("zh-CN");
+}
+
+function formatDashboardRoutingScore(score: number | null | undefined) {
+  return score == null ? "-" : `${Math.round(score / 100)} 分`;
 }
 
 function buildAlertingRiskItem(

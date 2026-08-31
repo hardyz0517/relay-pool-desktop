@@ -1,5 +1,7 @@
 import { getActiveBackendClient } from "@/lib/bridge/activeBackendClient";
 import type {
+  ApplyRoutingPolicyDocumentInput,
+  RoutingPolicyPublicationStatusInput,
   RecentRouteDecisionsInput,
   RouteSimulationInput,
   RoutingWorkspaceSnapshotInput,
@@ -31,18 +33,22 @@ export function listStationKeyHealth() {
   return getActiveBackendClient().routing.listStationKeyHealth();
 }
 
-export function getRoutingProtectionStatus(
-  input: import("@/lib/types/routing").RoutingProtectionStatusInput = {},
-) {
-  return getActiveBackendClient().routing.getRoutingProtectionStatus(input);
+export function getRoutingProtectionStatus() {
+  return getActiveBackendClient().routing.getRoutingProtectionStatus();
 }
 
 export function loadRoutingPolicy() {
   return getActiveBackendClient().routing.loadRoutingPolicy();
 }
 
+export function getRoutingPolicyPublicationStatus(
+  input: RoutingPolicyPublicationStatusInput,
+) {
+  return getActiveBackendClient().routing.getRoutingPolicyPublicationStatus(input);
+}
+
 export function applyRoutingPolicyDocument(
-  input: import("@/lib/types/routing").ApplyRoutingPolicyDocumentInput,
+  input: ApplyRoutingPolicyDocumentInput,
 ) {
   return getActiveBackendClient().routing.applyRoutingPolicyDocument(input);
 }

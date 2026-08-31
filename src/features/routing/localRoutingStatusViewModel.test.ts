@@ -50,10 +50,27 @@ describe("local routing status view model", () => {
   it("renders candidate economics from backend facts without legacy multiplier fields", () => {
     const display = buildCandidateDisplayFacts(candidate());
 
-    expect(display.multiplierLabel).toBe("1.25x");
+    expect(display.multiplierLabel).toBe("1.250x");
     expect(display.multiplierDetail).toBeNull();
     expect(display.balanceLabel).toBe("正常");
     expect(display.balanceDetail).toBeNull();
+  });
+
+  it("renders effective multipliers with three decimal places", () => {
+    const display = buildCandidateDisplayFacts(
+      candidate({
+        facts: [
+          {
+            kind: "pricing",
+            label: "Effective multiplier",
+            value: "0.075x",
+            severity: "info",
+          },
+        ],
+      }),
+    );
+
+    expect(display.multiplierLabel).toBe("0.075x");
   });
 
   it("shows the collected balance amount instead of its status", () => {
@@ -63,6 +80,23 @@ describe("local routing status view model", () => {
 
     expect(display.balanceLabel).toBe("12.50$");
     expect(display.balanceDetail).toBeNull();
+  });
+
+  it("preserves a negative collected balance even when its status is stale", () => {
+    const display = buildCandidateDisplayFacts(
+      candidate({ balanceValue: -0.05, balanceCurrency: "USD" }),
+    );
+
+    expect(display.balanceLabel).toBe("-0.05$");
+    expect(display.balanceAmountLabel).toBe("-0.05");
+  });
+
+  it("does not show a conflicting normal status when routing rejected the balance", () => {
+    const display = buildCandidateDisplayFacts(
+      candidate({ previewRejectReasons: ["balance_depleted"] }),
+    );
+
+    expect(display.balanceLabel).toBe("余额不足");
   });
 
   it("uses backend rejection codes and stays explicit when facts are missing", () => {

@@ -22,14 +22,18 @@ import type {
   StationKeyOperationalDetailDto,
   UpdateStationKeyCapabilitiesInputDto,
   UpsertModelAliasInputDto,
-  RoutingPolicyConfigV2Dto,
+  RoutingPolicyConfigV3Dto,
+  RoutingPolicyPublicationStatusDto,
+  RoutingPolicyPublicationStatusInputDto,
   RoutingPolicySnapshotDto,
   ApplyRoutingPolicyDocumentInputDto,
 } from "@/lib/bridge/generated";
 
-export type RoutingPolicyConfigV2 = RoutingPolicyConfigV2Dto;
+export type RoutingPolicyConfigV3 = RoutingPolicyConfigV3Dto;
 export type RoutingPolicySnapshot = RoutingPolicySnapshotDto;
 export type ApplyRoutingPolicyDocumentInput = ApplyRoutingPolicyDocumentInputDto;
+export type RoutingPolicyPublicationStatusInput = RoutingPolicyPublicationStatusInputDto;
+export type RoutingPolicyPublicationStatus = RoutingPolicyPublicationStatusDto;
 export type RouteEndpointKind = RouteEndpointKindDto;
 export type PricingGroupType = PricingGroupTypeDto;
 export type RoutingGroupFilter = RoutingGroupFilterDto;

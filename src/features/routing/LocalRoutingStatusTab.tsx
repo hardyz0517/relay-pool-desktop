@@ -265,10 +265,12 @@ export function LocalRoutingStatusTab({
 }
 
 const decisionActionLabels: Record<NonNullable<RequestDecisionTrace["timeline"][number]["action"]>, string> = {
-  retry_same_target: "同目标重试",
-  wait_then_replan: "等待后重新规划",
-  try_different_failure_domain: "切换故障域",
+  retry_current_key: "重试当前密钥",
+  try_next_key: "尝试下一密钥",
   stop_request: "停止请求",
+  retry_same_target: "历史动作：同目标重试",
+  wait_then_replan: "历史动作：等待后重新规划",
+  try_different_failure_domain: "历史动作：切换故障域",
 };
 
 const decisionTraceStatusLabels: Record<RequestDecisionTrace["status"], string> = {
@@ -322,9 +324,8 @@ export function DecisionTraceDetails({ trace }: { trace: RequestDecisionTrace })
               <div className="mt-1 text-muted-foreground">{item.summary}</div>
               <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-muted-foreground">
                 {item.remainingAttempts != null ? <span>剩余尝试：{item.remainingAttempts}</span> : null}
-                {item.remainingWaitBudgetMs != null ? <span>等待预算：{item.remainingWaitBudgetMs} ms</span> : null}
+                {item.remainingPrecommitBudgetMs != null ? <span>请求提交前预算：{item.remainingPrecommitBudgetMs} ms</span> : null}
                 {item.policyRevision != null ? <span>策略 revision：{item.policyRevision}</span> : null}
-                {item.failureDomain ? <span>故障域：{item.failureDomain}</span> : null}
                 <span>{item.detailAvailability === "detailed" ? "字段完整" : "摘要字段"}</span>
               </div>
             </li>

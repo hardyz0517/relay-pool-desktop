@@ -20,12 +20,16 @@ describe("official status view model", () => {
         lastAttemptAtMs: 1700000000000, lastSuccessAtMs: 1700000000000, lastCompleteAtMs: 1700000000000,
         upstreamMonitorId: "upstream-1", identityKind: "upstream_id", name: "监控", provider: "openai", groupName: null,
         primaryModel: "gpt-test", extraModels: [], currentOutcome: "available", currentLatencyMs: 120, currentPingLatencyMs: 30,
-        recentAvailabilityPercent: 87.5, upstreamCheckedAtMs: 1700000000000, recentSamples: [],
+        recentAvailabilityPercent: 87.5, upstreamCheckedAtMs: 1700000000000, recentSamples: [
+          { id: "newest", model: "gpt-test", outcome: "available", latencyMs: 120, pingLatencyMs: 30, checkedAtMs: 1700000000000 },
+          { id: "oldest", model: "gpt-test", outcome: "unavailable", latencyMs: 500, pingLatencyMs: 40, checkedAtMs: 1699999000000 },
+        ],
       }],
       page: { limit: 100, returned: 1, nextCursor: "v1:100" },
     });
     expect(view.rows[0].availabilityLabel).toBe("87.50%");
     expect(view.rows[0].sourceStateLabel).toBe("正常");
+    expect(view.rows[0].trend.map((sample) => sample.id)).toEqual(["oldest", "newest"]);
     expect(view.nextCursor).toBe("v1:100");
   });
 });

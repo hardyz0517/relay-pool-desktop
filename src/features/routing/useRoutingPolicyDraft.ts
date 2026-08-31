@@ -5,11 +5,14 @@ import { BackendError, isBackendError } from "@/lib/bridge/errors";
 import { readError } from "@/lib/errors";
 import {
   routingPolicyQueryOptions,
+  routingPolicyPublicationQueryOptions,
   routingQueryKeys,
 } from "@/lib/queries/routingQueries";
 import type {
   ApplyRoutingPolicyDocumentInput,
-  RoutingPolicyConfigV2,
+  RoutingPolicyConfigV3,
+  RoutingPolicyPublicationStatus,
+  RoutingPolicyPublicationStatusInput,
   RoutingPolicySnapshot,
 } from "@/lib/types/routing";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
@@ -23,11 +26,26 @@ export type RoutingPolicyDraftStatus =
   | "error"
   | "conflict";
 
+export type RoutingPolicyPublicationPollingState =
+  | "idle"
+  | "polling"
+  | "unavailable"
+  | "timed_out";
+
+export const ROUTING_POLICY_PUBLICATION_POLL_INTERVAL_MS = 1_000;
+export const ROUTING_POLICY_PUBLICATION_POLL_TIMEOUT_MS = 120_000;
+
 export type RoutingPolicyDraftState = {
-  config: RoutingPolicyConfigV2 | null;
-  initialConfig: RoutingPolicyConfigV2 | null;
+  config: RoutingPolicyConfigV3 | null;
+  initialConfig: RoutingPolicyConfigV3 | null;
   baseRevision: number | null;
   remoteSnapshot: RoutingPolicySnapshot | null;
+  publicationStatus: string | null;
+  publicationGenerationId: string | null;
+  publicationFailureCode: string | null;
+  publicationPollingState: RoutingPolicyPublicationPollingState;
+  publicationError: string | null;
+  publicationStartedAtMs: number | null;
   status: RoutingPolicyDraftStatus;
   error: string | null;
   fieldErrors: Record<string, string>;
@@ -36,9 +54,12 @@ export type RoutingPolicyDraftState = {
 
 export type RoutingPolicyDraftAction =
   | { type: "hydrate"; snapshot: RoutingPolicySnapshot }
-  | { type: "edit"; config: RoutingPolicyConfigV2 }
+  | { type: "edit"; config: RoutingPolicyConfigV3 }
   | { type: "saveStart" }
-  | { type: "saveSuccess"; snapshot: RoutingPolicySnapshot }
+  | { type: "saveSuccess"; snapshot: RoutingPolicySnapshot; publicationStartedAtMs?: number }
+  | { type: "publicationUpdate"; publication: RoutingPolicyPublicationStatus }
+  | { type: "publicationUnavailable"; revision: number }
+  | { type: "publicationTimeout"; revision: number }
   | { type: "saveError"; error: string; fieldErrors?: Record<string, string> }
   | { type: "saveConflict"; error: string; currentRevision: number | null }
   | { type: "discard" }
@@ -50,22 +71,26 @@ export const initialRoutingPolicyDraftState: RoutingPolicyDraftState = {
   initialConfig: null,
   baseRevision: null,
   remoteSnapshot: null,
+  publicationStatus: null,
+  publicationGenerationId: null,
+  publicationFailureCode: null,
+  publicationPollingState: "idle",
+  publicationError: null,
+  publicationStartedAtMs: null,
   status: "loading",
   error: null,
   fieldErrors: {},
   conflictRevision: null,
 };
 
-/** Return a fresh copy of the backend-compatible V2 baseline for draft reset. */
-export function createDefaultRoutingPolicyConfig(): RoutingPolicyConfigV2 {
+/** Return a fresh copy of the backend-compatible V3 baseline for draft reset. */
+export function createDefaultRoutingPolicyConfig(): RoutingPolicyConfigV3 {
   return {
-    version: 2,
+    version: 3,
     reliabilityWeight: 4_000,
     responsivenessWeight: 2_500,
     costWeight: 2_000,
     preferenceWeight: 1_500,
-    maxCandidates: 64,
-    explorationShareBasisPoints: 500,
     allowDepletedFallback: false,
     affinityEnabled: false,
     affinityTtlSeconds: 300,
@@ -73,21 +98,25 @@ export function createDefaultRoutingPolicyConfig(): RoutingPolicyConfigV2 {
     routingGroupFilter: "all_groups",
     outboundProxyMode: "inherit",
     outboundProxyUrl: null,
-    retryFailover: {
-      version: 2,
-      maxTotalAttempts: 4,
-      maxSameTargetCapacityRetries: 2,
-      capacityRetryWaitBudgetSeconds: 2,
-      allowCrossCapacityDomainFallback: true,
+    reliabilitySourceWeights: {
+      realTrafficPercent: 70,
+      monitoringPercent: 30,
     },
-    protectionProfile: {
-      version: 2,
-      enabled: false,
-      windowMaxSamples: 64,
-      windowSeconds: 300,
-      minSamples: 5,
-      failureThresholdPercent: 60,
-      halfOpenSuccessesToClose: 2,
+    reliabilitySampling: {
+      historicalMinimumSamples: 15,
+      recentMinimumSamples: 5,
+      optimisticReliabilityPercent: 95,
+      optimisticLatencyMs: 2_500,
+    },
+    retry: {
+      version: 1,
+      maxRetryCount: 3,
+      consecutiveFailureThreshold: 3,
+    },
+    circuitBreaker: {
+      version: 1,
+      recoverySuccessThreshold: 2,
+      recoveryWaitSeconds: 30,
     },
     timeoutPolicy: {
       version: 2,
@@ -105,8 +134,8 @@ function configFingerprint(value: unknown): string {
 }
 
 export function routingPolicyConfigEqual(
-  left: RoutingPolicyConfigV2 | null,
-  right: RoutingPolicyConfigV2 | null,
+  left: RoutingPolicyConfigV3 | null,
+  right: RoutingPolicyConfigV3 | null,
 ): boolean {
   return configFingerprint(left) === configFingerprint(right);
 }
@@ -118,13 +147,21 @@ export function routingPolicyDraftIsDirty(state: RoutingPolicyDraftState): boole
 /** Non-blocking client hints. The backend remains the final validator and no
  * value is silently clamped before the document reaches CAS validation. */
 export function routingPolicyDraftFieldHints(
-  config: RoutingPolicyConfigV2 | null,
+  config: RoutingPolicyConfigV3 | null,
 ): Record<string, string> {
   if (!config) return {};
   const hints: Record<string, string> = {};
-  if (config.retryFailover.maxSameTargetCapacityRetries >= config.retryFailover.maxTotalAttempts) {
-    hints["retryFailover.maxSameTargetCapacityRetries"] =
-      "同目标容量重试次数必须小于单个请求最大尝试次数。保存时后端会再次校验。";
+  if (
+    config.reliabilitySourceWeights.realTrafficPercent < 0 ||
+    config.reliabilitySourceWeights.realTrafficPercent > 100 ||
+    !Number.isInteger(config.reliabilitySourceWeights.realTrafficPercent) ||
+    config.reliabilitySourceWeights.monitoringPercent < 0 ||
+    config.reliabilitySourceWeights.monitoringPercent > 100 ||
+    !Number.isInteger(config.reliabilitySourceWeights.monitoringPercent) ||
+    config.reliabilitySourceWeights.realTrafficPercent + config.reliabilitySourceWeights.monitoringPercent !== 100
+  ) {
+    hints["reliabilitySourceWeights"] =
+      "真实流量和监控权重必须是 0-100 的整数，且之和为 100%。保存时后端会再次校验。";
   }
   return hints;
 }
@@ -137,6 +174,12 @@ function withSnapshot(
     initialConfig: snapshot.config,
     baseRevision: snapshot.revision,
     remoteSnapshot: snapshot,
+    publicationStatus: snapshot.status,
+    publicationGenerationId: null,
+    publicationFailureCode: null,
+    publicationPollingState: "idle",
+    publicationError: null,
+    publicationStartedAtMs: null,
     status: "ready",
     error: null,
     fieldErrors: {},
@@ -145,42 +188,64 @@ function withSnapshot(
 }
 
 function dirtyFields(
-  base: RoutingPolicyConfigV2,
-  local: RoutingPolicyConfigV2,
-): Set<keyof RoutingPolicyConfigV2> {
-  const keys = Object.keys(base) as Array<keyof RoutingPolicyConfigV2>;
+  base: RoutingPolicyConfigV3,
+  local: RoutingPolicyConfigV3,
+): Set<keyof RoutingPolicyConfigV3> {
+  const keys = Object.keys(base) as Array<keyof RoutingPolicyConfigV3>;
   return new Set(keys.filter((key) =>
     configFingerprint(base[key] as never) !== configFingerprint(local[key] as never),
   ));
 }
 
-function mergeWithRemote(state: RoutingPolicyDraftState): RoutingPolicyConfigV2 | null {
+function mergeWithRemote(state: RoutingPolicyDraftState): RoutingPolicyConfigV3 | null {
   if (!state.config || !state.initialConfig || !state.remoteSnapshot) return state.config;
   const localChanges = dirtyFields(state.initialConfig, state.config);
   const merged = { ...state.remoteSnapshot.config };
   for (const key of localChanges) {
-    if (key === "retryFailover") {
-      const baseRetry = state.initialConfig.retryFailover;
-      const localRetry = state.config.retryFailover;
-      const remoteRetry = state.remoteSnapshot.config.retryFailover;
-      const retryFailover = { ...remoteRetry };
+    if (key === "reliabilitySourceWeights") {
+      const baseWeights = state.initialConfig.reliabilitySourceWeights;
+      const localWeights = state.config.reliabilitySourceWeights;
+      const remoteWeights = state.remoteSnapshot.config.reliabilitySourceWeights;
+      const reliabilitySourceWeights = { ...remoteWeights };
+      for (const nestedKey of Object.keys(baseWeights) as Array<keyof typeof baseWeights>) {
+        if (configFingerprint(baseWeights[nestedKey]) !== configFingerprint(localWeights[nestedKey])) {
+          reliabilitySourceWeights[nestedKey] = localWeights[nestedKey];
+        }
+      }
+      merged.reliabilitySourceWeights = reliabilitySourceWeights;
+    } else if (key === "reliabilitySampling") {
+      const baseSampling = state.initialConfig.reliabilitySampling;
+      const localSampling = state.config.reliabilitySampling;
+      const remoteSampling = state.remoteSnapshot.config.reliabilitySampling;
+      const reliabilitySampling = { ...remoteSampling };
+      for (const nestedKey of Object.keys(baseSampling) as Array<keyof typeof baseSampling>) {
+        if (configFingerprint(baseSampling[nestedKey]) !== configFingerprint(localSampling[nestedKey])) {
+          reliabilitySampling[nestedKey] = localSampling[nestedKey];
+        }
+      }
+      merged.reliabilitySampling = reliabilitySampling;
+    } else if (key === "retry") {
+      const baseRetry = state.initialConfig.retry;
+      const localRetry = state.config.retry;
+      const remoteRetry = state.remoteSnapshot.config.retry;
+      const retry = { ...remoteRetry };
       for (const nestedKey of Object.keys(baseRetry) as Array<keyof typeof baseRetry>) {
         if (configFingerprint(baseRetry[nestedKey]) !== configFingerprint(localRetry[nestedKey])) {
-          (retryFailover as Record<string, number | boolean>)[nestedKey] = localRetry[nestedKey];
+          retry[nestedKey] = localRetry[nestedKey];
         }
       }
-      merged.retryFailover = retryFailover;
-    } else if (key === "protectionProfile") {
-      const baseProfile = state.initialConfig.protectionProfile;
-      const localProfile = state.config.protectionProfile;
-      const remoteProfile = state.remoteSnapshot.config.protectionProfile;
-      const protectionProfile = { ...remoteProfile };
-      for (const nestedKey of Object.keys(baseProfile) as Array<keyof typeof baseProfile>) {
-        if (configFingerprint(baseProfile[nestedKey]) !== configFingerprint(localProfile[nestedKey])) {
-          (protectionProfile as Record<string, number | boolean>)[nestedKey] = localProfile[nestedKey];
+      merged.retry = retry;
+    } else if (key === "circuitBreaker") {
+      const baseCircuit = state.initialConfig.circuitBreaker;
+      const localCircuit = state.config.circuitBreaker;
+      const remoteCircuit = state.remoteSnapshot.config.circuitBreaker;
+      const circuitBreaker = { ...remoteCircuit };
+      for (const nestedKey of Object.keys(baseCircuit) as Array<keyof typeof baseCircuit>) {
+        if (configFingerprint(baseCircuit[nestedKey]) !== configFingerprint(localCircuit[nestedKey])) {
+          circuitBreaker[nestedKey] = localCircuit[nestedKey];
         }
       }
-      merged.protectionProfile = protectionProfile;
+      merged.circuitBreaker = circuitBreaker;
     } else if (key === "timeoutPolicy") {
       const baseTimeout = state.initialConfig.timeoutPolicy;
       const localTimeout = state.config.timeoutPolicy;
@@ -210,9 +275,21 @@ export function routingPolicyDraftReducer(
       // CAS write. Never roll a draft back to an older authoritative revision.
       if (action.snapshot.revision < state.baseRevision) return state;
       if (action.snapshot.revision === state.baseRevision) {
-        return state.remoteSnapshot?.revision === action.snapshot.revision
+        const publicationPending = shouldPollPublication(action.snapshot.status);
+        return configFingerprint(state.remoteSnapshot) === configFingerprint(action.snapshot)
           ? state
-          : { ...state, remoteSnapshot: action.snapshot };
+          : {
+              ...state,
+              remoteSnapshot: action.snapshot,
+              publicationStatus: action.snapshot.status,
+              publicationPollingState: publicationPending
+                ? state.publicationPollingState
+                : "idle",
+              publicationError: publicationPending ? state.publicationError : null,
+              publicationStartedAtMs: publicationPending
+                ? state.publicationStartedAtMs
+                : null,
+            };
       }
       if (!routingPolicyDraftIsDirty(state) && state.status !== "saving") {
         return withSnapshot(action.snapshot);
@@ -227,6 +304,7 @@ export function routingPolicyDraftReducer(
       };
     }
     case "edit":
+      if (state.status === "saving") return state;
       return {
         ...state,
         config: action.config,
@@ -236,16 +314,60 @@ export function routingPolicyDraftReducer(
       };
     case "saveStart":
       return { ...state, status: "saving", error: null, fieldErrors: {} };
-    case "saveSuccess":
+    case "saveSuccess": {
+      const publicationPending = shouldPollPublication(action.snapshot.status);
       return {
         config: action.snapshot.config,
         initialConfig: action.snapshot.config,
         baseRevision: action.snapshot.revision,
         remoteSnapshot: action.snapshot,
+        publicationStatus: action.snapshot.status,
+        publicationGenerationId: null,
+        publicationFailureCode: null,
+        publicationPollingState: publicationPending ? "polling" : "idle",
+        publicationError: null,
+        publicationStartedAtMs: publicationPending
+          ? action.publicationStartedAtMs ?? null
+          : null,
         status: "saved",
         error: null,
         fieldErrors: {},
         conflictRevision: null,
+      };
+    }
+    case "publicationUpdate": {
+      if (action.publication.revision !== state.baseRevision) return state;
+      const terminal = isTerminalPublicationStatus(action.publication.status);
+      return {
+        ...state,
+        publicationStatus: action.publication.status,
+        publicationGenerationId:
+          action.publication.policyGenerationId ?? state.publicationGenerationId,
+        publicationFailureCode: action.publication.failureCode,
+        publicationPollingState: terminal ? "idle" : "polling",
+        publicationError: null,
+        publicationStartedAtMs: terminal ? null : state.publicationStartedAtMs,
+      };
+    }
+    case "publicationUnavailable":
+      if (action.revision !== state.baseRevision || state.publicationStartedAtMs === null) {
+        return state;
+      }
+      return {
+        ...state,
+        publicationPollingState: "unavailable",
+        publicationError: "暂时无法读取策略发布进度，将在超时前继续重试；尚未确认此策略已生效。",
+      };
+    case "publicationTimeout":
+      if (action.revision !== state.baseRevision || state.publicationStartedAtMs === null) {
+        return state;
+      }
+      return {
+        ...state,
+        publicationStatus: "expired",
+        publicationPollingState: "timed_out",
+        publicationError: "等待策略发布状态超时，轮询已停止；尚未确认此策略已生效。",
+        publicationStartedAtMs: null,
       };
     case "saveError":
       return { ...state, status: "error", error: action.error, fieldErrors: action.fieldErrors ?? {} };
@@ -288,8 +410,8 @@ export function routingPolicyDraftReducer(
 export type UseRoutingPolicyDraftResult = {
   state: RoutingPolicyDraftState;
   query: ReturnType<typeof useActivityQuery<RoutingPolicySnapshot>>;
-  setConfig: (config: RoutingPolicyConfigV2) => void;
-  save: () => Promise<boolean>;
+  setConfig: (config: RoutingPolicyConfigV3) => void;
+  save: () => Promise<RoutingPolicySnapshot | null>;
   reload: () => Promise<void>;
   discard: () => void;
   mergeRemote: () => void;
@@ -318,6 +440,128 @@ function validationFieldErrors(error: unknown): Record<string, string> {
   return Object.fromEntries(error.details.fields.map(({ field, message }) => [field, message]));
 }
 
+function shouldPollPublication(status: string | null): boolean {
+  return status === "staged" || status === "ready";
+}
+
+function isTerminalPublicationStatus(status: RoutingPolicyPublicationStatus["status"]): boolean {
+  return status === "active" || status === "failed" || status === "expired";
+}
+
+type PublicationPollWait = (delayMs: number, signal: AbortSignal) => Promise<void>;
+
+export type RoutingPolicyPublicationPollOutcome =
+  | "terminal"
+  | "timed_out"
+  | "cancelled";
+
+export type RoutingPolicyPublicationPollOptions = {
+  revision: number;
+  policyGenerationId?: string | null;
+  startedAtMs: number;
+  signal: AbortSignal;
+  fetchStatus: (
+    input: RoutingPolicyPublicationStatusInput,
+  ) => Promise<RoutingPolicyPublicationStatus>;
+  onStatus: (status: RoutingPolicyPublicationStatus) => void;
+  onUnavailable: () => void;
+  intervalMs?: number;
+  timeoutMs?: number;
+  now?: () => number;
+  wait?: PublicationPollWait;
+};
+
+type DeadlineResult<T> =
+  | { kind: "value"; value: T }
+  | { kind: "error" }
+  | { kind: "timed_out" }
+  | { kind: "cancelled" };
+
+function withPollDeadline<T>(
+  promise: Promise<T>,
+  delayMs: number,
+  signal: AbortSignal,
+): Promise<DeadlineResult<T>> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result: DeadlineResult<T>) => {
+      if (settled) return;
+      settled = true;
+      globalThis.clearTimeout(timeout);
+      signal.removeEventListener("abort", onAbort);
+      resolve(result);
+    };
+    const onAbort = () => finish({ kind: "cancelled" });
+    const timeout = globalThis.setTimeout(
+      () => finish({ kind: "timed_out" }),
+      Math.max(0, delayMs),
+    );
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    promise.then(
+      (value) => finish({ kind: "value", value }),
+      () => finish({ kind: "error" }),
+    );
+  });
+}
+
+function waitForPublicationPoll(delayMs: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const onAbort = () => {
+      globalThis.clearTimeout(timeout);
+      resolve();
+    };
+    const timeout = globalThis.setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, Math.max(0, delayMs));
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
+  });
+}
+
+export async function pollRoutingPolicyPublication(
+  options: RoutingPolicyPublicationPollOptions,
+): Promise<RoutingPolicyPublicationPollOutcome> {
+  const intervalMs = options.intervalMs ?? ROUTING_POLICY_PUBLICATION_POLL_INTERVAL_MS;
+  const timeoutMs = options.timeoutMs ?? ROUTING_POLICY_PUBLICATION_POLL_TIMEOUT_MS;
+  const now = options.now ?? Date.now;
+  const wait = options.wait ?? waitForPublicationPoll;
+  let policyGenerationId = options.policyGenerationId ?? null;
+
+  while (!options.signal.aborted) {
+    const remainingMs = timeoutMs - (now() - options.startedAtMs);
+    if (remainingMs <= 0) return "timed_out";
+    const input: RoutingPolicyPublicationStatusInput = {
+      revision: options.revision,
+      policyGenerationId,
+    };
+    const result = await withPollDeadline(
+      Promise.resolve().then(() => options.fetchStatus(input)),
+      remainingMs,
+      options.signal,
+    );
+    if (result.kind === "cancelled") return "cancelled";
+    if (result.kind === "timed_out") return "timed_out";
+    if (result.kind === "error") {
+      options.onUnavailable();
+    } else {
+      const publication = result.value;
+      options.onStatus(publication);
+      policyGenerationId = publication.policyGenerationId ?? policyGenerationId;
+      if (isTerminalPublicationStatus(publication.status)) return "terminal";
+    }
+
+    const afterRequestRemainingMs = timeoutMs - (now() - options.startedAtMs);
+    if (afterRequestRemainingMs <= 0) return "timed_out";
+    await wait(Math.min(intervalMs, afterRequestRemainingMs), options.signal);
+  }
+  return "cancelled";
+}
+
 export function useRoutingPolicyDraft(): UseRoutingPolicyDraftResult {
   const queryClient = useQueryClient();
   const query = useActivityQuery(routingPolicyQueryOptions());
@@ -333,13 +577,51 @@ export function useRoutingPolicyDraft(): UseRoutingPolicyDraftResult {
     }
   }, [query.data, query.error, state.baseRevision]);
 
-  const setConfig = useCallback((config: RoutingPolicyConfigV2) => {
+  useEffect(() => {
+    if (
+      state.baseRevision === null ||
+      state.publicationStartedAtMs === null ||
+      !shouldPollPublication(state.publicationStatus)
+    ) {
+      return;
+    }
+    const revision = state.baseRevision;
+    const controller = new AbortController();
+    void pollRoutingPolicyPublication({
+      revision,
+      policyGenerationId: state.publicationGenerationId,
+      startedAtMs: state.publicationStartedAtMs,
+      signal: controller.signal,
+      fetchStatus: (input) =>
+        queryClient.fetchQuery(routingPolicyPublicationQueryOptions(input)),
+      onStatus: (publication) => {
+        dispatch({ type: "publicationUpdate", publication });
+        if (publication.status === "active") {
+          void queryClient.invalidateQueries({ queryKey: routingQueryKeys.all });
+        }
+      },
+      onUnavailable: () => dispatch({ type: "publicationUnavailable", revision }),
+    }).then((outcome) => {
+      if (outcome === "timed_out" && !controller.signal.aborted) {
+        dispatch({ type: "publicationTimeout", revision });
+      }
+    });
+    return () => controller.abort();
+  }, [
+    queryClient,
+    state.baseRevision,
+    state.publicationGenerationId,
+    state.publicationStartedAtMs,
+    state.publicationStatus,
+  ]);
+
+  const setConfig = useCallback((config: RoutingPolicyConfigV3) => {
     dispatch({ type: "edit", config });
   }, []);
 
-  const save = useCallback(async (): Promise<boolean> => {
+  const save = useCallback(async (): Promise<RoutingPolicySnapshot | null> => {
     if (!state.config || state.baseRevision === null || state.status === "saving") {
-      return false;
+      return null;
     }
     dispatch({ type: "saveStart" });
     const input: ApplyRoutingPolicyDocumentInput = {
@@ -349,10 +631,14 @@ export function useRoutingPolicyDraft(): UseRoutingPolicyDraftResult {
     };
     try {
       const snapshot = await applyRoutingPolicyDocument(input);
-      dispatch({ type: "saveSuccess", snapshot });
+      dispatch({
+        type: "saveSuccess",
+        snapshot,
+        publicationStartedAtMs: Date.now(),
+      });
       queryClient.setQueryData(routingQueryKeys.policy(), snapshot);
       await queryClient.invalidateQueries({ queryKey: routingQueryKeys.all });
-      return true;
+      return snapshot;
     } catch (error) {
       const conflict = conflictInfoFromError(error);
       dispatch(conflict.isConflict
@@ -365,7 +651,7 @@ export function useRoutingPolicyDraft(): UseRoutingPolicyDraftResult {
       if (conflict.isConflict) {
         await query.refetch();
       }
-      return false;
+      return null;
     }
   }, [query, queryClient, state.baseRevision, state.config, state.status]);
 

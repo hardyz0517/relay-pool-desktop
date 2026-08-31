@@ -24,7 +24,7 @@ function toRow(row: StationPublishedStatusOverviewRow): OfficialStatusRowView {
     sourceStateLabel: sourceStateLabel(row.sourceState),
     availabilityLabel: row.recentAvailabilityPercent == null ? "--" : `${row.recentAvailabilityPercent.toFixed(2)}%`,
     lastCheckedLabel: formatTime(row.upstreamCheckedAtMs),
-    trend: row.recentSamples.map((sample, i) => ({
+    trend: [...row.recentSamples].reverse().map((sample, i) => ({
       id: sample.id || `${row.rowKey}-${i}`,
       tone: sampleTone(sample.outcome),
       label: outcomeLabel(sample.outcome),

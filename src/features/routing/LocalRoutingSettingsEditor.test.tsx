@@ -5,25 +5,25 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "@/components/ui";
 import { BackendError } from "@/lib/bridge/errors";
-import type { RoutingPolicyConfigV2 } from "@/lib/types/routing";
+import type { RoutingPolicyConfigV3 } from "@/lib/types/routing";
 import { LocalRoutingSettingsEditor } from "./LocalRoutingSettingsEditor";
 import { createDefaultRoutingPolicyConfig } from "./useRoutingPolicyDraft";
 
 const mocks = vi.hoisted(() => ({
-  load: vi.fn(),
-  protection: vi.fn(),
   policyData: null as unknown,
   protectionData: null as unknown,
   policyQuery: null as unknown,
   protectionQuery: null as unknown,
   apply: vi.fn(),
+  publication: vi.fn(() => new Promise(() => undefined)),
   refresh: vi.fn(),
 }));
 
 vi.mock("@/lib/api/routing", () => ({
-  loadRoutingPolicy: mocks.load,
-  getRoutingProtectionStatus: mocks.protection,
+  loadRoutingPolicy: vi.fn(async () => mocks.policyData),
+  getRoutingProtectionStatus: vi.fn(async () => mocks.protectionData),
   applyRoutingPolicyDocument: mocks.apply,
+  getRoutingPolicyPublicationStatus: mocks.publication,
 }));
 
 vi.mock("@/lib/query/routingQuerySynchronization", () => ({
@@ -38,12 +38,7 @@ vi.mock("@/lib/query/useActivityQuery", () => ({
     if (options.queryKey?.[1] === "protectionStatus") {
       return mocks.protectionQuery ?? { data: mocks.protectionData, isPending: false, error: null, refetch: vi.fn() };
     }
-    return {
-      data: { collectorProxyMode: "system" },
-    isPending: false,
-    error: null,
-    refetch: vi.fn(),
-    };
+    return { data: { collectorProxyMode: "system" }, isPending: false, error: null, refetch: vi.fn() };
   },
 }));
 
@@ -51,288 +46,286 @@ vi.mock("@/lib/query/useActivityQuery", () => ({
 
 afterEach(() => {
   document.body.innerHTML = "";
-  mocks.load.mockReset();
-  mocks.protection.mockReset();
   mocks.policyData = null;
   mocks.protectionData = null;
   mocks.policyQuery = null;
   mocks.protectionQuery = null;
   mocks.apply.mockReset();
+  mocks.publication.mockReset();
+  mocks.publication.mockImplementation(() => new Promise(() => undefined));
   mocks.refresh.mockReset();
   vi.restoreAllMocks();
 });
 
 describe("LocalRoutingSettingsEditor", () => {
-  it("shows percentage presets and normalizes manual weight changes", async () => {
+  it("renders V3 defaults and removes legacy candidate/exploration and error-rate controls", async () => {
     const config = policyConfig();
-    mocks.load.mockResolvedValue({ config, revision: 4 });
-    mocks.protection.mockResolvedValue({ statusVersion: "routing_protection_status_v1", generatedAtMs: 1, entries: [], readModelStatus: "available" });
-    mocks.policyData = { config, revision: 4, policyVersion: "routing-policy-v2", systemVersion: "routing-system-v1", status: "active", updatedAtMs: 1 };
-    mocks.protectionData = await mocks.protection();
-    mocks.apply.mockImplementation(async (input: { policy: RoutingPolicyConfigV2 }) => ({ config: input.policy, revision: 5 }));
-    mocks.refresh.mockResolvedValue({ refreshed: true, errors: [] });
+    mocks.policyData = policySnapshot(config, 4);
+    mocks.protectionData = availableProtection();
     const { host, root, queryClient } = renderEditor();
 
     await act(async () => Promise.resolve());
-    expect(value(host, "可靠性（%）")).toBe("40");
-    expect(host.querySelector('[aria-label="可靠性（%）"]')?.className).toContain("text-center");
-    expect(value(host, "响应速度（%）")).toBe("25");
-    expect(host.textContent).toContain("评分偏好");
-    expect(host.textContent).not.toContain("权重合计");
-
-    await act(async () => findButton(host, "稳定优先")?.click());
-    expect(value(host, "可靠性（%）")).toBe("50");
-    expect(value(host, "响应速度（%）")).toBe("25");
-    expect(value(host, "成本（%）")).toBe("15");
-    expect(value(host, "偏好（%）")).toBe("10");
-
-    setInput(host, '[aria-label="可靠性（%）"]', "60");
-    expect(value(host, "可靠性（%）")).toBe("60");
-    await act(async () => findButton(host, "保存")?.click());
-    const saved = mocks.apply.mock.calls[0][0].policy as RoutingPolicyConfigV2;
-    expect(saved.reliabilityWeight + saved.responsivenessWeight + saved.costWeight + saved.preferenceWeight).toBe(10_000);
-    expect(saved.reliabilityWeight).toBe(6_000);
+    expect(host.querySelector('[aria-label="真实流量与监控权重比例滑块"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="编辑真实流量权重"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="编辑监控权重"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="真实流量权重（%）"]')).toBeNull();
+    expect(host.querySelector('[aria-label="监控权重（%）"]')).toBeNull();
+    expect(host.textContent).toContain("真实流量（%）");
+    expect(host.querySelector('[aria-label="编辑真实流量权重"]')?.textContent?.trim()).toBe("70");
+    expect(host.textContent).toContain("监控（%）");
+    expect(host.querySelector('[aria-label="编辑监控权重"]')?.textContent?.trim()).toBe("30");
+    expect(host.querySelector('[aria-label="编辑真实流量权重"]')?.className).toContain("font-normal");
+    expect(host.querySelector('[aria-label="编辑监控权重"]')?.className).toContain("font-normal");
+    expect(value(host, "历史最小样本数")).toBe("15");
+    expect(value(host, "最近最小样本数")).toBe("5");
+    expect(value(host, "乐观可靠性（%）")).toBe("95");
+    expect(value(host, "乐观响应时间（毫秒）")).toBe("2500");
+    expect(value(host, "最大重试次数（次）")).toBe("3");
+    expect(value(host, "连续失败阈值（次）")).toBe("3");
+    expect(value(host, "恢复成功阈值（次）")).toBe("2");
+    expect(value(host, "恢复等待时间（秒）")).toBe("30");
+    expect(host.textContent).toContain("质量来源权重");
+    expect(host.textContent).toContain("熔断器设置");
+    expect(host.textContent).toContain("重试设置");
+    expect(host.textContent).toContain("首把密钥之外最多再尝试多少把密钥");
+    expect(host.textContent).toContain("当前密钥失败后会继续重试");
+    expect(host.textContent).toContain("连续失败达到该次数后熔断并尝试下一把密钥");
+    expect(host.textContent).not.toContain("429 按当前密钥的普通故障处理并尝试下一候选");
+    expect(host.textContent).not.toContain("候选与探索");
+    expect(host.textContent).not.toContain("错误率保护参数");
+    expect(host.querySelector('[aria-label="最大候选数"]')).toBeNull();
+    expect(host.querySelector('[aria-label="探索比例（%）"]')).toBeNull();
+    expect(host.querySelector('[aria-label="失败率阈值（%）"]')).toBeNull();
+    expect(host.querySelector('[aria-label="允许跨容量域回退"]')).toBeNull();
+    const scoreSection = host.querySelector("#routing-policy-weights-title")?.closest("section");
+    expect(scoreSection?.querySelector('[aria-label="真实流量与监控权重比例滑块"]')).not.toBeNull();
+    expect(scoreSection?.querySelector('[aria-label="乐观响应时间（毫秒）"]')).not.toBeNull();
 
     await act(async () => root.unmount());
     queryClient.clear();
   });
 
-  it("places measurement units in field labels instead of input suffixes", async () => {
-    const config = policyConfig();
-    config.affinityEnabled = true;
-    mocks.load.mockResolvedValue({ config, revision: 4 });
-    mocks.protection.mockResolvedValue({ statusVersion: "routing_protection_status_v1", generatedAtMs: 1, entries: [], readModelStatus: "available" });
-    mocks.policyData = policySnapshot(config, 4);
-    mocks.protectionData = await mocks.protection();
+  it("shows only an unsaved tag while the draft is dirty", async () => {
+    mocks.policyData = policySnapshot(policyConfig(), 4, "active");
+    mocks.protectionData = availableProtection();
     const { host, root, queryClient } = renderEditor();
 
     await act(async () => Promise.resolve());
-    for (const label of [
-      "倍率上限（倍）",
-      "可靠性（%）",
-      "探索比例（%）",
-      "连接超时（秒）",
-      "统计窗口时长（秒）",
-      "失败率阈值（%）",
-      "亲和时长（秒）",
-      "容量重试总等待预算（秒）",
-    ]) {
-      expect(host.textContent).toContain(label);
+    expect(host.textContent).not.toContain("未保存");
+    expect(host.textContent).not.toContain("已生效");
+    expect(host.textContent).not.toContain("当前运行时正在使用此策略");
+
+    setInput(host, '[aria-label="最大重试次数（次）"]', "1");
+    expect(host.textContent).toContain("未保存");
+    expect(host.textContent).not.toContain("存在未保存的修改");
+    expect(host.textContent).not.toContain("已生效");
+    expect(host.textContent).not.toContain("当前运行时正在使用此策略");
+
+    await act(async () => root.unmount());
+    queryClient.clear();
+  });
+
+  it("keeps source weights at 100 percent while editing", async () => {
+    const config = policyConfig();
+    mocks.policyData = policySnapshot(config, 4);
+    mocks.protectionData = availableProtection();
+    mocks.apply.mockImplementation(async (input: { policy: RoutingPolicyConfigV3 }) => policySnapshot(input.policy, 5));
+    const { host, root, queryClient } = renderEditor();
+
+    await act(async () => Promise.resolve());
+    clickElement(host, '[aria-label="编辑真实流量权重"]');
+    setInput(host, '[aria-label="真实流量权重（%）"]', "85");
+    expect(value(host, "真实流量权重（%）")).toBe("85");
+    expect(host.querySelector('[aria-label="编辑监控权重"]')?.textContent).toContain("15");
+    await act(async () => findButton(host, "保存")?.click());
+    const saved = mocks.apply.mock.calls[0][0].policy as RoutingPolicyConfigV3;
+    expect(saved.reliabilitySourceWeights).toEqual({ realTrafficPercent: 85, monitoringPercent: 15 });
+
+    await act(async () => root.unmount());
+    queryClient.clear();
+  });
+
+  it("updates the other source weight when the monitoring side is edited", async () => {
+    const config = policyConfig();
+    mocks.policyData = policySnapshot(config, 4);
+    mocks.protectionData = availableProtection();
+    mocks.apply.mockImplementation(async (input: { policy: RoutingPolicyConfigV3 }) => policySnapshot(input.policy, 5));
+    const { host, root, queryClient } = renderEditor();
+
+    await act(async () => Promise.resolve());
+    clickElement(host, '[aria-label="编辑监控权重"]');
+    setInput(host, '[aria-label="监控权重（%）"]', "22");
+    expect(value(host, "监控权重（%）")).toBe("22");
+    expect(host.querySelector('[aria-label="编辑真实流量权重"]')?.textContent).toContain("78");
+
+    await act(async () => findButton(host, "保存")?.click());
+    const saved = mocks.apply.mock.calls[0][0].policy as RoutingPolicyConfigV3;
+    expect(saved.reliabilitySourceWeights).toEqual({ realTrafficPercent: 78, monitoringPercent: 22 });
+
+    await act(async () => root.unmount());
+    queryClient.clear();
+  });
+
+  it("updates both displayed percentages when the slider moves", async () => {
+    mocks.policyData = policySnapshot(policyConfig(), 4);
+    mocks.protectionData = availableProtection();
+    const { host, root, queryClient } = renderEditor();
+
+    await act(async () => Promise.resolve());
+    setInput(host, '[aria-label="真实流量与监控权重比例滑块"]', "85");
+    expect(value(host, "真实流量与监控权重比例滑块")).toBe("85");
+    expect(host.querySelector('[aria-label="编辑真实流量权重"]')?.textContent).toContain("85");
+    expect(host.querySelector('[aria-label="编辑监控权重"]')?.textContent).toContain("15");
+
+    await act(async () => root.unmount());
+    queryClient.clear();
+  });
+
+  it("keeps controls locked while saving and reports staged policy honestly", async () => {
+    const config = policyConfig();
+    mocks.policyData = policySnapshot(config, 4);
+    mocks.protectionData = availableProtection();
+    let resolveApply: ((value: ReturnType<typeof policySnapshot>) => void) | null = null;
+    mocks.apply.mockImplementation(() => new Promise((resolve) => {
+      resolveApply = resolve;
+    }));
+    const { host, root, queryClient } = renderEditor();
+
+    await act(async () => Promise.resolve());
+    setInput(host, '[aria-label="最大重试次数（次）"]', "1");
+    act(() => findButton(host, "保存")?.click());
+    await act(async () => Promise.resolve());
+
+    const retryInput = host.querySelector('[aria-label="最大重试次数（次）"]') as HTMLInputElement;
+    const proxySelect = host.querySelector('[aria-label="本地路由出站代理"]') as HTMLButtonElement;
+    expect(retryInput.matches(":disabled")).toBe(true);
+    expect(proxySelect.matches(":disabled")).toBe(true);
+
+    setInput(host, '[aria-label="最大重试次数（次）"]', "2");
+    const stagedConfig = { ...config, retry: { ...config.retry, maxRetryCount: 1 } };
+    await act(async () => {
+      resolveApply?.(policySnapshot(stagedConfig, 5, "staged"));
+      await Promise.resolve();
+    });
+
+    expect(value(host, "最大重试次数（次）")).toBe("1");
+    expect(host.textContent).toContain("等待重建");
+    expect(host.textContent).toContain("路由策略已提交");
+    expect(host.textContent).not.toContain("路由策略已保存");
+
+    await act(async () => root.unmount());
+    queryClient.clear();
+  });
+
+  it.each([
+    ["ready", "等待切换", "重建已完成"],
+    ["failed", "重建失败", "当前运行策略未改变"],
+  ])("shows the %s publication state", async (status, label, description) => {
+    mocks.policyData = policySnapshot(policyConfig(), 4, status);
+    mocks.protectionData = availableProtection();
+    const { host, root, queryClient } = renderEditor();
+
+    await act(async () => Promise.resolve());
+    expect(host.textContent).toContain(label);
+    expect(host.textContent).toContain(description);
+
+    await act(async () => root.unmount());
+    queryClient.clear();
+  });
+
+  it("does not silently clamp an invalid source weight", async () => {
+    mocks.policyData = policySnapshot(policyConfig(), 4);
+    mocks.protectionData = availableProtection();
+    const { host, root, queryClient } = renderEditor();
+
+    await act(async () => Promise.resolve());
+    clickElement(host, '[aria-label="编辑真实流量权重"]');
+    setInput(host, '[aria-label="真实流量权重（%）"]', "110");
+    expect(value(host, "真实流量权重（%）")).toBe("110");
+    expect(host.querySelector('[aria-label="编辑监控权重"]')?.textContent).toContain("-10");
+    expect(host.textContent).toContain("必须是 0-100 的整数");
+    expect(host.querySelector('[aria-label="真实流量权重（%）"]')?.getAttribute("aria-invalid")).toBe("true");
+
+    await act(async () => root.unmount());
+    queryClient.clear();
+  });
+
+  it("shows publication read failure without claiming the staged policy is active", async () => {
+    const config = policyConfig();
+    mocks.policyData = policySnapshot(config, 4);
+    mocks.protectionData = availableProtection();
+    mocks.apply.mockImplementation(async (input: { policy: RoutingPolicyConfigV3 }) =>
+      policySnapshot(input.policy, 5, "staged"));
+    mocks.publication.mockRejectedValue(new Error("publication unavailable"));
+    const { host, root, queryClient } = renderEditor();
+
+    await act(async () => Promise.resolve());
+    setInput(host, '[aria-label="最大重试次数（次）"]', "1");
+    await act(async () => {
+      findButton(host, "保存")?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(host.textContent).toContain("发布状态不可用");
+    expect(host.textContent).toContain("尚未确认此策略已生效");
+    expect(host.textContent).not.toContain("当前运行时正在使用此策略");
+
+    await act(async () => root.unmount());
+    queryClient.clear();
+  });
+
+  it("shows independent explanations for every timeout field", async () => {
+    mocks.policyData = policySnapshot(policyConfig(), 4);
+    mocks.protectionData = availableProtection();
+    const { host, root, queryClient } = renderEditor();
+
+    await act(async () => Promise.resolve());
+    const expected = [
+      ["首字节超时（秒）", "等待上游开始返回内容的最长时间"],
+      ["提交前超时（秒）", "输出提交给客户端前允许消耗的总预算"],
+      ["缓冲执行超时（秒）", "非流式请求在完整响应返回前允许执行的最长时间"],
+      ["流空闲超时（秒）", "两次输出之间允许的最长静默时间"],
+    ] as const;
+    for (const [label, explanation] of expected) {
+      const input = host.querySelector(`[aria-label="${label}"]`);
+      expect(input?.parentElement?.parentElement?.textContent).toContain(explanation);
+      expect(input?.parentElement?.parentElement?.textContent).toContain("范围");
+      expect(input?.parentElement?.parentElement?.textContent).toContain("默认");
     }
-    expect(host.querySelector('[aria-label="连接超时（秒）"]')?.parentElement?.textContent).toBe("");
-    expect(host.querySelector('[aria-label="失败率阈值（%）"]')?.parentElement?.textContent).toBe("");
+    const connectInput = host.querySelector('[aria-label="连接超时（秒）"]');
+    expect(connectInput?.parentElement?.parentElement?.textContent).toContain("范围 1-120 秒，默认 10 秒。");
+    expect(host.textContent).not.toContain("建立到中转站网络连接允许等待的最长时间");
+    expect(host.textContent).not.toContain("保存后需要重启本地路由");
 
     await act(async () => root.unmount());
     queryClient.clear();
   });
 
-  it("groups strategy sections with subtle surfaces instead of dividers", async () => {
-    const config = policyConfig();
-    mocks.policyData = policySnapshot(config, 4);
+  it("edits retry and circuit settings in their V3 namespaces", async () => {
+    mocks.policyData = policySnapshot(policyConfig(), 4);
     mocks.protectionData = availableProtection();
+    mocks.apply.mockImplementation(async (input: { policy: RoutingPolicyConfigV3 }) => policySnapshot(input.policy, 5));
     const { host, root, queryClient } = renderEditor();
 
     await act(async () => Promise.resolve());
-    const strategyCard = Array.from(host.querySelectorAll("section")).find(
-      (section) => section.querySelector("h2")?.textContent === "策略配置",
-    );
-    const blocks = Array.from(strategyCard?.querySelectorAll('section[aria-labelledby^="routing-policy-"]') ?? []);
-
-    expect(strategyCard?.querySelector(".divide-y")).toBeNull();
-    expect(blocks.length).toBeGreaterThan(0);
-    expect(blocks.every((block) => block.className.includes("bg-surface-subtle") && block.className.includes("rounded-[var(--surface-radius)]"))).toBe(true);
-
-    await act(async () => root.unmount());
-    queryClient.clear();
-  });
-
-  it("converts exploration percentage and only shows affinity duration when enabled", async () => {
-    const config = policyConfig();
-    config.affinityEnabled = true;
-    mocks.load.mockResolvedValue({ config, revision: 4 });
-    mocks.protection.mockResolvedValue({ statusVersion: "routing_protection_status_v1", generatedAtMs: 1, entries: [], readModelStatus: "available" });
-    mocks.policyData = { config, revision: 4, policyVersion: "routing-policy-v2", systemVersion: "routing-system-v1", status: "active", updatedAtMs: 1 };
-    mocks.protectionData = await mocks.protection();
-    mocks.apply.mockImplementation(async (input: { policy: RoutingPolicyConfigV2 }) => ({ config: input.policy, revision: 5 }));
-    mocks.refresh.mockResolvedValue({ refreshed: true, errors: [] });
-    const { host, root, queryClient } = renderEditor();
-
-    await act(async () => Promise.resolve());
-    expect(value(host, "探索比例（%）")).toBe("5");
-    expect(host.querySelector('[aria-label="亲和时长（秒）"]')).toBeTruthy();
-
-    setInput(host, '[aria-label="探索比例（%）"]', "7.25");
+    setInput(host, '[aria-label="最大重试次数（次）"]', "1");
+    setInput(host, '[aria-label="连续失败阈值（次）"]', "4");
+    setInput(host, '[aria-label="恢复成功阈值（次）"]', "3");
+    setInput(host, '[aria-label="恢复等待时间（秒）"]', "60");
     await act(async () => findButton(host, "保存")?.click());
-    const saved = mocks.apply.mock.calls[0][0].policy as RoutingPolicyConfigV2;
-    expect(saved.explorationShareBasisPoints).toBe(725);
+    const saved = mocks.apply.mock.calls[0][0].policy as RoutingPolicyConfigV3;
+    expect(saved.retry.maxRetryCount).toBe(1);
+    expect(saved.retry.consecutiveFailureThreshold).toBe(4);
+    expect(saved.circuitBreaker.recoverySuccessThreshold).toBe(3);
+    expect(saved.circuitBreaker.recoveryWaitSeconds).toBe(60);
 
     await act(async () => root.unmount());
     queryClient.clear();
   });
 
-  it("edits the four retry/failover fields as one policy document", async () => {
-    const config = policyConfig();
-    mocks.load.mockResolvedValue({ config, revision: 4 });
-    mocks.protectionData = { statusVersion: "routing_protection_status_v1", generatedAtMs: 1, entries: [], readModelStatus: "available" };
-    mocks.policyData = { config, revision: 4, policyVersion: "routing-policy-v2", systemVersion: "routing-system-v1", status: "active", updatedAtMs: 1 };
-    mocks.apply.mockImplementation(async (input: { policy: RoutingPolicyConfigV2 }) => ({ config: input.policy, revision: 5, policyVersion: "routing-policy-v2", systemVersion: "routing-system-v1", status: "active", updatedAtMs: 2 }));
-    const { host, root, queryClient } = renderEditor();
-
-    await act(async () => Promise.resolve());
-    setInput(host, '[aria-label="单个请求最大尝试次数"]', "3");
-    setInput(host, '[aria-label="同目标容量重试次数"]', "1");
-    setInput(host, '[aria-label="容量重试总等待预算（秒）"]', "0.75");
-    await act(async () => (host.querySelector('[aria-label="允许跨容量域回退"]') as HTMLButtonElement)?.click());
-    await act(async () => findButton(host, "保存")?.click());
-
-    const saved = mocks.apply.mock.calls[0][0].policy as RoutingPolicyConfigV2;
-    expect(saved.retryFailover).toEqual({
-      version: 2,
-      maxTotalAttempts: 3,
-      maxSameTargetCapacityRetries: 1,
-      capacityRetryWaitBudgetSeconds: 0.75,
-      allowCrossCapacityDomainFallback: false,
-    });
-
-    await act(async () => root.unmount());
-    queryClient.clear();
-  });
-
-  it("edits proxy timeout fields as part of the routing policy document", async () => {
-    const config = policyConfig();
-    mocks.policyData = policySnapshot(config, 4);
-    mocks.protectionData = availableProtection();
-    mocks.apply.mockImplementation(async (input: { policy: RoutingPolicyConfigV2 }) => ({ config: input.policy, revision: 5, policyVersion: "routing-policy-v2", systemVersion: "routing-system-v1", status: "active", updatedAtMs: 2 }));
-    const { host, root, queryClient } = renderEditor();
-
-    await act(async () => Promise.resolve());
-    setInput(host, '[aria-label="连接超时（秒）"]', "15");
-    setInput(host, '[aria-label="缓冲执行超时（秒）"]', "600");
-    await act(async () => findButton(host, "保存")?.click());
-
-    const saved = mocks.apply.mock.calls[0][0].policy as RoutingPolicyConfigV2;
-    expect(saved.timeoutPolicy).toEqual({
-      version: 2,
-      connectSeconds: 15,
-      firstByteSeconds: 30,
-      precommitSeconds: 60,
-      bufferedExecutionSeconds: 600,
-      streamIdleSeconds: 90,
-    });
-
-    await act(async () => root.unmount());
-    queryClient.clear();
-  });
-
-  it("does not expose runtime protection status in policy settings", async () => {
-    const config = policyConfig();
-    mocks.load.mockResolvedValue({ config, revision: 4 });
-    mocks.policyData = { config, revision: 4, policyVersion: "routing-policy-v2", systemVersion: "routing-system-v1", status: "active", updatedAtMs: 1 };
-    mocks.protectionData = {
-      statusVersion: "routing_protection_status_v1",
-      generatedAtMs: 1,
-      readModelStatus: "available",
-      timeouts: {
-        connectSeconds: 1,
-        firstByteSeconds: 2,
-        precommitSeconds: 3,
-        bufferedExecutionSeconds: 4,
-        streamIdleSeconds: 5,
-        owner: "proxy.runtime.v1",
-      },
-      entries: [
-        { scope: "key-a", scopeKind: "station_key", state: "cooldown", explanationKey: "routing.protection.cooldown", persistenceKind: "durable", cooldownUntilMs: 2_000, cooldownRemainingMs: 1_000, recentFailureCode: "upstream_overloaded", updatedAtMs: 1_000, detailAvailable: true },
-        { scope: "capacity-domain-a", scopeKind: "capacity_domain", state: "half_open", explanationKey: "routing.protection.half_open", persistenceKind: "runtime_capacity", cooldownUntilMs: null, cooldownRemainingMs: null, recentFailureCode: "capacity_exhausted", updatedAtMs: 1_000, detailAvailable: true },
-      ],
-    };
-    const { host, root, queryClient } = renderEditor();
-
-    await act(async () => Promise.resolve());
-    expect(host.textContent).not.toContain("故障保护");
-    expect(host.textContent).not.toContain("持久化健康状态");
-    expect(host.textContent).not.toContain("进程内容量状态");
-    expect(host.textContent).not.toContain("容量探测中");
-    expect(host.textContent).not.toContain("上游过载");
-    expect(host.textContent).toContain("错误率保护参数");
-    expect(host.textContent).not.toContain("当前运行实例仍为");
-    expect(host.textContent).not.toContain("proxy.runtime.v1");
-
-    await act(async () => root.unmount());
-    queryClient.clear();
-  });
-
-  it("does not expose legacy compatibility snapshots in the protection settings", async () => {
-    const config = policyConfig();
-    mocks.policyData = policySnapshot(config, 4);
-    mocks.protectionData = {
-      statusVersion: "routing_protection_status_v1",
-      generatedAtMs: 1,
-      readModelStatus: "available",
-      entries: [
-        { scope: "legacy_station_key:v1:hash", scopeKind: "legacy_station_key", state: "degraded", explanationKey: "routing.protection.legacy_degraded", persistenceKind: "legacy_compatibility", cooldownUntilMs: null, cooldownRemainingMs: null, recentFailureCode: "legacy_failure", updatedAtMs: 1_000, detailAvailable: true },
-      ],
-    };
-    const { host, root, queryClient } = renderEditor();
-
-    await act(async () => Promise.resolve());
-    expect(host.textContent).not.toContain("故障保护");
-    expect(host.textContent).not.toContain("legacy_station_key");
-    expect(host.textContent).not.toContain("兼容健康状态");
-    expect(host.textContent).not.toContain("legacy_failure");
-
-    await act(async () => root.unmount());
-    queryClient.clear();
-  });
-
-  it("does not expose unavailable runtime capacity placeholders", async () => {
-    const config = policyConfig();
-    mocks.policyData = policySnapshot(config, 4);
-    mocks.protectionData = {
-      statusVersion: "routing_protection_status_v1",
-      generatedAtMs: 1,
-      readModelStatus: "available",
-      entries: [
-        { scope: "runtime_capacity", scopeKind: "capacity_domain", state: "unavailable", explanationKey: "routing.protection.unavailable", persistenceKind: "runtime_capacity", cooldownUntilMs: null, cooldownRemainingMs: null, recentFailureCode: null, updatedAtMs: null, detailAvailable: false },
-      ],
-    };
-    const { host, root, queryClient } = renderEditor();
-
-    await act(async () => Promise.resolve());
-    expect(host.textContent).not.toContain("故障保护");
-    expect(host.textContent).not.toContain("runtime_capacity");
-    expect(host.textContent).not.toContain("进程内容量状态");
-    expect(host.textContent).not.toContain("明细不可用");
-
-    await act(async () => root.unmount());
-    queryClient.clear();
-  });
-
-  it("explains closed monitoring separately from an empty protection view", async () => {
-    const config = policyConfig();
-    mocks.policyData = policySnapshot(config, 4);
-    mocks.protectionData = {
-      statusVersion: "routing_protection_status_v1",
-      generatedAtMs: 1,
-      readModelStatus: "available",
-      entries: [
-        { scope: "endpoint-a", scopeKind: "endpoint", state: "degraded", explanationKey: "routing.protection.closed_monitoring", persistenceKind: "durable", cooldownUntilMs: null, cooldownRemainingMs: null, recentFailureCode: "upstream_5xx", updatedAtMs: 1_000, detailAvailable: true },
-        { scope: "routing", scopeKind: null, state: "no_protection", explanationKey: "routing.protection.none_active", persistenceKind: null, cooldownUntilMs: null, cooldownRemainingMs: null, recentFailureCode: null, updatedAtMs: 1_000, detailAvailable: true },
-      ],
-    };
-    const { host, root, queryClient } = renderEditor();
-
-    await act(async () => Promise.resolve());
-    expect(host.textContent).not.toContain("故障保护");
-    expect(host.textContent).not.toContain("当前未打开保护、仍在监控");
-    expect(host.textContent).not.toContain("保护已打开，暂时抑制候选");
-
-    await act(async () => root.unmount());
-    queryClient.clear();
-  });
-
-  it("renders typed backend validation errors on the matching retry field", async () => {
-    const config = policyConfig();
-    mocks.policyData = policySnapshot(config, 4);
+  it("maps V3 backend validation errors to their fields", async () => {
+    mocks.policyData = policySnapshot(policyConfig(), 4);
     mocks.protectionData = availableProtection();
     mocks.apply.mockRejectedValue(new BackendError(
       "invalid_input",
@@ -340,245 +333,17 @@ describe("LocalRoutingSettingsEditor", () => {
       false,
       {
         kind: "validation",
-        fields: [{
-          field: "retryFailover.capacityRetryWaitBudgetSeconds",
-          code: "out_of_range",
-          message: "等待预算超出允许范围",
-        }],
+        fields: [{ field: "circuitBreaker.recoveryWaitSeconds", code: "out_of_range", message: "恢复等待时间超出范围" }],
       },
     ));
     const { host, root, queryClient } = renderEditor();
 
     await act(async () => Promise.resolve());
-    setInput(host, '[aria-label="容量重试总等待预算（秒）"]', "2500");
+    setInput(host, '[aria-label="恢复等待时间（秒）"]', "4");
     await act(async () => findButton(host, "保存")?.click());
-
-    const field = host.querySelector('[aria-label="容量重试总等待预算（秒）"]') as HTMLInputElement;
+    const field = host.querySelector('[aria-label="恢复等待时间（秒）"]') as HTMLInputElement;
     expect(field.getAttribute("aria-invalid")).toBe("true");
-    expect(field.getAttribute("aria-describedby")).toBe("routing-error-wait-budget");
-    expect(host.querySelector("#routing-error-wait-budget")?.textContent).toContain("等待预算超出允许范围");
-    expect(host.textContent).toContain("策略验证失败");
-
-    await act(async () => root.unmount());
-    queryClient.clear();
-  });
-
-  it("renders typed backend validation errors on protection profile fields", async () => {
-    const config = policyConfig();
-    mocks.policyData = policySnapshot(config, 4);
-    mocks.protectionData = availableProtection();
-    mocks.apply.mockRejectedValue(new BackendError(
-      "invalid_input",
-      "保护参数验证失败",
-      false,
-      {
-        kind: "validation",
-        fields: [{
-          field: "protectionProfile.failureThresholdPercent",
-          code: "out_of_range",
-          message: "失败率阈值必须在 1 到 100 之间",
-        }],
-      },
-    ));
-    const { host, root, queryClient } = renderEditor();
-
-    await act(async () => Promise.resolve());
-    setInput(host, '[aria-label="失败率阈值（%）"]', "101");
-    await act(async () => findButton(host, "保存")?.click());
-
-    const field = host.querySelector('[aria-label="失败率阈值（%）"]') as HTMLInputElement;
-    expect(field.getAttribute("aria-invalid")).toBe("true");
-    expect(field.getAttribute("aria-describedby")).toBe("routing-error-protection-failure-threshold");
-    expect(host.querySelector("#routing-error-protection-failure-threshold")?.textContent).toContain("失败率阈值必须在 1 到 100 之间");
-
-    await act(async () => root.unmount());
-    queryClient.clear();
-  });
-
-  it("keeps the local draft visible and offers explicit choices after a CAS conflict", async () => {
-    const config = policyConfig();
-    mocks.policyData = policySnapshot(config, 4);
-    mocks.protectionData = availableProtection();
-    const refetch = vi.fn().mockResolvedValue(undefined);
-    mocks.policyQuery = { data: mocks.policyData, isPending: false, error: null, refetch };
-    mocks.apply.mockRejectedValue(new BackendError(
-      "conflict",
-      "策略已被更新",
-      false,
-      { kind: "conflict", resource: "routing_policy", currentRevision: "5" },
-    ));
-    const { host, root, queryClient } = renderEditor();
-
-    await act(async () => Promise.resolve());
-    setInput(host, '[aria-label="最大候选数"]', "32");
-    await act(async () => findButton(host, "保存")?.click());
-
-    expect(refetch).toHaveBeenCalled();
-    expect(host.textContent).toContain("策略保存冲突");
-    expect(findButton(host, "重新加载")).toBeTruthy();
-    expect(findButton(host, "合并远端")).toBeTruthy();
-    expect(findButton(host, "覆盖远端")).toBeTruthy();
-    expect(value(host, "最大候选数")).toBe("32");
-
-    await act(async () => root.unmount());
-    queryClient.clear();
-  });
-
-  it("detects external document changes and merges only untouched fields", async () => {
-    const config = policyConfig();
-    mocks.policyData = policySnapshot(config, 4);
-    mocks.protectionData = availableProtection();
-    const { host, root, queryClient } = renderEditor();
-
-    await act(async () => Promise.resolve());
-    setInput(host, '[aria-label="最大候选数"]', "32");
-    mocks.policyData = policySnapshot({ ...config, maxCandidates: 128, explorationShareBasisPoints: 900 }, 5);
-    await act(async () => {
-      root.render(
-        <QueryClientProvider client={queryClient}>
-          <ToastProvider><LocalRoutingSettingsEditor /></ToastProvider>
-        </QueryClientProvider>,
-      );
-      await Promise.resolve();
-    });
-
-    expect(host.textContent).toContain("策略已被其他操作更新");
-    expect(value(host, "最大候选数")).toBe("32");
-    await act(async () => findButton(host, "合并远端")?.click());
-    expect(value(host, "最大候选数")).toBe("32");
-    expect(value(host, "探索比例（%）")).toBe("9");
-    expect(findButton(host, "保存")?.disabled).toBe(false);
-
-    await act(async () => root.unmount());
-    queryClient.clear();
-  });
-
-  it("fails closed for an invalid policy document and exposes reload", async () => {
-    const refetch = vi.fn().mockResolvedValue(undefined);
-    mocks.policyQuery = {
-      data: null,
-      isPending: false,
-      error: new BackendError("invalid_input", "受管策略文档无效"),
-      refetch,
-    };
-    const { host, root, queryClient } = renderEditor();
-
-    await act(async () => Promise.resolve());
-    expect(host.textContent).toContain("受管策略文档无效");
-    const reload = findButton(host, "重新加载");
-    expect(reload?.disabled).toBe(false);
-    await act(async () => reload?.click());
-    expect(refetch).toHaveBeenCalled();
-
-    await act(async () => root.unmount());
-    queryClient.clear();
-  });
-
-  it("keeps policy editing available while protection facts are unavailable", async () => {
-    const config = policyConfig();
-    mocks.policyData = policySnapshot(config, 4);
-    mocks.protectionData = {
-      statusVersion: "routing_protection_status_v1",
-      generatedAtMs: 1,
-      entries: [],
-      readModelStatus: "unavailable" as const,
-    };
-    const { host, root, queryClient } = renderEditor();
-
-    await act(async () => Promise.resolve());
-    expect(host.textContent).not.toContain("保护状态资料不可用");
-    expect(host.textContent).toContain("运行时超时事实暂不可用");
-    expect(findButton(host, "保存")?.disabled).toBe(true);
-    setInput(host, '[aria-label="最大候选数"]', "32");
-    expect(findButton(host, "保存")?.disabled).toBe(false);
-
-    await act(async () => root.unmount());
-    queryClient.clear();
-  });
-
-  it("resets the draft to the default policy", async () => {
-    const config = { ...policyConfig(), maxCandidates: 128, affinityEnabled: true, outboundProxyMode: "manual" as const, outboundProxyUrl: "http://127.0.0.1:7890" };
-    config.retryFailover = { ...config.retryFailover, maxTotalAttempts: 2, capacityRetryWaitBudgetSeconds: 0.5, allowCrossCapacityDomainFallback: false };
-    mocks.policyData = policySnapshot(config, 4);
-    mocks.protectionData = availableProtection();
-    const { host, root, queryClient } = renderEditor();
-
-    await act(async () => Promise.resolve());
-    await act(async () => findButton(host, "重置")?.click());
-    expect(value(host, "最大候选数")).toBe("64");
-    expect(value(host, "单个请求最大尝试次数")).toBe("4");
-    expect(value(host, "容量重试总等待预算（秒）")).toBe("2");
-    expect(host.querySelector('[aria-label="本地路由手动代理地址"]')).toBeNull();
-    expect(findButton(host, "保存")?.disabled).toBe(false);
-
-    await act(async () => root.unmount());
-    queryClient.clear();
-  });
-
-  it("keeps outbound proxy settings in their own module", async () => {
-    const config = policyConfig();
-    mocks.policyData = policySnapshot(config, 4);
-    mocks.protectionData = availableProtection();
-    const { host, root, queryClient } = renderEditor();
-
-    await act(async () => Promise.resolve());
-    const strategyCard = Array.from(host.querySelectorAll("section")).find(
-      (section) => section.querySelector("h2")?.textContent === "策略配置",
-    );
-    const proxyCard = Array.from(host.querySelectorAll("section")).find(
-      (section) => section.querySelector("#routing-outbound-proxy-title"),
-    );
-
-    expect(strategyCard?.querySelector('[aria-label="本地路由出站代理"]')).toBeNull();
-    const proxySelect = proxyCard?.querySelector('[aria-label="本地路由出站代理"]');
-    expect(proxySelect).toBeTruthy();
-    expect(proxySelect?.textContent).toContain("继承全局设置（使用系统代理）");
-    expect(proxySelect?.className).toContain("sm:w-auto");
-    expect(proxyCard?.textContent).not.toContain("当前使用：");
-    expect(proxyCard?.querySelector("header h2")?.textContent).toBe("网络出口");
-    expect(proxyCard?.querySelector("#routing-outbound-proxy-title")?.textContent).toBe("出站代理");
-    expect(proxyCard?.querySelector("#routing-outbound-proxy-title")?.parentElement?.parentElement?.className)
-      .toContain("sm:grid-cols-[minmax(0,1fr)_auto]");
-
-    await act(async () => root.unmount());
-    queryClient.clear();
-  });
-
-  it("keeps clean actions disabled and retry controls keyboard-focusable in a narrow layout", async () => {
-    const config = policyConfig();
-    mocks.policyData = policySnapshot(config, 4);
-    mocks.protectionData = availableProtection();
-    const { host, root, queryClient } = renderEditor();
-
-    await act(async () => Promise.resolve());
-    expect(findButton(host, "保存")?.disabled).toBe(true);
-    expect(findButton(host, "撤销")).toBeUndefined();
-    expect(host.textContent).not.toContain("当前生效 revision");
-    expect(host.textContent).not.toContain("只影响后续请求");
-    expect(Array.from(host.querySelectorAll("footer button")).map((button) => button.textContent?.trim())).toEqual(["重置", "保存"]);
-    const retryInput = host.querySelector('[aria-label="单个请求最大尝试次数"]') as HTMLInputElement;
-    const fallbackSwitch = host.querySelector('[aria-label="允许跨容量域回退"]') as HTMLButtonElement;
-    retryInput.focus();
-    expect(document.activeElement).toBe(retryInput);
-    fallbackSwitch.focus();
-    expect(document.activeElement).toBe(fallbackSwitch);
-    expect(host.querySelector(".sm\\:grid-cols-2")).toBeTruthy();
-
-    await act(async () => root.unmount());
-    queryClient.clear();
-  });
-
-  it("does not create a revision-worthy draft when defaults are already active", async () => {
-    const config = createDefaultRoutingPolicyConfig();
-    mocks.policyData = policySnapshot(config, 4);
-    mocks.protectionData = availableProtection();
-    const { host, root, queryClient } = renderEditor();
-
-    await act(async () => Promise.resolve());
-    await act(async () => findButton(host, "重置")?.click());
-    expect(findButton(host, "保存")?.disabled).toBe(true);
-    expect(findButton(host, "撤销")).toBeUndefined();
-    expect(mocks.apply).not.toHaveBeenCalled();
+    expect(host.textContent).toContain("恢复等待时间超出范围");
 
     await act(async () => root.unmount());
     queryClient.clear();
@@ -593,9 +358,7 @@ function renderEditor() {
   act(() => {
     root.render(
       <QueryClientProvider client={queryClient}>
-        <ToastProvider>
-          <LocalRoutingSettingsEditor />
-        </ToastProvider>
+        <ToastProvider><LocalRoutingSettingsEditor /></ToastProvider>
       </QueryClientProvider>,
     );
   });
@@ -604,6 +367,12 @@ function renderEditor() {
 
 function findButton(host: HTMLElement, text: string): HTMLButtonElement | undefined {
   return Array.from(host.querySelectorAll("button")).find((button) => button.textContent?.includes(text)) as HTMLButtonElement | undefined;
+}
+
+function clickElement(host: HTMLElement, selector: string) {
+  const element = host.querySelector(selector) as HTMLElement | null;
+  if (!element) throw new Error(`Expected element ${selector}`);
+  act(() => element.click());
 }
 
 function value(host: HTMLElement, label: string): string {
@@ -620,51 +389,12 @@ function setInput(host: HTMLElement, selector: string, nextValue: string) {
   });
 }
 
-function policyConfig(): RoutingPolicyConfigV2 {
-  return {
-    version: 2,
-    reliabilityWeight: 4_000,
-    responsivenessWeight: 2_500,
-    costWeight: 2_000,
-    preferenceWeight: 1_500,
-    maxCandidates: 64,
-    explorationShareBasisPoints: 500,
-    allowDepletedFallback: false,
-    affinityEnabled: false,
-    affinityTtlSeconds: 300,
-    maxRateMultiplier: null,
-    outboundProxyMode: "inherit",
-    outboundProxyUrl: null,
-    routingGroupFilter: "all_groups",
-    retryFailover: {
-      version: 2,
-      maxTotalAttempts: 4,
-      maxSameTargetCapacityRetries: 2,
-      capacityRetryWaitBudgetSeconds: 2,
-      allowCrossCapacityDomainFallback: true,
-    },
-    protectionProfile: {
-      version: 2,
-      enabled: false,
-      windowMaxSamples: 64,
-      windowSeconds: 300,
-      minSamples: 5,
-      failureThresholdPercent: 60,
-      halfOpenSuccessesToClose: 2,
-    },
-    timeoutPolicy: {
-      version: 2,
-      connectSeconds: 10,
-      firstByteSeconds: 30,
-      precommitSeconds: 60,
-      bufferedExecutionSeconds: 300,
-      streamIdleSeconds: 90,
-    },
-  };
+function policyConfig(): RoutingPolicyConfigV3 {
+  return createDefaultRoutingPolicyConfig();
 }
 
-function policySnapshot(config: RoutingPolicyConfigV2, revision: number) {
-  return { config, revision, policyVersion: "routing-policy-v2", systemVersion: "routing-system-v1", status: "active" as const, updatedAtMs: revision };
+function policySnapshot(config: RoutingPolicyConfigV3, revision: number, status = "active") {
+  return { config, revision, policyVersion: "routing-policy-v3", systemVersion: "routing-system-v1", status, updatedAtMs: revision, documentSync: null };
 }
 
 function availableProtection() {

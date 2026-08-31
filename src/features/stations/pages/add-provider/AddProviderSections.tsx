@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { Check, KeyRound, LogIn, Plus, RefreshCw, ShieldCheck } from "lucide-react";
 import { Button, SectionCard, SelectControl } from "@/components/ui";
 import { DEFAULT_MANUAL_PROXY_URL, withManualProxyDefault } from "@/lib/proxyDefaults";
@@ -19,7 +19,6 @@ import {
 import { RemoteKeyDiscoveryList } from "../../components/RemoteKeyDiscoveryList";
 import type { RemoteKeyCapability, RemoteStationKey, StationKey } from "@/lib/types/stationKeys";
 import type { CommonLoginEmail, CommonLoginPassword } from "@/lib/types/settings";
-import type { StationCapacityDomain } from "@/lib/types/stations";
 import { inputClassName, type AddProviderFormState, type ConnectionTestState } from "./formModel";
 
 export function Field({ label, children }: { label: string; children: ReactNode }) {
@@ -585,30 +584,4 @@ export function ProviderOptionsSection({ form, onFormChange }: ProviderOptionsSe
       </div>
     </SectionCard>
   );
-}
-
-type CapacityDomainSectionProps = {
-  domain: StationCapacityDomain | null;
-  disabled: boolean;
-  onSave: (input: { providerFamily: string; deploymentIdentity: string; regionIdentity: string }) => void;
-  onClear: () => void;
-};
-
-export function CapacityDomainSection({ domain, disabled, onSave, onClear }: CapacityDomainSectionProps) {
-  const [providerFamily, setProviderFamily] = useState(domain?.providerFamily ?? "");
-  const [deploymentIdentity, setDeploymentIdentity] = useState(domain?.deploymentIdentity ?? "");
-  const [regionIdentity, setRegionIdentity] = useState(domain?.regionIdentity ?? "");
-  useEffect(() => {
-    setProviderFamily(domain?.providerFamily ?? "");
-    setDeploymentIdentity(domain?.deploymentIdentity ?? "");
-    setRegionIdentity(domain?.regionIdentity ?? "");
-  }, [domain]);
-  return <SectionCard className="gap-1.5 [&>header]:min-h-0" contentClassName="p-3 shadow-none" title="容量域身份">
-    <div className="grid gap-2.5">
-      <Field label="Provider family"><input className={inputClassName} disabled={disabled} value={providerFamily} onChange={(event) => setProviderFamily(event.target.value)} /></Field>
-      <Field label="Deployment identity"><input className={inputClassName} disabled={disabled} value={deploymentIdentity} onChange={(event) => setDeploymentIdentity(event.target.value)} /></Field>
-      <Field label="Region identity"><input className={inputClassName} disabled={disabled} value={regionIdentity} onChange={(event) => setRegionIdentity(event.target.value)} /></Field>
-      <div className="flex gap-2"><Button type="button" disabled={disabled || !providerFamily.trim()} onClick={() => onSave({ providerFamily, deploymentIdentity, regionIdentity })}>保存</Button>{domain && <Button type="button" variant="secondary" disabled={disabled} onClick={onClear}>清除</Button>}</div>
-    </div>
-  </SectionCard>;
 }

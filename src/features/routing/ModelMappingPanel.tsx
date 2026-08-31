@@ -423,7 +423,7 @@ function ModelPicker({
       />
       <SelectControl
         ariaLabel={`${ariaLabel} 候选模型`}
-        title="从当前 Key 的模型中选择"
+        title="从当前密钥的模型中选择"
         className="!h-9 !w-9 !min-w-9 !px-0 justify-center [&>span:first-child]:hidden"
         value=""
         options={options.map((option) => ({ value: option, label: option }))}

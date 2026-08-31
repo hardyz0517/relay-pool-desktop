@@ -13,7 +13,7 @@ function statusWithEntries(entries: RoutingProtectionStatus["entries"]): Routing
 }
 
 describe("routing protection presentation", () => {
-  it("hides compatibility snapshots while retaining effective protection facts", () => {
+  it("shows only active station-key protection facts", () => {
     const visible = userVisibleProtectionEntries(statusWithEntries([
       {
         scope: "legacy_station_key:v1:hash",
@@ -24,39 +24,52 @@ describe("routing protection presentation", () => {
         cooldownUntilMs: null,
         cooldownRemainingMs: null,
         recentFailureCode: "legacy_failure",
+        diagnosticReason: null,
         updatedAtMs: 1,
         detailAvailable: true,
       },
       {
-        scope: "credential:hash",
-        scopeKind: "credential",
+        scope: "station_key:key-1",
+        scopeKind: "station_key",
         state: "cooldown",
         explanationKey: "routing.protection.cooldown",
         persistenceKind: "durable",
         cooldownUntilMs: 2_000,
         cooldownRemainingMs: 1_000,
         recentFailureCode: "upstream_overloaded",
+        diagnosticReason: null,
         updatedAtMs: 1,
         detailAvailable: true,
       },
       {
-        scope: "capacity:hash",
-        scopeKind: "capacity_domain",
+        scope: "local-capacity:hash",
+        scopeKind: "local_capacity",
         state: "half_open",
         explanationKey: "routing.protection.half_open",
         persistenceKind: "runtime_capacity",
         cooldownUntilMs: null,
         cooldownRemainingMs: null,
         recentFailureCode: "capacity_exhausted",
+        diagnosticReason: "capacity_exhausted",
+        updatedAtMs: 1,
+        detailAvailable: true,
+      },
+      {
+        scope: "credential:hash",
+        scopeKind: "credential",
+        state: "open",
+        explanationKey: "routing.protection.open",
+        persistenceKind: "durable",
+        cooldownUntilMs: null,
+        cooldownRemainingMs: null,
+        recentFailureCode: "upstream_failure",
+        diagnosticReason: null,
         updatedAtMs: 1,
         detailAvailable: true,
       },
     ]));
 
-    expect(visible.map((entry) => entry.persistenceKind)).toEqual([
-      "durable",
-      "runtime_capacity",
-    ]);
+    expect(visible.map((entry) => entry.scope)).toEqual(["station_key:key-1"]);
     expect(visible.some((entry) => entry.scope.includes("legacy_station_key"))).toBe(false);
   });
 
@@ -69,13 +82,27 @@ describe("routing protection presentation", () => {
     const visible = userVisibleProtectionEntries(statusWithEntries([
       {
         scope: "runtime_capacity",
-        scopeKind: "capacity_domain",
+        scopeKind: "local_capacity",
         state: "unavailable",
         explanationKey: "routing.protection.unavailable",
         persistenceKind: "runtime_capacity",
         cooldownUntilMs: null,
         cooldownRemainingMs: null,
         recentFailureCode: null,
+        diagnosticReason: "capacity_state_unavailable",
+        updatedAtMs: null,
+        detailAvailable: false,
+      },
+      {
+        scope: "station_key:key-1",
+        scopeKind: "station_key",
+        state: "unavailable",
+        explanationKey: "routing.protection.unavailable",
+        persistenceKind: "durable",
+        cooldownUntilMs: null,
+        cooldownRemainingMs: null,
+        recentFailureCode: null,
+        diagnosticReason: null,
         updatedAtMs: null,
         detailAvailable: false,
       },
@@ -88,6 +115,7 @@ describe("routing protection presentation", () => {
         cooldownUntilMs: null,
         cooldownRemainingMs: null,
         recentFailureCode: null,
+        diagnosticReason: null,
         updatedAtMs: 1,
         detailAvailable: true,
       },

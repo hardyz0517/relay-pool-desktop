@@ -29,6 +29,7 @@ describe("TourCenterDialog", () => {
         full: { revision: 2, state: "completed", updatedAt: 1 },
         basic: { revision: 1, state: "completed", updatedAt: 2 },
         dashboard: { revision: 1, state: "skipped", updatedAt: 3 },
+        stations: { revision: 1, state: "completed", updatedAt: 4 },
       },
     };
     root = createRoot(document.createElement("div"));

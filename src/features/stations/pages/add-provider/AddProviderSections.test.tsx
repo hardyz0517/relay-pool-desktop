@@ -6,7 +6,6 @@ import { providerPresets } from "../../providerPresets";
 import { RemoteKeyDiscoveryList } from "../../components/RemoteKeyDiscoveryList";
 import { createDefaultProviderForm } from "./formModel";
 import {
-  CapacityDomainSection,
   ProviderConnectionSection,
   ProviderGroupsSection,
   ProviderKeysSection,
@@ -17,58 +16,19 @@ import {
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe("AddProviderSections", () => {
-  it("saves a capacity-domain identity and exposes clear for existing identity", async () => {
-    const onSave = vi.fn();
-    const onClear = vi.fn();
+  it("does not expose the retired capacity-domain editor", async () => {
     const host = document.createElement("div");
     const root = createRoot(host);
+    const form = createDefaultProviderForm();
 
     await act(async () =>
-      root.render(
-        <CapacityDomainSection domain={null} disabled={false} onSave={onSave} onClear={onClear} />,
-      ),
+      root.render(<ProviderOptionsSection form={form} onFormChange={vi.fn()} />),
     );
 
-    const inputs = host.querySelectorAll<HTMLInputElement>("input");
-    const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-    valueSetter.call(inputs[0], "openai-compatible");
-    await act(async () => inputs[0].dispatchEvent(new Event("input", { bubbles: true })));
-    valueSetter.call(inputs[1], "deployment-a");
-    await act(async () => inputs[1].dispatchEvent(new Event("input", { bubbles: true })));
-    valueSetter.call(inputs[2], "region-a");
-    await act(async () => inputs[2].dispatchEvent(new Event("input", { bubbles: true })));
-    await act(async () =>
-      host.querySelector<HTMLButtonElement>("button")!
-        .dispatchEvent(new MouseEvent("click", { bubbles: true })),
-    );
-    expect(onSave).toHaveBeenCalledWith({
-      providerFamily: "openai-compatible",
-      deploymentIdentity: "deployment-a",
-      regionIdentity: "region-a",
-    });
-
-    await act(async () =>
-      root.render(
-        <CapacityDomainSection
-          domain={{
-            stationId: "station-1",
-            providerFamily: "openai-compatible",
-            deploymentIdentity: null,
-            regionIdentity: null,
-            revision: 1,
-            updatedAt: "2026-08-13T00:00:00Z",
-          }}
-          disabled={false}
-          onSave={onSave}
-          onClear={onClear}
-        />,
-      ),
-    );
-    await act(async () =>
-      host.querySelectorAll<HTMLButtonElement>("button")[1]!
-        .dispatchEvent(new MouseEvent("click", { bubbles: true })),
-    );
-    expect(onClear).toHaveBeenCalledOnce();
+    expect(host.textContent).not.toContain("容量域身份");
+    expect(host.textContent).not.toContain("Provider family");
+    expect(host.textContent).not.toContain("Deployment identity");
+    expect(host.textContent).not.toContain("Region identity");
 
     await act(async () => root.unmount());
   });

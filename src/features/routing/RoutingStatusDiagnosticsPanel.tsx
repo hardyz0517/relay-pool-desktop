@@ -10,6 +10,7 @@ import type {
 } from "@/lib/types/routing";
 import type { VersionedRoutingDeepLink } from "@/lib/types/routingDeepLinks";
 import { userVisibleProtectionEntries } from "./routingProtectionPresentation";
+import { buildRoutingCandidateDiagnosticsDisplay } from "./routingDiagnosticsPresentation";
 
 type RoutingStatusDiagnosticsPanelProps = {
   snapshot: RoutingWorkspaceSnapshot | null;
@@ -17,22 +18,11 @@ type RoutingStatusDiagnosticsPanelProps = {
   decisions: RecentRouteDecisionsPage | null;
   protectionStatus: RoutingProtectionStatus | null;
   loading: boolean;
+  error?: string | null;
   developerModeEnabled: boolean;
   deepLink?: VersionedRoutingDeepLink | null;
   onOpenRequestLog?: (requestLogId: string) => void;
 };
-
-export function sortFailureDomainDiagnostics(
-  diagnostics: RoutingProtectionStatus["failureDomains"] = [],
-) {
-  return [...diagnostics].sort(
-    (left, right) =>
-      right.candidateCount - left.candidateCount ||
-      (left.commitment ?? left.providerFamily ?? "").localeCompare(
-        right.commitment ?? right.providerFamily ?? "",
-      ),
-  );
-}
 
 export function RoutingStatusDiagnosticsPanel({
   snapshot,
@@ -40,6 +30,7 @@ export function RoutingStatusDiagnosticsPanel({
   decisions,
   protectionStatus,
   loading,
+  error = null,
   developerModeEnabled,
   deepLink,
   onOpenRequestLog,
@@ -68,10 +59,6 @@ export function RoutingStatusDiagnosticsPanel({
       const healthState = overlay?.healthState ?? candidate.healthState;
       return ["ready", "available"].includes(healthState) && candidate.scoreStatus === "scored";
     }).length ?? 0;
-  const domainGroups = useMemo(
-    () => sortFailureDomainDiagnostics(protectionStatus?.failureDomains),
-    [protectionStatus?.failureDomains],
-  );
   useEffect(() => {
     if (!deepLink || !snapshot) return;
     if (deepLink.kind === "station") {
@@ -95,6 +82,17 @@ export function RoutingStatusDiagnosticsPanel({
     );
   }
 
+  if (error && !snapshot) {
+    return (
+      <SectionCard title="路由诊断">
+        <div className="grid gap-1 text-sm" role="alert">
+          <div className="font-medium text-danger-foreground">无法读取路由诊断</div>
+          <div className="break-words text-xs text-muted-foreground">{error}</div>
+        </div>
+      </SectionCard>
+    );
+  }
+
   if (!snapshot) {
     return (
       <SectionCard title="路由诊断">
@@ -110,13 +108,20 @@ export function RoutingStatusDiagnosticsPanel({
     <section className="grid min-w-0 gap-4" aria-labelledby="routing-diagnostics-title">
       <SectionCard
         title="路由诊断"
-        description="把候选、价格、实时并发、故障域和最近决策合在状态页里看。"
+        description="把候选、价格、实时并发和最近决策合在状态页里看。"
         action={<div className="flex flex-wrap items-center justify-end gap-2">
           <StatusBadge tone={snapshot.readModelStatus === "available" ? "healthy" : "warning"}>{readModelStatusLabel(snapshot.readModelStatus)}</StatusBadge>
           <StatusBadge tone={snapshot.plannerEvaluation === "available" ? "healthy" : "warning"}>{plannerEvaluationLabel(snapshot.plannerEvaluation)}</StatusBadge>
+          <StatusBadge tone={snapshot.availabilityStatus === "available" ? "healthy" : "warning"}>{availabilityStatusLabel(snapshot.availabilityStatus)}</StatusBadge>
         </div>}
         contentClassName="grid min-w-0 gap-3"
       >
+        {error ? (
+          <div className="rounded-[var(--surface-radius)] border border-danger-border bg-danger-surface px-3 py-2 text-xs text-danger-foreground" role="alert">
+            路由诊断刷新失败，当前显示的是上一次成功读取的数据：{error}
+          </div>
+        ) : null}
+        <RoutingProjectionStatus snapshot={snapshot} />
         <div className="grid min-w-0 gap-2 text-sm sm:grid-cols-4">
           <ReadableMetric label="可用候选" value={`${availableCount}/${snapshot.candidates.length}`} />
           <ReadableMetric label="价格缺口" value={`${unpricedCount}`} tone={unpricedCount > 0 ? "warning" : "healthy"} />
@@ -177,36 +182,19 @@ export function RoutingStatusDiagnosticsPanel({
       </SectionCard>
 
       <SectionCard
-        title="Provider / 故障域"
-        description="按低敏感 commitment 聚合同一容量域，保护状态与运行时容量状态分开显示。"
+        title="密钥熔断诊断"
+        description="熔断器按每把站点密钥独立作用，恢复请求必须通过同层评分门。"
         contentClassName="grid min-w-0 gap-2"
       >
-        {domainGroups.length === 0 ? (
-          <EmptyState title="暂无故障域诊断" description="候选缺少可用身份，或保护诊断读模型暂不可用。系统不会猜测故障域归属。" />
-        ) : (
-          <div className="grid gap-2">
-            {domainGroups.slice(0, 8).map((domain) => (
-              <div key={`${domain.commitment ?? "unresolved"}:${domain.providerFamily ?? "unknown"}:${domain.deploymentIdentity ?? "unknown"}:${domain.regionIdentity ?? "unknown"}`} className="grid min-w-0 gap-1 rounded-[var(--surface-radius)] border border-border bg-surface px-3 py-2 text-xs md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-center">
-                <div className="min-w-0">
-                  <div className="truncate font-medium text-foreground">{domain.providerFamily ?? "未配置 provider"}</div>
-                  <div className="truncate text-muted-foreground">{domain.deploymentIdentity ?? "未声明 deployment"} / {domain.regionIdentity ?? "未声明 region"}</div>
-                </div>
-                <div className="min-w-0 text-muted-foreground">
-                  <div>{domain.candidateCount} 个候选，{domain.schedulableCandidateCount} 个可调度</div>
-                  <div className="truncate" title={domain.commitment ?? undefined}>身份：{failureDomainResolutionLabel(domain.resolution)}</div>
-                </div>
-                <div className="flex min-w-0 flex-wrap items-center gap-2 md:justify-end">
-                  <StatusBadge tone={domain.status === "open" || domain.status === "half_open" || domain.status === "blocked" ? "warning" : domain.status === "unavailable" ? "disabled" : "healthy"}>
-                    {protectionStateLabel(domain.status)}
-                  </StatusBadge>
-                  {domain.recentFailureCode ? <span className="truncate text-muted-foreground">最近：{domain.recentFailureCode}</span> : null}
-                </div>
-                <div className="truncate text-muted-foreground md:col-span-3" title={domain.explanationKey}>解释：{domain.explanationKey}</div>
-              </div>
+        {scopedCandidates.some((candidate) => candidate.diagnostics) ? (
+          <div className="grid min-w-0 gap-2">
+            {scopedCandidates.slice(0, 8).map((candidate) => (
+              <CircuitLine key={candidate.stationKeyId} candidate={candidate} />
             ))}
           </div>
+        ) : (
+          <ProtectionSummary status={protectionStatus} />
         )}
-        <ProtectionSummary status={protectionStatus} />
       </SectionCard>
 
     </section>
@@ -247,6 +235,7 @@ function CandidateLine({
   const healthState = overlay?.healthState ?? candidate.healthState;
   const inFlight = overlay?.inFlight ?? candidate.capacity.inFlight;
   const blocked = candidate.scoreStatus !== "scored";
+  const diagnostics = buildRoutingCandidateDiagnosticsDisplay(candidate);
 
   return (
     <div className={`grid min-w-0 gap-2 rounded-[var(--surface-radius)] border px-3 py-2 text-sm md:grid-cols-[minmax(0,1.2fr)_minmax(0,0.9fr)_auto] md:items-center ${highlighted ? "border-info-border bg-info-surface" : "border-border bg-surface"}`}>
@@ -257,17 +246,88 @@ function CandidateLine({
       <div className="min-w-0 text-xs text-muted-foreground">
         <div className="truncate">分组：{candidate.group?.displayName ?? "未分组"}</div>
         <div className="truncate">价格：{formatPrice(candidate)}</div>
-        <div className="truncate" title={candidate.failureDomain.commitment ?? undefined}>
-          故障域：{formatFailureDomain(candidate.failureDomain)}
-        </div>
       </div>
       <div className="flex flex-wrap items-center gap-2 md:justify-end">
         <StatusBadge tone={blocked ? "warning" : ["ready", "available"].includes(healthState) ? "healthy" : healthState === "degraded" ? "warning" : "disabled"}>
           {blocked ? scoreStatusLabel(candidate.scoreStatus) : healthStateLabel(healthState)}
         </StatusBadge>
         <span className="text-xs text-muted-foreground">
-          本地在途 {inFlight ?? 0}/{formatConcurrencyLimit(candidate.capacity.maxConcurrency)}
+          {capacityStatusLabel(candidate.capacity.status)} · 本地在途 {inFlight ?? 0}/{formatConcurrencyLimit(candidate.capacity.maxConcurrency)}
         </span>
+      </div>
+      {diagnostics ? (
+        <div className="grid min-w-0 gap-x-4 gap-y-1 border-t border-border pt-2 text-xs text-muted-foreground sm:grid-cols-2 md:col-span-3 xl:grid-cols-4">
+          <span className="min-w-0 break-words font-medium text-foreground">{diagnostics.score}</span>
+          <span className="min-w-0 break-words">{diagnostics.qualityMetadata}</span>
+          <span className="min-w-0 break-words sm:col-span-2">{diagnostics.sourceReliability}</span>
+          <span className="min-w-0 break-words">{diagnostics.recentWindow}</span>
+          <span className="min-w-0 break-words">{diagnostics.historicalWindow}</span>
+          <span className="min-w-0 break-words sm:col-span-2">{diagnostics.latencySummary}</span>
+          <span className="min-w-0 break-words">{diagnostics.sampleCounts}</span>
+          <span className="min-w-0 break-words">{diagnostics.idleRealRoute}</span>
+        </div>
+      ) : (
+        <div className="border-t border-border pt-2 text-xs text-muted-foreground md:col-span-3">
+          V3 评分诊断暂不可用。
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RoutingProjectionStatus({ snapshot }: { snapshot: RoutingWorkspaceSnapshot }) {
+  const revisionKnown =
+    snapshot.policyRevision != null ||
+    snapshot.qualityRevision != null ||
+    snapshot.healthRevision != null;
+  const projectionKnown =
+    snapshot.qualityProjectionBacklog != null ||
+    snapshot.qualityProjectionLagSeconds != null ||
+    snapshot.qualityStale != null;
+  if (!revisionKnown && !projectionKnown && !snapshot.runtimeGenerationId) return null;
+
+  const stale = snapshot.qualityStale === true;
+  return (
+    <div
+      className={`grid min-w-0 gap-2 rounded-[var(--surface-radius)] border px-3 py-2 text-xs sm:grid-cols-2 xl:grid-cols-4 ${stale ? "border-warning-border bg-warning-surface text-warning-foreground" : "border-border bg-surface text-muted-foreground"}`}
+      aria-label="路由投影状态"
+    >
+      <span className="min-w-0 break-words">
+        运行代际：{snapshot.runtimeGenerationId ?? "尚未激活"}
+      </span>
+      <span className="min-w-0 break-words">
+        revision：策略 {formatRevision(snapshot.policyRevision)} · 质量 {formatRevision(snapshot.qualityRevision)} · 健康 {formatRevision(snapshot.healthRevision)}
+      </span>
+      <span className="min-w-0 break-words">
+        质量投影：{stale ? "陈旧" : snapshot.qualityStale === false ? "最新" : "状态未知"} · 积压 {formatOptionalCount(snapshot.qualityProjectionBacklog)}
+      </span>
+      <span className="min-w-0 break-words">
+        投影延迟：{formatProjectionLag(snapshot.qualityProjectionLagSeconds)}
+      </span>
+    </div>
+  );
+}
+
+function CircuitLine({ candidate }: { candidate: RoutingWorkspaceCandidate }) {
+  const diagnostics = buildRoutingCandidateDiagnosticsDisplay(candidate);
+  if (!diagnostics) return null;
+  const circuit = candidate.diagnostics?.circuit;
+  const warning = circuit?.state === "open" || circuit?.state === "half_open";
+  return (
+    <div className="grid min-w-0 gap-2 rounded-[var(--surface-radius)] border border-border bg-surface px-3 py-2 text-xs md:grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,1.2fr)] md:items-start">
+      <div className="min-w-0">
+        <div className="truncate font-medium text-foreground">{candidate.keyName}</div>
+        <div className="truncate text-muted-foreground">{candidate.stationName}</div>
+      </div>
+      <div className="grid min-w-0 gap-1 text-muted-foreground">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <StatusBadge tone={warning ? "warning" : "healthy"}>{diagnostics.circuitState}</StatusBadge>
+        </div>
+        <span className="break-words">{diagnostics.circuitDetail}</span>
+      </div>
+      <div className="grid min-w-0 gap-1 text-muted-foreground">
+        <span className="break-words">{diagnostics.halfOpenLease}</span>
+        <span className="break-words">{diagnostics.scoreGate}</span>
       </div>
     </div>
   );
@@ -275,6 +335,26 @@ function CandidateLine({
 
 function plannerEvaluationLabel(status: RoutingWorkspaceSnapshot["plannerEvaluation"] | undefined) {
   return status === "available" ? "基线评估可用" : "基线评估暂不可用";
+}
+
+function availabilityStatusLabel(status: RoutingWorkspaceSnapshot["availabilityStatus"]) {
+  const labels: Record<RoutingWorkspaceSnapshot["availabilityStatus"], string> = {
+    available: "存在可用密钥",
+    capacity_exhausted: "本地容量已耗尽",
+    capacity_state_unavailable: "容量状态不可用",
+    all_keys_unavailable: "全部密钥不可用",
+  };
+  return labels[status];
+}
+
+function capacityStatusLabel(status: RoutingWorkspaceCandidate["capacity"]["status"]) {
+  const labels: Record<RoutingWorkspaceCandidate["capacity"]["status"], string> = {
+    available: "容量可用",
+    exhausted: "容量耗尽",
+    state_unavailable: "容量状态不可用",
+    unknown: "容量状态未知",
+  };
+  return labels[status];
 }
 
 function scoreStatusLabel(status: RoutingWorkspaceCandidate["scoreStatus"] | undefined) {
@@ -308,29 +388,6 @@ function ProtectionSummary({ status }: { status: RoutingProtectionStatus | null 
       ))}
     </div>
   );
-}
-
-function formatFailureDomain(
-  failureDomain: RoutingWorkspaceCandidate["failureDomain"],
-): string {
-  if (failureDomain.resolution === "not_configured") return "未配置";
-  if (failureDomain.resolution === "invalid_identity") return "身份无效";
-  if (failureDomain.resolution === "model_required") return "等待模型";
-  const identity = [
-    failureDomain.providerFamily,
-    failureDomain.deploymentIdentity,
-    failureDomain.regionIdentity,
-  ]
-    .filter(Boolean)
-    .join(" / ");
-  return identity || "已解析";
-}
-
-function failureDomainResolutionLabel(resolution: string) {
-  if (resolution === "resolved") return "已解析";
-  if (resolution === "model_required") return "等待模型";
-  if (resolution === "invalid_identity") return "身份无效";
-  return "未配置";
 }
 
 function protectionStateLabel(state: string) {
@@ -368,7 +425,6 @@ function protectionScopeKindLabel(kind: string | null) {
     account: "账号",
     endpoint: "端点",
     model: "模型",
-    capacity_domain: "容量域",
     station_key: "站点密钥",
   };
   return kind ? labels[kind] ?? "路由作用域" : "路由作用域";
@@ -411,6 +467,20 @@ function formatRuntimeCapacity(
 
 function formatConcurrencyLimit(limit: number) {
   return limit > 0 ? String(limit) : "∞";
+}
+
+function formatRevision(value: number | null | undefined) {
+  return value == null ? "未知" : `r${value}`;
+}
+
+function formatOptionalCount(value: number | null | undefined) {
+  return value == null ? "未知" : value.toLocaleString("zh-CN");
+}
+
+function formatProjectionLag(value: number | null | undefined) {
+  if (value == null) return "未知";
+  if (value < 60) return `${value} 秒`;
+  return `${Math.floor(value / 60)} 分 ${value % 60} 秒`;
 }
 
 function formatPrice(candidate: RoutingWorkspaceCandidate) {

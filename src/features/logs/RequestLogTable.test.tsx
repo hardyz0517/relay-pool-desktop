@@ -34,7 +34,7 @@ describe("RequestLogTable", () => {
     expect(markup).not.toContain("text-selected-foreground");
     expect(markup).toContain("relative min-h-[36px] w-full text-xs leading-4");
     expect(markup).toContain("absolute left-1/2 top-1/2 grid w-max -translate-x-1/2 -translate-y-1/2");
-    expect(markup).toContain("absolute right-full top-0 mr-2.5 h-9 w-1");
+    expect(markup).toContain("absolute -left-1 top-1/2 h-9 w-1 -translate-y-1/2");
     expect(markup).toContain("flex items-center gap-2 whitespace-nowrap");
     expect(markup).toContain("08/11 12:34:56");
     expect(markup).not.toContain("2026/08/11 12:34:56");

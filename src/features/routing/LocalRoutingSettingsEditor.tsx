@@ -1,15 +1,17 @@
+import { useState, type KeyboardEvent } from "react";
 import { RefreshCw, Save } from "lucide-react";
-import { Button, SectionCard, SelectControl, SwitchControl, useToast } from "@/components/ui";
+import { Button, SectionCard, SelectControl, StatusBadge, SwitchControl, useToast } from "@/components/ui";
 import { groupCategoryDefinitions } from "@/lib/groupCategories";
-import type { PricingGroupType, RoutingGroupFilter, RoutingPolicyConfigV2 } from "@/lib/types/routing";
+import type { PricingGroupType, RoutingGroupFilter, RoutingPolicyConfigV3 } from "@/lib/types/routing";
 import { collectorProxyModeLabels } from "@/lib/types/settings";
 import { settingsQueryOptions } from "@/lib/query/resourceQueries";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import { routingProtectionStatusQueryOptions } from "@/lib/queries/routingQueries";
 import { createDefaultRoutingPolicyConfig, routingPolicyConfigEqual, routingPolicyDraftFieldHints, useRoutingPolicyDraft } from "./useRoutingPolicyDraft";
 
-type WeightKey = keyof Pick<RoutingPolicyConfigV2, "reliabilityWeight" | "responsivenessWeight" | "costWeight" | "preferenceWeight">;
+type WeightKey = keyof Pick<RoutingPolicyConfigV3, "reliabilityWeight" | "responsivenessWeight" | "costWeight" | "preferenceWeight">;
 type WeightPercentages = Record<WeightKey, number>;
+type SourceWeightKey = "realTrafficPercent" | "monitoringPercent";
 
 const WEIGHTS: Array<{ key: WeightKey; label: string }> = [
   { key: "reliabilityWeight", label: "可靠性" },
@@ -37,7 +39,7 @@ const SCORE_PRESETS: Array<{ id: string; label: string; percentages: WeightPerce
 
 const WEIGHT_TOTAL = 10_000;
 
-function percentagesFromConfig(config: RoutingPolicyConfigV2): WeightPercentages {
+function percentagesFromConfig(config: RoutingPolicyConfigV3): WeightPercentages {
   const total = WEIGHTS.reduce((sum, { key }) => sum + Math.max(0, config[key]), 0);
   if (total <= 0) {
     return { reliabilityWeight: 25, responsivenessWeight: 25, costWeight: 25, preferenceWeight: 25 };
@@ -45,8 +47,8 @@ function percentagesFromConfig(config: RoutingPolicyConfigV2): WeightPercentages
   return Object.fromEntries(WEIGHTS.map(({ key }) => [key, (Math.max(0, config[key]) / total) * 100])) as WeightPercentages;
 }
 
-function weightsFromPercentages(percentages: WeightPercentages): Pick<RoutingPolicyConfigV2, WeightKey> {
-  const weights = Object.fromEntries(WEIGHTS.map(({ key }) => [key, Math.max(0, Math.round(percentages[key] * 100))])) as Pick<RoutingPolicyConfigV2, WeightKey>;
+function weightsFromPercentages(percentages: WeightPercentages): Pick<RoutingPolicyConfigV3, WeightKey> {
+  const weights = Object.fromEntries(WEIGHTS.map(({ key }) => [key, Math.max(0, Math.round(percentages[key] * 100))])) as Pick<RoutingPolicyConfigV3, WeightKey>;
   const difference = WEIGHT_TOTAL - WEIGHTS.reduce((sum, { key }) => sum + weights[key], 0);
   const adjustmentKey = WEIGHTS[WEIGHTS.length - 1].key;
   weights[adjustmentKey] = Math.max(0, weights[adjustmentKey] + difference);
@@ -75,7 +77,110 @@ function matchingPreset(percentages: WeightPercentages): string {
   return preset?.id ?? "custom";
 }
 
+function SourceWeightControl({
+  realTrafficPercent,
+  monitoringPercent,
+  editing,
+  error,
+  onEdit,
+  onChange,
+}: {
+  realTrafficPercent: number;
+  monitoringPercent: number;
+  editing: SourceWeightKey | null;
+  error: string | undefined;
+  onEdit: (key: SourceWeightKey | null) => void;
+  onChange: (key: SourceWeightKey, value: number) => void;
+}) {
+  const realValue = Number.isFinite(realTrafficPercent) ? realTrafficPercent : 0;
+  const sliderValue = Math.min(100, Math.max(0, realValue));
+  const realLabel = formatSourceWeight(realTrafficPercent);
+  const monitoringLabel = formatSourceWeight(monitoringPercent);
+
+  function finishEditing() {
+    onEdit(null);
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Enter") {
+      event.currentTarget.blur();
+    }
+  }
+
+  function endpoint(key: SourceWeightKey, label: string, value: number, display: string) {
+    if (editing === key) {
+      return (
+        <input
+          autoFocus
+          aria-label={`${label}权重（%）`}
+          aria-invalid={Boolean(error)}
+          className="h-7 w-16 rounded-[var(--surface-radius)] border border-ring bg-surface px-1.5 text-center text-sm font-normal tabular-nums text-foreground outline-none ring-2 ring-ring/20"
+          type="number"
+          min={0}
+          max={100}
+          step={1}
+          value={value}
+          onChange={(event) => onChange(key, Number(event.target.value))}
+          onBlur={finishEditing}
+          onKeyDown={handleKeyDown}
+        />
+      );
+    }
+
+    return (
+      <button
+        type="button"
+        aria-label={`编辑${label}权重`}
+        className="inline-flex h-7 min-w-16 items-center justify-center rounded-[var(--surface-radius)] border border-border bg-surface px-1.5 text-sm font-normal tabular-nums text-foreground shadow-surface outline-none transition hover:border-ring hover:bg-hover focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
+        onClick={() => onEdit(key)}
+        title={`编辑${label}权重`}
+      >
+        {display}
+      </button>
+    );
+  }
+
+  return (
+    <div className="grid gap-2" role="group" aria-label="质量来源权重">
+      <div className="grid min-w-0 grid-cols-[minmax(0,auto)_minmax(4rem,1fr)_minmax(0,auto)] items-center gap-2 text-xs text-muted-foreground sm:gap-3">
+        <span className="flex min-w-0 items-center gap-1 whitespace-nowrap">
+          <span>真实流量（%）</span>
+          {endpoint("realTrafficPercent", "真实流量", realTrafficPercent, realLabel)}
+        </span>
+        <div className="relative flex h-6 min-w-0 items-center">
+          <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 flex h-1.5 overflow-hidden rounded-full">
+            <div className="h-full shrink-0 bg-primary-solid transition-[width]" style={{ width: `${sliderValue}%` }} />
+            <div className="h-full min-w-0 flex-1 bg-border" />
+          </div>
+          <input
+            aria-label="真实流量与监控权重比例滑块"
+            aria-invalid={Boolean(error)}
+            aria-valuetext={`真实流量 ${realLabel}%，监控 ${monitoringLabel}%`}
+            className="relative z-10 h-6 w-full cursor-pointer bg-transparent accent-[var(--primary-solid)]"
+            type="range"
+            min={0}
+            max={100}
+            step={1}
+            value={sliderValue}
+            onChange={(event) => onChange("realTrafficPercent", Number(event.target.value))}
+          />
+        </div>
+        <span className="flex min-w-0 items-center justify-end gap-1 whitespace-nowrap">
+          <span>监控（%）</span>
+          {endpoint("monitoringPercent", "监控", monitoringPercent, monitoringLabel)}
+        </span>
+      </div>
+      {error ? <span className="font-normal text-danger-foreground" role="alert">{error}</span> : null}
+    </div>
+  );
+}
+
+function formatSourceWeight(value: number) {
+  return Number.isFinite(value) ? String(value) : "0";
+}
+
 export function LocalRoutingSettingsEditor() {
+  const [editingSourceWeight, setEditingSourceWeight] = useState<SourceWeightKey | null>(null);
   const toast = useToast();
   const settingsQuery = useActivityQuery(settingsQueryOptions());
   const protectionQuery = useActivityQuery(routingProtectionStatusQueryOptions());
@@ -84,10 +189,25 @@ export function LocalRoutingSettingsEditor() {
   const dirty = draft.status === "dirty" || draft.status === "conflict";
   const error = draft.error;
   const state = draft.status;
+  const publication = policyPublicationFeedback(
+    draft.publicationStatus,
+    draft.publicationPollingState,
+    draft.publicationError,
+    draft.publicationFailureCode,
+  );
   const fieldHints = routingPolicyDraftFieldHints(config);
   const fieldErrors = draft.fieldErrors;
-  const protectionFieldError = (field: string) =>
-    fieldErrors[`protectionProfile.${field}`] ?? fieldErrors.protectionProfile;
+  const sourceFieldError = (field: string) =>
+    fieldErrors[`reliabilitySourceWeights.${field}`] ??
+    fieldErrors.reliabilitySourceWeights ??
+    fieldHints[`reliabilitySourceWeights.${field}`] ??
+    fieldHints.reliabilitySourceWeights;
+  const samplingFieldError = (field: string) =>
+    fieldErrors[`reliabilitySampling.${field}`] ?? fieldErrors.reliabilitySampling;
+  const retryFieldError = (field: string) =>
+    fieldErrors[`retry.${field}`] ?? fieldErrors.retry;
+  const circuitFieldError = (field: string) =>
+    fieldErrors[`circuitBreaker.${field}`] ?? fieldErrors.circuitBreaker;
   const timeoutFieldError = (field: string) =>
     fieldErrors[`timeoutPolicy.${field}`] ?? fieldErrors.timeoutPolicy;
   const globalProxyMode = settingsQuery.data?.collectorProxyMode;
@@ -100,7 +220,7 @@ export function LocalRoutingSettingsEditor() {
     ? routingProxyModeLabels[config.outboundProxyMode as RoutingProxyMode]
     : routingProxyModeLabels.inherit;
 
-  function update<K extends keyof RoutingPolicyConfigV2>(key: K, value: RoutingPolicyConfigV2[K]) {
+  function update<K extends keyof RoutingPolicyConfigV3>(key: K, value: RoutingPolicyConfigV3[K]) {
     if (!config) return;
     setConfig({ ...config, [key]: value });
   }
@@ -114,6 +234,17 @@ export function LocalRoutingSettingsEditor() {
   function applyScorePreset(percentages: WeightPercentages) {
     if (!config) return;
     setConfig({ ...config, ...weightsFromPercentages(percentages) });
+  }
+
+  function updateSourceWeight(key: SourceWeightKey, value: number) {
+    const target = Number.isFinite(value) ? value : 0;
+    const otherKey = key === "realTrafficPercent" ? "monitoringPercent" : "realTrafficPercent";
+    if (!config) return;
+    update("reliabilitySourceWeights", {
+      ...config.reliabilitySourceWeights,
+      [key]: target,
+      [otherKey]: 100 - target,
+    });
   }
 
   function parseMaxRateMultiplier(value: string): number | null {
@@ -138,8 +269,24 @@ export function LocalRoutingSettingsEditor() {
   }
 
   async function savePolicy() {
-    const didSave = await save();
-    if (didSave) toast.success("路由策略已保存");
+    const snapshot = await save();
+    if (!snapshot) return;
+    switch (snapshot.status) {
+      case "staged":
+        toast.info("路由策略已提交", "正在重建评分与熔断状态，完成切换后才会影响新请求。");
+        break;
+      case "ready":
+        toast.info("路由策略已完成重建", "正在等待原子切换，当前运行策略暂未改变。");
+        break;
+      case "failed":
+        toast.error("路由策略重建失败", "当前运行策略未改变，请查看诊断后重试。");
+        break;
+      case "active":
+        toast.success("路由策略已生效");
+        break;
+      default:
+        toast.info("路由策略状态已更新", `当前状态：${snapshot.status || "未知"}`);
+    }
   }
 
   function restoreDefaults() {
@@ -162,7 +309,11 @@ export function LocalRoutingSettingsEditor() {
   }
 
   return (
-    <div className="grid gap-3">
+    <fieldset
+      aria-busy={state === "saving"}
+      className="grid min-w-0 gap-3 border-0 p-0"
+      disabled={state === "saving"}
+    >
       <SectionCard title="策略配置">
         <div className="grid gap-3">
         <section className={settingsBlockClassName} aria-labelledby="routing-policy-boundaries-title">
@@ -210,7 +361,6 @@ export function LocalRoutingSettingsEditor() {
         >
           <div>
             <h3 id="routing-policy-weights-title" className="text-sm font-medium text-foreground">评分偏好</h3>
-            <p className="mt-0.5 text-xs text-muted-foreground">调整各项因素的重要程度，其他比例会自动归一化。</p>
           </div>
           <div className="flex flex-wrap gap-1" role="group" aria-label="评分策略预设">
             {SCORE_PRESETS.map((preset) => (
@@ -260,24 +410,41 @@ export function LocalRoutingSettingsEditor() {
               );
             })}
           </div>
-        </section>
-
-        <section className={settingsBlockClassName} aria-labelledby="routing-policy-runtime-title">
-          <div>
-            <h3 id="routing-policy-runtime-title" className="text-sm font-medium text-foreground">候选与探索</h3>
-            <p className="mt-0.5 text-xs text-muted-foreground">控制每次请求的候选范围与探索额度。</p>
+          <div className="border-t border-border pt-4">
+            <h4 className="text-xs font-medium text-foreground">质量来源权重</h4>
           </div>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <SourceWeightControl
+            realTrafficPercent={config.reliabilitySourceWeights.realTrafficPercent}
+            monitoringPercent={config.reliabilitySourceWeights.monitoringPercent}
+            editing={editingSourceWeight}
+            error={sourceFieldError("realTrafficPercent") ?? sourceFieldError("monitoringPercent")}
+            onEdit={setEditingSourceWeight}
+            onChange={updateSourceWeight}
+          />
+          <div className="grid gap-3 sm:grid-cols-2">
             <label className="grid max-w-xs gap-1.5 text-xs font-medium text-muted-foreground">
-              <span>最大候选数</span>
-              <input aria-label="最大候选数" className={inputClassName} type="number" min={1} max={1024} value={config.maxCandidates} onChange={(event) => update("maxCandidates", Number(event.target.value))} />
+              <span>历史最小样本数</span>
+              <input aria-label="历史最小样本数" aria-invalid={Boolean(samplingFieldError("historicalMinimumSamples"))} className={inputClassName} type="number" min={1} max={10_000} step={1} value={config.reliabilitySampling.historicalMinimumSamples} onChange={(event) => update("reliabilitySampling", { ...config.reliabilitySampling, historicalMinimumSamples: Number(event.target.value) })} />
+              <span className="font-normal">历史窗口有效样本不足时，可靠性和响应速度使用乐观值。范围 1-10000，默认 15。</span>
+              {samplingFieldError("historicalMinimumSamples") ? <span className="font-normal text-danger-foreground" role="alert">{samplingFieldError("historicalMinimumSamples")}</span> : null}
             </label>
             <label className="grid max-w-xs gap-1.5 text-xs font-medium text-muted-foreground">
-              <span>探索比例（%）</span>
-              <div>
-                <input aria-label="探索比例（%）" className={inputClassName} type="number" min={0} max={100} step="0.01" value={config.explorationShareBasisPoints / 100} onChange={(event) => update("explorationShareBasisPoints", Math.min(10_000, Math.max(0, Math.round(Number(event.target.value) * 100) || 0)))} />
-              </div>
-              <span className="text-xs font-normal text-muted-foreground">控制每次请求用于探索候选的概率。</span>
+              <span>最近最小样本数</span>
+              <input aria-label="最近最小样本数" aria-invalid={Boolean(samplingFieldError("recentMinimumSamples"))} className={inputClassName} type="number" min={1} max={10_000} step={1} value={config.reliabilitySampling.recentMinimumSamples} onChange={(event) => update("reliabilitySampling", { ...config.reliabilitySampling, recentMinimumSamples: Number(event.target.value) })} />
+              <span className="font-normal">最近 24 小时窗口有效样本不足时，可靠性和响应速度使用乐观值。范围 1-10000，默认 5。</span>
+              {samplingFieldError("recentMinimumSamples") ? <span className="font-normal text-danger-foreground" role="alert">{samplingFieldError("recentMinimumSamples")}</span> : null}
+            </label>
+            <label className="grid max-w-xs gap-1.5 text-xs font-medium text-muted-foreground">
+              <span>乐观可靠性（%）</span>
+              <input aria-label="乐观可靠性（%）" aria-invalid={Boolean(samplingFieldError("optimisticReliabilityPercent"))} className={inputClassName} type="number" min={0} max={100} step={1} value={config.reliabilitySampling.optimisticReliabilityPercent} onChange={(event) => update("reliabilitySampling", { ...config.reliabilitySampling, optimisticReliabilityPercent: Number(event.target.value) })} />
+              <span className="font-normal">仅作为样本不足时的排序假设，不写入真实统计。范围 0-100%，默认 95%。</span>
+              {samplingFieldError("optimisticReliabilityPercent") ? <span className="font-normal text-danger-foreground" role="alert">{samplingFieldError("optimisticReliabilityPercent")}</span> : null}
+            </label>
+            <label className="grid max-w-xs gap-1.5 text-xs font-medium text-muted-foreground">
+              <span>乐观响应时间（毫秒）</span>
+              <input aria-label="乐观响应时间（毫秒）" aria-invalid={Boolean(samplingFieldError("optimisticLatencyMs"))} className={inputClassName} type="number" min={100} max={120_000} step={100} value={config.reliabilitySampling.optimisticLatencyMs} onChange={(event) => update("reliabilitySampling", { ...config.reliabilitySampling, optimisticLatencyMs: Number(event.target.value) })} />
+              <span className="font-normal">仅作为样本不足时的排序假设，不写入真实统计。范围 100-120000 毫秒，默认 2500 毫秒（2.5 秒）。</span>
+              {samplingFieldError("optimisticLatencyMs") ? <span className="font-normal text-danger-foreground" role="alert">{samplingFieldError("optimisticLatencyMs")}</span> : null}
             </label>
           </div>
         </section>
@@ -285,19 +452,18 @@ export function LocalRoutingSettingsEditor() {
         <section className={settingsBlockClassName} aria-labelledby="routing-policy-timeouts-title">
           <div>
             <h3 id="routing-policy-timeouts-title" className="text-sm font-medium text-foreground">超时</h3>
-            <p className="mt-0.5 text-xs text-muted-foreground">控制新启动的本地路由实例；保存后需要重启本地路由才会替换当前运行时限制。</p>
           </div>
           {protectionQuery.isError || protectionQuery.data?.readModelStatus === "unavailable" ? (
-            <p className="text-xs text-danger-foreground">运行时超时事实暂不可用；配置仍可编辑，重启后按保存值生效。</p>
+            <p className="text-xs text-danger-foreground">运行时超时事实暂不可用；配置仍可编辑，保存值会用于后续新请求。</p>
           ) : null}
           <div className="grid gap-3 sm:grid-cols-2">
             {([
-              ["connectSeconds", "连接超时", 1, 120],
-              ["firstByteSeconds", "首字节超时", 1, 300],
-              ["precommitSeconds", "提交前超时", 1, 600],
-              ["bufferedExecutionSeconds", "缓冲执行超时", 1, 1_800],
-              ["streamIdleSeconds", "流空闲超时", 1, 600],
-            ] as const).map(([key, label, min, max]) => {
+              ["connectSeconds", "连接超时", 1, 120, 10, null],
+              ["firstByteSeconds", "首字节超时", 1, 300, 30, "连接建立后等待上游开始返回内容的最长时间；超过后视为上游响应异常。"],
+              ["precommitSeconds", "提交前超时", 1, 600, 60, "输出提交给客户端前允许消耗的总预算，包含排队、重新规划和请求尝试。"],
+              ["bufferedExecutionSeconds", "缓冲执行超时", 1, 1_800, 300, "非流式请求在完整响应返回前允许执行的最长时间。"],
+              ["streamIdleSeconds", "流空闲超时", 1, 600, 90, "流式输出开始后两次输出之间允许的最长静默时间；触发后结束流，不自动重放已提交请求。"],
+            ] as const).map(([key, label, min, max, defaultValue, description]) => {
               const error = timeoutFieldError(key);
               return (
                 <label key={key} className="grid max-w-xs gap-1.5 text-xs font-medium text-muted-foreground">
@@ -315,6 +481,7 @@ export function LocalRoutingSettingsEditor() {
                       onChange={(event) => update("timeoutPolicy", { ...config.timeoutPolicy, [key]: Number(event.target.value) })}
                     />
                   </div>
+                  <span className="font-normal">{description ? `${description} ` : null}范围 {min}-{max} 秒，默认 {defaultValue} 秒。</span>
                   {error ? <span className="font-normal text-danger-foreground" role="alert">{error}</span> : null}
                 </label>
               );
@@ -325,51 +492,25 @@ export function LocalRoutingSettingsEditor() {
           ) : null}
         </section>
 
-        {config ? (
-            <section className={settingsBlockClassName} aria-labelledby="routing-policy-protection-profile-title">
-              <div>
-                <h3 id="routing-policy-protection-profile-title" className="text-sm font-medium text-foreground">错误率保护参数</h3>
-                <p className="mt-0.5 text-xs text-muted-foreground">默认关闭；开启后只影响跨请求健康保护，不改变单次请求的重试安全门。</p>
-              </div>
-              <div className="flex items-center justify-between gap-4 text-xs">
-                <span className="font-medium text-muted-foreground">启用错误率保护</span>
-                <SwitchControl
-                  ariaLabel="启用错误率保护"
-                  checked={config.protectionProfile.enabled}
-                  showLabel={false}
-                  onCheckedChange={() => update("protectionProfile", { ...config.protectionProfile, enabled: !config.protectionProfile.enabled })}
-                />
-              </div>
-              {protectionFieldError("enabled") ? <p className="text-xs text-danger-foreground" role="alert">{protectionFieldError("enabled")}</p> : null}
-              <div className="grid gap-3 sm:grid-cols-2">
-                <label className="grid max-w-xs gap-1.5 text-xs font-medium text-muted-foreground">
-                  <span>统计窗口样本数</span>
-                  <input aria-label="统计窗口样本数" aria-invalid={Boolean(protectionFieldError("windowMaxSamples"))} aria-describedby={protectionFieldError("windowMaxSamples") ? "routing-error-protection-window-max-samples" : undefined} className={inputClassName} type="number" min={1} max={256} step={1} value={config.protectionProfile.windowMaxSamples} onChange={(event) => update("protectionProfile", { ...config.protectionProfile, windowMaxSamples: Number(event.target.value) })} />
-                  {protectionFieldError("windowMaxSamples") ? <span id="routing-error-protection-window-max-samples" className="font-normal text-danger-foreground" role="alert">{protectionFieldError("windowMaxSamples")}</span> : null}
-                </label>
-                <label className="grid max-w-xs gap-1.5 text-xs font-medium text-muted-foreground">
-                  <span>统计窗口时长（秒）</span>
-                  <div><input aria-label="统计窗口时长（秒）" aria-invalid={Boolean(protectionFieldError("windowSeconds"))} aria-describedby={protectionFieldError("windowSeconds") ? "routing-error-protection-window-seconds" : undefined} className={inputClassName} type="number" min={1} max={86_400} step={0.1} value={config.protectionProfile.windowSeconds} onChange={(event) => update("protectionProfile", { ...config.protectionProfile, windowSeconds: Number(event.target.value) })} /></div>
-                  {protectionFieldError("windowSeconds") ? <span id="routing-error-protection-window-seconds" className="font-normal text-danger-foreground" role="alert">{protectionFieldError("windowSeconds")}</span> : null}
-                </label>
-                <label className="grid max-w-xs gap-1.5 text-xs font-medium text-muted-foreground">
-                  <span>最小样本数</span>
-                  <input aria-label="最小样本数" aria-invalid={Boolean(protectionFieldError("minSamples"))} aria-describedby={protectionFieldError("minSamples") ? "routing-error-protection-min-samples" : undefined} className={inputClassName} type="number" min={1} max={256} step={1} value={config.protectionProfile.minSamples} onChange={(event) => update("protectionProfile", { ...config.protectionProfile, minSamples: Number(event.target.value) })} />
-                  {protectionFieldError("minSamples") ? <span id="routing-error-protection-min-samples" className="font-normal text-danger-foreground" role="alert">{protectionFieldError("minSamples")}</span> : null}
-                </label>
-                <label className="grid max-w-xs gap-1.5 text-xs font-medium text-muted-foreground">
-                  <span>失败率阈值（%）</span>
-                  <div><input aria-label="失败率阈值（%）" aria-invalid={Boolean(protectionFieldError("failureThresholdPercent"))} aria-describedby={protectionFieldError("failureThresholdPercent") ? "routing-error-protection-failure-threshold" : undefined} className={inputClassName} type="number" min={1} max={100} step={1} value={config.protectionProfile.failureThresholdPercent} onChange={(event) => update("protectionProfile", { ...config.protectionProfile, failureThresholdPercent: Number(event.target.value) })} /></div>
-                  {protectionFieldError("failureThresholdPercent") ? <span id="routing-error-protection-failure-threshold" className="font-normal text-danger-foreground" role="alert">{protectionFieldError("failureThresholdPercent")}</span> : null}
-                </label>
-                <label className="grid max-w-xs gap-1.5 text-xs font-medium text-muted-foreground">
-                  <span>半开成功次数</span>
-                  <input aria-label="半开成功次数" aria-invalid={Boolean(protectionFieldError("halfOpenSuccessesToClose"))} aria-describedby={protectionFieldError("halfOpenSuccessesToClose") ? "routing-error-protection-half-open-successes" : undefined} className={inputClassName} type="number" min={1} max={16} step={1} value={config.protectionProfile.halfOpenSuccessesToClose} onChange={(event) => update("protectionProfile", { ...config.protectionProfile, halfOpenSuccessesToClose: Number(event.target.value) })} />
-                  {protectionFieldError("halfOpenSuccessesToClose") ? <span id="routing-error-protection-half-open-successes" className="font-normal text-danger-foreground" role="alert">{protectionFieldError("halfOpenSuccessesToClose")}</span> : null}
-                </label>
-              </div>
-            </section>
-          ) : null}
+        <section className={settingsBlockClassName} aria-labelledby="routing-policy-circuit-title">
+          <div>
+            <h3 id="routing-policy-circuit-title" className="text-sm font-medium text-foreground">熔断器设置</h3>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="grid max-w-xs gap-1.5 text-xs font-medium text-muted-foreground">
+              <span>恢复成功阈值（次）</span>
+              <input aria-label="恢复成功阈值（次）" aria-invalid={Boolean(circuitFieldError("recoverySuccessThreshold"))} className={inputClassName} type="number" min={1} max={16} step={1} value={config.circuitBreaker.recoverySuccessThreshold} onChange={(event) => update("circuitBreaker", { ...config.circuitBreaker, recoverySuccessThreshold: Number(event.target.value) })} />
+              <span className="font-normal">恢复阶段需要连续多少个独立真实请求成功才回到正常状态。范围 1-16 次，默认 2 次。</span>
+              {circuitFieldError("recoverySuccessThreshold") ? <span className="font-normal text-danger-foreground" role="alert">{circuitFieldError("recoverySuccessThreshold")}</span> : null}
+            </label>
+            <label className="grid max-w-xs gap-1.5 text-xs font-medium text-muted-foreground">
+              <span>恢复等待时间（秒）</span>
+              <input aria-label="恢复等待时间（秒）" aria-invalid={Boolean(circuitFieldError("recoveryWaitSeconds"))} className={inputClassName} type="number" min={5} max={3_600} step={1} value={config.circuitBreaker.recoveryWaitSeconds} onChange={(event) => update("circuitBreaker", { ...config.circuitBreaker, recoveryWaitSeconds: Number(event.target.value) })} />
+              <span className="font-normal">熔断后至少等待多久才有资格进行恢复尝试，反复失败会由系统自动延长。范围 5-3600 秒，默认 30 秒。</span>
+              {circuitFieldError("recoveryWaitSeconds") ? <span className="font-normal text-danger-foreground" role="alert">{circuitFieldError("recoveryWaitSeconds")}</span> : null}
+            </label>
+          </div>
+        </section>
 
         <section className={settingsBlockClassName} aria-labelledby="routing-policy-fallback-title">
           <div className="flex flex-wrap items-center justify-between gap-4">
@@ -390,7 +531,6 @@ export function LocalRoutingSettingsEditor() {
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
               <h3 id="routing-policy-affinity-title" className="text-sm font-medium text-foreground">会话亲和</h3>
-            <p className="mt-0.5 text-xs text-muted-foreground">在有效期内优先复用同一候选密钥。</p>
             </div>
             <SwitchControl
               ariaLabel="启用会话亲和"
@@ -405,54 +545,45 @@ export function LocalRoutingSettingsEditor() {
               <div>
                 <input aria-label="亲和时长（秒）" className={inputClassName} type="number" min={1} max={86400} value={config.affinityTtlSeconds} onChange={(event) => update("affinityTtlSeconds", Number(event.target.value))} />
               </div>
+              <span className="font-normal">亲和记录保持有效的时间。范围 1-86400 秒，默认 300 秒。</span>
             </label>
           ) : null}
         </section>
 
         <section className={settingsBlockClassName} aria-labelledby="routing-policy-retry-title">
           <div>
-            <h3 id="routing-policy-retry-title" className="text-sm font-medium text-foreground">重试与故障转移</h3>
-            <p className="mt-0.5 text-xs text-muted-foreground">只控制可安全重放的容量类失败；认证、请求参数、已提交响应等错误不会被设置强行重试。仅影响保存后创建的请求。</p>
+            <h3 id="routing-policy-retry-title" className="text-sm font-medium text-foreground">重试设置</h3>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="grid max-w-xs gap-1.5 text-xs font-medium text-muted-foreground">
-              <span>单个请求最大尝试次数</span>
-                <input aria-label="单个请求最大尝试次数" aria-invalid={Boolean(fieldErrors["retryFailover.maxTotalAttempts"])} aria-describedby={fieldErrors["retryFailover.maxTotalAttempts"] ? "routing-error-max-total-attempts" : undefined} className={inputClassName} type="number" min={1} max={4} step={1} value={config.retryFailover.maxTotalAttempts} onChange={(event) => update("retryFailover", { ...config.retryFailover, maxTotalAttempts: Number(event.target.value) })} />
-                <span className="font-normal">包含第一次发送，范围 1-4。</span>
-                {fieldErrors["retryFailover.maxTotalAttempts"] ? <span id="routing-error-max-total-attempts" className="font-normal text-danger-foreground" role="alert">{fieldErrors["retryFailover.maxTotalAttempts"]}</span> : null}
+              <span>最大重试次数（次）</span>
+              <input aria-label="最大重试次数（次）" aria-invalid={Boolean(retryFieldError("maxRetryCount"))} className={inputClassName} type="number" min={0} max={3} step={1} value={config.retry.maxRetryCount} onChange={(event) => update("retry", { ...config.retry, maxRetryCount: Number(event.target.value) })} />
+              <span className="font-normal">首把密钥之外最多再尝试多少把密钥。范围 0-3，默认 3。</span>
+              {retryFieldError("maxRetryCount") ? <span className="font-normal text-danger-foreground" role="alert">{retryFieldError("maxRetryCount")}</span> : null}
             </label>
             <label className="grid max-w-xs gap-1.5 text-xs font-medium text-muted-foreground">
-              <span>同目标容量重试次数</span>
-                <input aria-label="同目标容量重试次数" aria-invalid={Boolean(fieldErrors["retryFailover.maxSameTargetCapacityRetries"])} aria-describedby={fieldErrors["retryFailover.maxSameTargetCapacityRetries"] ? "routing-error-same-target-retries" : undefined} className={inputClassName} type="number" min={0} max={2} step={1} value={config.retryFailover.maxSameTargetCapacityRetries} onChange={(event) => update("retryFailover", { ...config.retryFailover, maxSameTargetCapacityRetries: Number(event.target.value) })} />
-              <span className="font-normal">范围 0-2，且必须小于最大尝试次数。</span>
-              {fieldHints["retryFailover.maxSameTargetCapacityRetries"] ? <span className="font-normal text-warning-foreground" role="alert">{fieldHints["retryFailover.maxSameTargetCapacityRetries"]}</span> : null}
-                {fieldErrors["retryFailover.maxSameTargetCapacityRetries"] ? <span id="routing-error-same-target-retries" className="font-normal text-danger-foreground" role="alert">{fieldErrors["retryFailover.maxSameTargetCapacityRetries"]}</span> : null}
+              <span>连续失败阈值（次）</span>
+              <input aria-label="连续失败阈值（次）" aria-invalid={Boolean(retryFieldError("consecutiveFailureThreshold"))} className={inputClassName} type="number" min={1} max={10} step={1} value={config.retry.consecutiveFailureThreshold} onChange={(event) => update("retry", { ...config.retry, consecutiveFailureThreshold: Number(event.target.value) })} />
+              <span className="font-normal">当前密钥失败后会继续重试；连续失败达到该次数后熔断并尝试下一把密钥。计数跨请求保留，范围 1-10 次，默认 3 次。</span>
+              {retryFieldError("consecutiveFailureThreshold") ? <span className="font-normal text-danger-foreground" role="alert">{retryFieldError("consecutiveFailureThreshold")}</span> : null}
             </label>
-            <label className="grid max-w-xs gap-1.5 text-xs font-medium text-muted-foreground">
-              <span>容量重试总等待预算（秒）</span>
-              <div>
-                <input aria-label="容量重试总等待预算（秒）" aria-invalid={Boolean(fieldErrors["retryFailover.capacityRetryWaitBudgetSeconds"])} aria-describedby={fieldErrors["retryFailover.capacityRetryWaitBudgetSeconds"] ? "routing-error-wait-budget" : undefined} className={inputClassName} type="number" min={0} max={2} step={0.05} value={config.retryFailover.capacityRetryWaitBudgetSeconds} onChange={(event) => update("retryFailover", { ...config.retryFailover, capacityRetryWaitBudgetSeconds: Number(event.target.value) })} />
-              </div>
-              <span className="font-normal">范围 0-2，所有等待共享此预算。</span>
-              {fieldErrors["retryFailover.capacityRetryWaitBudgetSeconds"] ? <span id="routing-error-wait-budget" className="font-normal text-danger-foreground" role="alert">{fieldErrors["retryFailover.capacityRetryWaitBudgetSeconds"]}</span> : null}
-            </label>
-            <div className="flex max-w-xl items-start justify-between gap-4 rounded-[var(--surface-radius)] border border-border bg-surface-subtle p-3 text-xs">
-              <div>
-                <p className="font-medium text-foreground">允许跨容量域回退</p>
-                <p className="mt-0.5 font-normal text-muted-foreground">同一容量域不可用时，允许规划器尝试其他容量域。</p>
-              </div>
-              <SwitchControl ariaLabel="允许跨容量域回退" checked={config.retryFailover.allowCrossCapacityDomainFallback} showLabel={false} onCheckedChange={() => update("retryFailover", { ...config.retryFailover, allowCrossCapacityDomainFallback: !config.retryFailover.allowCrossCapacityDomainFallback })} />
-            </div>
           </div>
         </section>
 
         <footer
-          className={`flex flex-wrap items-center gap-3 pt-4 ${error || dirty ? "justify-between" : "justify-end"}`}
+          className={`flex flex-wrap items-center gap-3 pt-4 ${error || dirty || publication ? "justify-between" : "justify-end"}`}
           data-tour="routing-policy-save"
         >
-          {error || dirty ? (
-            <div className="min-h-5 text-xs" aria-live="polite">
-              {error ? <p className="text-danger-foreground">{error}</p> : <span className="text-muted-foreground">存在未保存的修改</span>}
+          {error || dirty || publication ? (
+            <div className="flex min-h-5 min-w-0 flex-wrap items-center gap-2 text-xs" aria-live="polite">
+              {error ? <p className="text-danger-foreground">{error}</p> : null}
+              {dirty ? <StatusBadge tone="warning">未保存</StatusBadge> : null}
+              {!dirty && publication ? (
+                <>
+                  <StatusBadge tone={publication.tone}>{publication.label}</StatusBadge>
+                  <span className="min-w-0 text-muted-foreground">{publication.description}</span>
+                </>
+              ) : null}
             </div>
           ) : null}
           <div className="flex gap-2">
@@ -504,6 +635,72 @@ export function LocalRoutingSettingsEditor() {
           </div>
         </div>
       </SectionCard>
-    </div>
+    </fieldset>
   );
+}
+
+function policyPublicationFeedback(
+  status: string | null,
+  pollingState: "idle" | "polling" | "unavailable" | "timed_out",
+  publicationError: string | null,
+  failureCode: string | null,
+) {
+  if (pollingState === "timed_out" || pollingState === "unavailable") {
+    return {
+      label: pollingState === "timed_out" ? "发布确认超时" : "发布状态不可用",
+      description: publicationError ?? "尚未确认此策略已生效。",
+      tone: "error" as const,
+    };
+  }
+  switch (status) {
+    case "staged":
+      return {
+        label: "等待重建",
+        description: "策略已提交，但尚未影响运行中的请求。",
+        tone: "info" as const,
+      };
+    case "ready":
+      return {
+        label: "等待切换",
+        description: "重建已完成，正在等待原子切换。",
+        tone: "warning" as const,
+      };
+    case "failed":
+      return {
+        label: "重建失败",
+        description: publicationFailureDescription(failureCode),
+        tone: "error" as const,
+      };
+    case "active":
+      return null;
+    case "expired":
+      return {
+        label: "发布已失效",
+        description: "该 revision 或 generation 已被替代，尚未确认此策略生效。",
+        tone: "warning" as const,
+      };
+    default:
+      return status
+        ? {
+            label: "状态未知",
+            description: `后端返回状态：${status}`,
+            tone: "warning" as const,
+          }
+        : null;
+  }
+}
+
+function publicationFailureDescription(failureCode: string | null): string {
+  switch (failureCode) {
+    case "generation_build_failed":
+      return "评分或熔断状态重建失败，当前运行策略未改变。";
+    case "generation_superseded":
+      return "发布 generation 已被更新输入替代，当前运行策略未改变。";
+    case "generation_qualification_failed":
+      return "发布资格校验失败，当前运行策略未改变。";
+    case "generation_cutover_failed":
+      return "原子切换失败，当前运行策略未改变。";
+    default:
+      return "当前运行策略未改变。";
+  }
 }

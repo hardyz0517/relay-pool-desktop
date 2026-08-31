@@ -1,5 +1,6 @@
 import {
   getRoutingProtectionStatus,
+  getRoutingPolicyPublicationStatus,
   getRequestDecisionTrace,
   getStationKeyOperationalDetail,
   listRecentRouteDecisions,
@@ -17,15 +18,16 @@ import type {
   RoutingRuntimeOverlay,
   RoutingWorkspaceSnapshot,
   RoutingWorkspaceSnapshotInput,
-  RoutingProtectionStatusInput,
+  RoutingPolicyPublicationStatusInput,
   StationKeyOperationalDetail,
 } from "@/lib/types/routing";
 
 export const routingQueryKeys = {
   all: ["routing"] as const,
   policy: () => ["routing", "policy"] as const,
-  protectionStatus: (input: RoutingProtectionStatusInput = {}) =>
-    ["routing", "protectionStatus", input.model ?? null] as const,
+  policyPublication: (input: RoutingPolicyPublicationStatusInput) =>
+    ["routing", "policyPublication", input.revision, input.policyGenerationId ?? null] as const,
+  protectionStatus: () => ["routing", "protectionStatus"] as const,
   workspaceSnapshot: (input: RoutingWorkspaceSnapshotInput = {}) =>
     ["routing", "workspaceSnapshot", input.limit ?? null, input.cursor ?? null] as const,
   runtimeOverlay: () => ["routing", "runtimeOverlay"] as const,
@@ -66,10 +68,22 @@ export function routingPolicyQueryOptions() {
   } as const;
 }
 
-export function routingProtectionStatusQueryOptions(input: RoutingProtectionStatusInput = {}) {
+export function routingPolicyPublicationQueryOptions(
+  input: RoutingPolicyPublicationStatusInput,
+) {
   return {
-    queryKey: routingQueryKeys.protectionStatus(input),
-    queryFn: () => getRoutingProtectionStatus(input),
+    queryKey: routingQueryKeys.policyPublication(input),
+    queryFn: () => getRoutingPolicyPublicationStatus(input),
+    staleTime: 0,
+    retry: false,
+    meta: { suppressGlobalErrorNotification: true },
+  } as const;
+}
+
+export function routingProtectionStatusQueryOptions() {
+  return {
+    queryKey: routingQueryKeys.protectionStatus(),
+    queryFn: getRoutingProtectionStatus,
     staleTime: 5_000,
     retry: false,
     meta: { suppressGlobalErrorNotification: true },

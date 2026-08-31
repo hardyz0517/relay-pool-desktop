@@ -171,9 +171,6 @@ export type StationsDomainClient = {
   deleteStation(id: string): Promise<void>;
   openStationWebsite(url: string): Promise<void>;
   reorderStations(stationIds: string[]): Promise<Station[]>;
-  getStationCapacityDomain(stationId: string): Promise<import("@/lib/types/stations").StationCapacityDomain | null>;
-  upsertStationCapacityDomain(input: import("@/lib/types/stations").UpsertStationCapacityDomainInput): Promise<import("@/lib/types/stations").StationCapacityDomain>;
-  clearStationCapacityDomain(stationId: string, expectedRevision: number): Promise<void>;
   listStationEndpointHealth(): Promise<StationEndpointHealth[]>;
   pingStationEndpoint(stationId: string): Promise<EndpointPingResult>;
 };
@@ -320,8 +317,8 @@ export type RoutingDomainClient = {
   deleteModelAlias(id: string): Promise<void>;
   listStationKeyHealth(): Promise<StationKeyHealth[]>;
   getRoutingProtectionStatus(input?: import("./generated").RoutingProtectionStatusInputDto): Promise<import("./generated").RoutingProtectionStatusDto>;
-  listErrorRateHistory(input?: import("./generated").ErrorRateHistoryInputDto): Promise<import("./generated").ErrorRateHistoryPageDto>;
   loadRoutingPolicy(): Promise<import("./generated").RoutingPolicySnapshotDto>;
+  getRoutingPolicyPublicationStatus(input: import("./generated").RoutingPolicyPublicationStatusInputDto): Promise<import("./generated").RoutingPolicyPublicationStatusDto>;
   applyRoutingPolicyDocument(input: import("./generated").ApplyRoutingPolicyDocumentInputDto): Promise<import("./generated").RoutingPolicySnapshotDto>;
   loadRoutingWorkspaceSnapshot(input?: RoutingWorkspaceSnapshotInput): Promise<RoutingWorkspaceSnapshot>;
   loadRoutingRuntimeOverlay(): Promise<RoutingRuntimeOverlay>;

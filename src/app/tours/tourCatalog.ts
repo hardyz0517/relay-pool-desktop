@@ -72,7 +72,7 @@ const dashboardSteps = [
   step("dashboard-station-metrics", "dashboard", "dashboard-station-metrics", "中转站统计", "站点余额与站点侧请求、消耗来自上游资产事实，统计口径不等同于本地请求指标。"),
   step("dashboard-risk", "dashboard", "dashboard-risk", "风险提示", "这里聚合需要处理的问题，严重度和最近出现时间可以帮助决定处理顺序。"),
   step("dashboard-key-health", "dashboard", "dashboard-key-health", "密钥健康", "可用、冷却和禁用等状态会影响密钥能否继续参与路由。"),
-  step("dashboard-routing-queue", "dashboard", "dashboard-routing-queue", "路由候选", "候选 Key 的并发和近期成功率用于观察当前承载情况，这里并不是手工排队列表。"),
+  step("dashboard-routing-queue", "dashboard", "dashboard-routing-queue", "路由候选", "候选 Key 的并发和评分用于观察当前承载情况，这里并不是手工排队列表。"),
   step("dashboard-recent-usage", "dashboard", "dashboard-recent-usage", "近期使用", "这里用于快速确认最新请求，完整筛选、生命周期和成本详情应进入使用记录。"),
 ] as const;
 

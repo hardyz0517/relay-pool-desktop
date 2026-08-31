@@ -71,7 +71,7 @@ export function RoutingPage({
   });
   const latestDecision = routeDecisionsQuery.data?.decisions[0] ?? null;
   const protectionStatusQuery = useActivityQuery({
-    ...routingProtectionStatusQueryOptions({ model: latestDecision?.model ?? undefined }),
+    ...routingProtectionStatusQueryOptions(),
     enabled: queryEnabled && activeTab === "status" && developerModeEnabled,
   });
   const workspace = useMemo(() => {
@@ -254,6 +254,7 @@ export function RoutingPage({
               decisions={routeDecisionsQuery.data ?? null}
               protectionStatus={protectionStatusQuery.data ?? null}
               loading={routingSnapshotQuery.isPending && routingSnapshotQuery.data === undefined}
+              error={error}
               developerModeEnabled={developerModeEnabled}
               deepLink={deepLink}
               onOpenRequestLog={onOpenRequestLog}

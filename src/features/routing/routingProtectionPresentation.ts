@@ -10,6 +10,7 @@ export function userVisibleProtectionEntries(
 ) {
   return (status?.entries ?? []).filter(
     (entry) =>
+      entry.scopeKind === "station_key" &&
       entry.persistenceKind !== "legacy_compatibility" &&
       entry.state !== "unavailable" &&
       entry.state !== "no_protection",

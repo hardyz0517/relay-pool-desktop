@@ -23,7 +23,6 @@ import {
   createNewDataStore as createNewDataStoreBinding,
   createRemoteStationKey as createRemoteStationKeyBinding,
   createStation as createStationBinding,
-  clearStationCapacityDomain as clearStationCapacityDomainBinding,
   createStationKey as createStationKeyBinding,
   collectStationInfo as collectStationInfoBinding,
   collectStationTask as collectStationTaskBinding,
@@ -70,7 +69,6 @@ import {
   getStationPublishedStatusWorkspace as getStationPublishedStatusWorkspaceBinding,
   getStationPublishedStatusOverview as getStationPublishedStatusOverviewBinding,
   getStationCredentials as getStationCredentialsBinding,
-  getStationCapacityDomain as getStationCapacityDomainBinding,
   getStationKeyCapabilities as getStationKeyCapabilitiesBinding,
   getStationKeyHealth as getStationKeyHealthBinding,
   importRelayPoolToCcswitch as importRelayPoolToCcswitchBinding,
@@ -102,8 +100,8 @@ import {
   loadPricingGroupMonitorStatus as loadPricingGroupMonitorStatusBinding,
   loadRoutingRuntimeOverlay as loadRoutingRuntimeOverlayBinding,
   loadRoutingPolicy as loadRoutingPolicyBinding,
+  getRoutingPolicyPublicationStatus as getRoutingPolicyPublicationStatusBinding,
   getRoutingProtectionStatus as getRoutingProtectionStatusBinding,
-  listErrorRateHistory as listErrorRateHistoryBinding,
   loadRoutingWorkspaceSnapshot as loadRoutingWorkspaceSnapshotBinding,
   listModelAliases as listModelAliasesBinding,
   getModelMappingWorkspace as getModelMappingWorkspaceBinding,
@@ -164,7 +162,6 @@ import {
   upsertStationGroupBinding as upsertStationGroupBindingBinding,
   updateSettings as updateSettingsBinding,
   updateStation as updateStationBinding,
-  upsertStationCapacityDomain as upsertStationCapacityDomainBinding,
   updateChannelMonitor as updateChannelMonitorBinding,
   updateChannelMonitorTemplate as updateChannelMonitorTemplateBinding,
   updateStationCredentials as updateStationCredentialsBinding,
@@ -254,9 +251,6 @@ export class DesktopBackend implements BackendClient {
     openStationWebsite: (url: string) => openExternalUrlBinding({ url }),
     reorderStations: (stationIds: string[]) =>
       reorderStationsBinding({ stationIds }).then((stations) => stations.map(normalizeStation)),
-    getStationCapacityDomain: (stationId: string) => getStationCapacityDomainBinding({ stationId }),
-    upsertStationCapacityDomain: (input: Parameters<BackendClient["stations"]["upsertStationCapacityDomain"]>[0]) => upsertStationCapacityDomainBinding(input),
-    clearStationCapacityDomain: (stationId: string, expectedRevision: number) => clearStationCapacityDomainBinding({ stationId, expectedRevision }),
     listStationEndpointHealth: () =>
       listStationEndpointHealthBinding().then((health) => health.map(normalizeStationEndpointHealth)),
     pingStationEndpoint: (stationId: string) =>
@@ -540,8 +534,10 @@ export class DesktopBackend implements BackendClient {
     deleteModelAlias: (id: string) => deleteModelAliasBinding({ id }),
     listStationKeyHealth: () => listStationKeyHealthBinding(),
     getRoutingProtectionStatus: (input = {}) => getRoutingProtectionStatusBinding(input),
-    listErrorRateHistory: (input = {}) => listErrorRateHistoryBinding(input),
     loadRoutingPolicy: () => loadRoutingPolicyBinding(),
+    getRoutingPolicyPublicationStatus: (
+      input: Parameters<BackendClient["routing"]["getRoutingPolicyPublicationStatus"]>[0],
+    ) => getRoutingPolicyPublicationStatusBinding(input),
     applyRoutingPolicyDocument: (input: Parameters<BackendClient["routing"]["applyRoutingPolicyDocument"]>[0]) =>
       applyRoutingPolicyDocumentBinding(input),
     loadRoutingWorkspaceSnapshot: (input = {}) => loadRoutingWorkspaceSnapshotBinding(input),

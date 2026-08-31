@@ -228,11 +228,11 @@ function LatencyCell({ log }: { log: RequestLog }) {
   const tone = requestLatencyTone(log);
   return (
     <div className="relative min-h-[36px] w-full text-xs leading-4">
+      <span
+        className={`absolute -left-1 top-1/2 h-9 w-1 -translate-y-1/2 rounded-full ${latencyToneBarClass(tone)}`}
+        aria-hidden="true"
+      />
       <div className="absolute left-1/2 top-1/2 grid w-max -translate-x-1/2 -translate-y-1/2 gap-0.5">
-        <span
-          className={`absolute right-full top-0 mr-2.5 h-9 w-1 rounded-full ${latencyToneBarClass(tone)}`}
-          aria-hidden="true"
-        />
         {latencyBreakdown(log).map((row) => (
           <div
             key={row.label}
