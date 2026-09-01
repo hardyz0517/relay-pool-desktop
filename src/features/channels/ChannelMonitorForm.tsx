@@ -2,6 +2,9 @@ import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "re
 import { AlertTriangle, ArrowLeft, Check, Plus, RefreshCw, X } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, IconButton, PageForm, SectionCard, SelectControl, SwitchControl } from "@/components/ui";
+import { getStationKeyCapabilities } from "@/lib/api/routing";
+import { readError } from "@/lib/errors";
+import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import type {
   ChannelMonitor,
   ChannelMonitorHealthWritebackMode,
@@ -121,6 +124,23 @@ export function ChannelMonitorForm({
     })),
     [stationKeys],
   );
+  const modelKeyIds = useMemo(
+    () => draft.targetType === "station_key"
+      ? (draft.stationKeyId ? [draft.stationKeyId] : [])
+      : stationKeys.filter((key) => key.enabled).map((key) => key.id),
+    [draft.stationKeyId, draft.targetType, stationKeys],
+  );
+  const modelCapabilitiesQuery = useActivityQuery({
+    queryKey: ["channelMonitoring", "keyCapabilities", modelKeyIds],
+    enabled: modelKeyIds.length > 0,
+    queryFn: () => Promise.all(modelKeyIds.map((stationKeyId) => getStationKeyCapabilities(stationKeyId))),
+    staleTime: 5_000,
+  });
+  const modelOptions = useMemo(
+    () => buildMonitorModelOptions(modelCapabilitiesQuery.data ?? []),
+    [modelCapabilitiesQuery.data],
+  );
+  const modelOptionsUnavailable = modelCapabilitiesQuery.isError || modelCapabilitiesQuery.isPending || modelKeyIds.length === 0;
   const selectedProfile = capabilities?.profiles.find((profile) => profile.id === draft.clientProfileId);
   const validationError = validateMonitorDraft(draft, { templates, keys, capabilities });
   const highRisk = draft.healthPolicyMode === "authoritative" || Number(draft.intervalSeconds) < 60;
@@ -243,10 +263,34 @@ export function ChannelMonitorForm({
                 />
               </Field>
               <Field label="主模型">
-                <input className={inputClassName} value={draft.primaryModel} placeholder="例如 gpt-4.1-mini" onChange={(event) => updateDraft({ primaryModel: event.target.value })} />
+                <ModelInput
+                  ariaLabel="主模型"
+                  selectAriaLabel="从模型列表选择主模型"
+                  value={draft.primaryModel}
+                  options={modelOptions}
+                  selectDisabled={modelOptionsUnavailable}
+                  placeholder="例如 gpt-4.1-mini"
+                  onChange={(primaryModel) => updateDraft({ primaryModel })}
+                />
+                {modelCapabilitiesQuery.isPending && modelKeyIds.length > 0 ? (
+                  <span className="text-[11px] font-normal text-muted-foreground">正在读取密钥已获取的模型…</span>
+                ) : null}
+                {modelCapabilitiesQuery.isError ? (
+                  <span className="text-[11px] font-normal text-danger-foreground" role="alert">
+                    读取密钥模型列表失败：{readError(modelCapabilitiesQuery.error)}
+                  </span>
+                ) : null}
+                {!modelCapabilitiesQuery.isPending && !modelCapabilitiesQuery.isError && modelKeyIds.length > 0 && modelOptions.length === 0 ? (
+                  <span className="text-[11px] font-normal text-muted-foreground">该密钥尚未拉取模型列表，可手动输入模型名称。</span>
+                ) : null}
               </Field>
             </div>
-            <FallbackModelEditor models={draft.fallbackModels} onChange={(fallbackModels) => updateDraft({ fallbackModels })} />
+            <FallbackModelEditor
+              models={draft.fallbackModels}
+              options={modelOptions}
+              selectDisabled={modelOptionsUnavailable}
+              onChange={(fallbackModels) => updateDraft({ fallbackModels })}
+            />
           </SectionCard>
 
           <SectionCard title="调度与预算">
@@ -333,7 +377,17 @@ export function ChannelMonitorForm({
   );
 }
 
-function FallbackModelEditor({ models, onChange }: { models: string[]; onChange: (models: string[]) => void }) {
+function FallbackModelEditor({
+  models,
+  options,
+  selectDisabled,
+  onChange,
+}: {
+  models: string[];
+  options: string[];
+  selectDisabled: boolean;
+  onChange: (models: string[]) => void;
+}) {
   return (
     <div className="mt-3">
       <div className="mb-1.5 flex items-center justify-between gap-2 text-xs font-medium text-muted-foreground">
@@ -350,7 +404,15 @@ function FallbackModelEditor({ models, onChange }: { models: string[]; onChange:
         <div className="grid gap-2 md:grid-cols-3">
           {models.map((model, index) => (
             <div key={index} className="flex min-w-0 items-center gap-1.5">
-              <input className={`${inputClassName} min-w-0 flex-1`} value={model} placeholder={`回退模型 ${index + 1}`} onChange={(event) => onChange(models.map((item, itemIndex) => itemIndex === index ? event.target.value : item))} />
+              <ModelInput
+                ariaLabel={`回退模型 ${index + 1}`}
+                selectAriaLabel={`从模型列表选择回退模型 ${index + 1}`}
+                value={model}
+                options={options}
+                selectDisabled={selectDisabled}
+                placeholder={`回退模型 ${index + 1}`}
+                onChange={(nextModel) => onChange(models.map((item, itemIndex) => itemIndex === index ? nextModel : item))}
+              />
               <IconButton label={`移除回退模型 ${index + 1}`} onClick={() => onChange(models.filter((_, itemIndex) => itemIndex !== index))}>
                 <X className="h-4 w-4" />
               </IconButton>
@@ -360,6 +422,74 @@ function FallbackModelEditor({ models, onChange }: { models: string[]; onChange:
       )}
     </div>
   );
+}
+
+function ModelInput({
+  ariaLabel,
+  selectAriaLabel,
+  value,
+  options,
+  selectDisabled = false,
+  placeholder,
+  onChange,
+}: {
+  ariaLabel: string;
+  selectAriaLabel: string;
+  value: string;
+  options: string[];
+  selectDisabled?: boolean;
+  placeholder: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] gap-2">
+      <input
+        aria-label={ariaLabel}
+        className={`${inputClassName} min-w-0 w-full`}
+        value={value}
+        placeholder={placeholder}
+        onChange={(event) => onChange(event.target.value)}
+      />
+      <SelectControl
+        ariaLabel={selectAriaLabel}
+        title="从模型列表选择"
+        className="h-8 w-8 min-w-[2rem] justify-center gap-0 px-0 shadow-none"
+        disabled={selectDisabled || options.length === 0}
+        menuAlign="end"
+        menuMinWidth={220}
+        options={options.map((model) => ({ value: model, label: model }))}
+        placeholder={null}
+        searchable
+        searchPlaceholder="搜索模型..."
+        emptyLabel="没有匹配的模型"
+        value=""
+        onChange={onChange}
+      />
+    </div>
+  );
+}
+
+function buildMonitorModelOptions(capabilities: Array<{ modelAllowlist: string[]; modelBlocklist: string[] }>) {
+  const firstAllowlist = capabilities[0]?.modelAllowlist ?? [];
+  const availableInEveryKey = new Set(firstAllowlist.map((model) => model.trim().toLocaleLowerCase()).filter(Boolean));
+  for (const capability of capabilities) {
+    const allowlist = new Set(capability.modelAllowlist.map((model) => model.trim().toLocaleLowerCase()).filter(Boolean));
+    const blocklist = new Set(capability.modelBlocklist.map((model) => model.trim().toLocaleLowerCase()).filter(Boolean));
+    for (const model of availableInEveryKey) {
+      if (!allowlist.has(model) || blocklist.has(model)) {
+        availableInEveryKey.delete(model);
+      }
+    }
+  }
+
+  const seen = new Set<string>();
+  return firstAllowlist.flatMap((model) => {
+    const trimmed = model.trim();
+    const normalized = trimmed.toLocaleLowerCase();
+    if (!trimmed || !availableInEveryKey.has(normalized) || seen.has(normalized)) return [];
+    seen.add(normalized);
+    return [trimmed];
+  });
 }
 
 function NumberInput({ value, onChange }: { value: string; onChange: (value: string) => void }) {
