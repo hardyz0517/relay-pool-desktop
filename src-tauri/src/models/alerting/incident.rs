@@ -192,6 +192,17 @@ impl Incident {
                     return StateTransition::Opened;
                 }
 
+                // An already-open incident remains open while the abnormal
+                // condition is observed again. Re-evaluating the trigger
+                // here would emit another `Opened` transition for immediate
+                // (or already-satisfied consecutive) policies on every
+                // collection run, which in turn schedules duplicate
+                // notifications. A new notification is only valid after the
+                // incident has recovered and subsequently reopens.
+                if self.lifecycle_state == LifecycleState::Open {
+                    return StateTransition::None;
+                }
+
                 self.maybe_open(
                     observation.observed_at_ms,
                     trigger_mode,
@@ -385,6 +396,20 @@ mod tests {
         }
     }
 
+    fn authorization_observation(kind: ObservationKind, at: i64) -> IncidentObservation {
+        IncidentObservation {
+            source_observation_key: format!("authorization-obs-{at}"),
+            event_type: AlertEventType::AuthorizationExpired,
+            condition_key: ConditionKey::new("collector:station-1:authorization_expired")
+                .unwrap(),
+            kind,
+            severity: Severity::Warning,
+            observed_at_ms: at,
+            fact_fresh_until_ms: at + 10_000,
+            summary_json: "{}".to_string(),
+        }
+    }
+
     #[test]
     fn immediate_incident_recovers_and_reopens_new_episode() {
         let mut incident = Incident::new(
@@ -444,6 +469,45 @@ mod tests {
             StateTransition::Opened
         );
         assert_eq!(incident.episode_number, 2);
+    }
+
+    #[test]
+    fn open_incident_does_not_reemit_open_transition_for_repeated_abnormal_observation() {
+        let mut incident = Incident::new(
+            "incident-authorization",
+            ConditionKey::new("collector:station-1:authorization_expired").unwrap(),
+            AlertEventType::AuthorizationExpired,
+            Severity::Warning,
+            0,
+            "p1",
+        );
+        assert_eq!(
+            incident.apply_observation(
+                &authorization_observation(ObservationKind::Abnormal, 1),
+                TriggerMode::Immediate,
+                None,
+                None,
+                RecoveryMode::ConsecutiveHealthy,
+                Some(1),
+                None,
+            ),
+            StateTransition::Opened
+        );
+        assert_eq!(
+            incident.apply_observation(
+                &authorization_observation(ObservationKind::Abnormal, 2),
+                TriggerMode::Immediate,
+                None,
+                None,
+                RecoveryMode::ConsecutiveHealthy,
+                Some(1),
+                None,
+            ),
+            StateTransition::None
+        );
+        assert_eq!(incident.lifecycle_state, LifecycleState::Open);
+        assert_eq!(incident.episode_number, 1);
+        assert_eq!(incident.episode_occurrence_count, 2);
     }
 
     #[test]

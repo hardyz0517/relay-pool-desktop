@@ -376,7 +376,7 @@ mod tests {
             severity: Severity::Critical,
             object_type: "station".to_string(),
             object_id: Some("station-1".to_string()),
-            station_id: Some("station-1".to_string()),
+            station_id: None,
             station_key_id: None,
             source: "fixture".to_string(),
             reason_code: None,
@@ -402,7 +402,7 @@ mod tests {
             severity: Severity::Info,
             object_type: "station_group_binding".to_string(),
             object_id: Some("group-1".to_string()),
-            station_id: Some("station-1".to_string()),
+            station_id: None,
             station_key_id: None,
             source: "fixture".to_string(),
             reason_code: Some("group_missing".to_string()),
@@ -510,6 +510,62 @@ mod tests {
         runtime.close().await.expect("close runtime");
     }
 
+    #[tokio::test]
+    async fn repeated_authorization_expiry_observations_schedule_only_first_notification() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let runtime = PersistenceRuntime::initialize_new(
+            &root.path().join("authorization-expiry-notification.sqlite3"),
+        )
+        .await
+        .expect("runtime");
+        let alerting = AlertingIngress::new(runtime.handle());
+
+        runtime
+            .handle()
+            .write(|write| {
+                Box::pin(async move {
+                    authorization_observation("authorization-expired-1", 100)
+                        .validate()
+                        .expect("valid authorization observation");
+                    alerting
+                        .record_in_session(
+                            write,
+                            authorization_observation("authorization-expired-1", 100),
+                        )
+                        .await
+                        .expect("first authorization expiry record");
+                    alerting
+                        .record_in_session(
+                            write,
+                            authorization_observation("authorization-expired-2", 200),
+                        )
+                        .await
+                        .expect("second authorization expiry record");
+
+                    let deliveries = sqlx::query_scalar::<_, i64>(
+                        "SELECT COUNT(*) FROM notification_deliveries
+                         WHERE incident_id = 'incident-collector:station-1:authorization_expired'
+                           AND episode_number = 1",
+                    )
+                    .fetch_one(write.connection())
+                    .await?;
+                    assert_eq!(deliveries, 2, "one delivery per channel for the first open");
+
+                    let occurrence_count = sqlx::query_scalar::<_, i64>(
+                        "SELECT occurrence_count FROM change_incidents
+                         WHERE condition_key = 'collector:station-1:authorization_expired'",
+                    )
+                    .fetch_one(write.connection())
+                    .await?;
+                    assert_eq!(occurrence_count, 2);
+                    Ok::<(), PersistenceError>(())
+                })
+            })
+            .await
+            .expect("record repeated authorization expiry");
+        runtime.close().await.expect("close runtime");
+    }
+
     fn observation(key: &str, kind: ObservationKind, at_ms: i64) -> ObservationIngress {
         ObservationIngress {
             source_observation_key: key.to_string(),
@@ -524,6 +580,25 @@ mod tests {
             source: "fixture".to_string(),
             reason_code: None,
             summary_json: "{}".to_string(),
+            observed_at_ms: at_ms,
+            fact_fresh_until_ms: at_ms + 1_000,
+        }
+    }
+
+    fn authorization_observation(key: &str, at_ms: i64) -> ObservationIngress {
+        ObservationIngress {
+            source_observation_key: key.to_string(),
+            event_type: AlertEventType::AuthorizationExpired,
+            condition_key: ConditionKey::new("collector:station-1:authorization_expired").unwrap(),
+            kind: ObservationKind::Abnormal,
+            severity: Severity::Warning,
+            object_type: "station".to_string(),
+            object_id: Some("station-1".to_string()),
+            station_id: None,
+            station_key_id: None,
+            source: "collector".to_string(),
+            reason_code: Some("authorization_expired".to_string()),
+            summary_json: "{\"manualActionRequired\":true}".to_string(),
             observed_at_ms: at_ms,
             fact_fresh_until_ms: at_ms + 1_000,
         }
