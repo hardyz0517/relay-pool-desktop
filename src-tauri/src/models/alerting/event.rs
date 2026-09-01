@@ -133,6 +133,7 @@ pub enum AlertEventType {
     PriceExpired,
     KeyInvalid,
     CollectorFailed,
+    AuthorizationExpired,
     StationDown,
     RouteImpacted,
     GroupAdded,
@@ -154,6 +155,7 @@ impl AlertEventType {
             Self::PriceExpired => "price_expired",
             Self::KeyInvalid => "key_invalid",
             Self::CollectorFailed => "collector_failed",
+            Self::AuthorizationExpired => "authorization_expired",
             Self::StationDown => "station_down",
             Self::RouteImpacted => "route_impacted",
             Self::GroupAdded => "group_added",
@@ -175,6 +177,7 @@ impl AlertEventType {
             "price_expired" => Self::PriceExpired,
             "key_invalid" => Self::KeyInvalid,
             "collector_failed" => Self::CollectorFailed,
+            "authorization_expired" => Self::AuthorizationExpired,
             "station_down" => Self::StationDown,
             "route_impacted" => Self::RouteImpacted,
             "group_added" => Self::GroupAdded,
@@ -245,7 +248,7 @@ impl EventDefinition {
 }
 
 pub fn event_registry() -> &'static [EventDefinition] {
-    static REGISTRY: [EventDefinition; 16] = [
+    static REGISTRY: [EventDefinition; 17] = [
         EventDefinition::audit(AlertEventType::GroupMissing, Severity::Info),
         EventDefinition::state(
             AlertEventType::KeyGroupUnresolved,
@@ -279,6 +282,12 @@ pub fn event_registry() -> &'static [EventDefinition] {
         ),
         EventDefinition::state(
             AlertEventType::CollectorFailed,
+            Severity::Warning,
+            RecoveryOwner::CollectorTask,
+            900,
+        ),
+        EventDefinition::state(
+            AlertEventType::AuthorizationExpired,
             Severity::Warning,
             RecoveryOwner::CollectorTask,
             900,
@@ -318,7 +327,7 @@ mod tests {
 
     #[test]
     fn registry_has_recovery_contract_for_every_condition() {
-        assert_eq!(event_registry().len(), 16);
+        assert_eq!(event_registry().len(), 17);
         assert!(event_registry()
             .iter()
             .filter(|entry| entry.category == EventCategory::ConditionObservation)

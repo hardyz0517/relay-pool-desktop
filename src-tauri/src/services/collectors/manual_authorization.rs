@@ -34,7 +34,7 @@ const INTERACTIVE_JSON_FLAGS: &[&str] = &[
     "verification_required",
 ];
 
-pub(crate) const ERROR_CODE: &str = "manual_authorization_required";
+pub(crate) const ERROR_CODE: &str = crate::models::collector::MANUAL_AUTHORIZATION_ERROR_CODE;
 pub(crate) const MESSAGE: &str = "当前登录状态已失效，请重新进行窗口授权";
 pub(crate) const RECOMMENDED_ACTION: &str = "reauthorize";
 

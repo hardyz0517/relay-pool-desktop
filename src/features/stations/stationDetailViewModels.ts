@@ -433,6 +433,14 @@ function buildIncidentItems(incidents: AlertingIncident[]): StationDetailDiagnos
 }
 
 function formatIncidentEventLabel(eventType: string): string {
+  const labels: Record<string, string> = {
+    authorization_expired: "授权过期",
+    collector_failed: "采集失败",
+    station_down: "站点不可用",
+  };
+  if (labels[eventType]) {
+    return labels[eventType];
+  }
   return eventType
     .split("_")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))

@@ -569,6 +569,7 @@ function IncidentDetail({ incident }: { incident: AlertingIncident }) {
 function eventLabel(eventType: string) {
   const labels: Record<string, string> = {
     collector_failed: "采集失败",
+    authorization_expired: "授权过期",
     station_down: "站点不可用",
     balance_low: "余额偏低",
     balance_depleted: "余额耗尽",
@@ -632,7 +633,7 @@ function formatAuditValue(value: string) {
 }
 
 function reasonLabel(value: string | null) {
-  return ({ group_added: "新增分组", group_missing: "远程分组未找到", group_rate_changed: "分组倍率变化", key_group_bound: "密钥已绑定分组", price_changed: "价格变化", model_added: "新增模型", model_removed: "模型移除" } as Record<string, string>)[value ?? ""] ?? value ?? "配置发生变化";
+  return ({ authorization_expired: "授权过期", authorization_recovered: "授权已恢复", group_added: "新增分组", group_missing: "远程分组未找到", group_rate_changed: "分组倍率变化", key_group_bound: "密钥已绑定分组", price_changed: "价格变化", model_added: "新增模型", model_removed: "模型移除" } as Record<string, string>)[value ?? ""] ?? value ?? "配置发生变化";
 }
 
 function sourceLabel(value: string | null) {

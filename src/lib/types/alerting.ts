@@ -4,6 +4,7 @@ export type AlertSeverity = "critical" | "warning" | "info";
 export type AlertEventType =
   | "group_missing" | "key_group_unresolved" | "balance_low" | "balance_depleted"
   | "price_expired" | "key_invalid" | "collector_failed" | "station_down"
+  | "authorization_expired"
   | "route_impacted" | "group_added" | "rate_changed" | "group_rate_changed"
   | "price_changed" | "model_added" | "model_removed" | "audit_change";
 export type AlertScope = "global" | "event_type" | "station" | "station_key";
@@ -253,6 +254,7 @@ export type AlertingEventOption = {
 
 export const ALERT_EVENT_OPTIONS: readonly AlertingEventOption[] = [
   { value: "collector_failed", label: "采集失败", description: "采集任务执行失败", defaultSeverity: "warning", configurable: true },
+  { value: "authorization_expired", label: "授权过期", description: "站点登录授权已过期，需要重新授权", defaultSeverity: "warning", configurable: true },
   { value: "station_down", label: "站点不可用", description: "站点健康检查失败", defaultSeverity: "critical", configurable: true },
   { value: "balance_low", label: "余额偏低", description: "余额低于配置的阈值", defaultSeverity: "warning", configurable: true },
   { value: "balance_depleted", label: "余额耗尽", description: "余额已经耗尽", defaultSeverity: "critical", configurable: true },
@@ -296,7 +298,7 @@ export const DEFAULT_ALERTING_SETTINGS: AlertingSettings = {
 export function defaultAlertPolicy(eventType: AlertEventType = "collector_failed"): AlertPolicy {
   const option = ALERT_EVENT_OPTIONS.find((item) => item.value === eventType) ?? ALERT_EVENT_OPTIONS[0];
   const audit = isAuditAlertEvent(eventType);
-  const immediate = audit || eventType === "key_invalid";
+  const immediate = audit || eventType === "key_invalid" || eventType === "authorization_expired";
   return {
     id: `policy-${eventType}`, name: option.label, enabled: true, state: "active",
     scopeKind: "event_type", eventType, stationId: null, stationKeyId: null,

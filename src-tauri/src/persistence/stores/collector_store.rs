@@ -1106,7 +1106,10 @@ impl CollectorStore {
              JOIN collector_runs AS runs ON runs.id = task_state.last_run_id
              WHERE task_state.station_id = ?1
                AND runs.parent_run_id IS NULL
-               AND task_state.last_status IN ('failed', 'manual_required')
+               -- `manual_required` is an authorization/action-required state,
+               -- not a collector failure. It is projected separately as an
+               -- authorization-expired incident by the application layer.
+               AND task_state.last_status = 'failed'
                AND task_state.task_type IN ('balance', 'groups', 'detect', 'full')",
         )
         .bind(station_id)

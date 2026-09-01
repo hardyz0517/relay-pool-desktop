@@ -352,6 +352,14 @@ mod outbound {
 }
 
 mod models {
+    // Keep the small model surface required by the included collector modules
+    // available in this standalone conformance harness. The production crate
+    // owns the canonical value; this mirror only satisfies the harness's
+    // `crate::models` seam without pulling in the full application module.
+    pub mod collector {
+        pub(crate) const MANUAL_AUTHORIZATION_ERROR_CODE: &str = "manual_authorization_required";
+    }
+
     pub mod station_published_status {
         pub use crate::station_published_status_model::*;
     }

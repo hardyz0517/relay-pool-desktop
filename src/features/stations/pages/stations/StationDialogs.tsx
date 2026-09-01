@@ -36,6 +36,7 @@ const incidentEventLabels: Record<string, string> = {
   balance_low: "余额偏低",
   balance_depleted: "余额耗尽",
   collector_failed: "采集失败",
+  authorization_expired: "授权过期",
   group_missing: "分组缺失",
   key_group_unresolved: "密钥分组未解析",
   key_invalid: "密钥无效",

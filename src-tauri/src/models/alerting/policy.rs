@@ -234,6 +234,7 @@ impl AlertPolicy {
             .is_some_and(|definition| definition.category == EventCategory::AuditChange);
         let immediate = audit
             || event_type == Some(AlertEventType::KeyInvalid)
+            || event_type == Some(AlertEventType::AuthorizationExpired)
             || (event_type.is_none() && base_severity == Severity::Critical);
         let recovery_count = Some(1);
         Self {

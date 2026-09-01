@@ -983,6 +983,51 @@ impl CollectorService {
                             .inserted;
                     }
 
+                    // A reauthorization requirement is a distinct station
+                    // condition. Keep it independent from the collector
+                    // failure projection, including optional root tasks such
+                    // as published-status collection.
+                    if should_emit_collector_observation(request.parent_run_id.as_deref())
+                        && should_record_collector_observation(&request.status)
+                    {
+                        let authorization_expired = request_requires_manual_authorization(&request);
+                        let authorization_recovery_task = if authorization_expired
+                            || !matches!(request.status.as_str(), "success" | "partial")
+                        {
+                            None
+                        } else {
+                            authorization_expiry_incident_task_type(
+                                &alerting,
+                                write,
+                                &request.station_id,
+                            )
+                            .await?
+                        };
+                        let authorization_recovered = authorization_recovery_task
+                            .as_deref()
+                            .is_some_and(|task_type| {
+                                request_confirms_authorization_recovery(&request, task_type)
+                            });
+                        if authorization_expired || authorization_recovered {
+                            alerting_changed |= alerting
+                                .record_in_session(
+                                    write,
+                                    authorization_expired_observation(
+                                        &request,
+                                        &run_id,
+                                        if authorization_expired {
+                                            ObservationKind::Abnormal
+                                        } else {
+                                            ObservationKind::Healthy
+                                        },
+                                        &now,
+                                    ),
+                                )
+                                .await?
+                                .inserted;
+                        }
+                    }
+
                     collectors
                         .update_task_state(
                             write,
@@ -1637,6 +1682,125 @@ fn collector_observation(
     }
 }
 
+fn authorization_expired_observation(
+    request: &CollectorApplyRequest,
+    source_run_key: &str,
+    kind: ObservationKind,
+    now: &str,
+) -> ObservationIngress {
+    let observed_at_ms = parse_now_ms(now);
+    ObservationIngress {
+        source_observation_key: format!(
+            "collector:{}:authorization_expired:{}",
+            source_run_key, request.station_id
+        ),
+        event_type: AlertEventType::AuthorizationExpired,
+        condition_key: crate::models::alerting::ConditionKey::new(format!(
+            "collector:{}:authorization_expired",
+            request.station_id
+        ))
+        .expect("authorization expiry condition key is bounded"),
+        kind,
+        severity: Severity::Warning,
+        object_type: "station".to_string(),
+        object_id: Some(request.station_id.clone()),
+        station_id: Some(request.station_id.clone()),
+        station_key_id: None,
+        source: "collector".to_string(),
+        reason_code: Some(
+            if kind == ObservationKind::Abnormal {
+                "authorization_expired"
+            } else {
+                "authorization_recovered"
+            }
+            .to_string(),
+        ),
+        summary_json: json!({
+            "taskType": request.task_type,
+            "status": request.status,
+            "errorCode": request.error_code,
+            "manualActionRequired": kind == ObservationKind::Abnormal,
+            "recommendedAction": (kind == ObservationKind::Abnormal)
+                .then_some("reauthorize"),
+        })
+        .to_string(),
+        observed_at_ms,
+        fact_fresh_until_ms: observed_at_ms.saturating_add(900_000),
+    }
+}
+
+fn request_requires_manual_authorization(request: &CollectorApplyRequest) -> bool {
+    request.status == "manual_required"
+        || request.manual_action_required
+        || request.error_code.as_deref()
+            == Some(crate::models::collector::MANUAL_AUTHORIZATION_ERROR_CODE)
+        || request
+            .summary_json
+            .get("manualActionRequired")
+            .and_then(Value::as_bool)
+            == Some(true)
+        || request
+            .summary_json
+            .get("childRuns")
+            .and_then(Value::as_array)
+            .is_some_and(|children| {
+                children.iter().any(|child| {
+                    child.get("status").and_then(Value::as_str) == Some("manual_required")
+                        || child.get("manualActionRequired").and_then(Value::as_bool) == Some(true)
+                        || child.get("errorCode").and_then(Value::as_str)
+                            == Some(crate::models::collector::MANUAL_AUTHORIZATION_ERROR_CODE)
+                })
+            })
+}
+
+async fn authorization_expiry_incident_task_type(
+    alerting: &AlertingIngress,
+    write: &mut crate::persistence::WriteSession,
+    station_id: &str,
+) -> Result<Option<String>, crate::persistence::error::PersistenceError> {
+    let summary_json = alerting
+        .active_observation_summary_json(
+            write,
+            &format!("collector:{station_id}:authorization_expired"),
+        )
+        .await?;
+    Ok(summary_json.and_then(|encoded| {
+        serde_json::from_str::<Value>(&encoded)
+            .ok()?
+            .get("taskType")?
+            .as_str()
+            .map(str::to_string)
+    }))
+}
+
+fn request_confirms_authorization_recovery(
+    request: &CollectorApplyRequest,
+    affected_task_type: &str,
+) -> bool {
+    if request.task_type == affected_task_type {
+        return true;
+    }
+    if request.task_type != "full" {
+        return false;
+    }
+    if affected_task_type == "full" {
+        return true;
+    }
+    request
+        .summary_json
+        .get("childRuns")
+        .and_then(Value::as_array)
+        .is_some_and(|children| {
+            children.iter().any(|child| {
+                child.get("task").and_then(Value::as_str) == Some(affected_task_type)
+                    && child
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .is_some_and(|status| matches!(status, "success" | "partial"))
+            })
+        })
+}
+
 fn collector_balance_evidence_confidence(status: &str) -> String {
     match status.trim().to_ascii_lowercase().as_str() {
         "normal" | "available" | "usable" | "low" | "warning" | "depleted" | "exhausted"
@@ -1727,7 +1891,12 @@ fn merge_collector_failed_task_types(
                     continue;
                 };
                 if matches!(task_type, "balance" | "groups" | "detect") {
-                    apply_collector_task_status(&mut failed, task_type, status);
+                    apply_collector_task_status(
+                        &mut failed,
+                        task_type,
+                        status,
+                        child.get("errorCode").and_then(Value::as_str),
+                    );
                     applied_child_status = true;
                 }
             }
@@ -1735,10 +1904,20 @@ fn merge_collector_failed_task_types(
         if applied_child_status {
             failed.remove("full");
         } else {
-            apply_collector_task_status(&mut failed, "full", &request.status);
+            apply_collector_task_status(
+                &mut failed,
+                "full",
+                &request.status,
+                request.error_code.as_deref(),
+            );
         }
     } else {
-        apply_collector_task_status(&mut failed, &request.task_type, &request.status);
+        apply_collector_task_status(
+            &mut failed,
+            &request.task_type,
+            &request.status,
+            request.error_code.as_deref(),
+        );
     }
 
     ["balance", "groups", "detect", "full"]
@@ -1748,10 +1927,19 @@ fn merge_collector_failed_task_types(
         .collect()
 }
 
-fn apply_collector_task_status(failed: &mut BTreeSet<String>, task_type: &str, status: &str) {
-    if matches!(status, "failed" | "manual_required") {
+fn apply_collector_task_status(
+    failed: &mut BTreeSet<String>,
+    task_type: &str,
+    status: &str,
+    error_code: Option<&str>,
+) {
+    if error_code == Some(crate::models::collector::MANUAL_AUTHORIZATION_ERROR_CODE) {
+        failed.remove(task_type);
+    } else if status == "failed" {
         failed.insert(task_type.to_string());
     } else if matches!(status, "success" | "partial") {
+        failed.remove(task_type);
+    } else if status == "manual_required" {
         failed.remove(task_type);
     }
 }
@@ -1998,6 +2186,48 @@ mod tests {
         assert!(should_record_collector_observation("partial"));
         assert!(should_record_collector_observation("failed"));
         assert!(!should_record_collector_observation("unsupported"));
+    }
+
+    #[test]
+    fn authorization_expiry_is_a_distinct_observation_and_not_a_collector_failure() {
+        let request = CollectorApplyRequest {
+            run_key: "authorization-expired-run".to_string(),
+            station_id: "station-1".to_string(),
+            endpoint_revision: 1,
+            parent_run_id: None,
+            adapter: "newapi".to_string(),
+            task_type: "groups".to_string(),
+            status: "manual_required".to_string(),
+            facts: CanonicalCollectorFacts::default(),
+            summary_json: json!({}),
+            normalized_json: json!({}),
+            raw_json_redacted: None,
+            error_code: Some(crate::models::collector::MANUAL_AUTHORIZATION_ERROR_CODE.to_string()),
+            error_message: Some("当前登录状态已失效，请重新进行窗口授权".to_string()),
+            endpoint_count: 1,
+            success_count: 0,
+            failure_count: 1,
+            manual_action_required: true,
+            next_due_at: None,
+            execution_started_at_ms: None,
+            execution_duration_ms: None,
+        };
+        let observation = authorization_expired_observation(
+            &request,
+            "run-1",
+            ObservationKind::Abnormal,
+            "1700000000000",
+        );
+
+        assert_eq!(observation.event_type, AlertEventType::AuthorizationExpired);
+        assert_eq!(
+            observation.reason_code.as_deref(),
+            Some("authorization_expired")
+        );
+        assert_eq!(
+            merge_collector_failed_task_types(Vec::<String>::new(), &request),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
@@ -2514,7 +2744,7 @@ mod tests {
         request.manual_action_required = true;
         assert_eq!(
             merge_collector_failed_task_types(vec!["groups".to_string()], &request),
-            vec!["groups".to_string()]
+            Vec::<String>::new()
         );
 
         request.task_type = "full".to_string();
@@ -3115,6 +3345,19 @@ mod tests {
             .await
             .expect("manual authorization apply");
 
+        let mut read = runtime.begin_read().await.expect("authorization read");
+        let event_types = sqlx::query_scalar::<_, String>(
+            "SELECT event_type FROM change_incidents
+             WHERE station_id = ?1 AND lifecycle_state IN ('pending', 'open', 'recovering')
+             ORDER BY event_type",
+        )
+        .bind(&station.id)
+        .fetch_all(read.connection())
+        .await
+        .expect("active authorization incidents");
+        assert_eq!(event_types, vec!["authorization_expired".to_string()]);
+        drop(read);
+
         collectors
             .apply_result(collector_apply_request(
                 "later-balance-run",
@@ -3146,6 +3389,42 @@ mod tests {
             .expect("manual snapshot");
         assert_eq!(latest.status, "manual_required");
         assert_eq!(latest.summary_json["loginRequired"], true);
+
+        let mut read = runtime.begin_read().await.expect("balance recovery read");
+        let authorization_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM change_incidents
+             WHERE station_id = ?1 AND event_type = 'authorization_expired'
+               AND lifecycle_state IN ('pending', 'open', 'recovering')",
+        )
+        .bind(&station.id)
+        .fetch_one(read.connection())
+        .await
+        .expect("authorization count after unrelated success");
+        assert_eq!(authorization_count, 1);
+        drop(read);
+
+        collectors
+            .apply_result(collector_apply_request(
+                "recovered-groups-run",
+                &station,
+                None,
+                "groups",
+                "success",
+            ))
+            .await
+            .expect("groups recovery apply");
+        let mut read = runtime.begin_read().await.expect("groups recovery read");
+        let authorization_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM change_incidents
+             WHERE station_id = ?1 AND event_type = 'authorization_expired'
+               AND lifecycle_state IN ('pending', 'open', 'recovering')",
+        )
+        .bind(&station.id)
+        .fetch_one(read.connection())
+        .await
+        .expect("authorization count after matching success");
+        assert_eq!(authorization_count, 0);
+        drop(read);
         runtime.close().await.expect("close runtime");
     }
 
@@ -3173,12 +3452,33 @@ mod tests {
             "published_status",
             "manual_required",
         );
-        authorization.summary_json = json!({ "loginRequired": true });
+        authorization.summary_json = json!({
+            "loginRequired": true,
+            "manualActionRequired": true,
+        });
+        authorization.error_code = Some("manual_authorization_required".to_string());
         authorization.error_message = Some("当前登录状态已失效，请重新进行窗口授权".to_string());
         collectors
             .apply_result(authorization)
             .await
             .expect("published status authorization apply");
+
+        let mut read = runtime
+            .begin_read()
+            .await
+            .expect("published authorization read");
+        let event_types = sqlx::query_scalar::<_, String>(
+            "SELECT event_type FROM change_incidents
+             WHERE station_id = ?1 AND lifecycle_state IN ('pending', 'open', 'recovering')
+             ORDER BY event_type",
+        )
+        .bind(&station.id)
+        .fetch_all(read.connection())
+        .await
+        .expect("published authorization incidents");
+        assert_eq!(event_types, vec!["authorization_expired".to_string()]);
+        drop(read);
+
         collectors
             .apply_result(collector_apply_request(
                 "balance-after-published-status-authorization",
@@ -3201,6 +3501,21 @@ mod tests {
             .expect("authorization snapshot");
         assert_eq!(latest.status, "manual_required");
         assert_eq!(latest.summary_json["loginRequired"], true);
+        let mut read = runtime
+            .begin_read()
+            .await
+            .expect("published authorization persistence read");
+        let authorization_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM change_incidents
+             WHERE station_id = ?1 AND event_type = 'authorization_expired'
+               AND lifecycle_state IN ('pending', 'open', 'recovering')",
+        )
+        .bind(&station.id)
+        .fetch_one(read.connection())
+        .await
+        .expect("published authorization count after unrelated success");
+        assert_eq!(authorization_count, 1);
+        drop(read);
         runtime.close().await.expect("close runtime");
     }
 
@@ -3249,6 +3564,18 @@ mod tests {
             ],
         });
         collectors.apply_result(full).await.expect("full apply");
+        let mut read = runtime.begin_read().await.expect("authorization incidents");
+        let active_events = sqlx::query_scalar::<_, String>(
+            "SELECT event_type FROM change_incidents
+             WHERE station_id = ?1 AND lifecycle_state IN ('pending', 'open', 'recovering')
+             ORDER BY event_type",
+        )
+        .bind(&station.id)
+        .fetch_all(read.connection())
+        .await
+        .expect("active events");
+        assert_eq!(active_events, vec!["authorization_expired".to_string()]);
+        drop(read);
         assert_eq!(
             stations
                 .station_for_capture(&station.id)

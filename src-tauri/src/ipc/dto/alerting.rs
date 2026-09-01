@@ -854,6 +854,7 @@ pub const ALERTING_TYPE: super::TypeDescriptor = super::TypeDescriptor {
 export type AlertEventType =
   | "group_missing" | "key_group_unresolved" | "balance_low" | "balance_depleted"
   | "price_expired" | "key_invalid" | "collector_failed" | "station_down"
+  | "authorization_expired"
   | "route_impacted" | "group_added" | "rate_changed" | "group_rate_changed"
   | "price_changed" | "model_added" | "model_removed" | "audit_change";
 export type AlertScope = "global" | "event_type" | "station" | "station_key";

@@ -1,6 +1,11 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Stable machine-readable error code shared by collection producers and the
+/// application-owned recovery projection. Keeping the value in the model
+/// layer avoids coupling those two boundary owners to each other.
+pub(crate) const MANUAL_AUTHORIZATION_ERROR_CODE: &str = "manual_authorization_required";
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CollectorSnapshot {

@@ -1378,6 +1378,9 @@ fn station_login_probe_collection(
                 "status": prepared.credentials.login_status,
             },
             "loginRequired": !token_present,
+            "manualActionRequired": !token_present,
+            "recommendedAction": (!token_present)
+                .then_some(manual_authorization::RECOMMENDED_ACTION),
             "diagnosis": diagnosis,
             "endpointResults": [],
             "recognized": {
@@ -1408,7 +1411,7 @@ fn station_login_probe_collection(
             "loginUsernamePresent": !prepared.username.trim().is_empty(),
             "loginPasswordPresent": prepared.password.as_deref().is_some_and(|value| !value.trim().is_empty()),
         })),
-        error_code: (!token_present).then(|| "login_action_required".to_string()),
+        error_code: (!token_present).then_some(manual_authorization::ERROR_CODE.to_string()),
         error_message: (!token_present).then_some(diagnosis),
         execution_started_at_ms: None,
         execution_duration_ms: None,
@@ -1752,6 +1755,8 @@ fn driver_output_to_adapter_output(
     task: CollectorTask,
     output: contract::DriverOutput,
 ) -> AdapterOutput {
+    let manual_authorization_required =
+        output.status == contract::DriverOutputStatus::ManualRequired;
     let endpoint_results = output
         .evidence
         .iter()
@@ -1815,6 +1820,9 @@ fn driver_output_to_adapter_output(
             "rateCount": rate_count,
             "publishedStatusMonitorCount": published_status_count,
             "modelCount": 0,
+            "manualActionRequired": manual_authorization_required,
+            "recommendedAction": manual_authorization_required
+                .then_some(manual_authorization::RECOMMENDED_ACTION),
         }),
         normalized_json: json!({
             "balanceCount": balance_count,
@@ -1826,8 +1834,10 @@ fn driver_output_to_adapter_output(
             "models": [],
         }),
         raw_json_redacted: output.diagnostics.raw_json_redacted,
-        error_code: None,
-        error_message: None,
+        error_code: manual_authorization_required
+            .then_some(manual_authorization::ERROR_CODE.to_string()),
+        error_message: manual_authorization_required
+            .then_some(manual_authorization::MESSAGE.to_string()),
         execution_started_at_ms: None,
         execution_duration_ms: None,
     }
@@ -2113,6 +2123,34 @@ mod tests {
         assert_eq!(
             output.summary_json["recommendedAction"],
             json!("reauthorize")
+        );
+    }
+
+    #[test]
+    fn manual_required_driver_output_preserves_authorization_classification() {
+        let output = driver_output_to_adapter_output(
+            "sub2api",
+            CollectorTask::PublishedStatus,
+            contract::DriverOutput {
+                facts: facts::CollectorFacts::default(),
+                evidence: Vec::new(),
+                status: contract::DriverOutputStatus::ManualRequired,
+                diagnostics: contract::RedactedDiagnostics {
+                    summary: Some("{}".to_string()),
+                    raw_json_redacted: None,
+                },
+            },
+        );
+
+        assert_eq!(output.status, "manual_required");
+        assert_eq!(
+            output.error_code.as_deref(),
+            Some(manual_authorization::ERROR_CODE)
+        );
+        assert_eq!(output.summary_json["manualActionRequired"], json!(true));
+        assert_eq!(
+            output.summary_json["recommendedAction"],
+            json!(manual_authorization::RECOMMENDED_ACTION)
         );
     }
 

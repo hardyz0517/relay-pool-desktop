@@ -812,6 +812,7 @@ function buildAlertingRiskItem(
 function eventLabel(eventType: string) {
   return ({
     collector_failed: "采集失败",
+    authorization_expired: "授权过期",
     station_down: "站点不可用",
     balance_low: "余额偏低",
     balance_depleted: "余额耗尽",

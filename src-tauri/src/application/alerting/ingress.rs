@@ -106,6 +106,19 @@ impl AlertingIngress {
         Self { runtime }
     }
 
+    /// Read an active incident's latest observation summary inside the
+    /// caller's write transaction. Interpretation stays with the producer;
+    /// the persistence store owns the SQL and lifecycle filter.
+    pub(crate) async fn active_observation_summary_json(
+        &self,
+        write: &mut WriteSession,
+        condition_key: &str,
+    ) -> Result<Option<String>, PersistenceError> {
+        IncidentStore
+            .active_observation_summary_json(write, condition_key)
+            .await
+    }
+
     pub(crate) async fn record(
         &self,
         input: ObservationIngress,

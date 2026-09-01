@@ -141,4 +141,15 @@ describe("change center activity presentation", () => {
       recoveryDurationSeconds: null,
     });
   });
+
+  it("presents authorization expiry as its own condition", () => {
+    const activity = changeActivity({
+      eventType: "authorization_expired",
+      reasonCode: "authorization_expired",
+      severity: "warning",
+      newValueJson: JSON.stringify({ manualActionRequired: true }),
+    });
+
+    expect(changeSummary(activity)).toBe("授权过期");
+  });
 });

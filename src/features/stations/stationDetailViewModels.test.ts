@@ -128,6 +128,40 @@ describe("buildStationDetailViewModel", () => {
     expect(viewModel.statusTone).toBe("good");
     expect(viewModel.collectorItems[0]?.value).toBe("官方状态 · 失败");
   });
+
+  it("renders authorization expiry diagnostics in Chinese", () => {
+    const viewModel = buildStationDetailViewModel({
+      station: station("sub2api"),
+      balances: [],
+      groupBindings: [],
+      groupRates: [],
+      collectorRuns: [],
+      latestSnapshot: null,
+      credentials: null,
+      stationKeys: [],
+      incidents: [
+        {
+          id: "incident-authorization",
+          conditionKey: "collector:station-1:authorization_expired",
+          eventType: "authorization_expired",
+          lifecycleState: "open",
+          severity: "warning",
+          groupName: null,
+          stationId: "station-1",
+          episodeNumber: 1,
+          occurrenceCount: 1,
+          lastSeenAtMs: 1,
+          collectorFailedTaskTypes: [],
+          resolvedAtMs: null,
+          updatedAtMs: 1,
+          seenAtMs: null,
+          snoozedUntilMs: null,
+        },
+      ],
+    });
+
+    expect(viewModel.changeItems[0]?.label).toBe("授权过期");
+  });
 });
 
 function collectorRun(overrides: Partial<CollectorRun> = {}): CollectorRun {

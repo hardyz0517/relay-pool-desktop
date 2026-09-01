@@ -40,6 +40,11 @@ describe("alerting frontend contract", () => {
       triggerCount: null,
       recoveryCount: 1,
     });
+    expect(defaultAlertPolicy("authorization_expired")).toMatchObject({
+      triggerMode: "immediate",
+      triggerCount: null,
+      recoveryCount: 1,
+    });
     expect(defaultAlertPolicy("balance_depleted")).toMatchObject({
       triggerMode: "consecutive_occurrences",
       triggerCount: 2,
