@@ -1,7 +1,10 @@
 {
   "audit_id": "2026-07-31-schema15-upgrade-debt-cleanup",
-  "status": "schema15_source_and_production_architecture_qualified_pending_release_gate",
+  "status": "historical_superseded_schema15_upgrade_reliability_plan",
   "created_at": "2026-07-31",
+  "superseded_at": "2026-09-01",
+  "superseded_by": "docs/plans/2026-09-01-schema15-upgrade-reliability.md",
+  "supersession_note": "This manifest is retained for historical traceability. Several recorded Cargo filters no longer name existing tests, and the manifest does not prove a real frozen schema15 to current-latest restart upgrade. Do not use it as current release evidence.",
   "scope": [
     "generation-2 SQLite startup",
     "schema 15 to latest automatic upgrade",

@@ -4349,6 +4349,31 @@
             "temporary": false
         },
         {
+            "from": "test_support::schema_upgrade",
+            "to": "persistence",
+            "temporary": false
+        },
+        {
+            "from": "test_support::schema_upgrade",
+            "to": "persistence::baseline_conversion_support",
+            "temporary": false
+        },
+        {
+            "from": "test_support::schema_upgrade",
+            "to": "persistence::upgrade_fault",
+            "temporary": false
+        },
+        {
+            "from": "test_support::schema_upgrade",
+            "to": "services::data_store::startup_upgrade_executor",
+            "temporary": false
+        },
+        {
+            "from": "test_support::schema_upgrade",
+            "to": "services::secrets",
+            "temporary": false
+        },
+        {
             "from": "services::proxy::endpoint_adapter",
             "to": "services::proxy::error",
             "temporary": false
@@ -5556,6 +5581,36 @@
         {
             "from": "services::data_store::startup_upgrade_executor",
             "to": "persistence::baseline_conversion_support",
+            "temporary": false
+        },
+        {
+            "from": "services::data_store::startup_probe",
+            "to": "persistence::maintenance::request_log_url_sanitizer",
+            "temporary": false
+        },
+        {
+            "from": "services::data_store::startup_upgrade_plan",
+            "to": "persistence::maintenance::request_log_url_sanitizer",
+            "temporary": false
+        },
+        {
+            "from": "services::data_store::startup_upgrade_executor",
+            "to": "persistence::maintenance::request_log_url_sanitizer",
+            "temporary": false
+        },
+        {
+            "from": "persistence::migrations",
+            "to": "persistence::maintenance::request_log_url_sanitizer",
+            "temporary": false
+        },
+        {
+            "from": "persistence::runtime",
+            "to": "persistence::maintenance::request_log_url_sanitizer",
+            "temporary": false
+        },
+        {
+            "from": "services::data_store::generation_upgrade",
+            "to": "services::data_store::startup_upgrade_executor",
             "temporary": false
         },
         {

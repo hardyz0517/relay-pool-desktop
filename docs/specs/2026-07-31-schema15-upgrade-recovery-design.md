@@ -1,6 +1,6 @@
 # Schema 15 Baseline Upgrade And Recovery Design
 
-Status: Main route implemented; D-01 through D-09 closed; source-qualified and production-architecture-qualified
+Status: Historical design snapshot. Superseded as current release evidence by [`../plans/2026-09-01-schema15-upgrade-reliability.md`](../plans/2026-09-01-schema15-upgrade-reliability.md); the D-01 through D-09 claims below are retained for historical context only.
 
 Date: 2026-07-31
 

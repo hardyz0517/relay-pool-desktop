@@ -93,4 +93,4 @@ cargo test --manifest-path src-tauri/Cargo.toml --test schema15_upgrade_fixture 
 cargo test --manifest-path src-tauri/Cargo.toml startup_upgrade -- --nocapture
 ```
 
-Before release qualification, run the release gate documented in `docs/release/SCHEMA15_UPGRADE_RECOVERY.md`.
+Before release qualification, run the current execution and acceptance plan in `docs/plans/2026-09-01-schema15-upgrade-reliability.md`, then apply the release checklist in `docs/release/SCHEMA15_UPGRADE_RECOVERY.md` to the final tree. The release document is a checklist, not evidence by itself.
