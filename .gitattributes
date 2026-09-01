@@ -5,6 +5,7 @@ src-tauri/src/persistence/migrations/0012_seed_builtin_monitor_templates.sql tex
 src-tauri/src/persistence/migrations/0013_remote_key_discovery_order.sql text eol=lf
 src-tauri/src/persistence/migrations/0014_monitor_profile_v2.sql text eol=lf
 src-tauri/src/persistence/migrations/0015_monitor_probe_timeout_defaults.sql text eol=lf
+src-tauri/src/persistence/migrations/0043_model_mapping_foundation.sql text eol=lf
 src/lib/bridge/generated.ts -text whitespace=cr-at-eol
 src/lib/bridge/contract.ts -text whitespace=cr-at-eol
 src-tauri/generated/command-registry.json -text whitespace=cr-at-eol
