@@ -5,6 +5,7 @@ use chrono::Utc;
 use crate::{
     persistence::{
         self,
+        maintenance::request_log_url_sanitizer::sanitize_request_log_upstream_urls_at_path,
         runtime::PersistenceRuntime,
         upgrade_fault::{UpgradeFailpoint, UpgradeFaultInjector},
     },
@@ -146,6 +147,23 @@ pub(crate) fn execute_startup_upgrade_plan(
                     },
                 )?;
             }
+            StartupUpgradeStep::EnsureRequestLogSanitizer => {
+                let report = block_on(sanitize_request_log_upstream_urls_at_path(final_path))
+                    .map_err(|error| {
+                        StartupUpgradeError::new(
+                            RecoveryReason::SchemaMigrationFailed,
+                            format!(
+                                "failed to complete request-log URL sanitizer maintenance: {error}"
+                            ),
+                        )
+                    })?;
+                if !report.complete {
+                    return Err(StartupUpgradeError::new(
+                        RecoveryReason::SchemaMigrationFailed,
+                        "request-log URL sanitizer maintenance stopped before completion",
+                    ));
+                }
+            }
             StartupUpgradeStep::OpenRuntime => {
                 runtime = Some(
                     block_on(PersistenceRuntime::open_current(final_path)).map_err(|error| {
@@ -239,6 +257,7 @@ fn validate_startup_upgrade_steps(steps: &[StartupUpgradeStep]) -> Result<(), St
     let mut verified_secrets = false;
     let mut alerting_upgrade_seen = false;
     let mut legacy_removal_seen = false;
+    let mut request_log_sanitizer_seen = false;
     for step in steps {
         match step {
             StartupUpgradeStep::EnsureStructuralPreBaseline
@@ -254,6 +273,11 @@ fn validate_startup_upgrade_steps(steps: &[StartupUpgradeStep]) -> Result<(), St
                 {
                     return Err(invalid_step_contract(
                         "startup upgrade plan tried to migrate schema after alerting upgrade",
+                    ));
+                }
+                if request_log_sanitizer_seen {
+                    return Err(invalid_step_contract(
+                        "startup upgrade plan tried to run migration steps after request-log sanitizer maintenance",
                     ));
                 }
                 if matches!(step, StartupUpgradeStep::EnsureAlertingUpgrade) {
@@ -281,7 +305,25 @@ fn validate_startup_upgrade_steps(steps: &[StartupUpgradeStep]) -> Result<(), St
                         "startup upgrade plan tried to run legacy change-events removal more than once",
                     ));
                 }
+                if request_log_sanitizer_seen {
+                    return Err(invalid_step_contract(
+                        "startup upgrade plan tried to remove legacy change events after request-log sanitizer maintenance",
+                    ));
+                }
                 legacy_removal_seen = true;
+            }
+            StartupUpgradeStep::EnsureRequestLogSanitizer => {
+                if opened_runtime {
+                    return Err(invalid_step_contract(
+                        "startup upgrade plan tried to run request-log sanitizer maintenance after opening runtime",
+                    ));
+                }
+                if request_log_sanitizer_seen {
+                    return Err(invalid_step_contract(
+                        "startup upgrade plan tried to run request-log sanitizer maintenance more than once",
+                    ));
+                }
+                request_log_sanitizer_seen = true;
             }
             StartupUpgradeStep::OpenRuntime => {
                 if opened_runtime {
@@ -397,6 +439,7 @@ mod tests {
             StartupUpgradeStep::EnsureSchema { target_schema: 29 },
             StartupUpgradeStep::EnsureAlertingUpgrade,
             StartupUpgradeStep::EnsureLegacyChangeEventsRemoval,
+            StartupUpgradeStep::EnsureRequestLogSanitizer,
             StartupUpgradeStep::OpenRuntime,
             StartupUpgradeStep::StageRoutingPolicyV3,
             StartupUpgradeStep::VerifyWritableRuntime,

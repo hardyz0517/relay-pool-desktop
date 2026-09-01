@@ -1,10 +1,29 @@
-use sqlx::{Row, SqliteConnection, SqlitePool};
+use std::path::Path;
+
+use sqlx::{
+    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
+    Row, SqliteConnection, SqlitePool,
+};
 use url::Url;
 
 use crate::persistence::error::PersistenceError;
 
 pub(crate) const REQUEST_LOG_URL_SANITIZER_ID: &str = "request_logs_upstream_base_url_v1";
 const DEFAULT_BATCH_SIZE: i64 = 500;
+
+/// Read-only startup state for the versioned request-log sanitizer.
+///
+/// `Missing` is expected for databases older than migration 18 and is
+/// intentionally distinct from `Invalid`, which means the progress ledger is
+/// present but cannot be trusted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RequestLogUrlSanitizerProbe {
+    Missing,
+    Pending { remaining_rows: i64 },
+    Running { remaining_rows: i64 },
+    Complete,
+    Invalid,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct RequestLogUrlSanitizerOptions {
@@ -27,6 +46,44 @@ pub(crate) struct RequestLogUrlSanitizerReport {
     pub(crate) sanitized_count: u64,
     pub(crate) redacted_unparseable_count: u64,
     pub(crate) redacted_non_http_count: u64,
+}
+
+/// Observe sanitizer progress without creating or updating any rows.
+pub(crate) async fn probe_request_log_url_sanitizer(
+    connection: &mut SqliteConnection,
+) -> Result<RequestLogUrlSanitizerProbe, PersistenceError> {
+    let table_exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'request_log_url_sanitizer_progress'",
+    )
+    .fetch_one(&mut *connection)
+    .await?;
+    if table_exists == 0 {
+        return Ok(RequestLogUrlSanitizerProbe::Missing);
+    }
+
+    let Some(status) = sqlx::query_scalar::<_, String>(
+        "SELECT status FROM request_log_url_sanitizer_progress WHERE id = ?1",
+    )
+    .bind(REQUEST_LOG_URL_SANITIZER_ID)
+    .fetch_optional(&mut *connection)
+    .await?
+    else {
+        return Ok(RequestLogUrlSanitizerProbe::Missing);
+    };
+    let remaining_rows: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM request_logs WHERE upstream_base_url IS NOT NULL")
+            .fetch_one(&mut *connection)
+            .await?;
+    if remaining_rows < 0 {
+        return Ok(RequestLogUrlSanitizerProbe::Invalid);
+    }
+    match status.as_str() {
+        "pending" => Ok(RequestLogUrlSanitizerProbe::Pending { remaining_rows }),
+        "running" => Ok(RequestLogUrlSanitizerProbe::Running { remaining_rows }),
+        "complete" if remaining_rows == 0 => Ok(RequestLogUrlSanitizerProbe::Complete),
+        "complete" => Ok(RequestLogUrlSanitizerProbe::Invalid),
+        _ => Ok(RequestLogUrlSanitizerProbe::Invalid),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,6 +133,30 @@ pub(crate) async fn sanitize_request_log_upstream_urls(
         compact_sanitized_request_log_storage(pool).await?;
     }
     Ok(report)
+}
+
+/// Run the sanitizer against an already-migrated database before opening the
+/// normal runtime. This owns its short-lived single-writer pool so startup
+/// can resume an interrupted maintenance step without exposing a runtime.
+pub(crate) async fn sanitize_request_log_upstream_urls_at_path(
+    path: &Path,
+) -> Result<RequestLogUrlSanitizerReport, PersistenceError> {
+    let options = SqliteConnectOptions::new()
+        .filename(path)
+        .create_if_missing(false)
+        .journal_mode(SqliteJournalMode::Wal)
+        .synchronous(SqliteSynchronous::Full)
+        .foreign_keys(true)
+        .busy_timeout(std::time::Duration::from_secs(5));
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(std::time::Duration::from_secs(5))
+        .connect_with(options)
+        .await?;
+    let result =
+        sanitize_request_log_upstream_urls(&pool, RequestLogUrlSanitizerOptions::default()).await;
+    pool.close().await;
+    result
 }
 
 pub(crate) async fn sanitize_request_log_upstream_urls_before_schema18(

@@ -40,7 +40,7 @@ use services::data_store::{
     inspect_startup,
     relocation::apply_trusted_relocation,
     startup_probe::probe_upgrade_state_with_journal,
-    startup_upgrade_plan::{plan_upgrade, StartupUpgradePlan},
+    startup_upgrade_plan::{plan_upgrade, StartupUpgradePlan, StartupUpgradeStep},
     types::{DataStoreStartupState, RecoveryReason, StartupDecision, StartupUpgradeStage},
 };
 use services::portable_migration::recovery::{
@@ -52,6 +52,39 @@ use tauri::menu::{Menu, MenuItem};
 #[cfg(feature = "tray")]
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Manager, RunEvent, WindowEvent};
+
+/// Test-only seam for exercising the same startup planner as the production
+/// coordinator without exposing the planner to auxiliary modules. Keeping the
+/// call here preserves the architecture boundary: `plan_upgrade` has one
+/// production caller (the startup coordinator), while integration harnesses
+/// can still feed the resulting ordered steps into the real executor.
+#[cfg(debug_assertions)]
+pub(crate) fn plan_schema_upgrade_for_test(
+    database_path: &Path,
+    journal_path: Option<&Path>,
+    system_active_key_id: Option<&str>,
+) -> Result<Vec<StartupUpgradeStep>, String> {
+    let probe = probe_upgrade_state_with_journal(database_path, journal_path, system_active_key_id)
+        .map_err(|error| error.to_string())?;
+    match plan_upgrade(&probe) {
+        StartupUpgradePlan::Execute(steps) => Ok(steps),
+        StartupUpgradePlan::NeedsRecovery(reason) => {
+            Err(format!("schema upgrade routed to {:?}", reason))
+        }
+    }
+}
+
+#[cfg(debug_assertions)]
+pub(crate) fn schema_upgrade_restart_ready_for_test(
+    database_path: &Path,
+    journal_path: Option<&Path>,
+    system_active_key_id: Option<&str>,
+) -> Result<bool, String> {
+    let steps = plan_schema_upgrade_for_test(database_path, journal_path, system_active_key_id)?;
+    Ok(steps
+        .iter()
+        .any(|step| matches!(step, StartupUpgradeStep::OpenRuntime)))
+}
 
 /// Resolve the two application-owned roots used during startup.
 ///

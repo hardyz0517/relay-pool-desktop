@@ -12,6 +12,9 @@ use crate::{
     persistence::{
         self,
         baseline_conversion_support::{observe_persistence_journal, PersistenceJournalKind},
+        maintenance::request_log_url_sanitizer::{
+            probe_request_log_url_sanitizer, RequestLogUrlSanitizerProbe,
+        },
     },
     services::data_store::types::RecoveryReason,
     services::secrets::baseline_conversion::{
@@ -63,6 +66,7 @@ pub(crate) struct StartupUpgradeProbe {
     pub(crate) secret_format: SecretFormatProbe,
     pub(crate) key_requirement: StartupKeyRequirementProbe,
     pub(crate) journal: StartupJournalProbe,
+    pub(crate) request_log_url_sanitizer: RequestLogUrlSanitizerProbe,
     pub(crate) sqlite_quick_check_passed: bool,
 }
 
@@ -134,6 +138,14 @@ pub(crate) fn probe_upgrade_state_with_journal(
             read_secret_format(&mut connection, compatibility_schema_version).await?;
         let key_requirement =
             read_key_requirement(&mut connection, secret_format, system_active_key_id).await?;
+        let request_log_url_sanitizer = probe_request_log_url_sanitizer(&mut connection)
+            .await
+            .map_err(|error| {
+                StartupProbeError::new(
+                    StartupProbeErrorKind::QueryFailed,
+                    format!("failed to read request-log sanitizer progress: {error}"),
+                )
+            })?;
         connection
             .close()
             .await
@@ -148,6 +160,7 @@ pub(crate) fn probe_upgrade_state_with_journal(
             journal: journal_path
                 .map(read_journal_probe)
                 .unwrap_or(StartupJournalProbe::NotChecked),
+            request_log_url_sanitizer,
             sqlite_quick_check_passed,
         })
     })

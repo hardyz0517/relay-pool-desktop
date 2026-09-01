@@ -1,5 +1,8 @@
 use crate::{
-    persistence::schema_registry::MINIMUM_AUTOMATIC_SCHEMA_BASELINE,
+    persistence::{
+        maintenance::request_log_url_sanitizer::RequestLogUrlSanitizerProbe,
+        schema_registry::MINIMUM_AUTOMATIC_SCHEMA_BASELINE,
+    },
     services::data_store::{
         alerting_upgrade::ALERTING_FOUNDATION_SCHEMA_VERSION,
         startup_probe::{
@@ -29,6 +32,7 @@ pub(crate) enum StartupUpgradeStep {
     EnsureSchema { target_schema: i64 },
     EnsureAlertingUpgrade,
     EnsureLegacyChangeEventsRemoval,
+    EnsureRequestLogSanitizer,
     OpenRuntime,
     StageRoutingPolicyV3,
     VerifyWritableRuntime,
@@ -50,6 +54,9 @@ pub(crate) fn plan_upgrade(probe: &StartupUpgradeProbe) -> StartupUpgradePlan {
         return StartupUpgradePlan::NeedsRecovery(StartupUpgradeRecovery::CorruptedDatabase);
     }
     if probe.journal == StartupJournalProbe::Invalid {
+        return StartupUpgradePlan::NeedsRecovery(StartupUpgradeRecovery::InterruptedUpgrade);
+    }
+    if probe.request_log_url_sanitizer == RequestLogUrlSanitizerProbe::Invalid {
         return StartupUpgradePlan::NeedsRecovery(StartupUpgradeRecovery::InterruptedUpgrade);
     }
     if compatibility_schema < MINIMUM_AUTOMATIC_SCHEMA_BASELINE {
@@ -99,7 +106,9 @@ pub(crate) fn plan_upgrade(probe: &StartupUpgradeProbe) -> StartupUpgradePlan {
     if compatibility_schema < PRE_BASELINE_SCHEMA_VERSION {
         steps.push(StartupUpgradeStep::EnsureStructuralPreBaseline);
     }
-    if probe.secret_format == SecretFormatProbe::Legacy {
+    if probe.secret_format == SecretFormatProbe::Legacy
+        || probe.journal == StartupJournalProbe::BaselineConversion
+    {
         steps.push(StartupUpgradeStep::EnsureSecretBaseline);
     }
     let schema_after_secret_baseline = if probe.secret_format == SecretFormatProbe::Legacy {
@@ -120,6 +129,11 @@ pub(crate) fn plan_upgrade(probe: &StartupUpgradeProbe) -> StartupUpgradePlan {
         if latest_schema > ALERTING_FOUNDATION_SCHEMA_VERSION {
             steps.push(StartupUpgradeStep::EnsureLegacyChangeEventsRemoval);
         }
+    }
+    if latest_schema >= 18
+        && probe.request_log_url_sanitizer != RequestLogUrlSanitizerProbe::Complete
+    {
+        steps.push(StartupUpgradeStep::EnsureRequestLogSanitizer);
     }
     steps.extend([
         StartupUpgradeStep::OpenRuntime,
@@ -205,6 +219,7 @@ mod tests {
                 }
             },
             journal: StartupJournalProbe::Missing,
+            request_log_url_sanitizer: RequestLogUrlSanitizerProbe::Missing,
             sqlite_quick_check_passed: true,
         }
     }
@@ -223,6 +238,7 @@ mod tests {
                 },
                 StartupUpgradeStep::EnsureAlertingUpgrade,
                 StartupUpgradeStep::EnsureLegacyChangeEventsRemoval,
+                StartupUpgradeStep::EnsureRequestLogSanitizer,
                 StartupUpgradeStep::OpenRuntime,
                 StartupUpgradeStep::StageRoutingPolicyV3,
                 StartupUpgradeStep::VerifyWritableRuntime,
@@ -244,6 +260,7 @@ mod tests {
                 },
                 StartupUpgradeStep::EnsureAlertingUpgrade,
                 StartupUpgradeStep::EnsureLegacyChangeEventsRemoval,
+                StartupUpgradeStep::EnsureRequestLogSanitizer,
                 StartupUpgradeStep::OpenRuntime,
                 StartupUpgradeStep::StageRoutingPolicyV3,
                 StartupUpgradeStep::VerifyWritableRuntime,
@@ -265,6 +282,7 @@ mod tests {
             plan,
             StartupUpgradePlan::Execute(vec![
                 StartupUpgradeStep::EnsureSchema { target_schema: 18 },
+                StartupUpgradeStep::EnsureRequestLogSanitizer,
                 StartupUpgradeStep::OpenRuntime,
                 StartupUpgradeStep::StageRoutingPolicyV3,
                 StartupUpgradeStep::VerifyWritableRuntime,
@@ -286,6 +304,7 @@ mod tests {
             plan,
             StartupUpgradePlan::Execute(vec![
                 StartupUpgradeStep::EnsureSchema { target_schema: 42 },
+                StartupUpgradeStep::EnsureRequestLogSanitizer,
                 StartupUpgradeStep::OpenRuntime,
                 StartupUpgradeStep::StageRoutingPolicyV3,
                 StartupUpgradeStep::VerifyWritableRuntime,
@@ -364,5 +383,50 @@ mod tests {
             plan_upgrade(&missing_persisted),
             StartupUpgradePlan::NeedsRecovery(StartupUpgradeRecovery::InconsistentVersionMetadata)
         );
+    }
+
+    #[test]
+    fn latest_schema_with_incomplete_sanitizer_resumes_before_runtime() {
+        let mut probe = probe_with_latest(71, 71, 71, SecretFormatProbe::EncryptedBaseline);
+        probe.request_log_url_sanitizer =
+            RequestLogUrlSanitizerProbe::Running { remaining_rows: 3 };
+        let StartupUpgradePlan::Execute(steps) = plan_upgrade(&probe) else {
+            panic!("latest database with incomplete maintenance must be executable");
+        };
+        let sanitizer = steps
+            .iter()
+            .position(|step| matches!(step, StartupUpgradeStep::EnsureRequestLogSanitizer))
+            .expect("sanitizer step");
+        let open = steps
+            .iter()
+            .position(|step| matches!(step, StartupUpgradeStep::OpenRuntime))
+            .expect("open step");
+        assert!(sanitizer < open);
+    }
+
+    #[test]
+    fn latest_schema_with_complete_sanitizer_has_no_maintenance_step() {
+        let mut probe = probe_with_latest(71, 71, 71, SecretFormatProbe::EncryptedBaseline);
+        probe.request_log_url_sanitizer = RequestLogUrlSanitizerProbe::Complete;
+        let StartupUpgradePlan::Execute(steps) = plan_upgrade(&probe) else {
+            panic!("latest database must be executable");
+        };
+        assert!(!steps
+            .iter()
+            .any(|step| matches!(step, StartupUpgradeStep::EnsureRequestLogSanitizer)));
+    }
+
+    #[test]
+    fn valid_baseline_journal_is_resumed_even_after_encrypted_publish() {
+        let mut probe = probe_with_latest(71, 71, 71, SecretFormatProbe::EncryptedBaseline);
+        probe.journal = StartupJournalProbe::BaselineConversion;
+        probe.request_log_url_sanitizer = RequestLogUrlSanitizerProbe::Complete;
+        let StartupUpgradePlan::Execute(steps) = plan_upgrade(&probe) else {
+            panic!("valid baseline journal must be resumed");
+        };
+        assert!(matches!(
+            steps.first(),
+            Some(StartupUpgradeStep::EnsureSecretBaseline)
+        ));
     }
 }

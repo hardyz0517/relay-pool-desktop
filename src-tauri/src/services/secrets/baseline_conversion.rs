@@ -909,6 +909,62 @@ async fn rebuild_secrets_with_final_constraints(
     if missing != 0 {
         return Err("baseline conversion left secrets without key metadata".to_string());
     }
+    // Rebuilding the table is required to make the encryption metadata
+    // columns NOT NULL, but dropping `secrets` triggers ON DELETE SET NULL on
+    // every catalog reference.  Snapshot those references first and restore
+    // them after the replacement table is active; otherwise a successful
+    // baseline conversion silently disconnects station credentials.
+    let station_secret_refs = sqlx::query(
+        "SELECT id, api_key_secret_id FROM stations WHERE api_key_secret_id IS NOT NULL",
+    )
+    .fetch_all(&mut **connection)
+    .await
+    .map_err(|error| format!("failed to snapshot station secret references: {error}"))?
+    .into_iter()
+    .map(|row| {
+        (
+            row.get::<String, _>("id"),
+            row.get::<String, _>("api_key_secret_id"),
+        )
+    })
+    .collect::<Vec<_>>();
+    let station_key_secret_refs = sqlx::query(
+        "SELECT id, api_key_secret_id FROM station_keys WHERE api_key_secret_id IS NOT NULL",
+    )
+    .fetch_all(&mut **connection)
+    .await
+    .map_err(|error| format!("failed to snapshot station-key secret references: {error}"))?
+    .into_iter()
+    .map(|row| {
+        (
+            row.get::<String, _>("id"),
+            row.get::<String, _>("api_key_secret_id"),
+        )
+    })
+    .collect::<Vec<_>>();
+    let credential_secret_refs = sqlx::query(
+        r#"SELECT station_id, login_password_secret_id, access_token_secret_id,
+                   refresh_token_secret_id, cookie_secret_id
+            FROM station_credentials
+            WHERE login_password_secret_id IS NOT NULL
+               OR access_token_secret_id IS NOT NULL
+               OR refresh_token_secret_id IS NOT NULL
+               OR cookie_secret_id IS NOT NULL"#,
+    )
+    .fetch_all(&mut **connection)
+    .await
+    .map_err(|error| format!("failed to snapshot credential secret references: {error}"))?
+    .into_iter()
+    .map(|row| {
+        (
+            row.get::<String, _>("station_id"),
+            row.get::<Option<String>, _>("login_password_secret_id"),
+            row.get::<Option<String>, _>("access_token_secret_id"),
+            row.get::<Option<String>, _>("refresh_token_secret_id"),
+            row.get::<Option<String>, _>("cookie_secret_id"),
+        )
+    })
+    .collect::<Vec<_>>();
     let bindings = sqlx::query_as::<_, (String, String, String, String, String, String)>(
         r#"
         SELECT binding_scope, binding_owner_id, binding_kind, secret_id, created_at, updated_at
@@ -1007,6 +1063,47 @@ async fn rebuild_secrets_with_final_constraints(
         .execute(&mut **connection)
         .await
         .map_err(|error| format!("failed to restore secret binding: {error}"))?;
+    }
+    for (station_id, secret_id) in station_secret_refs {
+        sqlx::query("UPDATE stations SET api_key_secret_id = ?1 WHERE id = ?2")
+            .bind(secret_id)
+            .bind(station_id)
+            .execute(&mut **connection)
+            .await
+            .map_err(|error| format!("failed to restore station secret reference: {error}"))?;
+    }
+    for (station_key_id, secret_id) in station_key_secret_refs {
+        sqlx::query("UPDATE station_keys SET api_key_secret_id = ?1 WHERE id = ?2")
+            .bind(secret_id)
+            .bind(station_key_id)
+            .execute(&mut **connection)
+            .await
+            .map_err(|error| format!("failed to restore station-key secret reference: {error}"))?;
+    }
+    for (
+        station_id,
+        login_password_secret_id,
+        access_token_secret_id,
+        refresh_token_secret_id,
+        cookie_secret_id,
+    ) in credential_secret_refs
+    {
+        sqlx::query(
+            r#"UPDATE station_credentials
+               SET login_password_secret_id = ?1,
+                   access_token_secret_id = ?2,
+                   refresh_token_secret_id = ?3,
+                   cookie_secret_id = ?4
+               WHERE station_id = ?5"#,
+        )
+        .bind(login_password_secret_id)
+        .bind(access_token_secret_id)
+        .bind(refresh_token_secret_id)
+        .bind(cookie_secret_id)
+        .bind(station_id)
+        .execute(&mut **connection)
+        .await
+        .map_err(|error| format!("failed to restore credential secret references: {error}"))?;
     }
     Ok(())
 }

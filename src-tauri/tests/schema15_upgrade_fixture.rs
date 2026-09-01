@@ -125,6 +125,346 @@ async fn schema15_fixture_database_is_a_released_baseline_not_dynamic_latest() {
     connection.close().await.expect("close fixture connection");
 }
 
+#[test]
+fn schema15_fixture_upgrades_through_production_startup_route_and_restarts() {
+    let manifest = schema15_manifest();
+    let fixture_path = manifest_path(&manifest["fixture"]);
+    let root = tempfile::tempdir().expect("temporary upgrade root");
+    let data_dir = root.path().join("data");
+    fs::create_dir_all(&data_dir).expect("data directory");
+    let database_path = data_dir.join("relay-pool-desktop-v2.sqlite3");
+    fs::copy(&fixture_path, &database_path).expect("copy frozen fixture");
+    let source_digest = sha256_file(&fixture_path);
+    assert_eq!(
+        sha256_file(&database_path),
+        source_digest,
+        "upgrade must start from an exact frozen fixture copy"
+    );
+
+    let first = relay_pool_desktop_lib::test_support::schema_upgrade::run_schema_upgrade(
+        &data_dir,
+        &database_path,
+        "schema15-fixture-device-key",
+        [0x07; 32],
+    )
+    .expect("schema 15 production startup upgrade");
+    assert_eq!(first.schema_version, 71);
+    assert_eq!(first.open_mode, "writable");
+    assert!(first.plan_step_count > 0);
+    assert!(first.restart_ready);
+
+    let source_after = sha256_file(&fixture_path);
+    assert_eq!(
+        source_after, source_digest,
+        "frozen fixture must remain unchanged"
+    );
+    assert_ne!(
+        sha256_file(&database_path),
+        source_digest,
+        "upgrade must mutate only the copied database"
+    );
+    assert_eq!(
+        query_i64(
+            &database_path,
+            "SELECT schema_version FROM persistence_schema_compatibility WHERE singleton_key = 1"
+        ),
+        71
+    );
+    assert_eq!(
+        query_i64(
+            &database_path,
+            "SELECT MAX(version) FROM _sqlx_migrations WHERE success = 1"
+        ),
+        71
+    );
+    assert_eq!(
+        query_i64(
+            &database_path,
+            "SELECT COUNT(*) FROM request_logs WHERE upstream_base_url IS NOT NULL"
+        ),
+        0
+    );
+    assert_eq!(query_string(&database_path, "SELECT status FROM request_log_url_sanitizer_progress WHERE id = 'request_logs_upstream_base_url_v1'"), "complete");
+    assert_eq!(
+        query_string(
+            &database_path,
+            "SELECT value FROM settings WHERE key = '__secret_format_version'"
+        ),
+        "1"
+    );
+    assert_eq!(
+        query_string(
+            &database_path,
+            "SELECT value FROM settings WHERE key = '__active_key_id'"
+        ),
+        "schema15-fixture-device-key"
+    );
+    // The baseline conversion must move every legacy plaintext credential into
+    // an encrypted row and leave no plaintext copies behind.  The frozen
+    // manifest records the expected cardinality so this assertion also catches
+    // accidental duplicate conversion rows.
+    let expected = &manifest["expected_after_upgrade"];
+    assert_eq!(
+        query_i64(&database_path, "SELECT COUNT(*) FROM secrets"),
+        expected["secret_count"].as_i64().expect("secret_count"),
+    );
+    assert_eq!(
+        query_i64(
+            &database_path,
+            "SELECT COUNT(*) FROM secrets WHERE key_id IS NULL OR encryption_version IS NULL OR encryption_version <> 1",
+        ),
+        0,
+        "all upgraded secrets must carry current encryption metadata",
+    );
+    assert_eq!(
+        query_string(
+            &database_path,
+            "SELECT value FROM settings WHERE key = 'local_key'"
+        ),
+        expected["settings_local_key_value"]
+            .as_str()
+            .expect("settings_local_key_value"),
+    );
+    assert_eq!(
+        query_string(
+            &database_path,
+            "SELECT api_key FROM stations WHERE id = 'fixture-station-001'",
+        ),
+        expected["legacy_station_api_key_value"]
+            .as_str()
+            .expect("legacy_station_api_key_value"),
+    );
+    assert_eq!(
+        query_i64(
+            &database_path,
+            "SELECT COUNT(*) FROM stations WHERE TRIM(COALESCE(api_key, '')) <> ''",
+        ),
+        0,
+        "station plaintext API keys must be cleared after conversion",
+    );
+    assert_eq!(
+        query_i64(
+            &database_path,
+            "SELECT COUNT(*) FROM stations WHERE id = 'fixture-station-001' AND api_key_secret_id IS NOT NULL",
+        ),
+        1,
+        "station API key must be referenced by an encrypted secret",
+    );
+    assert_eq!(
+        query_string(
+            &database_path,
+            "SELECT api_key FROM station_keys WHERE id = 'fixture-station-key-001'",
+        ),
+        expected["legacy_station_key_api_key_value"]
+            .as_str()
+            .expect("legacy_station_key_api_key_value"),
+    );
+    assert_eq!(
+        query_i64(
+            &database_path,
+            "SELECT COUNT(*) FROM station_keys WHERE TRIM(COALESCE(api_key, '')) <> ''",
+        ),
+        0,
+        "station-key plaintext API keys must be cleared after conversion",
+    );
+    assert_eq!(
+        query_i64(
+            &database_path,
+            "SELECT COUNT(*) FROM station_keys WHERE id = 'fixture-station-key-001' AND api_key_secret_id IS NOT NULL",
+        ),
+        1,
+        "station-key API key must be referenced by an encrypted secret",
+    );
+    assert_eq!(
+        query_string(
+            &database_path,
+            "SELECT login_password FROM station_credentials WHERE station_id = 'fixture-station-001'",
+        ),
+        expected["legacy_login_password_value"]
+            .as_str()
+            .expect("legacy_login_password_value"),
+    );
+    assert_eq!(
+        query_i64(
+            &database_path,
+            "SELECT COUNT(*) FROM station_credentials WHERE TRIM(COALESCE(login_password, '')) <> ''",
+        ),
+        0,
+        "legacy login passwords must be cleared after conversion",
+    );
+    assert_eq!(
+        query_i64(
+            &database_path,
+            "SELECT COUNT(*) FROM station_credentials WHERE station_id = 'fixture-station-001' AND login_password_secret_id IS NOT NULL",
+        ),
+        1,
+        "login password must be referenced by an encrypted secret",
+    );
+    assert_eq!(
+        query_i64(
+            &database_path,
+            "SELECT COUNT(*) FROM app_secret_bindings WHERE binding_scope = 'settings' AND binding_owner_id = 'local_key' AND binding_kind = 'local_access_key'",
+        ),
+        expected["local_access_key_binding_count"]
+            .as_i64()
+            .expect("local_access_key_binding_count"),
+    );
+    assert_eq!(query_string(&database_path, "PRAGMA quick_check"), "ok");
+    assert!(query_string(&database_path, "PRAGMA foreign_key_check").is_empty());
+    let staged_policy_count = query_i64(
+        &database_path,
+        "SELECT COUNT(*) FROM routing_policy_v3_staged WHERE scope = 'active' AND status = 'staged'",
+    );
+    assert!(
+        staged_policy_count >= 1,
+        "routing policy v3 staging must materialize the active policy"
+    );
+    assert_eq!(
+        query_i64(
+            &database_path,
+            "SELECT COUNT(*) FROM routing_policy_v3_migration_audit WHERE scope = 'active' AND migration_status = 'staged'",
+        ),
+        staged_policy_count,
+        "every staged policy must have an append-only migration audit row",
+    );
+    let backup_entries = fs::read_dir(data_dir.join("backups"))
+        .expect("read upgrade backup directory")
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            let name = entry.file_name().to_string_lossy().to_string();
+            name.starts_with("relay-pool-v2-schema-") && name.ends_with(".sqlite3")
+        })
+        .collect::<Vec<_>>();
+    let backup_count = backup_entries.len();
+    assert!(
+        backup_count >= 1,
+        "schema15 upgrade must retain a verified backup"
+    );
+    for entry in backup_entries {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        assert!(
+            !Path::new(&format!("{}-wal", path.display())).exists()
+                && !Path::new(&format!("{}-shm", path.display())).exists(),
+            "verified backup must not leave SQLite sidecars: {name}"
+        );
+        assert_eq!(
+            query_string(&path, "PRAGMA quick_check"),
+            "ok",
+            "verified backup must pass SQLite quick_check: {name}"
+        );
+        let manifest_path = path.with_file_name(format!("{name}.backup-manifest.json"));
+        assert!(
+            manifest_path.is_file(),
+            "verified backup must have a durable identity manifest: {name}"
+        );
+        let backup_manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(&manifest_path).expect("backup manifest bytes"))
+                .expect("valid backup manifest");
+        assert_eq!(
+            backup_manifest["manifestVersion"].as_i64(),
+            Some(1),
+            "backup manifest version must be supported"
+        );
+        assert_eq!(
+            backup_manifest["backupFileName"].as_str(),
+            Some(name.as_str()),
+            "backup manifest must bind to its sibling file"
+        );
+        let source_schema = backup_manifest["sourceSchema"]
+            .as_i64()
+            .expect("backup manifest sourceSchema");
+        let target_schema = backup_manifest["targetSchema"]
+            .as_i64()
+            .expect("backup manifest targetSchema");
+        assert!(
+            source_schema < target_schema,
+            "backup manifest must describe a forward schema transition"
+        );
+    }
+
+    let second = relay_pool_desktop_lib::test_support::schema_upgrade::run_schema_upgrade(
+        &data_dir,
+        &database_path,
+        "schema15-fixture-device-key",
+        [0x07; 32],
+    )
+    .expect("second startup must be idempotent and writable");
+    assert_eq!(second.schema_version, 71);
+    assert_eq!(second.open_mode, "writable");
+    assert!(second.restart_ready);
+    assert_eq!(
+        query_i64(&database_path, "SELECT COUNT(*) FROM secrets"),
+        expected["secret_count"].as_i64().expect("secret_count"),
+        "idempotent restart must not duplicate converted secrets",
+    );
+    assert_eq!(
+        query_i64(&database_path, "SELECT COUNT(*) FROM app_secret_bindings"),
+        expected["local_access_key_binding_count"]
+            .as_i64()
+            .expect("local_access_key_binding_count"),
+    );
+    let backup_count_after_restart = fs::read_dir(data_dir.join("backups"))
+        .expect("read backups after restart")
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            let name = entry.file_name().to_string_lossy().to_string();
+            name.starts_with("relay-pool-v2-schema-") && name.ends_with(".sqlite3")
+        })
+        .count();
+    assert_eq!(
+        backup_count_after_restart, backup_count,
+        "idempotent restart must not create an unnecessary schema backup"
+    );
+    assert_eq!(
+        query_string(
+            &database_path,
+            "SELECT status FROM request_log_url_sanitizer_progress WHERE id = 'request_logs_upstream_base_url_v1'",
+        ),
+        "complete",
+    );
+    assert!(!data_dir.join("persistence-upgrade-journal.json").exists());
+}
+
+fn query_i64(path: &Path, sql: &str) -> i64 {
+    tauri::async_runtime::block_on(async {
+        let mut connection = SqliteConnection::connect_with(
+            &SqliteConnectOptions::new()
+                .filename(path)
+                .create_if_missing(false)
+                .read_only(true),
+        )
+        .await
+        .expect("query connection");
+        let value = sqlx::query_scalar::<_, i64>(sql)
+            .fetch_one(&mut connection)
+            .await
+            .expect("scalar query");
+        connection.close().await.expect("close query connection");
+        value
+    })
+}
+
+fn query_string(path: &Path, sql: &str) -> String {
+    tauri::async_runtime::block_on(async {
+        let mut connection = SqliteConnection::connect_with(
+            &SqliteConnectOptions::new()
+                .filename(path)
+                .create_if_missing(false)
+                .read_only(true),
+        )
+        .await
+        .expect("query connection");
+        let value = sqlx::query_scalar::<_, String>(sql)
+            .fetch_optional(&mut connection)
+            .await
+            .expect("scalar query")
+            .unwrap_or_default();
+        connection.close().await.expect("close query connection");
+        value
+    })
+}
+
 fn schema15_manifest() -> serde_json::Value {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/persistence/schema15/manifest.json");
