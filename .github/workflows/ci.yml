@@ -1,6 +1,13 @@
 name: CI
 
 on:
+  workflow_dispatch:
+    inputs:
+      upgrade_module_start:
+        description: "Resume schema-upgrade modules from this module after a focused failure"
+        required: false
+        default: "frontend-contracts"
+        type: string
   pull_request:
     paths-ignore:
       - "README.md"
@@ -51,6 +58,12 @@ jobs:
         run: |
           $actual = cargo deny --version
           if ($actual -notmatch '^cargo-deny 0\.20\.2\b') { throw "unexpected cargo-deny: $actual" }
+      - name: Schema upgrade modules (resumable)
+        shell: pwsh
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}\output\cargo\ci
+          UPGRADE_MODULE_START: ${{ inputs.upgrade_module_start || 'frontend-contracts' }}
+        run: ./scripts/run-schema-upgrade-modules.ps1 -StartModule $env:UPGRADE_MODULE_START
       - name: Full verification
         shell: pwsh
         env:

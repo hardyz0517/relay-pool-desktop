@@ -86,10 +86,15 @@ for (const item of matrix) {
   if (executedFilters.has(item.cargoFilter)) continue;
   const result = spawnSync(
     "cargo",
-    ["test", "--manifest-path", cargoManifest, "--lib", item.cargoFilter, "--", "--nocapture"],
-    { stdio: "inherit", shell: process.platform === "win32" },
+    ["test", "--locked", "--manifest-path", cargoManifest, "--lib", item.cargoFilter, "--", "--nocapture"],
+    { encoding: "utf8", shell: process.platform === "win32" },
   );
+  const combined = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+  process.stdout.write(result.stdout ?? "");
+  process.stderr.write(result.stderr ?? "");
   assert.equal(result.status, 0, `rust fixture test failed for ${item.risk}: ${item.cargoFilter}`);
+  const running = [...combined.matchAll(/running\s+(\d+)\s+tests?/g)].map((match) => Number(match[1]));
+  assert.ok(running.some((count) => count > 0), `rust fixture test filter executed zero tests for ${item.risk}: ${item.cargoFilter}`);
   executedFilters.add(item.cargoFilter);
 }
 

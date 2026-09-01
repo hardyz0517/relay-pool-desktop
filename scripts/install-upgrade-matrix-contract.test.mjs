@@ -40,6 +40,18 @@ for (const required of [
   "version = $NewVersion",
   "installerSha256",
   "Resolve-ExplicitPath",
+  "Get-DurableStartupSnapshot",
+  "Invoke-SqliteScalar",
+  "mode = \"writable\"",
+  "decision = \"ready\"",
+  "failureReason = $null",
+  "currentSchemaVersion",
+  "runtimeRegistered",
+  "localProxyRegistered",
+  "request_log_url_sanitizer_progress",
+  "persistence_runtime_health",
+  "PRAGMA quick_check",
+  "PRAGMA foreign_key_check",
 ]) {
   if (!source.includes(required)) {
     throw new Error(`install/upgrade matrix script is missing explicit-parameter contract text: ${required}`);

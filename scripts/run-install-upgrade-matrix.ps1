@@ -58,22 +58,40 @@ function Add-Result([string]$Name, [string]$Status, [hashtable]$Details) {
 }
 
 function Invoke-TimedProcess([string]$Path, [string[]]$Arguments, [int]$TimeoutSeconds) {
-  $psi = New-Object System.Diagnostics.ProcessStartInfo
+  $psi = [System.Diagnostics.ProcessStartInfo]::new()
   $psi.FileName = $Path
-  $psi.Arguments = ($Arguments -join " ")
   $psi.UseShellExecute = $false
   $psi.RedirectStandardOutput = $true
   $psi.RedirectStandardError = $true
-  $process = [System.Diagnostics.Process]::Start($psi)
-  $completed = $process.WaitForExit($TimeoutSeconds * 1000)
-  if (-not $completed) {
-    try { $process.Kill() } catch {}
-    throw "Process timed out after $TimeoutSeconds seconds: $Path"
+  # ArgumentList preserves spaces and quoting in the install directory.  A
+  # hand-built Arguments string would split `/D=` at `Relay Pool Desktop`.
+  foreach ($argument in $Arguments) {
+    [void]$psi.ArgumentList.Add([string]$argument)
   }
-  return [pscustomobject]@{
-    exitCode = $process.ExitCode
-    stdout = $process.StandardOutput.ReadToEnd()
-    stderr = $process.StandardError.ReadToEnd()
+
+  $process = [System.Diagnostics.Process]::new()
+  $process.StartInfo = $psi
+  try {
+    if (-not $process.Start()) {
+      throw "failed to start process: $Path"
+    }
+    # Drain both redirected streams while the process is running so a verbose
+    # installer cannot block on a full pipe before WaitForExit returns.
+    $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+    $stderrTask = $process.StandardError.ReadToEndAsync()
+    $completed = $process.WaitForExit($TimeoutSeconds * 1000)
+    if (-not $completed) {
+      try { $process.Kill($true) } catch { try { $process.Kill() } catch {} }
+      $process.WaitForExit()
+      throw "Process timed out after $TimeoutSeconds seconds: $Path"
+    }
+    return [pscustomobject]@{
+      exitCode = $process.ExitCode
+      stdout = $stdoutTask.GetAwaiter().GetResult()
+      stderr = $stderrTask.GetAwaiter().GetResult()
+    }
+  } finally {
+    $process.Dispose()
   }
 }
 
@@ -140,16 +158,119 @@ function Stop-RelayProcesses {
   Start-Sleep -Seconds 2
 }
 
-function Start-And-ProbeApp([string]$Name) {
+function Invoke-SqliteScalar([string]$DatabasePath, [string]$Query) {
+  $sqlite = Get-Command sqlite3 -ErrorAction SilentlyContinue
+  if (-not $sqlite) { throw "sqlite3 is required for the durable startup probe" }
+  $output = & $sqlite.Source -readonly -batch -noheader -cmd ".timeout 5000" $DatabasePath $Query 2>&1
+  if ($LASTEXITCODE -ne 0) { throw "sqlite3 startup probe query failed with exit code $LASTEXITCODE" }
+  return (($output | ForEach-Object { $_.ToString() }) -join "`n").Trim()
+}
+
+function Get-InstalledDatabasePath {
+  $candidates = foreach ($root in $appDataPaths) {
+    if (-not (Test-Path -LiteralPath $root -PathType Container)) { continue }
+    Get-ChildItem -LiteralPath $root -Filter "relay-pool-desktop-v2.sqlite3" -File -Recurse -ErrorAction SilentlyContinue |
+      Where-Object { $_.FullName -notmatch "[\\/]backups[\\/]" }
+  }
+  return ($candidates | Sort-Object { $_.FullName.Length } | Select-Object -First 1).FullName
+}
+
+function Get-DurableStartupSnapshot([int64]$MinimumSchemaVersion, [Nullable[int64]]$PreviousWriteProbeCount, [bool]$RequireLocalProxy) {
+  $databasePath = Get-InstalledDatabasePath
+  if (-not $databasePath) { throw "installed database was not found under the application data roots" }
+  $compatibility = Invoke-SqliteScalar $databasePath "SELECT schema_version || '|' || database_generation FROM persistence_schema_compatibility WHERE singleton_key = 1;"
+  $compatibilityParts = $compatibility -split '\|', 2
+  if ($compatibilityParts.Count -ne 2) { throw "startup probe returned malformed schema compatibility metadata" }
+  $schemaVersion = [int64]$compatibilityParts[0]
+  $databaseGeneration = [int64]$compatibilityParts[1]
+  $migrationVersion = [int64](Invoke-SqliteScalar $databasePath "SELECT COALESCE(MAX(version), 0) FROM _sqlx_migrations WHERE success = 1;")
+  $health = Invoke-SqliteScalar $databasePath "SELECT write_probe_count || '|' || last_open_mode || '|' || COALESCE(last_checked_at, '') FROM persistence_runtime_health WHERE singleton_key = 1;"
+  $healthParts = $health -split '\|', 3
+  if ($healthParts.Count -lt 2) { throw "startup probe returned malformed runtime health metadata" }
+  $writeProbeCount = [int64]$healthParts[0]
+  $openMode = $healthParts[1]
+  $lastCheckedAt = if ($healthParts.Count -ge 3) { $healthParts[2] } else { "" }
+  $quickCheck = Invoke-SqliteScalar $databasePath "PRAGMA quick_check;"
+  if ($quickCheck -ne "ok") { throw "startup probe quick_check failed: $quickCheck" }
+  $foreignKeyCheck = Invoke-SqliteScalar $databasePath "PRAGMA foreign_key_check;"
+  if (-not [string]::IsNullOrWhiteSpace($foreignKeyCheck)) { throw "startup probe foreign_key_check returned violations" }
+  $sanitizerStatus = $null
+  if ($schemaVersion -ge 18) {
+    $sanitizerStatus = Invoke-SqliteScalar $databasePath "SELECT status FROM request_log_url_sanitizer_progress WHERE id = 'request_logs_upstream_base_url_v1';"
+    if ($sanitizerStatus -ne "complete") { throw "startup probe request-log sanitizer is not complete: $sanitizerStatus" }
+  }
+  $configuredPort = [int](Invoke-SqliteScalar $databasePath "SELECT value FROM settings WHERE key = 'local_proxy_port';")
+  if ($configuredPort -le 0 -or $configuredPort -gt 65535) { throw "startup probe found invalid local proxy port" }
+  if ($databaseGeneration -ne 2) { throw "startup probe database generation mismatch: $databaseGeneration" }
+  if ($schemaVersion -lt $MinimumSchemaVersion) { throw "startup probe schema is below expected minimum: $schemaVersion < $MinimumSchemaVersion" }
+  if ($migrationVersion -lt $schemaVersion) { throw "startup probe migration ledger is behind schema metadata: $migrationVersion < $schemaVersion" }
+  if ($openMode -ne "writable") { throw "startup probe runtime open mode is not writable: $openMode" }
+  if ($null -ne $PreviousWriteProbeCount -and $writeProbeCount -le $PreviousWriteProbeCount) { throw "startup probe did not observe a writable open during this process" }
+  $listener = @(Get-NetTCPConnection -State Listen -LocalPort $configuredPort -ErrorAction SilentlyContinue | Select-Object LocalAddress, LocalPort, OwningProcess, State)
+  if ($RequireLocalProxy -and $listener.Count -eq 0) { throw "startup probe local proxy is not listening on configured port" }
+  $proxyHttpStatus = $null
+  if ($RequireLocalProxy) {
+    $client = [System.Net.Http.HttpClient]::new()
+    try {
+      $response = $client.GetAsync("http://127.0.0.1:$configuredPort/v1/models").GetAwaiter().GetResult()
+      $proxyHttpStatus = [int]$response.StatusCode
+      if ($proxyHttpStatus -ne 401) { throw "startup probe local proxy /v1/models returned HTTP $proxyHttpStatus instead of protected 401" }
+    } finally { $client.Dispose() }
+  }
+  return [ordered]@{
+    databasePath = $databasePath
+    mode = "writable"
+    decision = "ready"
+    failureReason = $null
+    currentSchemaVersion = $schemaVersion
+    sqlMigrationVersion = $migrationVersion
+    databaseGeneration = $databaseGeneration
+    writeProbeCount = $writeProbeCount
+    previousWriteProbeCount = $PreviousWriteProbeCount
+    lastCheckedAt = $lastCheckedAt
+    sanitizerStatus = $sanitizerStatus
+    runtimeRegistered = $true
+    localProxyRegistered = ($listener.Count -gt 0)
+    localProxyPort = $configuredPort
+    localProxyHttpStatus = $proxyHttpStatus
+    listeners = $listener
+    evidenceSource = "sqlite durable health metadata and process-local listener"
+  }
+}
+
+function Start-And-ProbeApp([string]$Name, [int64]$MinimumSchemaVersion, [bool]$RequireLocalProxy) {
   $exe = Get-InstalledExePath
   if (-not $exe) {
     throw "Installed executable not found"
   }
+  $databaseBeforeStart = Get-InstalledDatabasePath
+  $previousWriteProbeCount = $null
+  if ($databaseBeforeStart) {
+    try {
+      $previousWriteProbeCount = [int64](Invoke-SqliteScalar $databaseBeforeStart "SELECT write_probe_count FROM persistence_runtime_health WHERE singleton_key = 1;")
+    } catch { $previousWriteProbeCount = $null }
+  }
   $primary = Start-Process -FilePath $exe -PassThru -WindowStyle Hidden
-  Start-Sleep -Seconds 10
-  $primary.Refresh()
-  if ($primary.HasExited) {
-    throw "$Name primary process exited during startup with code $($primary.ExitCode)"
+  $startupProbe = $null
+  $probeError = $null
+  for ($attempt = 1; $attempt -le 30; $attempt++) {
+    Start-Sleep -Seconds 2
+    $primary.Refresh()
+    if ($primary.HasExited) {
+      throw "$Name primary process exited during startup with code $($primary.ExitCode)"
+    }
+    try {
+      $startupProbe = Get-DurableStartupSnapshot $MinimumSchemaVersion $previousWriteProbeCount $RequireLocalProxy
+      break
+    } catch { $probeError = $_.Exception.Message }
+  }
+  if ($null -eq $startupProbe) {
+    Add-Result $Name "fail" @{
+      executable = $exe
+      primaryPid = $primary.Id
+      startupProbe = @{ mode = "unknown"; decision = "unknown"; failureReason = "startupProbeFailed"; lastError = $probeError }
+    }
+    throw "$Name startup probe failed: $probeError"
   }
 
   $second = Start-Process -FilePath $exe -PassThru -WindowStyle Hidden
@@ -178,7 +299,8 @@ function Start-And-ProbeApp([string]$Name) {
   } catch {}
 
   Stop-RelayProcesses
-  Add-Result $Name "pass" @{
+  $probeStatus = if ($singleInstanceOk) { "pass" } else { "fail" }
+  Add-Result $Name $probeStatus @{
     executable = $exe
     primaryPid = $primary.Id
     secondPid = $second.Id
@@ -186,6 +308,7 @@ function Start-And-ProbeApp([string]$Name) {
     runningExecutableProcessCountAfterSecondLaunch = ($running | Measure-Object).Count
     singleInstanceOk = $singleInstanceOk
     startupEstablishedTcpConnections = @($connections)
+    startupProbe = $startupProbe
     closeProbe = $closeResult
   }
   if (-not $singleInstanceOk) {
@@ -243,7 +366,9 @@ function Uninstall-CurrentPackage([string]$Name) {
 }
 
 function Remove-InstallDirectoryWithRetry {
-  if (-not $installDirFull.StartsWith($installRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+  $installRootPrefix = $installRoot.TrimEnd([char[]]@('\', '/')) + [System.IO.Path]::DirectorySeparatorChar
+  if ([string]::Equals($installDirFull, $installRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+      -not $installDirFull.StartsWith($installRootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
     throw "Refusing to remove install directory outside expected root: $installDirFull"
   }
   for ($attempt = 1; $attempt -le 10; $attempt++) {
@@ -305,21 +430,26 @@ try {
     registryBefore = (Get-InstallRegistry)
   }
 
+  # Ensure no running target process keeps database/WAL files open while the
+  # user's existing app-data directory is moved out of the way.
+  Stop-RelayProcesses
   Move-AppDataAside
   Uninstall-CurrentPackage "remove-existing-install-or-orphan-state"
   Install-Package "fresh-install-candidate" $newInstallerFull $NewVersion
-  Start-And-ProbeApp "fresh-startup-offline-single-instance-close-probe-candidate"
+  $env:RELAY_POOL_START_PROXY_ON_LAUNCH = "1"
+  Start-And-ProbeApp "fresh-startup-offline-single-instance-close-probe-candidate" 71 $true
 
   Uninstall-CurrentPackage "remove-fresh-candidate"
   Install-Package "install-supported-baseline" $oldInstallerFull $OldVersion
-  Start-And-ProbeApp "supported-baseline-startup"
+  Start-And-ProbeApp "supported-baseline-startup" 1 $false
   Install-Package "upgrade-baseline-to-candidate" $newInstallerFull $NewVersion
-  Start-And-ProbeApp "post-upgrade-startup-single-instance-close-probe-candidate"
+  Start-And-ProbeApp "post-upgrade-startup-single-instance-close-probe-candidate" 71 $true
 } catch {
   $overallStatus = "fail"
   $errorMessage = $_.Exception.Message
   Add-Result "matrix-error" "fail" @{ message = $errorMessage }
 } finally {
+  Remove-Item Env:RELAY_POOL_START_PROXY_ON_LAUNCH -ErrorAction SilentlyContinue
   Stop-RelayProcesses
   Restore-AppData
   Add-Result "restore-existing-app-data" "pass" @{
