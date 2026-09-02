@@ -2,7 +2,7 @@
   "schema_version": 1,
   "generator_version": 1,
   "ipc_contract_version": 1,
-  "contract_hash": "ce78ae7bd9af3bffd8aff043969aa2346acfbd41534de9ed9cdf8166bfcce115",
+  "contract_hash": "5b9823053a6dd7dc5d57d8d6684db1fb0ab771ec22950a18514d11d36fedaa8d",
   "commands": [
     {
       "name": "activate_data_store_candidate",
