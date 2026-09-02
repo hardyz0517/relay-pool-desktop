@@ -109,6 +109,7 @@ export type AlertingIncident = {
   groupName: string | null;
   stationId: string | null;
   episodeNumber: number;
+  firstSeenAtMs: number;
   occurrenceCount: number;
   lastSeenAtMs: number;
   collectorFailedTaskTypes: string[];

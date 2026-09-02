@@ -430,6 +430,7 @@ pub(crate) struct AlertingIncidentSummaryDto {
     pub group_name: Option<String>,
     pub station_id: Option<String>,
     pub episode_number: i64,
+    pub first_seen_at_ms: i64,
     pub occurrence_count: i64,
     pub last_seen_at_ms: i64,
     pub collector_failed_task_types: Vec<String>,
@@ -745,6 +746,7 @@ impl From<IncidentSummary> for AlertingIncidentSummaryDto {
             group_name: item.group_name,
             station_id: item.station_id,
             episode_number: item.episode_number,
+            first_seen_at_ms: item.first_seen_at_ms,
             occurrence_count: item.occurrence_count,
             last_seen_at_ms: item.last_seen_at_ms,
             collector_failed_task_types: item.collector_failed_task_types,
@@ -759,7 +761,7 @@ impl From<IncidentSummary> for AlertingIncidentSummaryDto {
 impl From<IncidentCursor> for AlertingCursorOutputDto {
     fn from(cursor: IncidentCursor) -> Self {
         Self {
-            updated_at_ms: cursor.updated_at_ms,
+            updated_at_ms: cursor.first_seen_at_ms,
             id: cursor.id,
         }
     }
@@ -930,7 +932,7 @@ export type AlertingObservationInputDto = {
 export type AlertingIncidentSummaryDto = {
   id: string; conditionKey: string; eventType: string; lifecycleState: string;
   severity: string; groupName: string | null; stationId: string | null; episodeNumber: number;
-  occurrenceCount: number; lastSeenAtMs: number; collectorFailedTaskTypes: string[];
+  firstSeenAtMs: number; occurrenceCount: number; lastSeenAtMs: number; collectorFailedTaskTypes: string[];
   resolvedAtMs: number | null;
   updatedAtMs: number; seenAtMs: number | null; snoozedUntilMs: number | null;
 };

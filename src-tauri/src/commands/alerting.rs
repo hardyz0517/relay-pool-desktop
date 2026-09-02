@@ -192,7 +192,7 @@ pub async fn list_alerting_incidents(
             let input = AlertingCurrentInputDto::parse(input)?;
             let cursor = input.cursor.map(|value| {
                 crate::application::queries::change_center_workspace::IncidentCursor {
-                    updated_at_ms: value.updated_at_ms,
+                    first_seen_at_ms: value.updated_at_ms,
                     id: value.id,
                 }
             });

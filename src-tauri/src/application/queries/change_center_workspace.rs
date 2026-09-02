@@ -17,7 +17,7 @@ use std::{
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct IncidentCursor {
-    pub updated_at_ms: i64,
+    pub first_seen_at_ms: i64,
     pub id: String,
 }
 
@@ -31,6 +31,7 @@ pub(crate) struct IncidentSummary {
     pub group_name: Option<String>,
     pub station_id: Option<String>,
     pub episode_number: i64,
+    pub first_seen_at_ms: i64,
     pub occurrence_count: i64,
     pub last_seen_at_ms: i64,
     pub collector_failed_task_types: Vec<String>,
@@ -196,7 +197,7 @@ impl ChangeCenterWorkspaceQuery {
                 severity,
                 lifecycle_state,
                 search,
-                cursor.map(|value| (value.updated_at_ms, value.id.as_str())),
+                cursor.map(|value| (value.first_seen_at_ms, value.id.as_str())),
                 limit,
             )
             .await?;
@@ -211,7 +212,7 @@ impl ChangeCenterWorkspaceQuery {
         let next_cursor = has_more.then(|| {
             let last = items.last().expect("overflow page must contain an item");
             IncidentCursor {
-                updated_at_ms: last.updated_at_ms,
+                first_seen_at_ms: last.first_seen_at_ms,
                 id: last.id.clone(),
             }
         });
@@ -418,6 +419,7 @@ fn incident_summary_from_row(
         group_name,
         station_id: row.station_id,
         episode_number: row.episode_number,
+        first_seen_at_ms: row.first_seen_at_ms,
         occurrence_count: row.occurrence_count,
         last_seen_at_ms: row.last_seen_at_ms,
         collector_failed_task_types,
@@ -1032,6 +1034,148 @@ mod tests {
             ["older-active"]
         );
         assert!(second_page.next_cursor.is_none());
+
+        runtime.close().await.expect("close runtime");
+    }
+
+    #[tokio::test]
+    async fn incident_lists_keep_first_seen_order_when_occurrence_count_increases() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let runtime = PersistenceRuntime::initialize_new(
+            &temp.path().join("incident-first-seen-order.sqlite3"),
+        )
+        .await
+        .expect("runtime");
+        let station = StationService::new(
+            runtime.handle(),
+            Arc::new(SystemClock),
+            Arc::new(UuidV7Generator),
+        )
+        .create(CreateStationInput {
+            name: "Authorization order fixture".to_string(),
+            station_type: "sub2api".to_string(),
+            website_url: "https://authorization-order.example".to_string(),
+            api_base_url: "https://authorization-order.example/v1".to_string(),
+            api_key: String::new(),
+            collector_proxy_mode: "inherit".to_string(),
+            collector_proxy_url: None,
+            enabled: true,
+            credit_per_cny: 1.0,
+            low_balance_threshold_cny: None,
+            collection_interval_minutes: 30,
+            note: None,
+        })
+        .await
+        .expect("station");
+        let station_id = station.id.clone();
+
+        runtime
+            .handle()
+            .write(|write| {
+                Box::pin(async move {
+                    for (id, first_seen_at_ms, last_seen_at_ms, occurrence_count) in [
+                        ("older-authorization", 100_i64, 1_000_i64, 9_i64),
+                        ("newer-authorization", 200_i64, 200_i64, 1_i64),
+                    ] {
+                        sqlx::query(
+                            "INSERT INTO change_incidents (
+                                id, condition_key, event_type, lifecycle_state,
+                                base_severity, severity, object_type, object_id, station_id,
+                                lifecycle_policy_fingerprint, episode_number, first_seen_at_ms,
+                                last_seen_at_ms, occurrence_count, episode_occurrence_count,
+                                last_observation_summary_json, created_at_ms, updated_at_ms
+                             ) VALUES (?1, ?2, 'authorization_expired', 'open',
+                                       'warning', 'warning', 'station', ?3, ?3,
+                                       'authorization-order-fixture', 1, ?4, ?5, ?6, ?6,
+                                       '{}', ?4, ?5)",
+                        )
+                        .bind(id)
+                        .bind(format!("fixture:{id}"))
+                        .bind(&station_id)
+                        .bind(first_seen_at_ms)
+                        .bind(last_seen_at_ms)
+                        .bind(occurrence_count)
+                        .execute(write.connection())
+                        .await?;
+                    }
+                    Ok::<(), PersistenceError>(())
+                })
+            })
+            .await
+            .expect("authorization incidents");
+
+        let query = ChangeCenterWorkspaceQuery::new(runtime.handle());
+        let current_first_page = query
+            .list_current(None, None, Some("active"), None, None, 1)
+            .await
+            .expect("current first page");
+        assert_eq!(current_first_page.items[0].id, "newer-authorization");
+        assert_eq!(current_first_page.items[0].first_seen_at_ms, 200);
+        assert_eq!(
+            current_first_page
+                .next_cursor
+                .as_ref()
+                .map(|cursor| cursor.first_seen_at_ms),
+            Some(200)
+        );
+        let current_second_page = query
+            .list_current(
+                None,
+                None,
+                Some("active"),
+                None,
+                current_first_page.next_cursor.as_ref(),
+                1,
+            )
+            .await
+            .expect("current second page");
+        assert_eq!(current_second_page.items[0].id, "older-authorization");
+
+        runtime
+            .handle()
+            .write(|write| {
+                Box::pin(async move {
+                    sqlx::query(
+                        "UPDATE change_incidents
+                         SET occurrence_count = 10, episode_occurrence_count = 10,
+                             last_seen_at_ms = 2_000, updated_at_ms = 2_000
+                         WHERE id = 'older-authorization'",
+                    )
+                    .execute(write.connection())
+                    .await?;
+                    Ok::<(), PersistenceError>(())
+                })
+            })
+            .await
+            .expect("repeat authorization observation");
+
+        let current = query
+            .list_current(None, None, Some("active"), None, None, 10)
+            .await
+            .expect("current incidents after repeat");
+        assert_eq!(
+            current
+                .items
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            ["newer-authorization", "older-authorization"]
+        );
+        assert_eq!(current.items[1].occurrence_count, 10);
+        assert_eq!(current.items[1].updated_at_ms, 2_000);
+
+        let activity = query
+            .list_activity(None, None, None, false, None, None, 10)
+            .await
+            .expect("activity after repeat");
+        assert_eq!(
+            activity
+                .items
+                .iter()
+                .map(|item| (item.id.as_str(), item.activity_at_ms))
+                .collect::<Vec<_>>(),
+            [("newer-authorization", 200), ("older-authorization", 100)]
+        );
 
         runtime.close().await.expect("close runtime");
     }

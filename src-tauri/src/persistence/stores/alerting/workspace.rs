@@ -11,6 +11,7 @@ pub(crate) struct WorkspaceIncidentRow {
     pub severity: String,
     pub station_id: Option<String>,
     pub episode_number: i64,
+    pub first_seen_at_ms: i64,
     pub occurrence_count: i64,
     pub last_seen_at_ms: i64,
     pub last_observation_summary_json: String,
@@ -115,7 +116,7 @@ impl WorkspaceStore {
                        i.lifecycle_state AS lifecycle_state,
                        i.episode_number AS episode_number,
                        i.occurrence_count AS occurrence_count,
-                       i.updated_at_ms AS activity_at_ms,
+                       i.first_seen_at_ms AS activity_at_ms,
                        i.last_observation_summary_json AS last_observation_summary_json,
                        NULL AS old_value_json, NULL AS new_value_json, NULL AS impact_json,
                        NULL AS group_effective_rate_multiplier,
@@ -264,7 +265,7 @@ impl WorkspaceStore {
                 SELECT i.id, i.condition_key, i.event_type, i.lifecycle_state,
                        CASE WHEN i.event_type = 'group_missing' THEN 'info' ELSE i.severity END AS severity,
                        i.station_id, s.name AS station_name, i.episode_number,
-                       i.occurrence_count, i.last_seen_at_ms,
+                       i.first_seen_at_ms, i.occurrence_count, i.last_seen_at_ms,
                        i.last_observation_summary_json, i.resolved_at_ms, i.updated_at_ms,
                        a.seen_at_ms, a.snoozed_until_ms
                 FROM change_incidents i
@@ -292,13 +293,13 @@ impl WorkspaceStore {
                       ), lower(?4)) > 0)
             )
             SELECT id, condition_key, event_type, lifecycle_state, severity,
-                   station_id, episode_number, occurrence_count, last_seen_at_ms,
+                   station_id, episode_number, first_seen_at_ms, occurrence_count, last_seen_at_ms,
                    last_observation_summary_json, resolved_at_ms, updated_at_ms,
                    seen_at_ms, snoozed_until_ms, (SELECT COUNT(*) FROM filtered) AS total_count
             FROM filtered
-            WHERE (?5 IS NULL OR updated_at_ms < ?5
-                   OR (updated_at_ms = ?5 AND id < ?6))
-            ORDER BY updated_at_ms DESC, id DESC
+            WHERE (?5 IS NULL OR first_seen_at_ms < ?5
+                   OR (first_seen_at_ms = ?5 AND id < ?6))
+            ORDER BY first_seen_at_ms DESC, id DESC
             LIMIT ?7",
         )
         .bind(station_id)
@@ -350,7 +351,8 @@ impl WorkspaceStore {
         let row = sqlx::query(
             "SELECT i.id, i.condition_key, i.event_type, i.lifecycle_state,
                     CASE WHEN i.event_type = 'group_missing' THEN 'info' ELSE i.severity END AS severity,
-                    i.station_id, i.episode_number, i.occurrence_count, i.last_seen_at_ms,
+                    i.station_id, i.episode_number, i.first_seen_at_ms,
+                    i.occurrence_count, i.last_seen_at_ms,
                     i.last_observation_summary_json, i.resolved_at_ms, i.updated_at_ms,
                     a.seen_at_ms, a.snoozed_until_ms, 1 AS total_count
              FROM change_incidents i
@@ -462,6 +464,7 @@ fn row_to_incident(row: sqlx::sqlite::SqliteRow) -> Result<WorkspaceIncidentRow,
         severity: row.try_get("severity")?,
         station_id: row.try_get("station_id")?,
         episode_number: row.try_get("episode_number")?,
+        first_seen_at_ms: row.try_get("first_seen_at_ms")?,
         occurrence_count: row.try_get("occurrence_count")?,
         last_seen_at_ms: row.try_get("last_seen_at_ms")?,
         last_observation_summary_json: row.try_get("last_observation_summary_json")?,

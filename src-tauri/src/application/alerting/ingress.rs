@@ -514,7 +514,9 @@ mod tests {
     async fn repeated_authorization_expiry_observations_schedule_only_first_notification() {
         let root = tempfile::tempdir().expect("tempdir");
         let runtime = PersistenceRuntime::initialize_new(
-            &root.path().join("authorization-expiry-notification.sqlite3"),
+            &root
+                .path()
+                .join("authorization-expiry-notification.sqlite3"),
         )
         .await
         .expect("runtime");

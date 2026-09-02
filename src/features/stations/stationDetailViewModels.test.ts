@@ -149,6 +149,7 @@ describe("buildStationDetailViewModel", () => {
           groupName: null,
           stationId: "station-1",
           episodeNumber: 1,
+          firstSeenAtMs: 1,
           occurrenceCount: 1,
           lastSeenAtMs: 1,
           collectorFailedTaskTypes: [],

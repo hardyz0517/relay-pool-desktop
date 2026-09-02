@@ -400,8 +400,7 @@ mod tests {
         IncidentObservation {
             source_observation_key: format!("authorization-obs-{at}"),
             event_type: AlertEventType::AuthorizationExpired,
-            condition_key: ConditionKey::new("collector:station-1:authorization_expired")
-                .unwrap(),
+            condition_key: ConditionKey::new("collector:station-1:authorization_expired").unwrap(),
             kind,
             severity: Severity::Warning,
             observed_at_ms: at,

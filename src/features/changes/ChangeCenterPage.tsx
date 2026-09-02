@@ -128,7 +128,7 @@ function toIncidentActivity(incident: AlertingIncident): AlertingActivity {
     stationKeyId: null,
     source: null,
     reasonCode: null,
-    activityAtMs: incident.updatedAtMs,
+    activityAtMs: incident.firstSeenAtMs,
     oldValueJson: null,
     newValueJson: null,
     impactJson: null,
@@ -292,7 +292,7 @@ export function ChangeCenterPage({
           if (absoluteRow % pageSize !== 0) continue;
           const targetPage = anchorPage + absoluteRow / pageSize;
           nextCursors[targetPage] = {
-            updatedAtMs: "activityAtMs" in item ? item.activityAtMs : item.updatedAtMs,
+            updatedAtMs: "activityAtMs" in item ? item.activityAtMs : item.firstSeenAtMs,
             id: "recordType" in item ? `${item.recordType}:${item.id}` : item.id,
           };
         }
