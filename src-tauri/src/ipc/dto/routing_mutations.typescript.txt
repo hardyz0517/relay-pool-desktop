@@ -150,12 +150,41 @@ export type ApplyRoutingPolicyDocumentInputDto = {
   policy: RoutingPolicyConfigV3Dto;
 };
 
+export type RoutingPolicyPublicationStateDto =
+  | "staged"
+  | "ready"
+  | "waiting_latest_input"
+  | "failed"
+  | "active"
+  | "expired";
+
+export type RoutingPolicyActivationPathDto = "fast" | "generation" | "persisted_only";
+
+export type RoutingPolicyFallbackReasonDto =
+  | "quality_tail"
+  | "circuit_tail"
+  | "concurrent_revision"
+  | "runtime_unavailable"
+  | "checkpoint_mismatch"
+  | "fence_active"
+  | "transport_compile_failed";
+
+export type RoutingPolicyPublicationFailureCodeDto =
+  | "generation_build_failed"
+  | "generation_qualification_failed"
+  | "generation_cutover_failed"
+  | "generation_failed";
+
 export type RoutingPolicySnapshotDto = {
   config: RoutingPolicyConfigV3Dto;
   revision: number;
   policyVersion: string;
   systemVersion: string;
   status: string;
+  activationPath?: RoutingPolicyActivationPathDto | null;
+  runtimeStatus?: RoutingPolicyPublicationStateDto | null;
+  activeRevision?: number | null;
+  fallbackReason?: RoutingPolicyFallbackReasonDto | null;
   updatedAtMs: number;
   documentSync: RoutingDocumentSyncDto | null;
 };
@@ -168,8 +197,12 @@ export type RoutingPolicyPublicationStatusInputDto = {
 export type RoutingPolicyPublicationStatusDto = {
   revision: number;
   policyGenerationId: string | null;
-  status: "staged" | "ready" | "failed" | "active" | "expired";
-  failureCode: "generation_build_failed" | "generation_superseded" | "generation_qualification_failed" | "generation_cutover_failed" | "generation_failed" | null;
+  status: RoutingPolicyPublicationStateDto;
+  failureCode: RoutingPolicyPublicationFailureCodeDto | null;
+  activationPath?: RoutingPolicyActivationPathDto | null;
+  runtimeStatus?: RoutingPolicyPublicationStateDto | null;
+  activeRevision?: number | null;
+  fallbackReason?: RoutingPolicyFallbackReasonDto | null;
   updatedAtMs: number;
   terminal: boolean;
 };

@@ -237,4 +237,63 @@ mod tests {
             second.client_config_fingerprint()
         );
     }
+
+    #[test]
+    fn an_in_flight_snapshot_stays_immutable_after_a_newer_publish() {
+        let store = TransportPolicyStore::default();
+        // A request captures this Arc before the policy cutover.  The request
+        // must continue observing revision 1 for its entire lifetime, even
+        // after the process publishes revision 2 for subsequent requests.
+        let in_flight = store.load();
+        assert_eq!(in_flight.source_routing_policy_revision, 1);
+        assert_eq!(in_flight.connect_timeout, Duration::from_secs(10));
+
+        let mut newer = (*in_flight).clone();
+        newer.source_routing_policy_revision = 2;
+        newer.connect_timeout = Duration::from_secs(3);
+        assert!(store.publish_if_newer(newer).expect("publish revision 2"));
+
+        let current = store.load();
+        assert_eq!(current.source_routing_policy_revision, 2);
+        assert_eq!(current.connect_timeout, Duration::from_secs(3));
+        // The old Arc is intentionally checked after publication.  This is
+        // the request-boundary guarantee used by policy-only fast activation.
+        assert_eq!(in_flight.source_routing_policy_revision, 1);
+        assert_eq!(in_flight.connect_timeout, Duration::from_secs(10));
+    }
+
+    #[test]
+    fn concurrent_publication_is_monotonic_and_keeps_the_highest_revision() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let store = Arc::new(TransportPolicyStore::default());
+        let barrier = Arc::new(Barrier::new(5));
+        let mut workers = Vec::new();
+        for revision in 2..=5 {
+            let store = Arc::clone(&store);
+            let barrier = Arc::clone(&barrier);
+            workers.push(thread::spawn(move || {
+                barrier.wait();
+                let mut snapshot = (*store.load()).clone();
+                snapshot.source_routing_policy_revision = revision;
+                snapshot.connect_timeout = Duration::from_secs(revision as u64);
+                store
+                    .publish_if_newer(snapshot)
+                    .expect("concurrent publication is valid")
+            }));
+        }
+        barrier.wait();
+
+        let accepted = workers
+            .into_iter()
+            .map(|worker| worker.join().expect("publication worker completed"))
+            .filter(|published| *published)
+            .count();
+        assert!(accepted >= 1, "at least one revision must be published");
+
+        let current = store.load();
+        assert_eq!(current.source_routing_policy_revision, 5);
+        assert_eq!(current.connect_timeout, Duration::from_secs(5));
+    }
 }

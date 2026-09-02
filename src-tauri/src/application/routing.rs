@@ -112,6 +112,10 @@ pub(crate) struct RoutingService {
 }
 
 impl RoutingService {
+    pub(crate) fn persistence_handle(&self) -> PersistenceHandle {
+        self.runtime.clone()
+    }
+
     pub(crate) fn routing_policy_config_directory(&self) -> Option<std::path::PathBuf> {
         self.runtime
             .database_path()

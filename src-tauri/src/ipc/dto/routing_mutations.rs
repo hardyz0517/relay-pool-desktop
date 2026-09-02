@@ -613,6 +613,10 @@ pub struct RoutingPolicySnapshotDto {
     pub policy_version: String,
     pub system_version: String,
     pub status: String,
+    pub activation_path: Option<RoutingPolicyActivationPathDto>,
+    pub runtime_status: Option<RoutingPolicyPublicationStateDto>,
+    pub active_revision: Option<u64>,
+    pub fallback_reason: Option<RoutingPolicyFallbackReasonDto>,
     pub updated_at_ms: i64,
     pub document_sync: Option<RoutingDocumentSyncDto>,
 }
@@ -647,6 +651,7 @@ impl RoutingPolicyPublicationStatusInputDto {
 pub enum RoutingPolicyPublicationStateDto {
     Staged,
     Ready,
+    WaitingLatestInput,
     Failed,
     Active,
     Expired,
@@ -657,9 +662,77 @@ impl RoutingPolicyPublicationStateDto {
         match value {
             "staged" => Some(Self::Staged),
             "ready" => Some(Self::Ready),
+            "waiting_latest_input" => Some(Self::WaitingLatestInput),
             "failed" => Some(Self::Failed),
             "active" => Some(Self::Active),
             "expired" => Some(Self::Expired),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RoutingPolicyActivationPathDto {
+    Fast,
+    Generation,
+    PersistedOnly,
+}
+
+impl RoutingPolicyActivationPathDto {
+    pub fn from_internal_code(value: &str) -> Option<Self> {
+        match value {
+            "fast" => Some(Self::Fast),
+            "generation" => Some(Self::Generation),
+            "persisted_only" => Some(Self::PersistedOnly),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RoutingPolicyFallbackReasonDto {
+    QualityTail,
+    CircuitTail,
+    ConcurrentRevision,
+    RuntimeUnavailable,
+    CheckpointMismatch,
+    FenceActive,
+    TransportCompileFailed,
+}
+
+impl RoutingPolicyFallbackReasonDto {
+    pub fn from_internal_code(value: &str) -> Option<Self> {
+        match value {
+            "quality_tail" => Some(Self::QualityTail),
+            "circuit_tail" => Some(Self::CircuitTail),
+            "concurrent_revision" => Some(Self::ConcurrentRevision),
+            "runtime_unavailable" => Some(Self::RuntimeUnavailable),
+            "checkpoint_mismatch" => Some(Self::CheckpointMismatch),
+            "fence_active" => Some(Self::FenceActive),
+            "transport_compile_failed" => Some(Self::TransportCompileFailed),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RoutingPolicyPublicationFailureCodeDto {
+    GenerationBuildFailed,
+    GenerationQualificationFailed,
+    GenerationCutoverFailed,
+    GenerationFailed,
+}
+
+impl RoutingPolicyPublicationFailureCodeDto {
+    pub fn from_internal_code(value: &str) -> Option<Self> {
+        match value {
+            "generation_build_failed" => Some(Self::GenerationBuildFailed),
+            "generation_qualification_failed" => Some(Self::GenerationQualificationFailed),
+            "generation_cutover_failed" => Some(Self::GenerationCutoverFailed),
+            "generation_failed" => Some(Self::GenerationFailed),
             _ => None,
         }
     }
@@ -671,7 +744,11 @@ pub struct RoutingPolicyPublicationStatusDto {
     pub revision: u64,
     pub policy_generation_id: Option<String>,
     pub status: RoutingPolicyPublicationStateDto,
-    pub failure_code: Option<String>,
+    pub failure_code: Option<RoutingPolicyPublicationFailureCodeDto>,
+    pub activation_path: Option<RoutingPolicyActivationPathDto>,
+    pub runtime_status: Option<RoutingPolicyPublicationStateDto>,
+    pub active_revision: Option<u64>,
+    pub fallback_reason: Option<RoutingPolicyFallbackReasonDto>,
     pub updated_at_ms: i64,
     pub terminal: bool,
 }
@@ -1284,6 +1361,10 @@ mod tests {
         for (code, expected) in [
             ("staged", RoutingPolicyPublicationStateDto::Staged),
             ("ready", RoutingPolicyPublicationStateDto::Ready),
+            (
+                "waiting_latest_input",
+                RoutingPolicyPublicationStateDto::WaitingLatestInput,
+            ),
             ("failed", RoutingPolicyPublicationStateDto::Failed),
             ("active", RoutingPolicyPublicationStateDto::Active),
             ("expired", RoutingPolicyPublicationStateDto::Expired),
@@ -1297,6 +1378,109 @@ mod tests {
             RoutingPolicyPublicationStateDto::from_internal_code("future_state"),
             None
         );
+    }
+
+    #[test]
+    fn publication_metadata_maps_only_closed_low_cardinality_values() {
+        for (code, expected) in [
+            ("fast", RoutingPolicyActivationPathDto::Fast),
+            ("generation", RoutingPolicyActivationPathDto::Generation),
+            (
+                "persisted_only",
+                RoutingPolicyActivationPathDto::PersistedOnly,
+            ),
+        ] {
+            assert_eq!(
+                RoutingPolicyActivationPathDto::from_internal_code(code),
+                Some(expected)
+            );
+        }
+        for (code, expected) in [
+            ("quality_tail", RoutingPolicyFallbackReasonDto::QualityTail),
+            ("circuit_tail", RoutingPolicyFallbackReasonDto::CircuitTail),
+            (
+                "concurrent_revision",
+                RoutingPolicyFallbackReasonDto::ConcurrentRevision,
+            ),
+            (
+                "runtime_unavailable",
+                RoutingPolicyFallbackReasonDto::RuntimeUnavailable,
+            ),
+            (
+                "checkpoint_mismatch",
+                RoutingPolicyFallbackReasonDto::CheckpointMismatch,
+            ),
+            ("fence_active", RoutingPolicyFallbackReasonDto::FenceActive),
+            (
+                "transport_compile_failed",
+                RoutingPolicyFallbackReasonDto::TransportCompileFailed,
+            ),
+        ] {
+            assert_eq!(
+                RoutingPolicyFallbackReasonDto::from_internal_code(code),
+                Some(expected)
+            );
+        }
+        for (code, expected) in [
+            (
+                "generation_build_failed",
+                RoutingPolicyPublicationFailureCodeDto::GenerationBuildFailed,
+            ),
+            (
+                "generation_qualification_failed",
+                RoutingPolicyPublicationFailureCodeDto::GenerationQualificationFailed,
+            ),
+            (
+                "generation_cutover_failed",
+                RoutingPolicyPublicationFailureCodeDto::GenerationCutoverFailed,
+            ),
+            (
+                "generation_failed",
+                RoutingPolicyPublicationFailureCodeDto::GenerationFailed,
+            ),
+        ] {
+            assert_eq!(
+                RoutingPolicyPublicationFailureCodeDto::from_internal_code(code),
+                Some(expected)
+            );
+        }
+        assert_eq!(
+            RoutingPolicyActivationPathDto::from_internal_code("raw_internal_path"),
+            None
+        );
+        assert_eq!(
+            RoutingPolicyFallbackReasonDto::from_internal_code("raw sensitive detail"),
+            None
+        );
+        assert_eq!(
+            RoutingPolicyPublicationFailureCodeDto::from_internal_code("raw exception"),
+            None
+        );
+    }
+
+    #[test]
+    fn waiting_publication_serializes_only_sanitized_contract_metadata() {
+        let value = serde_json::to_value(RoutingPolicyPublicationStatusDto {
+            revision: 7,
+            policy_generation_id: Some("pg1_fixture".into()),
+            status: RoutingPolicyPublicationStateDto::WaitingLatestInput,
+            failure_code: None,
+            activation_path: Some(RoutingPolicyActivationPathDto::Generation),
+            runtime_status: Some(RoutingPolicyPublicationStateDto::WaitingLatestInput),
+            active_revision: Some(6),
+            fallback_reason: Some(RoutingPolicyFallbackReasonDto::QualityTail),
+            updated_at_ms: 20,
+            terminal: false,
+        })
+        .expect("publication status DTO");
+        assert_eq!(value["status"], "waiting_latest_input");
+        assert_eq!(value["failureCode"], Value::Null);
+        assert_eq!(value["activationPath"], "generation");
+        assert_eq!(value["runtimeStatus"], "waiting_latest_input");
+        assert_eq!(value["activeRevision"], 6);
+        assert_eq!(value["fallbackReason"], "quality_tail");
+        assert_eq!(value["terminal"], false);
+        assert!(!value.to_string().contains("superseded_by_input_tail"));
     }
 
     #[test]

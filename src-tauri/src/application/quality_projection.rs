@@ -113,9 +113,17 @@ pub(crate) struct QualityLatencySummary {
     pub(crate) historical_weighted_latency_ms: u32,
     pub(crate) historical_minimum_met: bool,
     pub(crate) blended_weighted_latency_ms: u32,
+    // These source-attribution fields were added after the first v3
+    // generation was materialized. Keep old persisted summaries readable so
+    // a new generation can compare against the active baseline during
+    // cutover qualification.
+    #[serde(default)]
     pub(crate) real_source_weight_basis_points: u16,
+    #[serde(default)]
     pub(crate) monitoring_source_weight_basis_points: u16,
+    #[serde(default)]
     pub(crate) real_source: QualityLatencySourceSummary,
+    #[serde(default)]
     pub(crate) monitoring_source: QualityLatencySourceSummary,
 }
 
@@ -1479,6 +1487,7 @@ mod tests {
         FailureAttribution, ObservationOrder, ObservationOutcome, ObservationRetryDisposition,
         ObservationScope, ObservationSource, RecoveryOrigin, ResponseOrigin, TrafficEquivalence,
     };
+    use serde_json::Value;
 
     fn observation(
         id: &str,
@@ -1541,6 +1550,44 @@ mod tests {
         assert_eq!(left, right);
         assert_eq!(left.observation_count, 2);
         assert_eq!(left.p95_latency_ms, Some(100));
+    }
+
+    #[test]
+    fn legacy_v3_summary_without_latency_source_attribution_remains_readable() {
+        let summary = rebuild_quality_summary_v3_at(
+            "station_key:key-1",
+            &[observation(
+                "legacy",
+                1,
+                QUALITY_RECENT_WINDOW_MS,
+                ObservationOutcome::Success,
+            )],
+            QualityProjectionConfig::default(),
+            1,
+            QUALITY_RECENT_WINDOW_MS,
+        );
+        let mut value = serde_json::to_value(summary).expect("serialize current summary");
+        let latency = value
+            .get_mut("latency")
+            .and_then(Value::as_object_mut)
+            .expect("latency object");
+        latency.remove("real_source_weight_basis_points");
+        latency.remove("monitoring_source_weight_basis_points");
+        latency.remove("real_source");
+        latency.remove("monitoring_source");
+
+        let parsed: QualitySummary =
+            serde_json::from_value(value).expect("legacy summary must remain readable");
+        assert_eq!(parsed.latency.real_source_weight_basis_points, 0);
+        assert_eq!(parsed.latency.monitoring_source_weight_basis_points, 0);
+        assert_eq!(
+            parsed.latency.real_source,
+            QualityLatencySourceSummary::default()
+        );
+        assert_eq!(
+            parsed.latency.monitoring_source,
+            QualityLatencySourceSummary::default()
+        );
     }
 
     #[test]

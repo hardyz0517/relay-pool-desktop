@@ -85,6 +85,37 @@ pub struct ProxyRuntimeState {
     transport_policy_store: TransportPolicyStore,
 }
 
+/// Point-in-time availability of the live proxy runtime for policy
+/// publication. The lifecycle remains visible so callers can distinguish a
+/// stopped proxy from a transition or failure without inferring from a bool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ProxyRuntimePublicationAvailability {
+    lifecycle: ProxyLifecycle,
+    live_runtime: bool,
+}
+
+impl ProxyRuntimePublicationAvailability {
+    fn from_runtime_parts(
+        lifecycle: ProxyLifecycle,
+        has_server: bool,
+        has_routing_runtime: bool,
+    ) -> Self {
+        Self {
+            lifecycle,
+            live_runtime: lifecycle == ProxyLifecycle::Running && has_server && has_routing_runtime,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn lifecycle(self) -> ProxyLifecycle {
+        self.lifecycle
+    }
+
+    pub(crate) fn can_receive_publication(self) -> bool {
+        self.live_runtime
+    }
+}
+
 impl RoutingRuntimeActivity for ProxyRuntimeState {
     fn active_for_station<'a>(
         &'a self,
@@ -121,6 +152,22 @@ impl Default for ProxyRuntimeState {
 }
 
 impl ProxyRuntimeState {
+    /// Returns a coherent runtime/publication snapshot without waiting for a
+    /// potentially long start, drain, or stop operation to complete.
+    pub(crate) async fn publication_availability(&self) -> ProxyRuntimePublicationAvailability {
+        let inner = self.v2.lock().await;
+        let lifecycle = self
+            .status_snapshot
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+            .lifecycle;
+        ProxyRuntimePublicationAvailability::from_runtime_parts(
+            lifecycle,
+            inner.server.is_some(),
+            inner.routing_runtime.is_some(),
+        )
+    }
+
     pub(crate) fn transport_policy_snapshot(&self) -> Arc<TransportPolicySnapshot> {
         self.transport_policy_store.load()
     }
@@ -1440,12 +1487,58 @@ mod tests {
         assert_eq!(started.lifecycle, ProxyLifecycle::Running);
         assert_ne!(started.port, 0);
 
+        let availability = runtime.publication_availability().await;
+        assert_eq!(availability.lifecycle(), ProxyLifecycle::Running);
+        assert!(availability.can_receive_publication());
+
         let draining = runtime
             .prepare_for_update(Duration::from_millis(250))
             .await
             .expect("drain");
         assert_eq!(draining.lifecycle, ProxyLifecycle::Stopped);
         assert!(!draining.running);
+
+        let availability = runtime.publication_availability().await;
+        assert_eq!(availability.lifecycle(), ProxyLifecycle::Stopped);
+        assert!(!availability.can_receive_publication());
+    }
+
+    #[test]
+    fn publication_availability_requires_running_lifecycle_and_live_components() {
+        for lifecycle in [
+            ProxyLifecycle::Stopped,
+            ProxyLifecycle::Starting,
+            ProxyLifecycle::Draining,
+            ProxyLifecycle::Stopping,
+            ProxyLifecycle::Failed,
+        ] {
+            let availability =
+                ProxyRuntimePublicationAvailability::from_runtime_parts(lifecycle, true, true);
+            assert_eq!(availability.lifecycle(), lifecycle);
+            assert!(
+                !availability.can_receive_publication(),
+                "{lifecycle:?} must not accept a live publication"
+            );
+        }
+
+        for (has_server, has_routing_runtime) in [(false, false), (true, false), (false, true)] {
+            let availability = ProxyRuntimePublicationAvailability::from_runtime_parts(
+                ProxyLifecycle::Running,
+                has_server,
+                has_routing_runtime,
+            );
+            assert!(
+                !availability.can_receive_publication(),
+                "a partial runtime must not accept a live publication"
+            );
+        }
+
+        let availability = ProxyRuntimePublicationAvailability::from_runtime_parts(
+            ProxyLifecycle::Running,
+            true,
+            true,
+        );
+        assert!(availability.can_receive_publication());
     }
 
     #[tokio::test]

@@ -146,9 +146,24 @@ impl RoutingCommandFacade {
         policy_generation_id: Option<&str>,
     ) -> Result<crate::application::routing_policy_read::RoutingPolicyPublication, ApplicationError>
     {
-        self.routing_policy_read
+        let mut publication = self
+            .routing_policy_read
             .load_routing_policy_publication(revision, policy_generation_id)
+            .await?;
+        // A durable generation may be active while the local proxy is stopped
+        // (for example after a save followed by an application restart).  Do
+        // not report that as live runtime activation until both runtime
+        // components are present and accepting requests.
+        let runtime_available = self
+            .proxy
+            .publication_availability()
             .await
+            .can_receive_publication();
+        if should_report_persisted_only(runtime_available, publication.status) {
+            publication.activation_path = Some("persisted_only");
+            publication.fallback_reason = Some("runtime_unavailable");
+        }
+        Ok(publication)
     }
 
     pub(crate) async fn get_routing_protection_status(
@@ -318,5 +333,42 @@ impl RoutingCommandFacade {
             checked_at: health.checked_at.unwrap_or(checked_at),
             error_summary: health.error_summary,
         })
+    }
+}
+
+fn should_report_persisted_only(
+    runtime_available: bool,
+    status: crate::application::routing_policy_read::RoutingPolicyPublicationStatus,
+) -> bool {
+    !runtime_available
+        && !matches!(
+            status,
+            crate::application::routing_policy_read::RoutingPolicyPublicationStatus::Failed
+                | crate::application::routing_policy_read::RoutingPolicyPublicationStatus::Expired
+        )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_report_persisted_only;
+    use crate::application::routing_policy_read::RoutingPolicyPublicationStatus;
+
+    #[test]
+    fn stopped_runtime_never_masks_failed_or_expired_publications() {
+        for status in [
+            RoutingPolicyPublicationStatus::Staged,
+            RoutingPolicyPublicationStatus::Ready,
+            RoutingPolicyPublicationStatus::WaitingLatestInput,
+            RoutingPolicyPublicationStatus::Active,
+        ] {
+            assert!(should_report_persisted_only(false, status));
+            assert!(!should_report_persisted_only(true, status));
+        }
+        for status in [
+            RoutingPolicyPublicationStatus::Failed,
+            RoutingPolicyPublicationStatus::Expired,
+        ] {
+            assert!(!should_report_persisted_only(false, status));
+        }
     }
 }

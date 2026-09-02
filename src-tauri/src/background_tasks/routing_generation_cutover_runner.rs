@@ -22,6 +22,7 @@ use crate::{
             RoutingGenerationCoordinator, RoutingGenerationCoordinatorError,
         },
         routing_policy_control_plane::RoutingPolicyMutationCoordinator,
+        routing_policy_impact::RoutingPolicyImpact,
         station_key_circuit::{
             CircuitTransition, StationKeyCircuit, StationKeyCircuitConfig, StationKeyCircuitState,
         },
@@ -56,6 +57,28 @@ const SYSTEM_MAX_COOLDOWN_MS: u64 = 24 * 60 * 60 * 1_000;
 // this aligned with the v3 operational contract; it is intentionally not a
 // user-configurable policy field.
 const SYSTEM_CUTOVER_FENCE_TIMEOUT_MS: i64 = 30_000;
+
+/// Outcome of the bounded interactive activation lane.
+///
+/// `NotApplicable` is deliberately not an error.  It means the candidate is
+/// still safe to process through the supervised generation runner (for
+/// example, a CAS race or an incomplete build).  Persistence failures and
+/// corrupted generation evidence must never be downgraded to this outcome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FastActivationResult {
+    Activated,
+    NotApplicable { reason: &'static str },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FencedAdvanceMode {
+    /// The supervised owner may rebuild a candidate when input arrives after
+    /// the fence was established.
+    Supervised,
+    /// The interactive lane is bounded: it must leave tail replay to the
+    /// supervised owner instead of doing unbounded work on the save request.
+    Fast,
+}
 
 #[derive(Debug, Clone)]
 struct StagedBuildInput {
@@ -168,6 +191,7 @@ async fn run_cutover_once(
     policy_publication: &RoutingPolicyMutationCoordinator,
     cancellation: &CancellationToken,
 ) -> Result<Option<String>, PersistenceError> {
+    let _generation_gate = policy_publication.lock_generation_lane().await;
     publish_active_policy(runtime, policy_publication, false).await?;
     let built = build_ready_once(runtime, cancellation).await?;
     if cancellation.is_cancelled() {
@@ -191,6 +215,115 @@ pub(crate) async fn build_ready_once(
         return Ok(None);
     };
     build_ready_from_input(runtime, input, cancellation).await
+}
+
+/// Attempt the bounded policy-only activation lane used by interactive saves.
+///
+/// This intentionally reuses the normal generation builder and fence
+/// coordinator. The only optimization is that the builder reuses the active
+/// quality/circuit components when the typed impact model proves that neither
+/// component (nor transport) changed. Reused components are qualified by
+/// immutable metadata checks plus the small semantic fixture set; the normal
+/// observation/event replay remains owned by the supervised runner.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=v3-policy-fast-activation-test-entrypoint; owner=background_tasks/routing_generation_cutover_runner; remove_when=tests use revision-bound entrypoint"
+    )
+)]
+pub(crate) async fn try_fast_activate_once(
+    runtime: &PersistenceHandle,
+) -> Result<FastActivationResult, PersistenceError> {
+    try_fast_activate_for_policy_revision_inner(runtime, None).await
+}
+
+pub(crate) async fn try_fast_activate_for_policy_revision(
+    runtime: &PersistenceHandle,
+    policy_revision: u64,
+) -> Result<FastActivationResult, PersistenceError> {
+    try_fast_activate_for_policy_revision_inner(runtime, Some(policy_revision)).await
+}
+
+async fn try_fast_activate_for_policy_revision_inner(
+    runtime: &PersistenceHandle,
+    expected_policy_revision: Option<u64>,
+) -> Result<FastActivationResult, PersistenceError> {
+    let cancellation = CancellationToken::new();
+    let Some(input) =
+        load_staged_build_input_for_revision(runtime, expected_policy_revision).await?
+    else {
+        return Ok(FastActivationResult::NotApplicable {
+            reason: "no_staged_generation",
+        });
+    };
+    let Some(active) = input.active.clone() else {
+        return Ok(FastActivationResult::NotApplicable {
+            reason: "no_active_generation",
+        });
+    };
+    if !generation_is_qualified(runtime, &active.generation.runtime_generation_id).await? {
+        // An active registry row without durable qualification evidence is a
+        // recovery state, not a safe reuse baseline.  Let the normal runner
+        // reconstruct and qualify a fresh generation.
+        return Ok(FastActivationResult::NotApplicable {
+            reason: "active_not_qualified",
+        });
+    }
+    if !RoutingPolicyImpact::compare(&active.policy, &input.policy).is_policy_only_fast_candidate()
+        || input.rebuild_plan.quality
+        || input.rebuild_plan.circuit
+    {
+        return Ok(FastActivationResult::NotApplicable {
+            reason: "component_rebuild_required",
+        });
+    }
+
+    let target_id = match build_ready_from_input(runtime, input, &cancellation).await {
+        Ok(Some(target_id)) => target_id,
+        Ok(None) => {
+            return Ok(FastActivationResult::NotApplicable {
+                reason: "build_incomplete",
+            });
+        }
+        Err(error) => {
+            if let Some(reason) = fast_not_applicable_error(&error) {
+                return Ok(FastActivationResult::NotApplicable { reason });
+            }
+            return Err(error);
+        }
+    };
+    let target = load_runtime_generation_by_id(runtime, &target_id).await?;
+    let policy_json = load_policy_generation_json(runtime, &target.policy_generation_id).await?;
+    let policy = RoutingPolicyConfigV3::from_stored_value(&policy_json)
+        .map_err(|_| PersistenceError::ConstraintViolation)?;
+    qualify_policy_only_generation(runtime, &target, &active, &policy).await?;
+    let now_ms = chrono::Utc::now()
+        .timestamp_millis()
+        .max(target.created_at_ms)
+        .saturating_add(1);
+    let coordinator = RoutingGenerationCoordinator::new(runtime.clone());
+    if let Err(error) = coordinator
+        .activate_policy_only(
+            &target.runtime_generation_id,
+            active.generation.runtime_generation_id.as_str(),
+            now_ms,
+        )
+        .await
+    {
+        if matches!(
+            error,
+            RoutingGenerationCoordinatorError::Conflict
+                | RoutingGenerationCoordinatorError::CutoverBusy
+        ) {
+            return Ok(FastActivationResult::NotApplicable {
+                reason: "cutover_conflict",
+            });
+        }
+        return Err(coordinator_error(error));
+    }
+
+    Ok(FastActivationResult::Activated)
 }
 
 async fn build_ready_from_input(
@@ -394,6 +527,9 @@ struct ComponentComparison {
 struct QualificationReplayReport {
     report_version: &'static str,
     runtime_generation_id: String,
+    component_verification_mode: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reuse_proof: Option<ComponentReuseQualificationProof>,
     observation_watermark: u64,
     circuit_event_watermark: u64,
     quality_input_hash: String,
@@ -405,6 +541,27 @@ struct QualificationReplayReport {
     circuit_input_event_count: u64,
     circuit_output_state_count: u64,
     semantic_fixtures: Vec<FailureSemanticReplay>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ComponentReuseQualificationProof {
+    proof_version: &'static str,
+    source_runtime_generation_id: String,
+    source_qualification_version: &'static str,
+    quality: ReusedComponentProof,
+    circuit: ReusedComponentProof,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ReusedComponentProof {
+    generation_id: String,
+    policy_revision: u64,
+    input_watermark: u64,
+    input_hash: String,
+    content_hash: String,
+    checkpoint_ref: String,
+    source_status: &'static str,
+    checkpoint_status: &'static str,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -534,8 +691,86 @@ async fn qualify_generation(
             },
         )
         .await?;
+    record_qualification_reports(
+        runtime,
+        target,
+        source,
+        policy,
+        quality_verification,
+        circuit_verification,
+        None,
+    )
+    .await
+}
+
+/// Qualify a policy-only candidate without replaying observations or circuit
+/// events. Both component generations must be the exact immutable active
+/// components, including their checkpoints and input/output hashes. The
+/// resulting report still contains the normal comparison and semantic fixture
+/// evidence so activation remains auditable and uses the same contract.
+async fn qualify_policy_only_generation(
+    runtime: &PersistenceHandle,
+    target: &RoutingRuntimeGeneration,
+    source: &ActiveBuildBaseline,
+    policy: &RoutingPolicyConfigV3,
+) -> Result<(), PersistenceError> {
+    let (quality_verification, circuit_verification) =
+        validate_reusable_components(runtime, source, target).await?;
+    let reuse_proof = ComponentReuseQualificationProof {
+        proof_version: "routing-component-reuse-proof-v1",
+        source_runtime_generation_id: source.generation.runtime_generation_id.clone(),
+        source_qualification_version:
+            crate::models::routing_generation::ROUTING_GENERATION_QUALIFICATION_VERSION,
+        quality: ReusedComponentProof {
+            generation_id: target.quality_generation_id.clone(),
+            policy_revision: target.quality_policy_revision,
+            input_watermark: target.input_observation_watermark,
+            input_hash: target.quality_input_hash.clone(),
+            content_hash: target.quality_content_hash.clone(),
+            checkpoint_ref: source.quality_checkpoint_ref.clone(),
+            source_status: "active",
+            checkpoint_status: "ready",
+        },
+        circuit: ReusedComponentProof {
+            generation_id: target.circuit_generation_id.clone(),
+            policy_revision: target.circuit_policy_revision,
+            input_watermark: target.input_circuit_event_watermark,
+            input_hash: target.circuit_input_hash.clone(),
+            content_hash: target.circuit_content_hash.clone(),
+            checkpoint_ref: source.circuit_checkpoint_ref.clone(),
+            source_status: "active",
+            checkpoint_status: "ready",
+        },
+    };
+    record_qualification_reports(
+        runtime,
+        target,
+        Some(&source.generation),
+        policy,
+        quality_verification,
+        circuit_verification,
+        Some(reuse_proof),
+    )
+    .await
+}
+
+async fn record_qualification_reports(
+    runtime: &PersistenceHandle,
+    target: &RoutingRuntimeGeneration,
+    source: Option<&RoutingRuntimeGeneration>,
+    policy: &RoutingPolicyConfigV3,
+    quality_verification: QualityGenerationVerification,
+    circuit_verification: CircuitGenerationVerification,
+    reuse_proof: Option<ComponentReuseQualificationProof>,
+) -> Result<(), PersistenceError> {
     let comparison = build_comparison_report(runtime, source, target, policy).await?;
-    let replay = build_replay_report(target, quality_verification, circuit_verification, policy)?;
+    let replay = build_replay_report(
+        target,
+        quality_verification,
+        circuit_verification,
+        policy,
+        reuse_proof,
+    )?;
     let comparison_report = serde_json::to_value(comparison)
         .map_err(|error| PersistenceError::InvariantViolation(error.to_string()))?;
     let replay_report = serde_json::to_value(replay)
@@ -561,13 +796,203 @@ async fn qualify_generation(
     Ok(())
 }
 
+async fn validate_reusable_components(
+    runtime: &PersistenceHandle,
+    source: &ActiveBuildBaseline,
+    target: &RoutingRuntimeGeneration,
+) -> Result<(QualityGenerationVerification, CircuitGenerationVerification), PersistenceError> {
+    let source_generation = &source.generation;
+    let target_quality_checkpoint =
+        load_component_checkpoint(runtime, &target.runtime_generation_id, true).await?;
+    let target_circuit_checkpoint =
+        load_component_checkpoint(runtime, &target.runtime_generation_id, false).await?;
+    if source_generation.status != RoutingGenerationStatus::Active
+        || target.status != RoutingGenerationStatus::Ready
+        || source_generation.quality_generation_id != target.quality_generation_id
+        || source_generation.circuit_generation_id != target.circuit_generation_id
+        || source_generation.quality_policy_revision != target.quality_policy_revision
+        || source_generation.circuit_policy_revision != target.circuit_policy_revision
+        || source_generation.input_observation_watermark != target.input_observation_watermark
+        || source_generation.input_circuit_event_watermark != target.input_circuit_event_watermark
+        || source_generation.quality_input_hash != target.quality_input_hash
+        || source_generation.circuit_input_hash != target.circuit_input_hash
+        || source_generation.quality_content_hash != target.quality_content_hash
+        || source_generation.circuit_content_hash != target.circuit_content_hash
+        || source.quality_checkpoint_ref != target_quality_checkpoint
+        || source.circuit_checkpoint_ref != target_circuit_checkpoint
+    {
+        return Err(PersistenceError::InvariantViolation(
+            "policy-only generation component identity does not match active baseline".into(),
+        ));
+    }
+
+    let mut read = runtime.begin_read().await?;
+    let quality = sqlx::query(
+        "SELECT q.quality_policy_revision, q.quality_algorithm_version,
+                q.status, q.input_observation_watermark,
+                q.input_observation_hash, q.output_content_hash,
+                q.checkpoint_ref, q.processed_observation_count,
+                qc.status AS checkpoint_status,
+                qc.input_observation_watermark AS checkpoint_watermark,
+                qc.processed_observation_count AS checkpoint_processed_count
+         FROM routing_quality_generation_v3 q
+         JOIN routing_quality_generation_v3_checkpoint qc
+           ON qc.quality_generation_id = q.quality_generation_id
+         WHERE q.quality_generation_id = ?1",
+    )
+    .bind(&target.quality_generation_id)
+    .fetch_optional(read.connection())
+    .await?
+    .ok_or_else(|| {
+        PersistenceError::InvariantViolation(
+            "policy-only quality generation component is missing".into(),
+        )
+    })?;
+    let circuit = sqlx::query(
+        "SELECT c.circuit_policy_revision, c.circuit_algorithm_version,
+                c.status, c.input_circuit_event_watermark,
+                c.input_circuit_event_hash, c.output_content_hash,
+                c.checkpoint_ref, c.processed_event_count,
+                cc.status AS checkpoint_status,
+                cc.input_circuit_event_watermark AS checkpoint_watermark,
+                cc.processed_event_count AS checkpoint_processed_count
+         FROM routing_circuit_generation_v3 c
+         JOIN routing_circuit_generation_v3_checkpoint cc
+           ON cc.circuit_generation_id = c.circuit_generation_id
+         WHERE c.circuit_generation_id = ?1",
+    )
+    .bind(&target.circuit_generation_id)
+    .fetch_optional(read.connection())
+    .await?
+    .ok_or_else(|| {
+        PersistenceError::InvariantViolation(
+            "policy-only circuit generation component is missing".into(),
+        )
+    })?;
+    let quality_scope_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM routing_quality_summary_v3
+         WHERE quality_generation_id = ?1",
+    )
+    .bind(&target.quality_generation_id)
+    .fetch_one(read.connection())
+    .await?;
+    let circuit_state_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM routing_circuit_state_generation_v3
+         WHERE circuit_generation_id = ?1",
+    )
+    .bind(&target.circuit_generation_id)
+    .fetch_one(read.connection())
+    .await?;
+
+    let quality_watermark = required_component_u64(&quality, "input_observation_watermark")?;
+    let quality_checkpoint_watermark = required_component_u64(&quality, "checkpoint_watermark")?;
+    let quality_input_hash = required_component_string(&quality, "input_observation_hash")?;
+    let quality_content_hash = required_component_string(&quality, "output_content_hash")?;
+    let quality_checkpoint_ref = required_component_string(&quality, "checkpoint_ref")?;
+    let quality_processed = required_component_u64(&quality, "processed_observation_count")?;
+    let quality_checkpoint_processed =
+        required_component_u64(&quality, "checkpoint_processed_count")?;
+    let circuit_watermark = required_component_u64(&circuit, "input_circuit_event_watermark")?;
+    let circuit_checkpoint_watermark = required_component_u64(&circuit, "checkpoint_watermark")?;
+    let circuit_input_hash = required_component_string(&circuit, "input_circuit_event_hash")?;
+    let circuit_content_hash = required_component_string(&circuit, "output_content_hash")?;
+    let circuit_checkpoint_ref = required_component_string(&circuit, "checkpoint_ref")?;
+    let circuit_processed = required_component_u64(&circuit, "processed_event_count")?;
+    let circuit_checkpoint_processed =
+        required_component_u64(&circuit, "checkpoint_processed_count")?;
+    let quality_scope_count = u64::try_from(quality_scope_count)
+        .map_err(|_| PersistenceError::InvariantViolation("negative quality scope count".into()))?;
+    let circuit_state_count = u64::try_from(circuit_state_count)
+        .map_err(|_| PersistenceError::InvariantViolation("negative circuit state count".into()))?;
+
+    let quality_valid = quality.get::<i64, _>("quality_policy_revision")
+        == i64::try_from(target.quality_policy_revision)
+            .map_err(|_| PersistenceError::ConstraintViolation)?
+        && quality.get::<String, _>("quality_algorithm_version")
+            == crate::application::quality_projection::QUALITY_PROJECTOR_VERSION
+        && quality.get::<String, _>("status") == "active"
+        && quality.get::<String, _>("checkpoint_status") == "ready"
+        && quality_watermark == target.input_observation_watermark
+        && quality_checkpoint_watermark == quality_watermark
+        && quality_input_hash == target.quality_input_hash
+        && quality_content_hash == target.quality_content_hash
+        && quality_checkpoint_ref == target_quality_checkpoint
+        && quality_processed == quality_checkpoint_processed;
+    let circuit_valid = circuit.get::<i64, _>("circuit_policy_revision")
+        == i64::try_from(target.circuit_policy_revision)
+            .map_err(|_| PersistenceError::ConstraintViolation)?
+        && circuit.get::<String, _>("circuit_algorithm_version")
+            == crate::background_tasks::routing_generation_rebuilder::CIRCUIT_REBUILD_ALGORITHM_VERSION
+        && circuit.get::<String, _>("status") == "active"
+        && circuit.get::<String, _>("checkpoint_status") == "ready"
+        && circuit_watermark == target.input_circuit_event_watermark
+        && circuit_checkpoint_watermark == circuit_watermark
+        && circuit_input_hash == target.circuit_input_hash
+        && circuit_content_hash == target.circuit_content_hash
+        && circuit_checkpoint_ref == target_circuit_checkpoint
+        && circuit_processed == circuit_checkpoint_processed;
+    if !quality_valid || !circuit_valid {
+        return Err(PersistenceError::InvariantViolation(
+            "policy-only generation component metadata is invalid".into(),
+        ));
+    }
+    Ok((
+        QualityGenerationVerification {
+            input_observation_count: quality_processed,
+            output_scope_count: quality_scope_count,
+        },
+        CircuitGenerationVerification {
+            input_event_count: circuit_processed,
+            output_state_count: circuit_state_count,
+        },
+    ))
+}
+
+fn required_component_u64(
+    row: &sqlx::sqlite::SqliteRow,
+    column: &str,
+) -> Result<u64, PersistenceError> {
+    row.get::<Option<i64>, _>(column)
+        .ok_or_else(|| PersistenceError::InvariantViolation(format!("{column} is null")))
+        .and_then(|value| {
+            u64::try_from(value)
+                .map_err(|_| PersistenceError::InvariantViolation(format!("{column} is negative")))
+        })
+}
+
+fn required_component_string(
+    row: &sqlx::sqlite::SqliteRow,
+    column: &str,
+) -> Result<String, PersistenceError> {
+    row.get::<Option<String>, _>(column)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| PersistenceError::InvariantViolation(format!("{column} is invalid")))
+}
+
+fn fast_not_applicable_error(error: &PersistenceError) -> Option<&'static str> {
+    match error {
+        PersistenceError::RevisionConflict(_) => Some("generation_conflict"),
+        PersistenceError::InvariantViolation(detail)
+            if detail == "routing generation compare-and-swap conflict"
+                || detail
+                    == "routing generation policy fingerprint does not match staged policy" =>
+        {
+            Some("generation_conflict")
+        }
+        _ => None,
+    }
+}
+
 async fn generation_is_qualified(
     runtime: &PersistenceHandle,
     runtime_generation_id: &str,
 ) -> Result<bool, PersistenceError> {
     let mut read = runtime.begin_read().await?;
-    let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM routing_generation_qualification_v2 q
+    let row = sqlx::query(
+        "SELECT q.qualification_version, q.comparison_status, q.replay_status,
+                q.comparison_report_hash, q.replay_report_hash,
+                r.comparison_report_json, r.replay_report_json
+         FROM routing_generation_qualification_v2 q
          JOIN routing_generation_qualification_report_v2 r
            ON r.runtime_generation_id = q.runtime_generation_id
           AND r.comparison_report_hash = q.comparison_report_hash
@@ -575,22 +1000,102 @@ async fn generation_is_qualified(
          WHERE q.runtime_generation_id = ?1",
     )
     .bind(runtime_generation_id)
-    .fetch_one(read.connection())
+    .fetch_optional(read.connection())
     .await?;
-    Ok(count == 1)
+    let Some(row) = row else {
+        return Ok(false);
+    };
+    let comparison_report = serde_json::from_str::<Value>(
+        &row.get::<String, _>("comparison_report_json"),
+    )
+    .map_err(|error| {
+        PersistenceError::InvariantViolation(format!(
+            "active generation qualification comparison report is invalid: {error}"
+        ))
+    })?;
+    let replay_report = serde_json::from_str::<Value>(&row.get::<String, _>("replay_report_json"))
+        .map_err(|error| {
+            PersistenceError::InvariantViolation(format!(
+                "active generation qualification replay report is invalid: {error}"
+            ))
+        })?;
+    let comparison_hash = canonical_json_sha256(&comparison_report).map_err(|_| {
+        PersistenceError::InvariantViolation("active qualification hash is invalid".into())
+    })?;
+    let replay_hash = canonical_json_sha256(&replay_report).map_err(|_| {
+        PersistenceError::InvariantViolation("active qualification hash is invalid".into())
+    })?;
+    let valid = row.get::<String, _>("qualification_version")
+        == crate::models::routing_generation::ROUTING_GENERATION_QUALIFICATION_VERSION
+        && row.get::<String, _>("comparison_status") == "passed"
+        && row.get::<String, _>("replay_status") == "passed"
+        && row.get::<String, _>("comparison_report_hash") == comparison_hash
+        && row.get::<String, _>("replay_report_hash") == replay_hash
+        && crate::models::routing_generation::qualification_reports_are_activation_ready(
+            runtime_generation_id,
+            &comparison_report,
+            &replay_report,
+        );
+    if !valid {
+        return Err(PersistenceError::InvariantViolation(
+            "active generation qualification evidence is invalid".into(),
+        ));
+    }
+    Ok(true)
 }
 
 async fn advance_fenced_cutover_once(
     runtime: &PersistenceHandle,
     cancellation: &CancellationToken,
 ) -> Result<Option<String>, PersistenceError> {
-    advance_fenced_cutover_at(runtime, cancellation, None).await
+    advance_fenced_cutover_at_mode(runtime, cancellation, None, FencedAdvanceMode::Supervised).await
 }
 
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=v3-fenced-cutover-fast-test-entrypoint; owner=background_tasks/routing_generation_cutover_runner; remove_when=fast-fence regression uses atomic activation"
+    )
+)]
+async fn advance_fenced_cutover_once_fast(
+    runtime: &PersistenceHandle,
+    cancellation: &CancellationToken,
+) -> Result<Option<String>, PersistenceError> {
+    match advance_fenced_cutover_at_mode(runtime, cancellation, None, FencedAdvanceMode::Fast).await
+    {
+        Ok(activated) => Ok(activated),
+        Err(error) if fast_not_applicable_error(&error).is_some() => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=v3-fenced-cutover-test-clock; owner=background_tasks/routing_generation_cutover_runner; remove_when=test helpers use the production clock"
+    )
+)]
 async fn advance_fenced_cutover_at(
     runtime: &PersistenceHandle,
     cancellation: &CancellationToken,
     now_override_ms: Option<i64>,
+) -> Result<Option<String>, PersistenceError> {
+    advance_fenced_cutover_at_mode(
+        runtime,
+        cancellation,
+        now_override_ms,
+        FencedAdvanceMode::Supervised,
+    )
+    .await
+}
+
+async fn advance_fenced_cutover_at_mode(
+    runtime: &PersistenceHandle,
+    cancellation: &CancellationToken,
+    now_override_ms: Option<i64>,
+    mode: FencedAdvanceMode,
 ) -> Result<Option<String>, PersistenceError> {
     if cancellation.is_cancelled() {
         return Ok(None);
@@ -712,6 +1217,12 @@ async fn advance_fenced_cutover_at(
     if final_observation_watermark > target.input_observation_watermark
         || final_circuit_watermark > target.input_circuit_event_watermark
     {
+        if mode == FencedAdvanceMode::Fast {
+            // Keep the fence durable so the supervised owner can rebuild the
+            // exact tail. Interactive saves must remain bounded regardless of
+            // accumulated observation or circuit history.
+            return Ok(None);
+        }
         let input = load_fenced_build_input(
             runtime,
             &target,
@@ -763,6 +1274,9 @@ async fn advance_fenced_cutover_at(
     match activation {
         Ok(()) => Ok(Some(target.runtime_generation_id)),
         Err(RoutingGenerationCoordinatorError::CutoverBusy) => Ok(None),
+        Err(RoutingGenerationCoordinatorError::Conflict) if mode == FencedAdvanceMode::Fast => {
+            Ok(None)
+        }
         Err(error) => Err(coordinator_error(error)),
     }
 }
@@ -1009,6 +1523,7 @@ fn build_replay_report(
     quality: QualityGenerationVerification,
     circuit: CircuitGenerationVerification,
     policy: &RoutingPolicyConfigV3,
+    reuse_proof: Option<ComponentReuseQualificationProof>,
 ) -> Result<QualificationReplayReport, PersistenceError> {
     let semantic_fixtures = vec![
         replay_failure_semantics("tntapi_502", 502, policy)?,
@@ -1017,6 +1532,12 @@ fn build_replay_report(
     Ok(QualificationReplayReport {
         report_version: "routing-generation-replay-report-v2",
         runtime_generation_id: target.runtime_generation_id.clone(),
+        component_verification_mode: if reuse_proof.is_some() {
+            "immutable_reuse"
+        } else {
+            "deterministic_replay"
+        },
+        reuse_proof,
         observation_watermark: target.input_observation_watermark,
         circuit_event_watermark: target.input_circuit_event_watermark,
         quality_input_hash: target.quality_input_hash.clone(),
@@ -1552,6 +2073,13 @@ async fn publish_active_policy(
 async fn load_staged_build_input(
     runtime: &PersistenceHandle,
 ) -> Result<Option<StagedBuildInput>, PersistenceError> {
+    load_staged_build_input_for_revision(runtime, None).await
+}
+
+async fn load_staged_build_input_for_revision(
+    runtime: &PersistenceHandle,
+    expected_policy_revision: Option<u64>,
+) -> Result<Option<StagedBuildInput>, PersistenceError> {
     let mut read = runtime.begin_read().await?;
     let registry = crate::persistence::stores::routing_generation_store::RoutingGenerationStore
         .load_registry_snapshot(read.connection())
@@ -1582,6 +2110,9 @@ async fn load_staged_build_input(
         .map_err(|_| PersistenceError::ConstraintViolation)?;
     if policy_revision == 0 {
         return Err(PersistenceError::ConstraintViolation);
+    }
+    if expected_policy_revision.is_some_and(|expected| expected != policy_revision) {
+        return Ok(None);
     }
     let policy_json = serde_json::from_str::<Value>(&row.get::<String, _>("config_json"))
         .map_err(|error| PersistenceError::InvariantViolation(error.to_string()))?;
@@ -1763,12 +2294,9 @@ fn component_rebuild_plan(
             circuit_policy_changed: true,
         };
     };
-    let quality_policy_changed = target.reliability_source_weights
-        != active.reliability_source_weights
-        || target.reliability_sampling != active.reliability_sampling;
-    let circuit_policy_changed = target.retry.consecutive_failure_threshold
-        != active.retry.consecutive_failure_threshold
-        || target.circuit_breaker != active.circuit_breaker;
+    let impact = RoutingPolicyImpact::compare(active, target);
+    let quality_policy_changed = impact.quality_rebuild();
+    let circuit_policy_changed = impact.circuit_rebuild();
     ComponentRebuildPlan {
         quality: quality_policy_changed || quality_tail || source_profile_changed,
         circuit: circuit_policy_changed || circuit_tail,
@@ -1781,39 +2309,10 @@ async fn quality_context_changed(
     connection: &mut sqlx::SqliteConnection,
     quality_generation_id: &str,
 ) -> Result<bool, PersistenceError> {
-    let snapshot_id = sqlx::query_scalar::<_, Option<String>>(
-        "SELECT source_profile_snapshot_id
-         FROM routing_quality_generation_v3
-         WHERE quality_generation_id = ?1",
-    )
-    .bind(quality_generation_id)
-    .fetch_optional(&mut *connection)
-    .await?
-    .flatten();
-    let Some(snapshot_id) = snapshot_id else {
-        return Ok(true);
-    };
-    let changed: i64 = sqlx::query_scalar(
-        "SELECT EXISTS (
-             SELECT 1
-             FROM station_keys k
-             JOIN domain_revisions r
-               ON r.scope = 'station_key:' || k.id
-             LEFT JOIN routing_quality_source_profile_snapshot_item_v3 item
-               ON item.snapshot_id = ?1 AND item.station_key_id = k.id
-             WHERE item.station_key_id IS NULL
-                OR item.station_key_lifecycle_revision <> r.revision
-         ) OR EXISTS (
-             SELECT 1
-             FROM routing_quality_source_profile_snapshot_item_v3 item
-             LEFT JOIN station_keys k ON k.id = item.station_key_id
-             WHERE item.snapshot_id = ?1 AND k.id IS NULL
-         )",
-    )
-    .bind(snapshot_id)
-    .fetch_one(&mut *connection)
-    .await?;
-    Ok(changed != 0)
+    crate::persistence::stores::routing_generation_store::RoutingGenerationStore
+        .quality_source_profile_is_current(connection, quality_generation_id)
+        .await
+        .map(|current| !current)
 }
 
 async fn resolve_build_evaluation_at_ms(
@@ -1940,6 +2439,7 @@ mod tests {
             routing_generation_coordinator::RoutingGenerationCoordinatorError,
         },
         models::{
+            routing::RoutingGroupFilter,
             routing_generation::RoutingGenerationQualification,
             routing_observation::{
                 EventTimeStatus, ObservationOrder, ObservationOutcome, ObservationScope,
@@ -1953,6 +2453,7 @@ mod tests {
                     RoutingAttemptAdmission, RoutingAttemptStore, RoutingAttemptTerminal,
                     RoutingGenerationEligibility,
                 },
+                routing_store::RoutingStore,
                 station_key_circuit_store::{CircuitTerminalInput, StationKeyCircuitStore},
             },
         },
@@ -2014,6 +2515,38 @@ mod tests {
         .expect("insert staged policy");
         write.commit().await.expect("commit staged policy");
         policy_generation_id
+    }
+
+    async fn clear_seeded_policy_rows(handle: &PersistenceHandle) {
+        let mut write = handle.begin_write().await.expect("begin fixture cleanup");
+        sqlx::query("DELETE FROM routing_policy_v3_migration_audit")
+            .execute(write.connection())
+            .await
+            .expect("clear migration audit fixture");
+        sqlx::query("DELETE FROM routing_policy_v3_staged")
+            .execute(write.connection())
+            .await
+            .expect("clear staged fixture");
+        write.commit().await.expect("commit fixture cleanup");
+    }
+
+    async fn build_and_activate_policy(
+        handle: &PersistenceHandle,
+        revision: u64,
+        policy: &RoutingPolicyConfigV3,
+    ) -> String {
+        insert_staged_policy(handle, revision, policy).await;
+        let generation_id = build_ready_once(handle, &CancellationToken::new())
+            .await
+            .expect("build generation")
+            .expect("generation id");
+        assert_eq!(
+            qualify_and_activate_once(handle, &CancellationToken::new())
+                .await
+                .expect("qualify and activate generation"),
+            Some(generation_id.clone())
+        );
+        generation_id
     }
 
     async fn seed_routing_key(handle: &PersistenceHandle, station_key_id: &str) {
@@ -2114,6 +2647,38 @@ mod tests {
     fn supervised_builder_never_activates_without_a_separate_qualification_owner() {
         assert_eq!(BUILD_INTERVAL, Duration::from_secs(5));
         assert_eq!(SYSTEM_MAX_COOLDOWN_MS, 86_400_000);
+    }
+
+    #[test]
+    fn fast_activation_result_keeps_fallback_reasons_typed() {
+        assert_eq!(
+            FastActivationResult::Activated,
+            FastActivationResult::Activated
+        );
+        assert_ne!(
+            FastActivationResult::NotApplicable {
+                reason: "generation_conflict"
+            },
+            FastActivationResult::NotApplicable {
+                reason: "cutover_waiting"
+            }
+        );
+        assert_eq!(
+            fast_not_applicable_error(&PersistenceError::RevisionConflict(
+                "routing_runtime_generation".into()
+            )),
+            Some("generation_conflict")
+        );
+        assert_eq!(
+            fast_not_applicable_error(&PersistenceError::DatabaseFailed),
+            None
+        );
+        assert_eq!(
+            fast_not_applicable_error(&PersistenceError::InvariantViolation(
+                "unexpected component corruption".into()
+            )),
+            None
+        );
     }
 
     #[test]
@@ -2336,6 +2901,234 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn policy_only_fast_lane_reuses_active_components_and_activates() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let runtime = PersistenceRuntime::initialize_new(&root.path().join("fast-policy.sqlite3"))
+            .await
+            .expect("initialize runtime");
+        let handle = runtime.handle();
+        clear_seeded_policy_rows(&handle).await;
+
+        let mut base_policy = RoutingPolicyConfigV3::default();
+        base_policy.routing_group_filter = RoutingGroupFilter::GroupBindingId("bound-group".into());
+        let base_id = build_and_activate_policy(&handle, 1, &base_policy).await;
+        let base = load_runtime_generation(&handle, &base_id).await;
+        let mut next_policy = base_policy;
+        next_policy.routing_group_filter = RoutingGroupFilter::AllGroups;
+        let next_policy_id = insert_staged_policy(&handle, 2, &next_policy).await;
+
+        assert_eq!(
+            try_fast_activate_once(&handle)
+                .await
+                .expect("fast activation"),
+            FastActivationResult::Activated
+        );
+        let registry = RoutingGenerationCoordinator::new(handle.clone())
+            .inspect()
+            .await
+            .expect("inspect registry");
+        let active = registry.active.expect("active fast generation");
+        assert_eq!(active.policy_generation_id, next_policy_id);
+        assert_eq!(active.policy_revision, 2);
+        assert_eq!(active.quality_generation_id, base.quality_generation_id);
+        assert_eq!(active.circuit_generation_id, base.circuit_generation_id);
+        assert!(
+            generation_is_qualified(&handle, &active.runtime_generation_id)
+                .await
+                .expect("qualification evidence")
+        );
+
+        runtime.close().await.expect("close runtime");
+    }
+
+    #[tokio::test]
+    async fn component_change_is_not_applicable_to_fast_lane() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let runtime = PersistenceRuntime::initialize_new(&root.path().join("fast-rebuild.sqlite3"))
+            .await
+            .expect("initialize runtime");
+        let handle = runtime.handle();
+        clear_seeded_policy_rows(&handle).await;
+
+        let base_policy = RoutingPolicyConfigV3::default();
+        build_and_activate_policy(&handle, 1, &base_policy).await;
+        let mut next_policy = base_policy;
+        next_policy.reliability_sampling.optimistic_latency_ms = next_policy
+            .reliability_sampling
+            .optimistic_latency_ms
+            .saturating_add(1);
+        insert_staged_policy(&handle, 2, &next_policy).await;
+
+        assert_eq!(
+            try_fast_activate_once(&handle)
+                .await
+                .expect("fast lane fallback"),
+            FastActivationResult::NotApplicable {
+                reason: "component_rebuild_required"
+            }
+        );
+        let registry = RoutingGenerationCoordinator::new(handle.clone())
+            .inspect()
+            .await
+            .expect("inspect registry");
+        assert_eq!(
+            registry.active.expect("active generation").policy_revision,
+            1
+        );
+
+        runtime.close().await.expect("close runtime");
+    }
+
+    #[tokio::test]
+    async fn fast_lane_leaves_fenced_input_tail_to_supervised_runner() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let runtime = PersistenceRuntime::initialize_new(&root.path().join("fast-tail.sqlite3"))
+            .await
+            .expect("initialize runtime");
+        let handle = runtime.handle();
+        clear_seeded_policy_rows(&handle).await;
+        seed_routing_key(&handle, "fast-tail-key").await;
+
+        let base_policy = RoutingPolicyConfigV3::default();
+        let base_id = build_and_activate_policy(&handle, 1, &base_policy).await;
+        let mut next_policy = base_policy;
+        next_policy.routing_group_filter = RoutingGroupFilter::AllGroups;
+        insert_staged_policy(&handle, 2, &next_policy).await;
+
+        let input = load_staged_build_input(&handle)
+            .await
+            .expect("load staged input")
+            .expect("staged input");
+        let source = input.active.clone().expect("active source");
+        let target_id = build_ready_from_input(&handle, input, &CancellationToken::new())
+            .await
+            .expect("build target")
+            .expect("target id");
+        let target = load_runtime_generation_by_id(&handle, &target_id)
+            .await
+            .expect("load target");
+        let policy_json = load_policy_generation_json(&handle, &target.policy_generation_id)
+            .await
+            .expect("load target policy");
+        let policy =
+            RoutingPolicyConfigV3::from_stored_value(&policy_json).expect("decode target policy");
+        qualify_policy_only_generation(&handle, &target, &source, &policy)
+            .await
+            .expect("qualify target");
+        let coordinator = RoutingGenerationCoordinator::new(handle.clone());
+        coordinator
+            .begin_cutover(&target_id, Some(&base_id), target.created_at_ms + 1)
+            .await
+            .expect("begin target fence");
+
+        let mut write = handle.begin_write().await.expect("begin tail write");
+        sqlx::query(
+            "INSERT INTO routing_circuit_event_v3 (
+                 event_id, effect_kind, source, attempt_id, station_key_id,
+                 station_key_lifecycle_revision, reducer_commit_sequence,
+                 policy_revision, expected_state_revision, occurred_at_ms,
+                 canonical_outcome, failure_code, recovery_origin,
+                 retry_disposition, boundary_crossed, created_at_ms
+             ) VALUES (
+                 'fast-tail-circuit', 'circuit', 'real_request',
+                 'fast-tail-attempt', 'fast-tail-key', 1, 1, 1, 1, 6,
+                 'attributable_failure', 'upstream_rate_limited', 'normal',
+                 'retryable_before_commit', 1, 6
+             )",
+        )
+        .execute(write.connection())
+        .await
+        .expect("insert circuit tail");
+        write.commit().await.expect("commit circuit tail");
+
+        assert_eq!(
+            advance_fenced_cutover_once_fast(&handle, &CancellationToken::new())
+                .await
+                .expect("fast advance remains bounded"),
+            None
+        );
+        let registry = coordinator
+            .inspect()
+            .await
+            .expect("inspect fenced registry");
+        assert_eq!(
+            registry
+                .fencing
+                .expect("fence must remain durable")
+                .runtime_generation_id,
+            target_id
+        );
+        assert_eq!(
+            load_runtime_generation_by_id(&handle, &target_id)
+                .await
+                .expect("load fenced target")
+                .status,
+            RoutingGenerationStatus::CutoverFencing
+        );
+
+        runtime.close().await.expect("close runtime");
+    }
+
+    #[tokio::test]
+    async fn fast_lane_propagates_corrupt_active_component_metadata() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let runtime = PersistenceRuntime::initialize_new(&root.path().join("fast-corrupt.sqlite3"))
+            .await
+            .expect("initialize runtime");
+        let handle = runtime.handle();
+        clear_seeded_policy_rows(&handle).await;
+
+        let base_policy = RoutingPolicyConfigV3::default();
+        let base_id = build_and_activate_policy(&handle, 1, &base_policy).await;
+        let base = load_runtime_generation(&handle, &base_id).await;
+        let mut next_policy = base_policy;
+        next_policy.routing_group_filter = RoutingGroupFilter::AllGroups;
+        insert_staged_policy(&handle, 2, &next_policy).await;
+        let mut write = handle
+            .begin_write()
+            .await
+            .expect("begin corruption fixture");
+        sqlx::query(
+            "UPDATE routing_quality_generation_v3_checkpoint
+             SET status = 'failed', error_code = 'fixture_corruption'
+             WHERE quality_generation_id = ?1",
+        )
+        .bind(&base.quality_generation_id)
+        .execute(write.connection())
+        .await
+        .expect("corrupt active quality checkpoint");
+        write.commit().await.expect("commit corruption fixture");
+
+        let error = try_fast_activate_once(&handle)
+            .await
+            .expect_err("corruption must propagate");
+        assert!(matches!(
+            error,
+            PersistenceError::InvariantViolation(detail)
+                if detail.starts_with("routing_generation_registry_corrupt:")
+        ));
+
+        runtime.close().await.expect("close runtime");
+    }
+
+    #[tokio::test]
+    async fn fast_lane_propagates_persistence_unavailability() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let runtime = PersistenceRuntime::initialize_new(&root.path().join("fast-closed.sqlite3"))
+            .await
+            .expect("initialize runtime");
+        let handle = runtime.handle();
+        runtime.close().await.expect("close runtime");
+
+        assert!(matches!(
+            try_fast_activate_once(&handle)
+                .await
+                .expect_err("closed persistence must propagate"),
+            PersistenceError::RuntimeUnavailable | PersistenceError::SessionClosed
+        ));
+    }
+
+    #[tokio::test]
     async fn production_qualification_replays_reports_and_activates_ready_generation() {
         let root = tempfile::tempdir().expect("tempdir");
         let runtime = PersistenceRuntime::initialize_new(&root.path().join("activate.sqlite3"))
@@ -2393,6 +3186,88 @@ mod tests {
                 .and_then(Value::as_u64),
             Some(0)
         );
+        drop(read);
+        runtime.close().await.expect("close runtime");
+    }
+
+    #[tokio::test]
+    async fn execution_settings_follow_active_v3_policy_not_legacy_compatibility_row() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let runtime = PersistenceRuntime::initialize_new(&root.path().join("settings-v3.sqlite3"))
+            .await
+            .expect("initialize runtime");
+        let handle = runtime.handle();
+        let mut write = handle.begin_write().await.expect("begin fixture cleanup");
+        sqlx::query("DELETE FROM routing_policy_v3_migration_audit")
+            .execute(write.connection())
+            .await
+            .expect("clear migration audit fixture");
+        sqlx::query("DELETE FROM routing_policy_v3_staged")
+            .execute(write.connection())
+            .await
+            .expect("clear staged fixture");
+
+        // Deliberately leave the compatibility row with a different policy.
+        // V3 staging must not update that row, and runtime reads must not use
+        // it after the generation pointer is activated.
+        let legacy_json: String =
+            sqlx::query_scalar("SELECT config_json FROM routing_policy WHERE singleton_key = 1")
+                .fetch_one(write.connection())
+                .await
+                .expect("load legacy compatibility policy");
+        let mut legacy: Value = serde_json::from_str(&legacy_json).expect("legacy policy JSON");
+        legacy["routingGroupFilter"] = serde_json::json!({ "group_type": "gpt" });
+        legacy["maxRateMultiplier"] = serde_json::json!(9.5);
+        legacy["allowDepletedFallback"] = serde_json::json!(false);
+        sqlx::query("UPDATE routing_policy SET config_json = ?1 WHERE singleton_key = 1")
+            .bind(serde_json::to_string(&legacy).expect("legacy policy JSON"))
+            .execute(write.connection())
+            .await
+            .expect("update legacy compatibility policy");
+        write.commit().await.expect("commit legacy fixture");
+
+        let mut target = RoutingPolicyConfigV3::default();
+        target.routing_group_filter = RoutingGroupFilter::AllGroups;
+        target.max_rate_multiplier = Some(1.75);
+        target.allow_depleted_fallback = true;
+        insert_staged_policy(&handle, 1, &target).await;
+        let ready_id = build_ready_once(&handle, &CancellationToken::new())
+            .await
+            .expect("build ready generation")
+            .expect("ready generation id");
+        assert_eq!(
+            qualify_and_activate_once(&handle, &CancellationToken::new())
+                .await
+                .expect("qualify and activate"),
+            Some(ready_id)
+        );
+
+        let mut read = handle.begin_read().await.expect("read active settings");
+        let legacy_after: Value = serde_json::from_str(
+            &sqlx::query_scalar::<_, String>(
+                "SELECT config_json FROM routing_policy WHERE singleton_key = 1",
+            )
+            .fetch_one(read.connection())
+            .await
+            .expect("load legacy compatibility policy after cutover"),
+        )
+        .expect("legacy policy JSON after cutover");
+        assert_eq!(
+            legacy_after["routingGroupFilter"],
+            serde_json::json!({ "group_type": "gpt" })
+        );
+        assert_eq!(legacy_after["maxRateMultiplier"], serde_json::json!(9.5));
+        assert_eq!(
+            legacy_after["allowDepletedFallback"],
+            serde_json::json!(false)
+        );
+        let settings = RoutingStore
+            .load_execution_settings(&mut read)
+            .await
+            .expect("load active v3 execution settings");
+        assert_eq!(settings.routing_group_scope, RoutingGroupFilter::AllGroups);
+        assert_eq!(settings.max_rate_multiplier, Some(1.75));
+        assert!(settings.allow_depleted_fallback);
         drop(read);
         runtime.close().await.expect("close runtime");
     }

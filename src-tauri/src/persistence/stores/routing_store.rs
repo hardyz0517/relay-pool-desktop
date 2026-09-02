@@ -124,15 +124,20 @@ impl RoutingStore {
         &self,
         read: &mut ReadSession,
     ) -> Result<RuntimeRoutingSettings, PersistenceError> {
-        let config_json = sqlx::query_scalar::<_, String>(
-            "SELECT config_json FROM routing_policy WHERE singleton_key = 1",
-        )
-        .fetch_optional(read.connection())
-        .await?
-        .ok_or(PersistenceError::NotFound)?;
-        let config = serde_json::from_str::<serde_json::Value>(&config_json)
-            .map_err(|_| PersistenceError::InvariantViolation("invalid routing policy".into()))?;
-        let config = RoutingPolicyConfigV2::from_stored_value(&config)
+        // The generation registry is the single publication boundary for
+        // routing policy. The legacy `routing_policy` row remains a
+        // pre-cutover compatibility source and is deliberately not updated
+        // by V3 staging, so reading it here would make a successfully
+        // activated policy appear to have been ignored by the runtime.
+        // `load_effective_active_in` keeps the pre-cutover fallback and the
+        // V1/V2 -> V3 migration boundary in one persistence owner.
+        let stored =
+            crate::persistence::stores::routing_policy_v3_stage_upgrade::load_effective_active_in(
+                read.connection(),
+            )
+            .await?
+            .ok_or(PersistenceError::NotFound)?;
+        let config = RoutingPolicyConfigV2::from_stored_value(&stored.config)
             .map_err(|_| PersistenceError::InvariantViolation("invalid routing policy".into()))?;
         let global_proxy_mode = sqlx::query_scalar::<_, String>(
             "SELECT value FROM settings WHERE key = 'collector_proxy_mode'",

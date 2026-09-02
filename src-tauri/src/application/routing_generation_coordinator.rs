@@ -136,6 +136,79 @@ impl RoutingGenerationCoordinator {
         Ok(fence)
     }
 
+    /// Atomically activate a qualified policy-only generation.  Unlike the
+    /// supervised cutover this keeps the fence entirely inside one short
+    /// write transaction, so admitted requests keep their immutable snapshot
+    /// and new requests are never blocked by a durable admission fence.
+    pub(crate) async fn activate_policy_only(
+        &self,
+        target_runtime_generation_id: &str,
+        expected_active_runtime_generation_id: &str,
+        now_ms: i64,
+    ) -> Result<(), RoutingGenerationCoordinatorError> {
+        let mut write = self.runtime.begin_write().await?;
+        let registry = self
+            .store
+            .load_registry_snapshot(write.connection())
+            .await?;
+        let Some(active) = registry.active.as_ref() else {
+            return Err(RoutingGenerationCoordinatorError::Conflict);
+        };
+        let target = self
+            .store
+            .load_runtime_generation(write.connection(), target_runtime_generation_id)
+            .await?
+            .ok_or(RoutingGenerationCoordinatorError::Conflict)?;
+        if active.runtime_generation_id != expected_active_runtime_generation_id
+            || target.status != crate::models::routing_generation::RoutingGenerationStatus::Ready
+            || target.quality_generation_id != active.quality_generation_id
+            || target.circuit_generation_id != active.circuit_generation_id
+            || target.input_observation_watermark != active.input_observation_watermark
+            || target.input_circuit_event_watermark != active.input_circuit_event_watermark
+            || target.quality_input_hash != active.quality_input_hash
+            || target.circuit_input_hash != active.circuit_input_hash
+            || target.quality_content_hash != active.quality_content_hash
+            || target.circuit_content_hash != active.circuit_content_hash
+        {
+            return Err(RoutingGenerationCoordinatorError::Conflict);
+        }
+        let latest_policy_revision: Option<i64> = sqlx::query_scalar(
+            "SELECT MAX(config_revision) FROM routing_policy_v3_staged
+             WHERE scope = 'active' AND status IN ('staged', 'ready', 'active')",
+        )
+        .fetch_one(write.connection())
+        .await
+        .map_err(PersistenceError::from)?;
+        if latest_policy_revision.and_then(|revision| u64::try_from(revision).ok())
+            != Some(target.policy_revision)
+        {
+            return Err(RoutingGenerationCoordinatorError::Conflict);
+        }
+        if !self
+            .store
+            .quality_source_profile_is_current(write.connection(), &target.quality_generation_id)
+            .await?
+        {
+            return Err(RoutingGenerationCoordinatorError::Conflict);
+        }
+        let fence = self
+            .store
+            .begin_fence(
+                write.connection(),
+                target_runtime_generation_id,
+                Some(expected_active_runtime_generation_id),
+                false,
+                Some("policy_fast"),
+                now_ms,
+            )
+            .await?;
+        self.store
+            .activate_fenced_generation(write.connection(), &fence, false, now_ms, true)
+            .await?;
+        write.commit().await?;
+        Ok(())
+    }
+
     pub(crate) async fn record_qualification(
         &self,
         qualification: &RoutingGenerationQualification,
@@ -283,7 +356,7 @@ impl RoutingGenerationCoordinator {
             return Err(RoutingGenerationCoordinatorError::PolicyFingerprintMismatch);
         }
         self.store
-            .activate_fenced_generation(write.connection(), fence, rollback, now_ms)
+            .activate_fenced_generation(write.connection(), fence, rollback, now_ms, false)
             .await?;
         write.commit().await?;
         Ok(())

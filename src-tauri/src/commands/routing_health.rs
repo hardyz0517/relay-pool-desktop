@@ -14,8 +14,10 @@ use crate::{
         },
         routing_mutations::{
             ApplyRoutingPolicyDocumentInputDto, RoutingDocumentSyncDto,
-            RoutingPolicyPublicationStateDto, RoutingPolicyPublicationStatusDto,
-            RoutingPolicyPublicationStatusInputDto, RoutingPolicySnapshotDto,
+            RoutingPolicyActivationPathDto, RoutingPolicyFallbackReasonDto,
+            RoutingPolicyPublicationFailureCodeDto, RoutingPolicyPublicationStateDto,
+            RoutingPolicyPublicationStatusDto, RoutingPolicyPublicationStatusInputDto,
+            RoutingPolicySnapshotDto,
         },
         EmptyInputDto,
     },
@@ -25,15 +27,30 @@ use crate::{
 fn routing_policy_snapshot(
     stored: crate::persistence::stores::routing_policy_store::StoredRoutingPolicy,
     document_sync: Option<crate::persistence::stores::document_sync_store::StoredDocumentSync>,
+    activation_path: Option<RoutingPolicyActivationPathDto>,
+    runtime_status: Option<RoutingPolicyPublicationStateDto>,
+    active_revision: Option<u64>,
+    fallback_reason: Option<RoutingPolicyFallbackReasonDto>,
 ) -> Result<RoutingPolicySnapshotDto, error::CommandError> {
     let config = crate::application::routing::routing_policy_v3_from_stored(&stored.config)
         .map_err(|_| error::CommandError::internal(None))?;
+    let runtime_status = match runtime_status {
+        Some(status) => Some(status),
+        None => Some(
+            RoutingPolicyPublicationStateDto::from_internal_code(&stored.status)
+                .ok_or_else(|| error::CommandError::internal(None))?,
+        ),
+    };
     Ok(RoutingPolicySnapshotDto {
         config: config.into(),
         revision: stored.revision,
         policy_version: stored.policy_version,
         system_version: stored.system_version,
         status: stored.status,
+        activation_path,
+        runtime_status,
+        active_revision,
+        fallback_reason,
         updated_at_ms: stored.updated_at_ms,
         document_sync: document_sync.map(RoutingDocumentSyncDto::from),
     })
@@ -136,7 +153,39 @@ pub async fn load_routing_policy(
                 .load_routing_policy_document_sync()
                 .await
                 .map_err(super::public_command_application_error)?;
-            routing_policy_snapshot(stored, document_sync)
+            let publication = facade
+                .load_routing_policy_publication(stored.revision, None)
+                .await
+                .map_err(super::public_command_application_error)?;
+            let activation_path = publication
+                .activation_path
+                .map(|value| {
+                    RoutingPolicyActivationPathDto::from_internal_code(value)
+                        .ok_or_else(|| error::CommandError::internal(None))
+                })
+                .transpose()?;
+            let runtime_status = publication
+                .runtime_status
+                .map(|value| {
+                    RoutingPolicyPublicationStateDto::from_internal_code(value)
+                        .ok_or_else(|| error::CommandError::internal(None))
+                })
+                .transpose()?;
+            let fallback_reason = publication
+                .fallback_reason
+                .map(|value| {
+                    RoutingPolicyFallbackReasonDto::from_internal_code(value)
+                        .ok_or_else(|| error::CommandError::internal(None))
+                })
+                .transpose()?;
+            routing_policy_snapshot(
+                stored,
+                document_sync,
+                activation_path,
+                runtime_status,
+                publication.active_revision,
+                fallback_reason,
+            )
         },
     )
     .await
@@ -168,11 +217,43 @@ pub async fn get_routing_policy_publication_status(
             let status =
                 RoutingPolicyPublicationStateDto::from_internal_code(publication.status.as_str())
                     .ok_or_else(|| error::CommandError::internal(None))?;
+            let activation_path = match publication.activation_path {
+                Some(value) => Some(
+                    RoutingPolicyActivationPathDto::from_internal_code(value)
+                        .ok_or_else(|| error::CommandError::internal(None))?,
+                ),
+                None => None,
+            };
+            let runtime_status = match publication.runtime_status {
+                Some(value) => Some(
+                    RoutingPolicyPublicationStateDto::from_internal_code(value)
+                        .ok_or_else(|| error::CommandError::internal(None))?,
+                ),
+                None => None,
+            };
+            let fallback_reason = match publication.fallback_reason {
+                Some(value) => Some(
+                    RoutingPolicyFallbackReasonDto::from_internal_code(value)
+                        .ok_or_else(|| error::CommandError::internal(None))?,
+                ),
+                None => None,
+            };
+            let failure_code = match publication.failure_code {
+                Some(value) => Some(
+                    RoutingPolicyPublicationFailureCodeDto::from_internal_code(value)
+                        .ok_or_else(|| error::CommandError::internal(None))?,
+                ),
+                None => None,
+            };
             Ok(RoutingPolicyPublicationStatusDto {
                 revision: publication.revision,
                 policy_generation_id: publication.policy_generation_id,
                 status,
-                failure_code: publication.failure_code.map(str::to_owned),
+                failure_code,
+                activation_path,
+                runtime_status,
+                active_revision: publication.active_revision,
+                fallback_reason,
                 updated_at_ms: publication.updated_at_ms,
                 terminal: publication.terminal,
             })
@@ -210,7 +291,42 @@ pub async fn apply_routing_policy_document(
                 .load_routing_policy_document_sync()
                 .await
                 .map_err(super::public_command_application_error)?;
-            routing_policy_snapshot(stored, document_sync)
+            let publication = facade
+                .load_routing_policy_publication(stored.revision, None)
+                .await
+                .map_err(super::public_command_application_error)?;
+            let activation_path = publication
+                .activation_path
+                .map(|value| {
+                    RoutingPolicyActivationPathDto::from_internal_code(value)
+                        .ok_or_else(|| error::CommandError::internal(None))
+                })
+                .transpose()?
+                .or_else(|| {
+                    (stored.status == "active").then_some(RoutingPolicyActivationPathDto::Fast)
+                });
+            let runtime_status = publication
+                .runtime_status
+                .map(|value| {
+                    RoutingPolicyPublicationStateDto::from_internal_code(value)
+                        .ok_or_else(|| error::CommandError::internal(None))
+                })
+                .transpose()?;
+            let fallback_reason = publication
+                .fallback_reason
+                .map(|value| {
+                    RoutingPolicyFallbackReasonDto::from_internal_code(value)
+                        .ok_or_else(|| error::CommandError::internal(None))
+                })
+                .transpose()?;
+            routing_policy_snapshot(
+                stored,
+                document_sync,
+                activation_path,
+                runtime_status,
+                publication.active_revision,
+                fallback_reason,
+            )
         },
     )
     .await

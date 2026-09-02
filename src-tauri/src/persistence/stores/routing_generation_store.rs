@@ -1,3 +1,4 @@
+use serde::Serialize;
 use serde_json::Value;
 use sqlx::{Row, SqliteConnection};
 
@@ -14,6 +15,27 @@ use crate::{
 
 const REGISTRY_CORRUPT: &str = "routing_generation_registry_corrupt";
 const GENERATION_NOT_QUALIFIED: &str = "routing_generation_not_qualified";
+
+enum QualificationSourceExpectation<'a> {
+    /// The report must describe the active generation observed by the fence.
+    Active(Option<&'a str>),
+    /// A retired rollback candidate carries historical source evidence; its
+    /// current active baseline is validated by tail replay instead.
+    Historical,
+}
+
+#[derive(Debug, Serialize)]
+struct CurrentMonitoringProfileFact {
+    monitor_id: String,
+    target_type: String,
+    station_key_id: Option<String>,
+    template_id: String,
+    protocol_kind: String,
+    client_profile_id: String,
+    client_profile_version: u64,
+    primary_model: String,
+    schedule_revision: u64,
+}
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct RoutingGenerationStore;
@@ -371,8 +393,21 @@ impl RoutingGenerationStore {
         }
         self.validate_component_bindings(connection, &target)
             .await?;
-        self.require_qualification(connection, target_runtime_generation_id)
-            .await?;
+        // A normal cutover can only reuse qualification evidence produced
+        // against the active generation observed by this fence transaction.
+        // Rollback candidates are different: their immutable qualification
+        // was produced for their historical source and the fence's tail
+        // replay is the validation boundary for restoring them.
+        self.require_qualification(
+            connection,
+            target_runtime_generation_id,
+            if rollback {
+                QualificationSourceExpectation::Historical
+            } else {
+                QualificationSourceExpectation::Active(expected_active_runtime_generation_id)
+            },
+        )
+        .await?;
         let fence_revision = snapshot
             .marker
             .fence_revision
@@ -471,8 +506,12 @@ impl RoutingGenerationStore {
             .await?;
         self.validate_no_tail_events(connection, &replacement)
             .await?;
-        self.require_qualification(connection, replacement_runtime_generation_id)
-            .await?;
+        self.require_qualification(
+            connection,
+            replacement_runtime_generation_id,
+            QualificationSourceExpectation::Active(fence.source_runtime_generation_id.as_deref()),
+        )
+        .await?;
 
         let retired = sqlx::query(
             "UPDATE routing_runtime_generation
@@ -630,6 +669,7 @@ impl RoutingGenerationStore {
         fence: &RoutingGenerationFence,
         rollback: bool,
         now_ms: i64,
+        preserve_live_circuit_state: bool,
     ) -> Result<(), PersistenceError> {
         if now_ms < 0 {
             return Err(PersistenceError::ConstraintViolation);
@@ -682,8 +722,25 @@ impl RoutingGenerationStore {
 
         self.switch_component_statuses(connection, fence, &target, now_ms)
             .await?;
-        self.replace_live_circuit_state(connection, &target, now_ms)
-            .await?;
+        // Policy-only generations point at the same immutable circuit
+        // component as the active source.  Keep the live state table in
+        // place so an in-flight or half-open attempt is never discarded.
+        let reuse_live_circuit_state = preserve_live_circuit_state
+            && (if let Some(source_id) = fence.source_runtime_generation_id.as_deref() {
+                // The source was validated above; loading it again keeps the
+                // decision inside this activation transaction.
+                let source = self
+                    .load_runtime_generation(connection, source_id)
+                    .await?
+                    .ok_or_else(|| corrupt("source generation disappeared during cutover"))?;
+                source.circuit_generation_id == target.circuit_generation_id
+            } else {
+                false
+            });
+        if !reuse_live_circuit_state {
+            self.replace_live_circuit_state(connection, &target, now_ms)
+                .await?;
+        }
         let marker_updated = sqlx::query(
             "UPDATE routing_runtime_cutover_marker
              SET status = 'v3_active', runtime_generation_id = ?1,
@@ -956,6 +1013,7 @@ impl RoutingGenerationStore {
         &self,
         connection: &mut SqliteConnection,
         runtime_generation_id: &str,
+        source_expectation: QualificationSourceExpectation<'_>,
     ) -> Result<(), PersistenceError> {
         let evidence = sqlx::query(
             "SELECT q.qualification_version, q.comparison_status, q.replay_status,
@@ -995,6 +1053,13 @@ impl RoutingGenerationStore {
             &replay_report,
         )
         .map_err(|_| PersistenceError::InvariantViolation(GENERATION_NOT_QUALIFIED.into()))?;
+        if let QualificationSourceExpectation::Active(expected_source) = source_expectation {
+            if !qualification_source_matches_expected(&comparison_report, expected_source) {
+                return Err(PersistenceError::InvariantViolation(
+                    GENERATION_NOT_QUALIFIED.into(),
+                ));
+            }
+        }
         if evidence.get::<String, _>("qualification_version")
             != ROUTING_GENERATION_QUALIFICATION_VERSION
             || evidence.get::<String, _>("comparison_status") != "passed"
@@ -1044,6 +1109,143 @@ impl RoutingGenerationStore {
             ));
         }
         Ok(())
+    }
+
+    /// Checks that the immutable quality source-profile snapshot still
+    /// describes the current station-key set and lifecycle revisions.  This
+    /// is intentionally evaluated in the activation write transaction to
+    /// close the read/activate TOCTOU window for policy-only reuse.
+    pub(crate) async fn quality_source_profile_is_current(
+        &self,
+        connection: &mut SqliteConnection,
+        quality_generation_id: &str,
+    ) -> Result<bool, PersistenceError> {
+        let snapshot_id = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT source_profile_snapshot_id
+             FROM routing_quality_generation_v3
+             WHERE quality_generation_id = ?1",
+        )
+        .bind(quality_generation_id)
+        .fetch_optional(&mut *connection)
+        .await?
+        .flatten();
+        let Some(snapshot_id) = snapshot_id else {
+            return Ok(false);
+        };
+        let snapshot_rows = sqlx::query(
+            "SELECT item.station_key_id,
+                    CASE
+                        WHEN alias.target_lifecycle_revision > item.station_key_lifecycle_revision
+                        THEN alias.target_lifecycle_revision
+                        ELSE item.station_key_lifecycle_revision
+                    END AS station_key_lifecycle_revision,
+                    item.real_source_eligible, item.monitoring_source_eligible,
+                    item.monitoring_profile_commitment
+             FROM routing_quality_source_profile_snapshot_item_v3 item
+             LEFT JOIN routing_quality_lifecycle_alias_v1 alias
+               ON alias.station_key_id = item.station_key_id
+             WHERE item.snapshot_id = ?1
+             ORDER BY item.station_key_id",
+        )
+        .bind(&snapshot_id)
+        .fetch_all(&mut *connection)
+        .await?;
+        let snapshot = snapshot_rows
+            .into_iter()
+            .map(|row| {
+                (
+                    row.get::<String, _>("station_key_id"),
+                    (
+                        required_u64(&row, "station_key_lifecycle_revision"),
+                        row.get::<i64, _>("real_source_eligible") != 0,
+                        row.get::<i64, _>("monitoring_source_eligible") != 0,
+                        row.get::<Option<String>, _>("monitoring_profile_commitment"),
+                    ),
+                )
+            })
+            .map(|(key, (revision, real, monitoring, commitment))| {
+                revision.map(|revision| (key, (revision, real, monitoring, commitment)))
+            })
+            .collect::<Result<std::collections::BTreeMap<_, _>, _>>()?;
+
+        let current_rows = sqlx::query(
+            "SELECT k.id AS station_key_id,
+                    r.revision AS station_key_lifecycle_revision,
+                    CASE WHEN k.enabled = 1 AND s.enabled = 1
+                           AND (TRIM(k.api_key) <> '' OR k.api_key_secret_id IS NOT NULL)
+                         THEN 1 ELSE 0 END AS real_source_eligible,
+                    m.id AS monitor_id, m.target_type,
+                    m.station_key_id AS monitor_station_key_id, m.template_id,
+                    m.protocol_kind, m.client_profile_id, m.client_profile_version,
+                    m.primary_model, m.schedule_revision
+             FROM station_keys k
+             JOIN stations s ON s.id = k.station_id
+             JOIN domain_revisions r ON r.scope = 'station_key:' || k.id
+             LEFT JOIN channel_monitors m
+               ON m.enabled = 1 AND m.station_id = k.station_id
+              AND (m.station_key_id = k.id OR m.station_key_id IS NULL)
+              AND m.client_profile_id = 'standard_api'
+              AND m.client_profile_version > 0
+              AND m.protocol_kind IN (
+                  'open_ai_chat', 'open_ai_responses', 'anthropic_messages',
+                  'gemini_native', 'xai_grok', 'generic_open_ai'
+              )
+              AND TRIM(m.primary_model) <> ''
+             WHERE r.revision > 0
+             ORDER BY k.id, r.revision, m.id",
+        )
+        .fetch_all(&mut *connection)
+        .await?;
+        let mut current = std::collections::BTreeMap::<
+            String,
+            (u64, bool, Vec<CurrentMonitoringProfileFact>),
+        >::new();
+        for row in current_rows {
+            let station_key_id = row.get::<String, _>("station_key_id");
+            let lifecycle_revision = required_u64(&row, "station_key_lifecycle_revision")?;
+            let entry = current.entry(station_key_id).or_insert_with(|| {
+                (
+                    lifecycle_revision,
+                    row.get::<i64, _>("real_source_eligible") != 0,
+                    Vec::new(),
+                )
+            });
+            if entry.0 != lifecycle_revision {
+                return Err(corrupt(
+                    "current quality source profile has duplicate key lifecycles",
+                ));
+            }
+            if let Some(monitor_id) = row.get::<Option<String>, _>("monitor_id") {
+                entry.2.push(CurrentMonitoringProfileFact {
+                    monitor_id,
+                    target_type: row.get("target_type"),
+                    station_key_id: row.get("monitor_station_key_id"),
+                    template_id: row.get("template_id"),
+                    protocol_kind: row.get("protocol_kind"),
+                    client_profile_id: row.get("client_profile_id"),
+                    client_profile_version: required_u64(&row, "client_profile_version")?,
+                    primary_model: row.get("primary_model"),
+                    schedule_revision: required_u64(&row, "schedule_revision")?,
+                });
+            }
+        }
+        let current = current
+            .into_iter()
+            .map(|(key, (revision, real, profiles))| {
+                let commitment = if profiles.is_empty() {
+                    None
+                } else {
+                    let value = serde_json::to_value(&profiles)
+                        .map_err(|error| PersistenceError::InvariantViolation(error.to_string()))?;
+                    Some(
+                        crate::application::routing_generation::canonical_json_sha256(&value)
+                            .map_err(|_| PersistenceError::ConstraintViolation)?,
+                    )
+                };
+                Ok((key, (revision, real, commitment.is_some(), commitment)))
+            })
+            .collect::<Result<std::collections::BTreeMap<_, _>, PersistenceError>>()?;
+        Ok(snapshot == current)
     }
 
     pub(crate) async fn validate_component_bindings(
@@ -1364,6 +1566,28 @@ impl RoutingGenerationStore {
     }
 }
 
+/// Compare the immutable comparison report's source with the active
+/// generation observed by the fence transaction. The inner `Option` models
+/// the pre-cutover case where no active generation exists yet.
+fn qualification_source_matches_expected(
+    comparison_report: &Value,
+    expected_source_runtime_generation_id: Option<&str>,
+) -> bool {
+    let Some(report) = comparison_report.as_object() else {
+        return false;
+    };
+    let reported_source = match report.get("source_runtime_generation_id") {
+        // Older qualification fixtures omitted this optional field. Treat an
+        // omission as unknown for compatibility, while still rejecting an
+        // explicit null when a concrete active source is required.
+        None => return true,
+        Some(Value::Null) => None,
+        Some(Value::String(source)) if !source.is_empty() => Some(source.as_str()),
+        Some(_) => return false,
+    };
+    reported_source == expected_source_runtime_generation_id
+}
+
 fn runtime_generation_from_row(
     row: sqlx::sqlite::SqliteRow,
 ) -> Result<RoutingRuntimeGeneration, PersistenceError> {
@@ -1486,4 +1710,259 @@ fn is_sha256_hex(value: &str) -> bool {
             .as_bytes()
             .iter()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        qualification_source_matches_expected, QualificationSourceExpectation,
+        RoutingGenerationStore, GENERATION_NOT_QUALIFIED,
+    };
+    use crate::persistence::error::PersistenceError;
+    use serde_json::json;
+    use sqlx::{Connection, Executor, SqliteConnection};
+
+    #[test]
+    fn qualification_source_must_match_fence_baseline() {
+        let matching = json!({
+            "source_runtime_generation_id": "runtime-active-a"
+        });
+        assert!(qualification_source_matches_expected(
+            &matching,
+            Some("runtime-active-a")
+        ));
+        assert!(!qualification_source_matches_expected(
+            &matching,
+            Some("runtime-active-b")
+        ));
+        assert!(!qualification_source_matches_expected(&matching, None));
+    }
+
+    #[test]
+    fn qualification_source_none_accepts_null_and_legacy_omission() {
+        assert!(qualification_source_matches_expected(
+            &json!({"source_runtime_generation_id": null}),
+            None
+        ));
+        assert!(qualification_source_matches_expected(&json!({}), None));
+        assert!(qualification_source_matches_expected(
+            &json!({}),
+            Some("runtime-active-a")
+        ));
+        assert!(!qualification_source_matches_expected(
+            &json!({"source_runtime_generation_id": null}),
+            Some("runtime-active-a")
+        ));
+    }
+
+    #[test]
+    fn qualification_source_rejects_invalid_values() {
+        assert!(!qualification_source_matches_expected(
+            &json!({"source_runtime_generation_id": ""}),
+            Some("runtime-active-a")
+        ));
+        assert!(!qualification_source_matches_expected(
+            &json!({"source_runtime_generation_id": 7}),
+            None
+        ));
+        assert!(!qualification_source_matches_expected(&json!([]), None));
+    }
+
+    #[tokio::test]
+    async fn persisted_qualification_rejects_a_stale_source_generation() {
+        let runtime_generation_id = "runtime-target";
+        let (mut comparison_report, replay_report) =
+            crate::models::routing_generation::test_activation_qualification_reports(
+                runtime_generation_id,
+            );
+        comparison_report["source_runtime_generation_id"] = json!("runtime-source-a");
+        let comparison_hash =
+            crate::application::routing_generation::canonical_json_sha256(&comparison_report)
+                .expect("comparison hash");
+        let replay_hash =
+            crate::application::routing_generation::canonical_json_sha256(&replay_report)
+                .expect("replay hash");
+        let mut connection = SqliteConnection::connect("sqlite::memory:")
+            .await
+            .expect("in-memory SQLite");
+        connection
+            .execute(
+                "CREATE TABLE routing_generation_qualification_v2 (
+                     runtime_generation_id TEXT PRIMARY KEY,
+                     qualification_version TEXT NOT NULL,
+                     comparison_status TEXT NOT NULL,
+                     comparison_report_hash TEXT NOT NULL,
+                     replay_status TEXT NOT NULL,
+                     replay_report_hash TEXT NOT NULL
+                 );
+                 CREATE TABLE routing_generation_qualification_report_v2 (
+                     runtime_generation_id TEXT PRIMARY KEY,
+                     comparison_report_json TEXT NOT NULL,
+                     comparison_report_hash TEXT NOT NULL,
+                     replay_report_json TEXT NOT NULL,
+                     replay_report_hash TEXT NOT NULL
+                 );",
+            )
+            .await
+            .expect("qualification schema");
+        sqlx::query(
+            "INSERT INTO routing_generation_qualification_v2 (
+                 runtime_generation_id, qualification_version,
+                 comparison_status, comparison_report_hash,
+                 replay_status, replay_report_hash
+             ) VALUES (?1, ?2, 'passed', ?3, 'passed', ?4)",
+        )
+        .bind(runtime_generation_id)
+        .bind(crate::models::routing_generation::ROUTING_GENERATION_QUALIFICATION_VERSION)
+        .bind(&comparison_hash)
+        .bind(&replay_hash)
+        .execute(&mut connection)
+        .await
+        .expect("qualification row");
+        sqlx::query(
+            "INSERT INTO routing_generation_qualification_report_v2 (
+                 runtime_generation_id, comparison_report_json,
+                 comparison_report_hash, replay_report_json,
+                 replay_report_hash
+             ) VALUES (?1, ?2, ?3, ?4, ?5)",
+        )
+        .bind(runtime_generation_id)
+        .bind(serde_json::to_string(&comparison_report).expect("comparison JSON"))
+        .bind(&comparison_hash)
+        .bind(serde_json::to_string(&replay_report).expect("replay JSON"))
+        .bind(&replay_hash)
+        .execute(&mut connection)
+        .await
+        .expect("qualification report row");
+
+        let error = RoutingGenerationStore
+            .require_qualification(
+                &mut connection,
+                runtime_generation_id,
+                QualificationSourceExpectation::Active(Some("runtime-source-b")),
+            )
+            .await
+            .expect_err("stale qualification source must be rejected");
+        assert!(matches!(
+            error,
+            PersistenceError::InvariantViolation(detail)
+                if detail == GENERATION_NOT_QUALIFIED
+        ));
+        RoutingGenerationStore
+            .require_qualification(
+                &mut connection,
+                runtime_generation_id,
+                QualificationSourceExpectation::Active(Some("runtime-source-a")),
+            )
+            .await
+            .expect("matching qualification source");
+    }
+
+    #[tokio::test]
+    async fn quality_source_profile_applies_lifecycle_aliases_and_eligibility() {
+        let mut connection = SqliteConnection::connect("sqlite::memory:")
+            .await
+            .expect("in-memory SQLite");
+        connection
+            .execute(
+                "CREATE TABLE routing_quality_generation_v3 (
+                     quality_generation_id TEXT PRIMARY KEY,
+                     source_profile_snapshot_id TEXT
+                 );
+                 CREATE TABLE routing_quality_source_profile_snapshot_item_v3 (
+                     snapshot_id TEXT NOT NULL,
+                     station_key_id TEXT NOT NULL,
+                     station_key_lifecycle_revision INTEGER NOT NULL,
+                     real_source_eligible INTEGER NOT NULL,
+                     monitoring_source_eligible INTEGER NOT NULL,
+                     monitoring_profile_commitment TEXT
+                 );
+                 CREATE TABLE routing_quality_lifecycle_alias_v1 (
+                     station_key_id TEXT PRIMARY KEY,
+                     target_lifecycle_revision INTEGER NOT NULL
+                 );
+                 CREATE TABLE stations (id TEXT PRIMARY KEY, enabled INTEGER NOT NULL);
+                 CREATE TABLE station_keys (
+                     id TEXT PRIMARY KEY,
+                     station_id TEXT NOT NULL,
+                     enabled INTEGER NOT NULL,
+                     api_key TEXT,
+                     api_key_secret_id TEXT
+                 );
+                 CREATE TABLE domain_revisions (scope TEXT PRIMARY KEY, revision INTEGER NOT NULL);
+                 CREATE TABLE channel_monitors (
+                     id TEXT PRIMARY KEY,
+                     enabled INTEGER NOT NULL,
+                     station_id TEXT NOT NULL,
+                     station_key_id TEXT,
+                     client_profile_id TEXT,
+                     client_profile_version INTEGER,
+                     protocol_kind TEXT,
+                     primary_model TEXT,
+                     target_type TEXT,
+                     template_id TEXT,
+                     schedule_revision INTEGER
+                 );",
+            )
+            .await
+            .expect("quality source profile schema");
+        sqlx::query(
+            "INSERT INTO routing_quality_generation_v3
+                 (quality_generation_id, source_profile_snapshot_id)
+             VALUES ('quality-1', 'snapshot-1')",
+        )
+        .execute(&mut connection)
+        .await
+        .expect("quality generation row");
+        sqlx::query(
+            "INSERT INTO routing_quality_source_profile_snapshot_item_v3
+                 (snapshot_id, station_key_id, station_key_lifecycle_revision,
+                  real_source_eligible, monitoring_source_eligible,
+                  monitoring_profile_commitment)
+             VALUES ('snapshot-1', 'key-1', 1, 1, 0, NULL)",
+        )
+        .execute(&mut connection)
+        .await
+        .expect("snapshot item");
+        sqlx::query(
+            "INSERT INTO routing_quality_lifecycle_alias_v1
+                 (station_key_id, target_lifecycle_revision)
+             VALUES ('key-1', 2)",
+        )
+        .execute(&mut connection)
+        .await
+        .expect("lifecycle alias");
+        sqlx::query("INSERT INTO stations (id, enabled) VALUES ('station-1', 1)")
+            .execute(&mut connection)
+            .await
+            .expect("station row");
+        sqlx::query(
+            "INSERT INTO station_keys (id, station_id, enabled, api_key, api_key_secret_id)
+             VALUES ('key-1', 'station-1', 1, 'fake-key', NULL)",
+        )
+        .execute(&mut connection)
+        .await
+        .expect("station key row");
+        sqlx::query(
+            "INSERT INTO domain_revisions (scope, revision)
+             VALUES ('station_key:key-1', 2)",
+        )
+        .execute(&mut connection)
+        .await
+        .expect("lifecycle row");
+
+        assert!(RoutingGenerationStore
+            .quality_source_profile_is_current(&mut connection, "quality-1")
+            .await
+            .expect("source profile comparison"));
+
+        sqlx::query("UPDATE station_keys SET enabled = 0 WHERE id = 'key-1'")
+            .execute(&mut connection)
+            .await
+            .expect("disable station key");
+        assert!(!RoutingGenerationStore
+            .quality_source_profile_is_current(&mut connection, "quality-1")
+            .await
+            .expect("source profile eligibility comparison"));
+    }
 }

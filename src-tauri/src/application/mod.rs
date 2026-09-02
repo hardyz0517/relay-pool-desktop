@@ -32,6 +32,7 @@ pub(crate) mod routing_generation;
 pub(crate) mod routing_generation_coordinator;
 pub(crate) mod routing_policy;
 pub(crate) mod routing_policy_control_plane;
+pub(crate) mod routing_policy_impact;
 pub(crate) mod routing_policy_read;
 pub(crate) mod runtime_diagnostics;
 pub(crate) mod settings;

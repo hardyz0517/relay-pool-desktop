@@ -239,7 +239,7 @@ pub(crate) fn qualification_reports_are_activation_ready(
     else {
         return false;
     };
-    [429_u64, 502_u64].into_iter().all(|status| {
+    let fixtures_valid = [429_u64, 502_u64].into_iter().all(|status| {
         fixtures.iter().any(|fixture| {
             fixture
                 .get("http_status")
@@ -267,7 +267,83 @@ pub(crate) fn qualification_reports_are_activation_ready(
                     .and_then(serde_json::Value::as_u64)
                     .is_some_and(|count| count > 0)
         })
+    });
+    if !fixtures_valid {
+        return false;
+    }
+    match replay_object
+        .get("component_verification_mode")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("deterministic_replay")
+    {
+        "deterministic_replay" => replay_object.get("reuse_proof").is_none(),
+        "immutable_reuse" => replay_object
+            .get("reuse_proof")
+            .is_some_and(valid_component_reuse_proof),
+        _ => false,
+    }
+}
+
+fn valid_component_reuse_proof(value: &serde_json::Value) -> bool {
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    if object
+        .get("proof_version")
+        .and_then(serde_json::Value::as_str)
+        != Some("routing-component-reuse-proof-v1")
+        || object
+            .get("source_runtime_generation_id")
+            .and_then(serde_json::Value::as_str)
+            .is_none_or(str::is_empty)
+        || object
+            .get("source_qualification_version")
+            .and_then(serde_json::Value::as_str)
+            != Some(ROUTING_GENERATION_QUALIFICATION_VERSION)
+    {
+        return false;
+    }
+    ["quality", "circuit"].into_iter().all(|component| {
+        let Some(component) = object.get(component).and_then(serde_json::Value::as_object) else {
+            return false;
+        };
+        component
+            .get("generation_id")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|value| !value.is_empty())
+            && component
+                .get("policy_revision")
+                .and_then(serde_json::Value::as_u64)
+                .is_some_and(|value| value > 0)
+            && component
+                .get("input_watermark")
+                .and_then(serde_json::Value::as_u64)
+                .is_some()
+            && component
+                .get("input_hash")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(valid_sha256)
+            && component
+                .get("content_hash")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(valid_sha256)
+            && component
+                .get("checkpoint_ref")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|value| !value.is_empty())
+            && component
+                .get("source_status")
+                .and_then(serde_json::Value::as_str)
+                == Some("active")
+            && component
+                .get("checkpoint_status")
+                .and_then(serde_json::Value::as_str)
+                == Some("ready")
     })
+}
+
+fn valid_sha256(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn valid_key_comparison(value: &serde_json::Value) -> bool {
@@ -469,6 +545,49 @@ mod qualification_tests {
 
         let (mut comparison, replay) = test_activation_qualification_reports(runtime_generation_id);
         comparison["rank_change_count"] = serde_json::json!(1);
+        assert!(!qualification_reports_are_activation_ready(
+            runtime_generation_id,
+            &comparison,
+            &replay
+        ));
+    }
+
+    #[test]
+    fn activation_requires_complete_reuse_proof_when_marked_immutable_reuse() {
+        let runtime_generation_id = "rg1_qualification-test";
+        let (comparison, mut replay) = test_activation_qualification_reports(runtime_generation_id);
+        replay["component_verification_mode"] = serde_json::json!("immutable_reuse");
+        replay["reuse_proof"] = serde_json::json!({
+            "proof_version": "routing-component-reuse-proof-v1",
+            "source_runtime_generation_id": "rg1_source",
+            "source_qualification_version": ROUTING_GENERATION_QUALIFICATION_VERSION,
+            "quality": {
+                "generation_id": "qg1",
+                "policy_revision": 1,
+                "input_watermark": 0,
+                "input_hash": "a".repeat(64),
+                "content_hash": "b".repeat(64),
+                "checkpoint_ref": "quality-checkpoint:qg1",
+                "source_status": "active",
+                "checkpoint_status": "ready"
+            },
+            "circuit": {
+                "generation_id": "cg1",
+                "policy_revision": 1,
+                "input_watermark": 0,
+                "input_hash": "c".repeat(64),
+                "content_hash": "d".repeat(64),
+                "checkpoint_ref": "circuit-checkpoint:cg1",
+                "source_status": "active",
+                "checkpoint_status": "ready"
+            }
+        });
+        assert!(qualification_reports_are_activation_ready(
+            runtime_generation_id,
+            &comparison,
+            &replay
+        ));
+        replay["reuse_proof"]["quality"]["content_hash"] = serde_json::json!("invalid");
         assert!(!qualification_reports_are_activation_ready(
             runtime_generation_id,
             &comparison,
