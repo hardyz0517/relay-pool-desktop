@@ -136,6 +136,96 @@ describe("routing policy draft reducer", () => {
     expect(active.publicationStartedAtMs).toBeNull();
   });
 
+  it("keeps fast activation metadata and distinguishes latest-input convergence", () => {
+    const clean = routingPolicyDraftReducer(initialRoutingPolicyDraftState, {
+      type: "hydrate",
+      snapshot: snapshot(3),
+    });
+    const fast = routingPolicyDraftReducer(clean, {
+      type: "saveSuccess",
+      snapshot: {
+        ...snapshot(4, {}, "active"),
+        activationPath: "fast",
+        runtimeStatus: "active",
+        activeRevision: 4,
+      },
+    });
+    expect(fast.publicationActivationPath).toBe("fast");
+    expect(fast.publicationRuntimeStatus).toBe("active");
+    expect(fast.publicationActiveRevision).toBe(4);
+    expect(fast.publicationPollingState).toBe("idle");
+
+    const waiting = routingPolicyDraftReducer(fast, {
+      type: "publicationUpdate",
+      publication: publication("waiting_latest_input"),
+    });
+    expect(waiting.publicationRuntimeStatus).toBe("waiting_latest_input");
+    expect(waiting.publicationStatus).toBe("waiting_latest_input");
+    expect(waiting.publicationPollingState).toBe("polling");
+  });
+
+  it("retains persisted-only status without claiming runtime activation", () => {
+    const saved = routingPolicyDraftReducer(initialRoutingPolicyDraftState, {
+      type: "saveSuccess",
+      snapshot: {
+        ...snapshot(4, {}, "staged"),
+        activationPath: "persisted_only",
+        runtimeStatus: "staged",
+        activeRevision: 3,
+        fallbackReason: "runtime_unavailable",
+      },
+    });
+    expect(saved.publicationActivationPath).toBe("persisted_only");
+    expect(saved.publicationRuntimeStatus).toBe("staged");
+    expect(saved.publicationActiveRevision).toBe(3);
+    expect(saved.publicationFallbackReason).toBe("runtime_unavailable");
+    expect(saved.publicationPollingState).toBe("idle");
+  });
+
+  it("refreshes same-revision publication metadata and stops persisted-only polling", () => {
+    const staged = routingPolicyDraftReducer(initialRoutingPolicyDraftState, {
+      type: "hydrate",
+      snapshot: snapshot(4, {}, "staged"),
+    });
+    const edited = routingPolicyDraftReducer(staged, {
+      type: "edit",
+      config: { ...staged.config!, reliabilityWeight: 4_100 },
+    });
+    const persistedOnly = {
+      ...snapshot(4, {}, "staged"),
+      activationPath: "persisted_only" as const,
+      runtimeStatus: "staged" as const,
+      activeRevision: 3,
+      fallbackReason: "runtime_unavailable" as const,
+    };
+
+    const hydrated = routingPolicyDraftReducer(edited, {
+      type: "hydrate",
+      snapshot: persistedOnly,
+    });
+    expect(hydrated.publicationActivationPath).toBe("persisted_only");
+    expect(hydrated.publicationActiveRevision).toBe(3);
+    expect(hydrated.publicationPollingState).toBe("idle");
+    expect(hydrated.publicationStartedAtMs).toBeNull();
+    expect(hydrated.config?.reliabilityWeight).toBe(4_100);
+    expect(hydrated.initialConfig?.reliabilityWeight).toBe(4_000);
+    expect(routingPolicyDraftIsDirty(hydrated)).toBe(true);
+
+    const updated = routingPolicyDraftReducer(edited, {
+      type: "publicationUpdate",
+      publication: {
+        ...publication("staged"),
+        activationPath: "persisted_only",
+        runtimeStatus: "staged",
+        activeRevision: 3,
+        fallbackReason: "runtime_unavailable",
+      },
+    });
+    expect(updated.publicationActivationPath).toBe("persisted_only");
+    expect(updated.publicationPollingState).toBe("idle");
+    expect(updated.publicationStartedAtMs).toBeNull();
+  });
+
   it("keeps an unavailable publication non-active and stops after a bounded timeout", () => {
     const staged = routingPolicyDraftReducer(
       routingPolicyDraftReducer(initialRoutingPolicyDraftState, {
@@ -266,6 +356,38 @@ describe("routing policy publication polling", () => {
     });
     expect(outcome).toBe("terminal");
     expect(calls).toBe(1);
+  });
+
+  it("stops immediately for a persisted-only publication", async () => {
+    let calls = 0;
+    let waits = 0;
+    const observed: string[] = [];
+    const outcome = await pollRoutingPolicyPublication({
+      revision: 4,
+      startedAtMs: 0,
+      signal: new AbortController().signal,
+      now: () => 0,
+      wait: async () => {
+        waits += 1;
+      },
+      fetchStatus: async () => {
+        calls += 1;
+        return {
+          ...publication("staged"),
+          activationPath: "persisted_only",
+          runtimeStatus: "staged",
+          activeRevision: 3,
+          fallbackReason: "runtime_unavailable",
+        };
+      },
+      onStatus: (status) => observed.push(status.status),
+      onUnavailable: () => undefined,
+    });
+
+    expect(outcome).toBe("terminal");
+    expect(calls).toBe(1);
+    expect(waits).toBe(0);
+    expect(observed).toEqual(["staged"]);
   });
 
   it("reports transient read errors without claiming activation and can recover", async () => {

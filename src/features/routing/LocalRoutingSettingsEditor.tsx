@@ -2,7 +2,14 @@ import { useState, type KeyboardEvent } from "react";
 import { RefreshCw, Save } from "lucide-react";
 import { Button, SectionCard, SelectControl, StatusBadge, SwitchControl, useToast } from "@/components/ui";
 import { groupCategoryDefinitions } from "@/lib/groupCategories";
-import type { PricingGroupType, RoutingGroupFilter, RoutingPolicyConfigV3 } from "@/lib/types/routing";
+import type {
+  PricingGroupType,
+  RoutingGroupFilter,
+  RoutingPolicyActivationPath,
+  RoutingPolicyConfigV3,
+  RoutingPolicyFallbackReason,
+  RoutingPolicyRuntimeStatus,
+} from "@/lib/types/routing";
 import { collectorProxyModeLabels } from "@/lib/types/settings";
 import { settingsQueryOptions } from "@/lib/query/resourceQueries";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
@@ -194,6 +201,9 @@ export function LocalRoutingSettingsEditor() {
     draft.publicationPollingState,
     draft.publicationError,
     draft.publicationFailureCode,
+    draft.publicationActivationPath,
+    draft.publicationRuntimeStatus,
+    draft.publicationFallbackReason,
   );
   const fieldHints = routingPolicyDraftFieldHints(config);
   const fieldErrors = draft.fieldErrors;
@@ -271,9 +281,17 @@ export function LocalRoutingSettingsEditor() {
   async function savePolicy() {
     const snapshot = await save();
     if (!snapshot) return;
+    if (snapshot.activationPath === "fast") {
+      toast.success("路由策略已即时生效", "后续新请求使用新策略；已经开始的请求继续使用原策略。");
+      return;
+    }
+    if (snapshot.activationPath === "persisted_only") {
+      toast.info("路由策略已保存", "运行时当前未启动；启动后将使用此策略。");
+      return;
+    }
     switch (snapshot.status) {
       case "staged":
-        toast.info("路由策略已提交", "正在重建评分与熔断状态，完成切换后才会影响新请求。");
+        toast.info("路由策略已提交", "正在等待最新输入收敛或重建，完成切换后才会影响新请求。");
         break;
       case "ready":
         toast.info("路由策略已完成重建", "正在等待原子切换，当前运行策略暂未改变。");
@@ -644,6 +662,9 @@ function policyPublicationFeedback(
   pollingState: "idle" | "polling" | "unavailable" | "timed_out",
   publicationError: string | null,
   failureCode: string | null,
+  activationPath: RoutingPolicyActivationPath | null = null,
+  runtimeStatus: RoutingPolicyRuntimeStatus | null = null,
+  fallbackReason: RoutingPolicyFallbackReason | null = null,
 ) {
   if (pollingState === "timed_out" || pollingState === "unavailable") {
     return {
@@ -652,11 +673,22 @@ function policyPublicationFeedback(
       tone: "error" as const,
     };
   }
-  switch (status) {
+  const effectiveStatus = runtimeStatus ?? status;
+  if (activationPath === "persisted_only") {
+    return {
+      label: "已保存，等待运行时启动",
+      description: "策略已写入本地；代理启动后将使用此 revision。",
+      tone: "info" as const,
+    };
+  }
+  switch (effectiveStatus) {
     case "staged":
       return {
-        label: "等待重建",
-        description: "策略已提交，但尚未影响运行中的请求。",
+        label: activationPath === "fast" ? "等待快速切换" : "等待重建",
+        description:
+          activationPath === "fast"
+            ? `快速激活条件暂不满足${fallbackReasonLabel(fallbackReason)}，正在等待安全切换。`
+            : "策略已保存，但尚未影响运行中的请求。",
         tone: "info" as const,
       };
     case "ready":
@@ -664,6 +696,12 @@ function policyPublicationFeedback(
         label: "等待切换",
         description: "重建已完成，正在等待原子切换。",
         tone: "warning" as const,
+      };
+    case "waiting_latest_input":
+      return {
+        label: "等待最新输入收敛",
+        description: `监控或熔断输入仍在更新${fallbackReasonLabel(fallbackReason)}，当前运行策略暂未改变。`,
+        tone: "info" as const,
       };
     case "failed":
       return {
@@ -688,6 +726,20 @@ function policyPublicationFeedback(
           }
         : null;
   }
+}
+
+function fallbackReasonLabel(reason: RoutingPolicyFallbackReason | null): string {
+  if (!reason) return "";
+  const labels: Record<string, string> = {
+    quality_tail: "（质量输入仍在更新）",
+    circuit_tail: "（熔断输入仍在更新）",
+    concurrent_revision: "（检测到更新中的策略 revision）",
+    runtime_unavailable: "（运行时当前不可用）",
+    checkpoint_mismatch: "（运行组件检查点已变化）",
+    fence_active: "（前一个切换事务仍在进行）",
+    transport_compile_failed: "（传输配置尚未编译完成）",
+  };
+  return labels[reason] ?? "（等待运行时条件满足）";
 }
 
 function publicationFailureDescription(failureCode: string | null): string {

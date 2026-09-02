@@ -233,6 +233,44 @@ describe("LocalRoutingSettingsEditor", () => {
     queryClient.clear();
   });
 
+  it("explains when publication is waiting for the latest monitoring input", async () => {
+    mocks.policyData = {
+      ...policySnapshot(policyConfig(), 4, "staged"),
+      runtimeStatus: "waiting_latest_input",
+      activationPath: "generation",
+      fallbackReason: "quality_tail",
+    };
+    mocks.protectionData = availableProtection();
+    const { host, root, queryClient } = renderEditor();
+
+    await act(async () => Promise.resolve());
+    expect(host.textContent).toContain("等待最新输入收敛");
+    expect(host.textContent).toContain("质量输入仍在更新");
+    expect(host.textContent).toContain("当前运行策略暂未改变");
+
+    await act(async () => root.unmount());
+    queryClient.clear();
+  });
+
+  it("does not claim runtime activation when the policy was persisted while stopped", async () => {
+    mocks.policyData = {
+      ...policySnapshot(policyConfig(), 4, "active"),
+      activationPath: "persisted_only",
+      runtimeStatus: "active",
+      activeRevision: 3,
+    };
+    mocks.protectionData = availableProtection();
+    const { host, root, queryClient } = renderEditor();
+
+    await act(async () => Promise.resolve());
+    expect(host.textContent).toContain("已保存，等待运行时启动");
+    expect(host.textContent).toContain("代理启动后将使用此 revision");
+    expect(host.textContent).not.toContain("当前运行时正在使用此策略");
+
+    await act(async () => root.unmount());
+    queryClient.clear();
+  });
+
   it("does not silently clamp an invalid source weight", async () => {
     mocks.policyData = policySnapshot(policyConfig(), 4);
     mocks.protectionData = availableProtection();

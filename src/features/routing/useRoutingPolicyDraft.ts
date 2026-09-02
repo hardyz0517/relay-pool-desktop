@@ -11,8 +11,11 @@ import {
 import type {
   ApplyRoutingPolicyDocumentInput,
   RoutingPolicyConfigV3,
+  RoutingPolicyActivationPath,
+  RoutingPolicyFallbackReason,
   RoutingPolicyPublicationStatus,
   RoutingPolicyPublicationStatusInput,
+  RoutingPolicyRuntimeStatus,
   RoutingPolicySnapshot,
 } from "@/lib/types/routing";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
@@ -41,6 +44,12 @@ export type RoutingPolicyDraftState = {
   baseRevision: number | null;
   remoteSnapshot: RoutingPolicySnapshot | null;
   publicationStatus: string | null;
+  /** The lane used to publish this revision, when reported by the backend. */
+  publicationActivationPath: RoutingPolicyActivationPath | null;
+  /** Runtime status may be more precise than the durable policy status. */
+  publicationRuntimeStatus: RoutingPolicyRuntimeStatus | null;
+  publicationActiveRevision: number | null;
+  publicationFallbackReason: RoutingPolicyFallbackReason | null;
   publicationGenerationId: string | null;
   publicationFailureCode: string | null;
   publicationPollingState: RoutingPolicyPublicationPollingState;
@@ -72,6 +81,10 @@ export const initialRoutingPolicyDraftState: RoutingPolicyDraftState = {
   baseRevision: null,
   remoteSnapshot: null,
   publicationStatus: null,
+  publicationActivationPath: null,
+  publicationRuntimeStatus: null,
+  publicationActiveRevision: null,
+  publicationFallbackReason: null,
   publicationGenerationId: null,
   publicationFailureCode: null,
   publicationPollingState: "idle",
@@ -175,6 +188,10 @@ function withSnapshot(
     baseRevision: snapshot.revision,
     remoteSnapshot: snapshot,
     publicationStatus: snapshot.status,
+    publicationActivationPath: snapshot.activationPath ?? null,
+    publicationRuntimeStatus: snapshot.runtimeStatus ?? null,
+    publicationActiveRevision: snapshot.activeRevision ?? null,
+    publicationFallbackReason: snapshot.fallbackReason ?? null,
     publicationGenerationId: null,
     publicationFailureCode: null,
     publicationPollingState: "idle",
@@ -275,13 +292,20 @@ export function routingPolicyDraftReducer(
       // CAS write. Never roll a draft back to an older authoritative revision.
       if (action.snapshot.revision < state.baseRevision) return state;
       if (action.snapshot.revision === state.baseRevision) {
-        const publicationPending = shouldPollPublication(action.snapshot.status);
+        const publicationPending = shouldPollPublication(
+          action.snapshot.status,
+          action.snapshot.activationPath,
+        );
         return configFingerprint(state.remoteSnapshot) === configFingerprint(action.snapshot)
           ? state
           : {
               ...state,
               remoteSnapshot: action.snapshot,
               publicationStatus: action.snapshot.status,
+              publicationActivationPath: action.snapshot.activationPath ?? null,
+              publicationRuntimeStatus: action.snapshot.runtimeStatus ?? null,
+              publicationActiveRevision: action.snapshot.activeRevision ?? null,
+              publicationFallbackReason: action.snapshot.fallbackReason ?? null,
               publicationPollingState: publicationPending
                 ? state.publicationPollingState
                 : "idle",
@@ -315,13 +339,20 @@ export function routingPolicyDraftReducer(
     case "saveStart":
       return { ...state, status: "saving", error: null, fieldErrors: {} };
     case "saveSuccess": {
-      const publicationPending = shouldPollPublication(action.snapshot.status);
+      const publicationPending = shouldPollPublication(
+        action.snapshot.status,
+        action.snapshot.activationPath,
+      );
       return {
         config: action.snapshot.config,
         initialConfig: action.snapshot.config,
         baseRevision: action.snapshot.revision,
         remoteSnapshot: action.snapshot,
         publicationStatus: action.snapshot.status,
+        publicationActivationPath: action.snapshot.activationPath ?? null,
+        publicationRuntimeStatus: action.snapshot.runtimeStatus ?? null,
+        publicationActiveRevision: action.snapshot.activeRevision ?? null,
+        publicationFallbackReason: action.snapshot.fallbackReason ?? null,
         publicationGenerationId: null,
         publicationFailureCode: null,
         publicationPollingState: publicationPending ? "polling" : "idle",
@@ -337,16 +368,28 @@ export function routingPolicyDraftReducer(
     }
     case "publicationUpdate": {
       if (action.publication.revision !== state.baseRevision) return state;
-      const terminal = isTerminalPublicationStatus(action.publication.status);
+      const activationPath =
+        action.publication.activationPath ?? state.publicationActivationPath;
+      const publicationPending = shouldPollPublication(
+        action.publication.status,
+        activationPath,
+      );
       return {
         ...state,
         publicationStatus: action.publication.status,
+        publicationActivationPath: activationPath,
+        publicationRuntimeStatus:
+          action.publication.runtimeStatus ?? action.publication.status,
+        publicationActiveRevision:
+          action.publication.activeRevision ?? state.publicationActiveRevision,
+        publicationFallbackReason:
+          action.publication.fallbackReason ?? state.publicationFallbackReason,
         publicationGenerationId:
           action.publication.policyGenerationId ?? state.publicationGenerationId,
         publicationFailureCode: action.publication.failureCode,
-        publicationPollingState: terminal ? "idle" : "polling",
+        publicationPollingState: publicationPending ? "polling" : "idle",
         publicationError: null,
-        publicationStartedAtMs: terminal ? null : state.publicationStartedAtMs,
+        publicationStartedAtMs: publicationPending ? state.publicationStartedAtMs : null,
       };
     }
     case "publicationUnavailable":
@@ -440,8 +483,14 @@ function validationFieldErrors(error: unknown): Record<string, string> {
   return Object.fromEntries(error.details.fields.map(({ field, message }) => [field, message]));
 }
 
-function shouldPollPublication(status: string | null): boolean {
-  return status === "staged" || status === "ready";
+function shouldPollPublication(
+  status: string | null,
+  activationPath?: RoutingPolicyActivationPath | null,
+): boolean {
+  return (
+    activationPath !== "persisted_only" &&
+    (status === "staged" || status === "ready" || status === "waiting_latest_input")
+  );
 }
 
 function isTerminalPublicationStatus(status: RoutingPolicyPublicationStatus["status"]): boolean {
@@ -552,7 +601,12 @@ export async function pollRoutingPolicyPublication(
       const publication = result.value;
       options.onStatus(publication);
       policyGenerationId = publication.policyGenerationId ?? policyGenerationId;
-      if (isTerminalPublicationStatus(publication.status)) return "terminal";
+      if (
+        isTerminalPublicationStatus(publication.status) ||
+        publication.activationPath === "persisted_only"
+      ) {
+        return "terminal";
+      }
     }
 
     const afterRequestRemainingMs = timeoutMs - (now() - options.startedAtMs);
@@ -581,7 +635,10 @@ export function useRoutingPolicyDraft(): UseRoutingPolicyDraftResult {
     if (
       state.baseRevision === null ||
       state.publicationStartedAtMs === null ||
-      !shouldPollPublication(state.publicationStatus)
+      !shouldPollPublication(
+        state.publicationStatus,
+        state.publicationActivationPath,
+      )
     ) {
       return;
     }
@@ -613,6 +670,7 @@ export function useRoutingPolicyDraft(): UseRoutingPolicyDraftResult {
     state.publicationGenerationId,
     state.publicationStartedAtMs,
     state.publicationStatus,
+    state.publicationActivationPath,
   ]);
 
   const setConfig = useCallback((config: RoutingPolicyConfigV3) => {

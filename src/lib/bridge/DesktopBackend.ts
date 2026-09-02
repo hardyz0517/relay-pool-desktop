@@ -718,6 +718,7 @@ function normalizeAlertingActivity(
     conditionKey: item.conditionKey ?? "",
     lifecycleState: item.lifecycleState ?? "open",
     episodeNumber: item.episodeNumber ?? 1,
+    firstSeenAtMs: item.activityAtMs,
     occurrenceCount: item.occurrenceCount ?? 0,
     lastSeenAtMs: item.activityAtMs,
     updatedAtMs: item.activityAtMs,
