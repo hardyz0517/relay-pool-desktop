@@ -15,6 +15,10 @@ export type ChannelStatusWorkspaceInputDto = {
   filter?: ChannelStatusFilterDto; sort?: ChannelStatusSortDto;
   cursor?: ChannelStatusCursorDto | null; limit?: number | null;
 };
+export type ChannelMonitorLatestSummaryDto = {
+  monitorId: string; stationId: string; stationKeyId: string | null;
+  latest: ChannelStatusLatestResultDto | null; running: ChannelStatusRunningExecutionDto | null;
+};
 export type RunChannelMonitorNowInputDto = { monitorId: string; triggerRequestId?: string | null };
 export type RunChannelMonitorReceiptDto = {
   executionId: string; monitorId: string; status: string; triggerRequestId: string; reusedExisting: boolean;

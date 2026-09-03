@@ -11,6 +11,7 @@ import type {
 import type {
   ChannelMonitor,
   ChannelMonitorRequestTemplate,
+  ChannelMonitorLatestSummary,
   ChannelMonitorAttemptHistoryInput,
   ChannelMonitorAttemptPage,
   ChannelMonitorExecutionDetail,
@@ -26,6 +27,8 @@ import type {
   UpdateChannelMonitorInput,
   UpdateChannelMonitorTemplateInput,
 } from "@/lib/types/channelMonitors";
+
+export type { ChannelMonitor, ChannelMonitorLatestSummary } from "@/lib/types/channelMonitors";
 import type {
   AppSettings,
   CcswitchImportResult,
@@ -61,6 +64,11 @@ import type {
   StationInput,
   StationUpdateInput,
 } from "@/lib/types/stations";
+import type {
+  StationAssetsReadModelEnvelope,
+  StationAssetsRevision,
+  StationDetailReadModelEnvelope,
+} from "@/lib/types/stationAssets";
 import type {
   CreateLocalStationKeyFromRemoteResult,
   CreateRemoteStationKeyInput,
@@ -164,6 +172,10 @@ export type SettingsDomainClient = {
 
 export type StationsDomainClient = {
   listStations(): Promise<Station[]>;
+  loadStationAssets(): Promise<StationAssetsReadModelEnvelope>;
+  loadStationDetail(stationId: string): Promise<StationDetailReadModelEnvelope>;
+  getStationDetailRevision(stationId: string): Promise<StationAssetsRevision>;
+  getStationAssetsRevision(): Promise<StationAssetsRevision>;
   createStation(input: StationInput): Promise<Station>;
   updateStation(input: StationUpdateInput): Promise<Station>;
   deleteStation(id: string): Promise<void>;
@@ -333,7 +345,10 @@ export type RoutingDomainClient = {
 
 export type ChannelMonitoringWorkspace = {
   monitors: ChannelMonitor[];
-  statusWorkspace: ChannelStatusWorkspace;
+  /** @deprecated Split latest-summary query is the active management-page path. */
+  latestSummary?: ChannelMonitorLatestSummary[];
+  /** @deprecated Aggregate workspace is retained only for rollback-compatible callers. */
+  statusWorkspace?: ChannelStatusWorkspace;
   stations: Station[];
   keyPoolItems: KeyPoolItem[];
   templates: ChannelMonitorRequestTemplate[];
@@ -355,6 +370,7 @@ export type ChannelsDomainClient = {
   updateChannelMonitorTemplate(input: UpdateChannelMonitorTemplateInput): Promise<ChannelMonitorRequestTemplate>;
   duplicateChannelMonitorTemplate(id: string): Promise<ChannelMonitorRequestTemplate>;
   deleteChannelMonitorTemplate(id: string): Promise<void>;
+  loadChannelMonitorLatestSummary(): Promise<ChannelMonitorLatestSummary[]>;
   loadChannelMonitoringWorkspace(): Promise<ChannelMonitoringWorkspace>;
   loadChannelStatusWorkspace(input?: ChannelStatusWorkspaceInput): Promise<ChannelStatusWorkspace>;
 };

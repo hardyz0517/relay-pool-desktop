@@ -462,6 +462,12 @@ fn fixture_run() -> CollectorRunResult {
             message: "Collection completed.".into(),
             status: "checked".into(),
         }],
+        receipt: crate::models::collector::MutationReceipt::for_scope(
+            "collector-operation-fixture",
+            1_700_000_000_000,
+            "station_collection:station-1",
+            3,
+        ),
     }
 }
 

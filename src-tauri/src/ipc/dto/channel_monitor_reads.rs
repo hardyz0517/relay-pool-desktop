@@ -6,8 +6,9 @@ use crate::models::{
     monitoring::{
         ChannelMonitorAttemptHistoryInput, ChannelMonitorAttemptPage,
         ChannelMonitorExecutionDetail, ChannelMonitorExecutionIdInput,
-        ChannelMonitorExecutionListInput, ChannelMonitorExecutionPage, ChannelStatusWorkspaceInput,
-        MonitoringCapabilityCatalog, RunChannelMonitorNowInputV2, RunChannelMonitorReceipt,
+        ChannelMonitorExecutionListInput, ChannelMonitorExecutionPage, ChannelMonitorLatestSummary,
+        ChannelStatusWorkspaceInput, MonitoringCapabilityCatalog, RunChannelMonitorNowInputV2,
+        RunChannelMonitorReceipt,
     },
 };
 
@@ -17,6 +18,7 @@ const MAX_ID_BYTES: usize = 128;
 
 pub type ChannelMonitorDto = ChannelMonitor;
 pub type ChannelMonitorRequestTemplateDto = ChannelMonitorRequestTemplate;
+pub type ChannelMonitorLatestSummaryDto = ChannelMonitorLatestSummary;
 pub type ChannelStatusWorkspaceInputDto = ChannelStatusWorkspaceInput;
 pub type ChannelMonitorExecutionIdInputDto = ChannelMonitorExecutionIdInput;
 pub type ChannelMonitorExecutionListInputDto = ChannelMonitorExecutionListInput;
@@ -228,6 +230,7 @@ pub(crate) fn serialization_fixtures() -> Vec<Value> {
     vec![
         serde_json::json!({"command":"list_channel_monitors","input":{},"output":[monitor]}),
         serde_json::json!({"command":"load_channel_status_workspace","input":{"window":"last24h","timezoneId":"UTC","limit":50},"output":fixture_workspace_v2()}),
+        serde_json::json!({"command":"load_channel_monitor_latest_summary","input":{},"output":Vec::<ChannelMonitorLatestSummaryDto>::new()}),
         serde_json::json!({"command":"list_channel_monitor_templates","input":{},"output":[fixture_template()]}),
     ]
 }

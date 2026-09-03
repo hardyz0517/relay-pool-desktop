@@ -125,6 +125,7 @@ pub const REGISTERED_TYPES: &[TypeDescriptor] = &[
     station_published_status::STATION_PUBLISHED_STATUS_TYPE,
     station_keys::STATION_KEY_TYPE,
     stations::STATION_TYPE,
+    stations::STATION_ASSETS_TYPE,
     updater_data_recovery::UPDATER_DATA_RECOVERY_TYPE,
     TypeDescriptor {
         name: "RuntimeContractInfo",

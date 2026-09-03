@@ -112,6 +112,10 @@ export class DemoBackend implements BackendClient {
   };
   readonly stations: BackendClient["stations"] = {
     listStations: () => this.rejectUnsupported("stations"),
+    loadStationAssets: () => this.rejectUnsupported("stations.assets"),
+    loadStationDetail: (_stationId: string) => this.rejectUnsupported("stations.detail"),
+    getStationDetailRevision: (_stationId: string) => this.rejectUnsupported("stations.detail"),
+    getStationAssetsRevision: () => this.rejectUnsupported("stations.assets"),
     createStation: () => this.rejectUnsupported("stations"),
     updateStation: () => this.rejectUnsupported("stations"),
     deleteStation: (_id: string) => this.rejectUnsupported("stations"),
@@ -273,6 +277,7 @@ export class DemoBackend implements BackendClient {
     updateChannelMonitorTemplate: () => this.rejectUnsupported("channels"),
     duplicateChannelMonitorTemplate: (_id: string) => this.rejectUnsupported("channels"),
     deleteChannelMonitorTemplate: (_id: string) => this.rejectUnsupported("channels"),
+    loadChannelMonitorLatestSummary: () => this.rejectUnsupported("channels"),
     loadChannelMonitoringWorkspace: () => this.rejectUnsupported("channels"),
     loadChannelStatusWorkspace: () => this.rejectUnsupported("channels"),
   };

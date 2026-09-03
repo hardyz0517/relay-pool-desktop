@@ -46,6 +46,8 @@ import {
   getCaptureSessionStatus as getCaptureSessionStatusBinding,
   getChannelMonitorExecution as getChannelMonitorExecutionBinding,
   getLatestCollectorSnapshot as getLatestCollectorSnapshotBinding,
+  getStationAssetsRevision as getStationAssetsRevisionBinding,
+  getStationDetailRevision as getStationDetailRevisionBinding,
   getCommonLoginPassword as getCommonLoginPasswordBinding,
   getRemoteKeyCapability as getRemoteKeyCapabilityBinding,
   getDataStoreStartupState as getDataStoreStartupStateBinding,
@@ -95,6 +97,7 @@ import {
   loadDashboardCumulativeRequestMetrics as loadDashboardCumulativeRequestMetricsBinding,
   loadDashboardLiveRequestMetrics as loadDashboardLiveRequestMetricsBinding,
   loadChannelStatusWorkspace as loadChannelStatusWorkspaceBinding,
+  loadChannelMonitorLatestSummary as loadChannelMonitorLatestSummaryBinding,
   loadPricingComparisonWorkspace as loadPricingComparisonWorkspaceBinding,
   loadPricingGroupMonitorStatus as loadPricingGroupMonitorStatusBinding,
   loadRoutingRuntimeOverlay as loadRoutingRuntimeOverlayBinding,
@@ -125,6 +128,8 @@ import {
   listStationGroupOptions as listStationGroupOptionsBinding,
   listStationKeys as listStationKeysBinding,
   listStations as listStationsBinding,
+  loadStationAssets as loadStationAssetsBinding,
+  loadStationDetail as loadStationDetailBinding,
   locateDataStoreCandidate as locateDataStoreCandidateBinding,
   openExternalUrl as openExternalUrlBinding,
   openDataStoreBackupDir as openDataStoreBackupDirBinding,
@@ -240,6 +245,30 @@ export class DesktopBackend implements BackendClient {
   };
   readonly stations = {
     listStations: () => listStationsBinding().then((stations) => stations.map(normalizeStation)),
+    loadStationAssets: () => loadStationAssetsBinding().then((envelope) => ({
+      ...envelope,
+      data: {
+        rows: envelope.data.rows.map((row) => ({
+          ...row,
+          station: normalizeStation(row.station),
+        })),
+      },
+    })),
+    loadStationDetail: (stationId: string) => loadStationDetailBinding({ stationId }).then((envelope) => ({
+      ...envelope,
+      data: {
+        ...envelope.data,
+        asset: {
+          ...envelope.data.asset,
+          station: normalizeStation(envelope.data.asset.station),
+        },
+        groupBindings: envelope.data.groupBindings.map(normalizeGroupBinding),
+        groupRates: envelope.data.groupRates.map(normalizeGroupRateRecord),
+        incidents: envelope.data.incidents.map(normalizeStationDetailIncident),
+      },
+    })),
+    getStationDetailRevision: (stationId: string) => getStationDetailRevisionBinding({ stationId }),
+    getStationAssetsRevision: () => getStationAssetsRevisionBinding(),
     createStation: (input: Parameters<BackendClient["stations"]["createStation"]>[0]) =>
       createStationBinding(toCreateStationDto(input)).then(normalizeStation),
     updateStation: (input: Parameters<BackendClient["stations"]["updateStation"]>[0]) =>
@@ -582,7 +611,12 @@ export class DesktopBackend implements BackendClient {
     ) => updateChannelMonitorTemplateBinding(input),
     duplicateChannelMonitorTemplate: (id: string) => duplicateChannelMonitorTemplateBinding({ id }),
     deleteChannelMonitorTemplate: (id: string) => deleteChannelMonitorTemplateBinding({ id }),
+    loadChannelMonitorLatestSummary: () => loadChannelMonitorLatestSummaryBinding({}),
     loadChannelMonitoringWorkspace: async () => {
+      // Keep the aggregate workspace intact as a rollback-compatible legacy
+      // client. Active pages use the split canonical queries below; callers
+      // that still depend on this method must continue receiving the full
+      // status workspace shape until that path is retired deliberately.
       const [monitors, statusWorkspace, stations, keyPoolItems, templates] = await Promise.all([
         listChannelMonitorsBinding(),
         loadChannelStatusWorkspaceBinding({ limit: 500 }),
@@ -735,6 +769,19 @@ function normalizeAlertingIncident(
   };
 }
 
+function normalizeStationDetailIncident(
+  incident: Awaited<ReturnType<typeof loadStationDetailBinding>>["data"]["incidents"][number],
+): Awaited<ReturnType<BackendClient["stations"]["loadStationDetail"]>>["data"]["incidents"][number] {
+  return {
+    ...incident,
+    severity: normalizeAlertSeverity(incident.severity),
+  };
+}
+
+function normalizeAlertSeverity(value: string) {
+  return value === "critical" || value === "warning" ? value : "info";
+}
+
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string) {
   return new Promise<T>((resolve, reject) => {
     const timer = window.setTimeout(() => reject(new Error(message)), timeoutMs);
@@ -787,7 +834,9 @@ function normalizeUpdateStationKeyInput(
 }
 
 function normalizeGroupBinding(
-  binding: Awaited<ReturnType<typeof upsertStationGroupBindingBinding>>,
+  binding:
+    | Awaited<ReturnType<typeof upsertStationGroupBindingBinding>>
+    | Awaited<ReturnType<typeof listStationGroupBindingsBinding>>[number],
 ): Awaited<ReturnType<BackendClient["groupFacts"]["upsertStationGroupBinding"]>> {
   return {
     ...binding,

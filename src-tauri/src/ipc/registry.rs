@@ -18,7 +18,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "5b9823053a6dd7dc5d57d8d6684db1fb0ab771ec22950a18514d11d36fedaa8d";
+    "348427e08cd5ebf61dbdd6042f2808e8b964834fb0c666e68f72bdca54099793";
 
 #[cfg_attr(
     not(test),
@@ -102,6 +102,10 @@ macro_rules! ipc_command_registry {
             get_portable_migration_operation => $crate::commands::data_migration::get_portable_migration_operation,
             get_portable_import_recovery_state => $crate::commands::data_migration::get_portable_import_recovery_state,
             list_stations => $crate::commands::stations::list_stations,
+            load_station_assets => $crate::commands::stations::load_station_assets,
+            load_station_detail => $crate::commands::stations::load_station_detail,
+            get_station_detail_revision => $crate::commands::stations::get_station_detail_revision,
+            get_station_assets_revision => $crate::commands::stations::get_station_assets_revision,
             create_station => $crate::commands::stations::create_station,
             update_station => $crate::commands::stations::update_station,
             delete_station => $crate::commands::stations::delete_station,
@@ -175,6 +179,7 @@ macro_rules! ipc_command_registry {
             get_request_decision_trace => $crate::commands::routing_health::get_request_decision_trace,
             list_channel_monitors => $crate::commands::channel_monitoring::list_channel_monitors,
             load_channel_status_workspace => $crate::commands::channel_status::load_channel_status_workspace,
+            load_channel_monitor_latest_summary => $crate::commands::channel_status::load_channel_monitor_latest_summary,
             list_channel_monitor_executions => $crate::commands::channel_status::list_channel_monitor_executions,
             get_channel_monitor_execution => $crate::commands::channel_status::get_channel_monitor_execution,
             list_channel_monitor_attempts => $crate::commands::channel_status::list_channel_monitor_attempts,
@@ -375,6 +380,16 @@ fn command_contract(name: &str) -> CommandContract {
             migrated_mutation("OpenExternalUrlInputDto", "unit", "non_idempotent", true)
         }
         "list_stations" => migrated_read("EmptyInputDto", "Vec<StationDto>"),
+        "load_station_assets" => migrated_read(
+            "EmptyInputDto",
+            "ReadModelEnvelope<StationAssetsReadModelDto>",
+        ),
+        "load_station_detail" => migrated_read(
+            "StationIdInputDto",
+            "ReadModelEnvelope<StationDetailReadModelDto>",
+        ),
+        "get_station_detail_revision" => migrated_read("StationIdInputDto", "ReadModelRevisionDto"),
+        "get_station_assets_revision" => migrated_read("EmptyInputDto", "ReadModelRevisionDto"),
         "update_settings" => {
             migrated_mutation("UpdateSettingsInputDto", "SettingsDto", "idempotent", false)
         }
@@ -701,6 +716,9 @@ fn command_contract(name: &str) -> CommandContract {
             "ChannelStatusWorkspaceInputDto",
             "ChannelStatusWorkspaceDto",
         ),
+        "load_channel_monitor_latest_summary" => {
+            migrated_read("EmptyInputDto", "ChannelMonitorLatestSummaryDto[]")
+        }
         "get_station_published_status_workspace" => migrated_read(
             "StationPublishedStatusWorkspaceInputDto",
             "StationPublishedStatusWorkspaceDto",
@@ -1219,6 +1237,7 @@ fn pilot_serialization_fixture() -> String {
         serde_json::json!({"command": "delete_station", "input": delete_station, "output": null}),
         serde_json::json!({"command": "reorder_stations", "input": reorder_stations, "output": [station]}),
     ];
+    commands.extend(super::dto::stations::station_assets_serialization_fixtures());
     commands.extend(super::dto::station_keys::serialization_fixtures());
     commands.extend(super::dto::request_logs::serialization_fixtures());
     commands.extend(super::dto::collector_facts::serialization_fixtures());
@@ -1269,6 +1288,30 @@ fn render_typescript(contract_hash: &str) -> String {
         .replace(
             r#"return invokeCommand<StationDto>("create_station", { input });"#,
             r#"return invokeNonIdempotent<StationDto>("create_station", { input });"#,
+        )
+        .replace(
+            r#"export function listStations(input: EmptyInputDto = {}): Promise<StationDto[]> {
+  return invokeCommand<StationDto[]>("list_stations", { input });
+}"#,
+            r#"export function listStations(input: EmptyInputDto = {}): Promise<StationDto[]> {
+  return invokeCommand<StationDto[]>("list_stations", { input });
+}
+
+export function loadStationAssets(input: EmptyInputDto = {}): Promise<ReadModelEnvelope<StationAssetsReadModelDto>> {
+  return invokeCommand<ReadModelEnvelope<StationAssetsReadModelDto>>("load_station_assets", { input });
+}
+
+export function loadStationDetail(input: StationIdInputDto): Promise<ReadModelEnvelope<StationDetailReadModelDto>> {
+  return invokeCommand<ReadModelEnvelope<StationDetailReadModelDto>>("load_station_detail", { input });
+}
+
+export function getStationDetailRevision(input: StationIdInputDto): Promise<ReadModelRevisionDto> {
+  return invokeCommand<ReadModelRevisionDto>("get_station_detail_revision", { input });
+}
+
+export function getStationAssetsRevision(input: EmptyInputDto = {}): Promise<ReadModelRevisionDto> {
+  return invokeCommand<ReadModelRevisionDto>("get_station_assets_revision", { input });
+}"#,
         )
         .replace(
             r#"export function listModelAliases(input: EmptyInputDto = {}): Promise<ModelAliasDto[]> {
@@ -1502,6 +1545,10 @@ export function deleteChannelMonitorTemplate(input: ChannelMonitorMutationIdInpu
 
 export function loadChannelStatusWorkspace(input: ChannelStatusWorkspaceInputDto = {}): Promise<ChannelStatusWorkspaceDto> {
   return invokeCommand<ChannelStatusWorkspaceDto>("load_channel_status_workspace", { input });
+}
+
+export function loadChannelMonitorLatestSummary(input: EmptyInputDto = {}): Promise<ChannelMonitorLatestSummaryDto[]> {
+  return invokeCommand<ChannelMonitorLatestSummaryDto[]>("load_channel_monitor_latest_summary", { input });
 }
 
 export function getStationPublishedStatusWorkspace(input: StationPublishedStatusWorkspaceInputDto): Promise<StationPublishedStatusWorkspaceDto> {
@@ -2090,6 +2137,10 @@ mod tests {
         assert_eq!(names.len(), original_len);
         assert!(names.contains(&"get_settings"));
         assert!(names.contains(&"list_stations"));
+        assert!(names.contains(&"load_station_assets"));
+        assert!(names.contains(&"load_station_detail"));
+        assert!(names.contains(&"get_station_detail_revision"));
+        assert!(names.contains(&"get_station_assets_revision"));
         assert!(names.contains(&"get_runtime_contract_info"));
     }
 
@@ -2104,6 +2155,10 @@ mod tests {
             "get_runtime_contract_info",
             "get_settings",
             "list_stations",
+            "load_station_assets",
+            "load_station_detail",
+            "get_station_detail_revision",
+            "get_station_assets_revision",
             "update_settings",
             "create_station",
             "update_station",

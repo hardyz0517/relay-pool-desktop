@@ -38,8 +38,17 @@ export type CollectorEventDto = {
   eventType: string; message: string; status: string;
 };
 
+export type MutationRevisionDto = { scope: string; revision: number };
+
+export type MutationReceiptDto = {
+  mutationId: string;
+  committedAtMs: number;
+  affectedScopes: string[];
+  revisionVector: MutationRevisionDto[];
+};
+
 export type CollectorRunResultDto = {
-  snapshot: CollectorSnapshotDto; events: CollectorEventDto[];
+  snapshot: CollectorSnapshotDto; events: CollectorEventDto[]; receipt: MutationReceiptDto;
 };
 
 export type StationLoginTestInputDto = {

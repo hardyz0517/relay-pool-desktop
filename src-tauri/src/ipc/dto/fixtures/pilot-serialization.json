@@ -33,9 +33,11 @@
           "apiBaseUrl": "https://provider.invalid/v1",
           "apiKeyMasked": "sk-fixture-...redacted",
           "apiKeyPresent": true,
+          "authorizationSummary": null,
           "balanceCny": null,
           "balanceRaw": null,
           "collectionIntervalMinutes": 5,
+          "collectionSummary": null,
           "collectorProxyMode": "inherit",
           "collectorProxyUrl": null,
           "createdAt": "2026-01-01T00:00:00Z",
@@ -118,9 +120,11 @@
         "apiBaseUrl": "https://provider.invalid/v1",
         "apiKeyMasked": "sk-fixture-...redacted",
         "apiKeyPresent": true,
+        "authorizationSummary": null,
         "balanceCny": null,
         "balanceRaw": null,
         "collectionIntervalMinutes": 5,
+        "collectionSummary": null,
         "collectorProxyMode": "inherit",
         "collectorProxyUrl": null,
         "createdAt": "2026-01-01T00:00:00Z",
@@ -163,9 +167,11 @@
         "apiBaseUrl": "https://provider.invalid/v1",
         "apiKeyMasked": "sk-fixture-...redacted",
         "apiKeyPresent": true,
+        "authorizationSummary": null,
         "balanceCny": null,
         "balanceRaw": null,
         "collectionIntervalMinutes": 5,
+        "collectionSummary": null,
         "collectorProxyMode": "inherit",
         "collectorProxyUrl": null,
         "createdAt": "2026-01-01T00:00:00Z",
@@ -206,9 +212,11 @@
           "apiBaseUrl": "https://provider.invalid/v1",
           "apiKeyMasked": "sk-fixture-...redacted",
           "apiKeyPresent": true,
+          "authorizationSummary": null,
           "balanceCny": null,
           "balanceRaw": null,
           "collectionIntervalMinutes": 5,
+          "collectionSummary": null,
           "collectorProxyMode": "inherit",
           "collectorProxyUrl": null,
           "createdAt": "2026-01-01T00:00:00Z",
@@ -230,6 +238,135 @@
           "websiteUrl": "https://provider.invalid"
         }
       ]
+    },
+    {
+      "command": "load_station_assets",
+      "input": {},
+      "output": {
+        "data": {
+          "rows": []
+        },
+        "domainRevision": 7,
+        "generatedAtMs": 1767225600000,
+        "page": {
+          "limit": 500,
+          "nextCursor": null,
+          "returned": 0
+        },
+        "schemaVersion": 1
+      }
+    },
+    {
+      "command": "get_station_assets_revision",
+      "input": {},
+      "output": {
+        "revision": 7,
+        "scope": "read_model:station_assets"
+      }
+    },
+    {
+      "command": "load_station_detail",
+      "input": {
+        "stationId": "station-fixture"
+      },
+      "output": {
+        "data": {
+          "asset": {
+            "authorizationSummary": {
+              "credentialRevision": 0,
+              "reasonCode": "projection_missing",
+              "revision": 1,
+              "status": "unknown"
+            },
+            "collectionSummary": {
+              "reasonCodes": [
+                "projection_missing"
+              ],
+              "revision": 1,
+              "status": "not_collected"
+            },
+            "groupIdentityHashes": [],
+            "keys": [],
+            "station": {
+              "apiBaseUrl": "https://provider.invalid/v1",
+              "apiKeyMasked": "sk-fixture-...redacted",
+              "apiKeyPresent": true,
+              "balanceCny": null,
+              "balanceRaw": null,
+              "collectionIntervalMinutes": 30,
+              "collectorProxyMode": "inherit",
+              "collectorProxyUrl": null,
+              "createdAt": "2026-01-01T00:00:00Z",
+              "creditPerCny": 1.0,
+              "enabled": true,
+              "endpointRevision": 1,
+              "id": "station-fixture",
+              "keyCount": 0,
+              "lastCheckedAt": null,
+              "lastPricingFetchedAt": null,
+              "latencyMs": null,
+              "lowBalanceThresholdCny": 15.0,
+              "name": "Fixture Station",
+              "note": null,
+              "priority": 0,
+              "stationType": "newapi",
+              "status": "unchecked",
+              "updatedAt": "2026-01-01T00:00:00Z",
+              "websiteUrl": "https://provider.invalid"
+            }
+          },
+          "balances": [],
+          "collectorRuns": [],
+          "credentials": {
+            "accessTokenPresent": false,
+            "cookiePresent": false,
+            "lastLoginAt": null,
+            "loginError": null,
+            "loginStatus": "unknown",
+            "loginUsername": null,
+            "newapiUserId": null,
+            "passwordPresent": false,
+            "refreshTokenPresent": false,
+            "rememberPassword": false,
+            "sessionExpiresAt": null,
+            "sessionSource": "none",
+            "sessionStatus": "missing",
+            "stationId": "station-fixture",
+            "tokenExpiresAt": null,
+            "tokenRefreshedAt": null,
+            "updatedAt": null
+          },
+          "groupBindings": [],
+          "groupRates": [],
+          "incidents": [],
+          "latestSnapshot": null,
+          "limits": {
+            "balances": 200,
+            "collectorRuns": 100,
+            "groupBindings": 500,
+            "groupRates": 500,
+            "incidents": 100
+          }
+        },
+        "domainRevision": 7,
+        "generatedAtMs": 1767225600000,
+        "page": {
+          "limit": 1,
+          "nextCursor": null,
+          "returned": 1
+        },
+        "schemaVersion": 1
+      }
+    },
+    {
+      "command": "get_station_detail_revision",
+      "input": {
+        "stationId": "station-fixture"
+      },
+      "output": {
+        "revision": 7,
+        "scope": "read_model:station_detail:station-fixture"
+      }
     },
     {
       "command": "list_station_keys",
@@ -1633,6 +1770,11 @@
       }
     },
     {
+      "command": "load_channel_monitor_latest_summary",
+      "input": {},
+      "output": []
+    },
+    {
       "command": "list_channel_monitor_templates",
       "input": {},
       "output": [
@@ -1918,6 +2060,19 @@
             "status": "checked"
           }
         ],
+        "receipt": {
+          "affectedScopes": [
+            "station_collection:station-1"
+          ],
+          "committedAtMs": 1700000000000,
+          "mutationId": "collector-operation-fixture",
+          "revisionVector": [
+            {
+              "revision": 3,
+              "scope": "station_collection:station-1"
+            }
+          ]
+        },
         "snapshot": {
           "createdAt": "1700000000000",
           "endpointRevision": 1,
@@ -1948,6 +2103,19 @@
             "status": "checked"
           }
         ],
+        "receipt": {
+          "affectedScopes": [
+            "station_collection:station-1"
+          ],
+          "committedAtMs": 1700000000000,
+          "mutationId": "collector-operation-fixture",
+          "revisionVector": [
+            {
+              "revision": 3,
+              "scope": "station_collection:station-1"
+            }
+          ]
+        },
         "snapshot": {
           "createdAt": "1700000000000",
           "endpointRevision": 1,
@@ -1978,6 +2146,19 @@
             "status": "checked"
           }
         ],
+        "receipt": {
+          "affectedScopes": [
+            "station_collection:station-1"
+          ],
+          "committedAtMs": 1700000000000,
+          "mutationId": "collector-operation-fixture",
+          "revisionVector": [
+            {
+              "revision": 3,
+              "scope": "station_collection:station-1"
+            }
+          ]
+        },
         "snapshot": {
           "createdAt": "1700000000000",
           "endpointRevision": 1,
@@ -2008,6 +2189,19 @@
             "status": "checked"
           }
         ],
+        "receipt": {
+          "affectedScopes": [
+            "station_collection:station-1"
+          ],
+          "committedAtMs": 1700000000000,
+          "mutationId": "collector-operation-fixture",
+          "revisionVector": [
+            {
+              "revision": 3,
+              "scope": "station_collection:station-1"
+            }
+          ]
+        },
         "snapshot": {
           "createdAt": "1700000000000",
           "endpointRevision": 1,
@@ -2039,6 +2233,19 @@
             "status": "checked"
           }
         ],
+        "receipt": {
+          "affectedScopes": [
+            "station_collection:station-1"
+          ],
+          "committedAtMs": 1700000000000,
+          "mutationId": "collector-operation-fixture",
+          "revisionVector": [
+            {
+              "revision": 3,
+              "scope": "station_collection:station-1"
+            }
+          ]
+        },
         "snapshot": {
           "createdAt": "1700000000000",
           "endpointRevision": 1,
@@ -2082,6 +2289,19 @@
             "status": "checked"
           }
         ],
+        "receipt": {
+          "affectedScopes": [
+            "station_collection:station-1"
+          ],
+          "committedAtMs": 1700000000000,
+          "mutationId": "collector-operation-fixture",
+          "revisionVector": [
+            {
+              "revision": 3,
+              "scope": "station_collection:station-1"
+            }
+          ]
+        },
         "snapshot": {
           "createdAt": "1700000000000",
           "endpointRevision": 1,

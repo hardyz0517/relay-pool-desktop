@@ -2,7 +2,7 @@
   "schema_version": 1,
   "generator_version": 1,
   "ipc_contract_version": 1,
-  "contract_hash": "5b9823053a6dd7dc5d57d8d6684db1fb0ab771ec22950a18514d11d36fedaa8d",
+  "contract_hash": "348427e08cd5ebf61dbdd6042f2808e8b964834fb0c666e68f72bdca54099793",
   "commands": [
     {
       "name": "activate_data_store_candidate",
@@ -863,10 +863,32 @@
       "runtime_validation": "rust_dto_pre_application"
     },
     {
+      "name": "get_station_assets_revision",
+      "transport": "ordinary",
+      "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
+      "output_schema_hash": "0ca4bfe84670b19e4f4eb2b44455dad7a29fcf864a5105b5ed81e861f72a95aa",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "read",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
       "name": "get_station_credentials",
       "transport": "ordinary",
       "input_schema_hash": "ca6ff4935fb83b44bb017eb5decb2e38a66654fda36cdd7df87a8747ecebac82",
       "output_schema_hash": "418227d3e18f931014f0b9252fffe740d3278c22870e5809a425da89c13cd779",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "read",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
+      "name": "get_station_detail_revision",
+      "transport": "ordinary",
+      "input_schema_hash": "ca6ff4935fb83b44bb017eb5decb2e38a66654fda36cdd7df87a8747ecebac82",
+      "output_schema_hash": "0ca4bfe84670b19e4f4eb2b44455dad7a29fcf864a5105b5ed81e861f72a95aa",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
       "transport_retry": false,
@@ -1292,6 +1314,17 @@
       "runtime_validation": "rust_dto_pre_application"
     },
     {
+      "name": "load_channel_monitor_latest_summary",
+      "transport": "ordinary",
+      "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
+      "output_schema_hash": "1a72b55e6d04ec637b8e8ac9e287aee427b88e742f6cd29527e857f93d25f777",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "read",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
       "name": "load_channel_status_workspace",
       "transport": "ordinary",
       "input_schema_hash": "211af9f08f0c0d01249be8d5c078568d6cf0943ca6ba74a1358905545973c0b4",
@@ -1373,6 +1406,28 @@
       "transport": "ordinary",
       "input_schema_hash": "50103778c6947ba2932443f36e722dc2d61a8a84a9c002553ea66e402e9fb81a",
       "output_schema_hash": "3872acc762d101d02635252e62ad2e53882baa51e63d56d375da6ed19f29c0ce",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "read",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
+      "name": "load_station_assets",
+      "transport": "ordinary",
+      "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
+      "output_schema_hash": "786e72c925813a9d88991e9fcafe64c7f92345b439638d9d4d32017d3fcdc05c",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "read",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
+      "name": "load_station_detail",
+      "transport": "ordinary",
+      "input_schema_hash": "ca6ff4935fb83b44bb017eb5decb2e38a66654fda36cdd7df87a8747ecebac82",
+      "output_schema_hash": "61d60f6391668f20d522a6aca923efd8f48f9556de7bc024c943f5a5cfe8a9da",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
       "transport_retry": false,
@@ -2186,6 +2241,6 @@
   "streaming_surfaces": [],
   "evidence": {
     "kind": "compiled-rust-registry",
-    "serialization_fixture_hash": "10f33c9da1267ad9bb5f49d73d9e06193673c211c1cb5b471715a7ae12adc9ad"
+    "serialization_fixture_hash": "a968e151d212007c681a48fdac5d3242bd23b26dd59b887158e50ed60ad0d39a"
   }
 }

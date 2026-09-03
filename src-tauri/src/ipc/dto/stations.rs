@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 
 use std::collections::HashSet;
 
+use crate::models::routing_read_models::{
+    ReadModelEnvelope, StationAssetsReadModel, StationDetailReadModel,
+};
 use crate::models::stations::{CreateStationInput, Station, UpdateStationInput};
 
 use super::{invalid_input, TypeDescriptor};
@@ -376,6 +379,23 @@ fn normalize_optional(value: Option<String>) -> Option<String> {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+pub struct StationCollectionSummaryDto {
+    pub status: String,
+    pub reason_codes: Vec<String>,
+    pub revision: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct StationAuthorizationSummaryDto {
+    pub status: String,
+    pub credential_revision: i64,
+    pub reason_code: Option<String>,
+    pub revision: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct StationDto {
     pub id: String,
     pub name: String,
@@ -402,10 +422,68 @@ pub struct StationDto {
     pub note: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    /// Typed projections are additive during authority cutover. They are
+    /// optional so older clients and recovery-mode fixtures remain readable.
+    #[serde(default)]
+    pub collection_summary: Option<StationCollectionSummaryDto>,
+    #[serde(default)]
+    pub authorization_summary: Option<StationAuthorizationSummaryDto>,
+}
+
+pub(crate) type StationAssetsReadModelDto = StationAssetsReadModel;
+pub(crate) type StationAssetsReadModelEnvelopeDto = ReadModelEnvelope<StationAssetsReadModelDto>;
+pub(crate) type StationDetailReadModelDto = StationDetailReadModel;
+pub(crate) type StationDetailReadModelEnvelopeDto = ReadModelEnvelope<StationDetailReadModelDto>;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadModelRevisionDto {
+    pub scope: String,
+    pub revision: i64,
+}
+
+impl ReadModelRevisionDto {
+    pub(crate) fn station_assets(revision: i64) -> Self {
+        Self {
+            scope: "read_model:station_assets".to_string(),
+            revision,
+        }
+    }
+
+    pub(crate) fn station_detail(station_id: &str, revision: i64) -> Self {
+        Self {
+            scope: format!("read_model:station_detail:{station_id}"),
+            revision,
+        }
+    }
 }
 
 impl From<Station> for StationDto {
     fn from(value: Station) -> Self {
+        let revision = value.endpoint_revision.max(1);
+        Self::from_station_with_summaries(
+            value,
+            StationCollectionSummaryDto {
+                status: "not_collected".to_string(),
+                reason_codes: vec!["projection_unavailable".to_string()],
+                revision,
+            },
+            StationAuthorizationSummaryDto {
+                status: "unknown".to_string(),
+                credential_revision: 0,
+                reason_code: Some("projection_unavailable".to_string()),
+                revision,
+            },
+        )
+    }
+}
+
+impl StationDto {
+    pub(crate) fn from_station_with_summaries(
+        value: Station,
+        collection_summary: StationCollectionSummaryDto,
+        authorization_summary: StationAuthorizationSummaryDto,
+    ) -> Self {
         Self {
             id: value.id,
             name: value.name,
@@ -432,6 +510,8 @@ impl From<Station> for StationDto {
             note: value.note,
             created_at: value.created_at,
             updated_at: value.updated_at,
+            collection_summary: Some(collection_summary),
+            authorization_summary: Some(authorization_summary),
         }
     }
 }
@@ -473,6 +553,19 @@ export type DeleteStationInputDto = { id: string };
 
 export type ReorderStationsInputDto = { stationIds: string[] };
 
+export type StationCollectionSummaryDto = {
+  status: string;
+  reasonCodes: string[];
+  revision: number;
+};
+
+export type StationAuthorizationSummaryDto = {
+  status: string;
+  credentialRevision: number;
+  reasonCode: string | null;
+  revision: number;
+};
+
 export type StationDto = {
   id: string;
   name: string;
@@ -499,8 +592,207 @@ export type StationDto = {
   note: string | null;
   createdAt: string;
   updatedAt: string;
+  collectionSummary?: StationCollectionSummaryDto | null;
+  authorizationSummary?: StationAuthorizationSummaryDto | null;
 };"#,
 };
+
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=ipc-dto-type-descriptor; owner=ipc; remove_when=descriptor is registered in production binding export"
+    )
+)]
+pub const STATION_ASSETS_TYPE: TypeDescriptor = TypeDescriptor {
+    name: "StationAssetsReadModelDto",
+    typescript: r#"export type ReadModelPageDto = {
+  limit: number;
+  returned: number;
+  nextCursor: string | null;
+};
+
+export type ReadModelEnvelope<T> = {
+  schemaVersion: number;
+  generatedAtMs: number;
+  domainRevision: number;
+  page: ReadModelPageDto;
+  data: T;
+};
+
+export type ReadModelRevisionDto = {
+  scope: string;
+  revision: number;
+};
+
+export type DomainRevisionVectorEntryDto = {
+  scope: string;
+  revision: number;
+};
+
+export type DomainRevisionNoticeDto = {
+  mutationId: string;
+  affectedScopes: string[];
+  revisionVector: DomainRevisionVectorEntryDto[];
+};
+
+export type StationAssetReadRowDto = {
+  station: StationDto;
+  keys: KeyPoolItemDto[];
+  groupIdentityHashes: string[];
+  collectionSummary: StationCollectionSummaryDto;
+  authorizationSummary: StationAuthorizationSummaryDto;
+};
+
+export type StationAssetsReadModelDto = {
+  rows: StationAssetReadRowDto[];
+};
+
+export type StationDetailLimitsDto = {
+  groupBindings: number;
+  groupRates: number;
+  collectorRuns: number;
+  balances: number;
+  incidents: number;
+};
+
+export type StationDetailIncidentDto = {
+  id: string;
+  eventType: string;
+  lifecycleState: string;
+  severity: string;
+  groupName: string | null;
+  stationId: string | null;
+  episodeNumber: number;
+  occurrenceCount: number;
+  lastSeenAtMs: number;
+};
+
+export type StationDetailReadModelDto = {
+  asset: StationAssetReadRowDto;
+  credentials: StationCredentialsDto;
+  groupBindings: StationGroupBindingDto[];
+  groupRates: GroupRateRecordDto[];
+  collectorRuns: CollectorRunDto[];
+  latestSnapshot: CollectorSnapshotDto | null;
+  balances: BalanceSnapshotDto[];
+  incidents: StationDetailIncidentDto[];
+  limits: StationDetailLimitsDto;
+};"#,
+};
+
+#[cfg(test)]
+pub(crate) fn station_assets_serialization_fixtures() -> Vec<serde_json::Value> {
+    vec![
+        serde_json::json!({
+            "command": "load_station_assets",
+            "input": {},
+            "output": {
+                "schemaVersion": 1,
+                "generatedAtMs": 1_767_225_600_000_i64,
+                "domainRevision": 7,
+                "page": { "limit": 500, "returned": 0, "nextCursor": null },
+                "data": { "rows": [] }
+            }
+        }),
+        serde_json::json!({
+            "command": "get_station_assets_revision",
+            "input": {},
+            "output": ReadModelRevisionDto::station_assets(7)
+        }),
+        serde_json::json!({
+            "command": "load_station_detail",
+            "input": { "stationId": "station-fixture" },
+            "output": {
+                "schemaVersion": 1,
+                "generatedAtMs": 1_767_225_600_000_i64,
+                "domainRevision": 7,
+                "page": { "limit": 1, "returned": 1, "nextCursor": null },
+                "data": {
+                    "asset": {
+                        "station": {
+                            "id": "station-fixture",
+                            "name": "Fixture Station",
+                            "stationType": "newapi",
+                            "websiteUrl": "https://provider.invalid",
+                            "apiBaseUrl": "https://provider.invalid/v1",
+                            "endpointRevision": 1,
+                            "collectorProxyMode": "inherit",
+                            "collectorProxyUrl": null,
+                            "apiKeyMasked": "sk-fixture-...redacted",
+                            "apiKeyPresent": true,
+                            "keyCount": 0,
+                            "enabled": true,
+                            "priority": 0,
+                            "creditPerCny": 1.0,
+                            "balanceRaw": null,
+                            "balanceCny": null,
+                            "lowBalanceThresholdCny": 15.0,
+                            "collectionIntervalMinutes": 30,
+                            "status": "unchecked",
+                            "latencyMs": null,
+                            "lastCheckedAt": null,
+                            "lastPricingFetchedAt": null,
+                            "note": null,
+                            "createdAt": "2026-01-01T00:00:00Z",
+                            "updatedAt": "2026-01-01T00:00:00Z"
+                        },
+                        "keys": [],
+                        "groupIdentityHashes": [],
+                        "collectionSummary": {
+                            "status": "not_collected",
+                            "reasonCodes": ["projection_missing"],
+                            "revision": 1
+                        },
+                        "authorizationSummary": {
+                            "status": "unknown",
+                            "credentialRevision": 0,
+                            "reasonCode": "projection_missing",
+                            "revision": 1
+                        }
+                    },
+                    "credentials": {
+                        "stationId": "station-fixture",
+                        "loginUsername": null,
+                        "passwordPresent": false,
+                        "accessTokenPresent": false,
+                        "refreshTokenPresent": false,
+                        "cookiePresent": false,
+                        "rememberPassword": false,
+                        "loginStatus": "unknown",
+                        "loginError": null,
+                        "lastLoginAt": null,
+                        "sessionStatus": "missing",
+                        "sessionExpiresAt": null,
+                        "newapiUserId": null,
+                        "tokenExpiresAt": null,
+                        "tokenRefreshedAt": null,
+                        "sessionSource": "none",
+                        "updatedAt": null
+                    },
+                    "groupBindings": [],
+                    "groupRates": [],
+                    "collectorRuns": [],
+                    "latestSnapshot": null,
+                    "balances": [],
+                    "incidents": [],
+                    "limits": {
+                        "groupBindings": 500,
+                        "groupRates": 500,
+                        "collectorRuns": 100,
+                        "balances": 200,
+                        "incidents": 100
+                    }
+                }
+            }
+        }),
+        serde_json::json!({
+            "command": "get_station_detail_revision",
+            "input": { "stationId": "station-fixture" },
+            "output": ReadModelRevisionDto::station_detail("station-fixture", 7)
+        }),
+    ]
+}
 
 #[cfg_attr(
     not(test),
@@ -536,6 +828,8 @@ pub(crate) fn fixture() -> StationDto {
         note: None,
         created_at: "2026-01-01T00:00:00Z".into(),
         updated_at: "2026-01-01T00:00:00Z".into(),
+        collection_summary: None,
+        authorization_summary: None,
     }
 }
 

@@ -75,13 +75,9 @@ export function normalizeStation(station: StationDto): Station {
       station.collectorProxyMode === "manual"
         ? station.collectorProxyMode
         : "inherit",
-    status:
-      station.status === "healthy" ||
-      station.status === "warning" ||
-      station.status === "error" ||
-      station.status === "disabled"
-        ? station.status
-        : "unchecked",
+    // Keep the transport field deterministic without reading the retired
+    // collection rollup. Current state lives in the typed summaries below.
+    status: station.enabled ? "unchecked" : "disabled",
   };
 }
 
