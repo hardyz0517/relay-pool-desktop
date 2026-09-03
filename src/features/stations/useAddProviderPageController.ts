@@ -35,6 +35,7 @@ import {
 import { readError } from "@/lib/errors";
 import { normalizeStationGroupOptions } from "@/lib/groupOptionViewModels";
 import { queryKeys } from "@/lib/query/queryKeys";
+import { invalidatePricingMonitoringQueries } from "@/lib/query/pricingMonitoringInvalidation";
 import { refreshRoutingQueries } from "@/lib/query/routingQuerySynchronization";
 import { discoverCreatedStationKeyModels } from "@/lib/stationKeyModelDiscovery";
 import type { RemoteKeyCapability, RemoteStationKey, StationKey } from "@/lib/types/stationKeys";
@@ -165,6 +166,7 @@ export function useAddProviderPageController({
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: queryKeys.stations }),
       queryClient.invalidateQueries({ queryKey: queryKeys.keyPool }),
+      invalidatePricingMonitoringQueries(queryClient),
       refreshRoutingQueries(queryClient),
     ]);
   }

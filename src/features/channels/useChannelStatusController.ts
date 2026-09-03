@@ -5,7 +5,6 @@ import {
   runChannelMonitorNow,
 } from "@/lib/api/channelMonitors";
 import {
-  channelMonitorExecutionsQueryOptions,
   channelStatusQueryOptions,
   currentStationBalanceSnapshotsQueryOptions,
 } from "@/lib/query/resourceQueries";
@@ -13,7 +12,6 @@ import { queryKeys } from "@/lib/query/queryKeys";
 import { invalidatePricingMonitoringQueries } from "@/lib/query/pricingMonitoringInvalidation";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import type {
-  ChannelMonitorExecutionListInput,
   ChannelStatusOutcome,
   ChannelStatusWorkspaceWindow,
 } from "@/lib/types/channelMonitors";
@@ -23,6 +21,7 @@ import {
   defaultChannelStatusFilters,
   defaultChannelStatusSort,
   type ChannelStatusFilters,
+  type ChannelStatusDisplayMode,
   type ChannelStatusRowView,
   type ChannelStatusSortModel,
 } from "./channelStatusViewModel";
@@ -34,7 +33,9 @@ import {
 export type ChannelStatusController = ReturnType<typeof useChannelStatusController>;
 export type ChannelStatusTestScope = "enabled" | "with_balance";
 
-export function useChannelStatusController() {
+export function useChannelStatusController(
+  displayMode: Exclude<ChannelStatusDisplayMode, "both"> = "table",
+) {
   const queryClient = useQueryClient();
   const [window, setWindowState] = useState<ChannelStatusWorkspaceWindow>(readChannelStatusWindow);
   const [filters, setFilters] = useState<ChannelStatusFilters>(defaultChannelStatusFilters);
@@ -51,17 +52,10 @@ export function useChannelStatusController() {
     [filters, sort, window],
   );
   const statusQuery = useActivityQuery(channelStatusQueryOptions(5_000, workspaceInput));
-  const balanceQuery = useActivityQuery(currentStationBalanceSnapshotsQueryOptions(5_000));
   const workspaceView = useMemo(
-    () => buildChannelStatusWorkspaceView(statusQuery.data),
-    [statusQuery.data],
+    () => buildChannelStatusWorkspaceView(statusQuery.data, displayMode),
+    [displayMode, statusQuery.data],
   );
-
-  const executionListInput = useMemo<ChannelMonitorExecutionListInput>(
-    () => (selectedExecutionId ? { limit: 50 } : { limit: 50 }),
-    [selectedExecutionId],
-  );
-  const executionsQuery = useActivityQuery(channelMonitorExecutionsQueryOptions(executionListInput));
 
   const runNowMutation = useMutation({
     mutationFn: async (row: ChannelStatusRowView) => {
@@ -78,58 +72,71 @@ export function useChannelStatusController() {
       await invalidateMonitoringQueries(queryClient);
     },
   });
+  const runNowMutate = runNowMutation.mutate;
+  const cancelMutate = cancelMutation.mutate;
+  const refetchStatus = statusQuery.refetch;
+
+  const runNow = useCallback((row: ChannelStatusRowView) => {
+    if (row.runningExecutionId) {
+      setSelectedExecutionId(row.runningExecutionId);
+      return;
+    }
+    runNowMutate(row);
+  }, [runNowMutate]);
+  const cancel = useCallback((executionId: string) => {
+    cancelMutate(executionId);
+  }, [cancelMutate]);
+  const setSearch = useCallback((value: string) => {
+    setFilters((current) => ({ ...current, search: value }));
+  }, []);
+  const setEnabled = useCallback((value: ChannelStatusFilters["enabled"]) => {
+    setFilters((current) => ({ ...current, enabled: value }));
+  }, []);
+  const setOutcome = useCallback((value: "all" | ChannelStatusOutcome) => {
+    setFilters((current) => ({ ...current, outcome: value }));
+  }, []);
+  const refresh = useCallback(async () => {
+    await refetchStatus({ throwOnError: true });
+  }, [refetchStatus]);
+
+  const testAll = useCallback(async (scope: ChannelStatusTestScope = "enabled") => {
+    if (batchTesting) return;
+    setBatchTesting(true);
+    try {
+      const snapshots = scope === "with_balance"
+        ? await queryClient.fetchQuery(currentStationBalanceSnapshotsQueryOptions())
+        : [];
+      const rows = workspaceView.rows.filter((row) => scope === "enabled"
+        ? row.enabled && !row.balancePaused
+        : hasCurrentBalance(row, snapshots));
+      if (rows.length === 0) return;
+      await Promise.allSettled(rows.map((row) => runChannelMonitorNow(row.monitorId)));
+      await invalidateMonitoringQueries(queryClient);
+      await refetchStatus({ throwOnError: true });
+    } finally {
+      setBatchTesting(false);
+    }
+  }, [batchTesting, queryClient, refetchStatus, workspaceView.rows]);
 
   return {
     window,
     setWindow,
     filters,
-    setSearch(value: string) {
-      setFilters((current) => ({ ...current, search: value }));
-    },
-    setEnabled(value: ChannelStatusFilters["enabled"]) {
-      setFilters((current) => ({ ...current, enabled: value }));
-    },
-    setOutcome(value: "all" | ChannelStatusOutcome) {
-      setFilters((current) => ({ ...current, outcome: value }));
-    },
+    setSearch,
+    setEnabled,
+    setOutcome,
     sort,
     setSort,
     workspaceInput,
     statusQuery,
     workspaceView,
-    executions: executionsQuery.data?.items ?? [],
-    executionsQuery,
     selectedExecutionId,
     setSelectedExecutionId,
     isRunningAction: batchTesting || runNowMutation.isPending || cancelMutation.isPending,
-    runNow(row: ChannelStatusRowView) {
-      if (row.runningExecutionId) {
-        setSelectedExecutionId(row.runningExecutionId);
-        return;
-      }
-      runNowMutation.mutate(row);
-    },
-    cancel(executionId: string) {
-      cancelMutation.mutate(executionId);
-    },
-    async testAll(scope: ChannelStatusTestScope = "enabled") {
-      if (batchTesting) return;
-      const rows = workspaceView.rows.filter((row) => scope === "enabled"
-        ? row.enabled && !row.balancePaused
-        : hasCurrentBalance(row, balanceQuery.data ?? []));
-      if (rows.length === 0) return;
-      setBatchTesting(true);
-      try {
-        await Promise.allSettled(rows.map((row) => runChannelMonitorNow(row.monitorId)));
-        await invalidateMonitoringQueries(queryClient);
-        await statusQuery.refetch({ throwOnError: true });
-      } finally {
-        setBatchTesting(false);
-      }
-    },
-    async refresh() {
-      await statusQuery.refetch({ throwOnError: true });
-    },
+    runNow,
+    cancel,
+    testAll,
+    refresh,
   };
 }
 

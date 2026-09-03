@@ -17,7 +17,7 @@ export function formatStationDisplayUrl(baseUrl: string) {
 }
 
 export function formatStationBalanceParts(row: StationAssetRow) {
-  const value = row.latestBalance?.value ?? row.station.balanceCny;
+  const value = row.latestBalance?.value ?? null;
   if (value == null) {
     return { amount: "未采集", currency: "" };
   }

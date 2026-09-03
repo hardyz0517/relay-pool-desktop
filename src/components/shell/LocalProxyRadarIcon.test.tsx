@@ -23,7 +23,24 @@ class IntersectionObserverStub {
 
   trigger(isIntersecting: boolean) {
     this.callback(
-      [{ isIntersecting, target: document.createElement("span") } as unknown as IntersectionObserverEntry],
+      [{
+        isIntersecting,
+        target: document.createElement("span"),
+        boundingClientRect: isIntersecting
+          ? { width: 24, height: 24, left: 0, right: 24, top: 0, bottom: 24 }
+          : { width: 24, height: 24, left: -48, right: -24, top: 0, bottom: 24 },
+      } as unknown as IntersectionObserverEntry],
+      this as unknown as IntersectionObserver,
+    );
+  }
+
+  triggerEmpty() {
+    this.callback([], this as unknown as IntersectionObserver);
+  }
+
+  triggerMalformed() {
+    this.callback(
+      [{ isIntersecting: false, target: document.createElement("span") } as unknown as IntersectionObserverEntry],
       this as unknown as IntersectionObserver,
     );
   }
@@ -79,15 +96,51 @@ describe("LocalProxyRadarIcon", () => {
     expect(icon.style.getPropertyValue("--local-proxy-globe-static-light")).toContain("routing-globe-static-24-light");
   });
 
+  it("keeps routing animation active when reduced motion is requested", () => {
+    vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: true })));
+
+    const icon = renderIcon(true);
+
+    expect(icon.classList.contains("local-proxy-globe--active")).toBe(true);
+    expect(icon.classList.contains("local-proxy-globe--paused")).toBe(false);
+    expect(icon.dataset.state).toBe("active");
+  });
+
   it("pauses and resumes when the icon leaves and re-enters the viewport", () => {
     const icon = renderIcon(true);
     const observer = IntersectionObserverStub.instances[0];
     expect(observer).toBeDefined();
     act(() => observer.trigger(false));
-    expect(icon.classList.contains("local-proxy-globe--active")).toBe(false);
+    expect(icon.classList.contains("local-proxy-globe--active")).toBe(true);
+    expect(icon.classList.contains("local-proxy-globe--paused")).toBe(true);
     expect(icon.dataset.visible).toBe("false");
     act(() => observer.trigger(true));
     expect(icon.classList.contains("local-proxy-globe--active")).toBe(true);
+    expect(icon.classList.contains("local-proxy-globe--paused")).toBe(false);
+    expect(icon.dataset.visible).toBe("true");
+  });
+
+  it("keeps an active animation when an observer callback has no entries", () => {
+    const icon = renderIcon(true);
+    const observer = IntersectionObserverStub.instances[0];
+    expect(observer).toBeDefined();
+
+    act(() => observer.triggerEmpty());
+
+    expect(icon.classList.contains("local-proxy-globe--active")).toBe(true);
+    expect(icon.classList.contains("local-proxy-globe--paused")).toBe(false);
+    expect(icon.dataset.visible).toBe("true");
+  });
+
+  it("ignores an observer entry without geometry until a complete entry arrives", () => {
+    const icon = renderIcon(true);
+    const observer = IntersectionObserverStub.instances[0];
+    expect(observer).toBeDefined();
+
+    act(() => observer.triggerMalformed());
+
+    expect(icon.classList.contains("local-proxy-globe--active")).toBe(true);
+    expect(icon.classList.contains("local-proxy-globe--paused")).toBe(false);
     expect(icon.dataset.visible).toBe("true");
   });
 
@@ -96,7 +149,12 @@ describe("LocalProxyRadarIcon", () => {
     const observer = IntersectionObserverStub.instances[0];
     Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
     act(() => document.dispatchEvent(new Event("visibilitychange")));
-    expect(icon.classList.contains("local-proxy-globe--active")).toBe(false);
+    expect(icon.classList.contains("local-proxy-globe--active")).toBe(true);
+    expect(icon.classList.contains("local-proxy-globe--paused")).toBe(true);
+    expect(icon.dataset.visible).toBe("false");
+
+    act(() => window.dispatchEvent(new Event("focus")));
+    expect(icon.classList.contains("local-proxy-globe--paused")).toBe(true);
     expect(icon.dataset.visible).toBe("false");
 
     act(() => root.unmount());

@@ -199,4 +199,46 @@ describe("PageVisibility policy", () => {
     expect(queryFn).toHaveBeenCalledTimes(1);
     queryClient.clear();
   });
+
+  it("revalidates a fresh cached query immediately when a retained page becomes active", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 60_000 } },
+    });
+    const queryFn = vi.fn(async () => "fresh");
+    queryClient.setQueryData(["retained-page"], "cached");
+
+    function Probe() {
+      useActivityQuery({
+        queryKey: ["retained-page"],
+        queryFn,
+      });
+      return null;
+    }
+
+    const renderWithVisibility = (state: "inactive" | "active") =>
+      root.render(
+        createElement(
+          QueryClientProvider,
+          {
+            client: queryClient,
+            children: createElement(
+              PageVisibilityProvider,
+              {
+                visibility: shellPageVisibilityForState(state),
+                children: createElement(Probe),
+              },
+            ),
+          },
+        ),
+      );
+
+    await act(async () => renderWithVisibility("inactive"));
+    await act(async () => {
+      renderWithVisibility("active");
+      await Promise.resolve();
+    });
+
+    expect(queryFn).toHaveBeenCalledTimes(1);
+    queryClient.clear();
+  });
 });

@@ -1,12 +1,14 @@
 import type { FormEvent, ReactNode } from "react";
 import { ShieldCheck } from "lucide-react";
 import { Button, Dialog, MaskedSecret, PropertyList, PropertyRow, SelectControl, StatusBadge } from "@/components/ui";
+import { currentStationBalanceFor } from "@/lib/projections/balanceFacts";
 import type { AlertingIncident } from "@/lib/types/alerting";
 import type { CollectorSnapshot } from "@/lib/types/collector";
 import type { CollectorRun } from "@/lib/types/collectorRuns";
+import type { BalanceSnapshot } from "@/lib/types/economics";
 import type { GroupRateRecord, StationGroupBinding } from "@/lib/types/groupFacts";
 import { stationKeyStatusLabels, type StationCredentials, type StationKey, type StationKeyStatus } from "@/lib/types/stationKeys";
-import { stationStatusLabels, stationTypeLabels, stationTypeOptions, type Station } from "@/lib/types/stations";
+import { stationTypeLabels, stationTypeOptions, type Station } from "@/lib/types/stations";
 import {
   stationEndpointOriginWarnings,
   type StationFormState,
@@ -19,6 +21,7 @@ import {
   formatNullableTime,
   groupBindingStatusLabel,
 } from "./displayModel";
+import { formatStationStatusLabel } from "../../stationDetailViewModels";
 
 export type DialogMode = "create" | "edit" | "detail" | null;
 
@@ -52,8 +55,27 @@ const incidentLifecycleLabels: Record<string, string> = {
   resolved: "已恢复",
 };
 
+const authorizationStatusLabels: Record<string, string> = {
+  unknown: "未验证",
+  verifying: "验证中",
+  valid: "已授权",
+  reauthorization_required: "需重新授权",
+  indeterminate: "待确认",
+};
+
 function formatIncidentEventLabel(eventType: string) {
   return incidentEventLabels[eventType] ?? eventType.replace(/_/g, " ");
+}
+
+function latestCollectionAt(runs: CollectorRun[]) {
+  const latest = [...runs]
+    .filter((run) => run.taskType !== "capture" && run.taskType !== "recharge")
+    .sort((left, right) => {
+      const leftTime = left.finishedAt ?? left.startedAt;
+      const rightTime = right.finishedAt ?? right.startedAt;
+      return rightTime.localeCompare(leftTime);
+    })[0];
+  return latest?.finishedAt ?? latest?.startedAt ?? null;
 }
 
 function formatIncidentSummary(event: AlertingIncident) {
@@ -230,6 +252,7 @@ export function StationDialogs({
 
 export function DetailBody({
   activeDialogStation,
+  balances,
   incidents = [],
   credentials,
   keyCountLabel,
@@ -243,6 +266,7 @@ export function DetailBody({
   onEditKey,
 }: {
   activeDialogStation: Station;
+  balances: BalanceSnapshot[];
   incidents: AlertingIncident[];
   credentials: StationCredentials | null;
   keyCountLabel: string;
@@ -255,6 +279,8 @@ export function DetailBody({
   onDeleteKey: (key: StationKey) => void;
   onEditKey: (key: StationKey) => void;
 }) {
+  const latestCollectionTimestamp = latestCollectionAt(collectorRuns);
+  const currentBalance = currentStationBalanceFor({ station: activeDialogStation, balances });
   return (
     <div className="space-y-4 p-5">
       <PropertyList className="overflow-hidden rounded-[var(--surface-radius)] border border-info-border bg-surface/80">
@@ -262,11 +288,14 @@ export function DetailBody({
         <PropertyRow label="站点类型" value={stationTypeLabels[activeDialogStation.stationType]} />
         <PropertyRow label="前端网址" value={<code className="text-xs">{activeDialogStation.websiteUrl}</code>} />
         <PropertyRow label="API Base URL" value={<code className="text-xs">{activeDialogStation.apiBaseUrl}</code>} />
-        <PropertyRow label="余额" value={activeDialogStation.balanceCny === null ? "未采集" : `$${activeDialogStation.balanceCny.toFixed(2)}`} />
+        <PropertyRow label="余额" value={currentBalance.value === null ? "未采集" : `$${currentBalance.value.toFixed(2)}`} />
         <PropertyRow label="密钥数量" value={keyCountLabel} />
-        <PropertyRow label="状态" value={stationStatusLabels[activeDialogStation.status]} />
-        <PropertyRow label="采集时间" value={activeDialogStation.lastPricingFetchedAt ?? "未采集"} />
-        <PropertyRow label="刷新时间" value={activeDialogStation.lastCheckedAt ?? "未检测"} />
+        <PropertyRow label="采集状态" value={formatStationStatusLabel(activeDialogStation)} />
+        <PropertyRow
+          label="授权状态"
+          value={authorizationStatusLabels[activeDialogStation.authorizationSummary?.status ?? "unknown"] ?? "未验证"}
+        />
+        <PropertyRow label="最近采集" value={formatNullableTime(latestCollectionTimestamp)} />
       </PropertyList>
 
       <SectionBlock title="登录账号">

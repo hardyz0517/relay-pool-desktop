@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { CollectorSnapshot } from "@/lib/types/collector";
-import type { Station } from "@/lib/types/stations";
+import type {
+  Station,
+  StationAuthorizationSummary,
+  StationCollectionSummary,
+} from "@/lib/types/stations";
 import {
   buildStationAssetRows,
   hasPositiveBalance,
@@ -29,6 +33,18 @@ describe("station issue filters", () => {
 });
 
 describe("station collection issue tags", () => {
+  it("fails closed when the backend-owned typed Station state is missing", () => {
+    expect(() => buildStationAssetRows({
+      stations: [station()],
+      stationStateByStation: new Map(),
+      keysByStation: new Map(),
+      balances: [],
+      groupBindingsByStation: new Map(),
+      incidents: [],
+      balanceFactsReady: false,
+    })).toThrow("Missing typed Station state for station-1");
+  });
+
   it("does not let an isolated failed snapshot override a healthy station", () => {
     const tags = issueTagsFor(station(), snapshot({ status: "failed" }));
 
@@ -37,7 +53,10 @@ describe("station collection issue tags", () => {
 
   it("shows isolated authorization requirements without degrading core health", () => {
     const tags = issueTagsFor(
-      station(),
+      station({
+        collectionSummary: collectionSummary("healthy"),
+        authorizationSummary: authorizationSummary("reauthorization_required"),
+      }),
       snapshot({
         status: "manual_required",
         summaryJson: { loginRequired: true },
@@ -58,7 +77,7 @@ describe("station collection issue tags", () => {
 
   it("reports the revision-fenced station error even if the newest snapshot succeeded", () => {
     const tags = issueTagsFor(
-      station({ status: "error" }),
+      station({ collectionSummary: collectionSummary("failed") }),
       snapshot({ status: "success" }),
     );
 
@@ -67,7 +86,7 @@ describe("station collection issue tags", () => {
 
   it("retains a generic warning when the latest snapshot cannot explain it", () => {
     const tags = issueTagsFor(
-      station({ status: "warning" }),
+      station({ collectionSummary: collectionSummary("degraded") }),
       snapshot({ status: "success" }),
     );
 
@@ -76,7 +95,10 @@ describe("station collection issue tags", () => {
 
   it("refines a station warning when the latest core snapshot requires authorization", () => {
     const tags = issueTagsFor(
-      station({ status: "warning" }),
+      station({
+        collectionSummary: collectionSummary("degraded"),
+        authorizationSummary: authorizationSummary("reauthorization_required"),
+      }),
       snapshot({
         status: "manual_required",
         summaryJson: { loginRequired: true },
@@ -88,7 +110,10 @@ describe("station collection issue tags", () => {
 
   it("keeps the authorization tag when another core task has a harder failure", () => {
     const tags = issueTagsFor(
-      station({ status: "error" }),
+      station({
+        collectionSummary: collectionSummary("failed"),
+        authorizationSummary: authorizationSummary("reauthorization_required"),
+      }),
       snapshot({
         status: "manual_required",
         summaryJson: { loginRequired: true },
@@ -102,9 +127,15 @@ describe("station collection issue tags", () => {
 function issueTagsFor(currentStation: Station, latestSnapshot: CollectorSnapshot | null) {
   const [row] = buildStationAssetRows({
     stations: [currentStation],
+    stationStateByStation: new Map([[
+      currentStation.id,
+      {
+        collectionSummary: currentStation.collectionSummary ?? collectionSummary("not_collected"),
+        authorizationSummary: currentStation.authorizationSummary ?? authorizationSummary("unknown"),
+      },
+    ]]),
     keysByStation: new Map(),
     balances: [],
-    snapshotsByStation: new Map([[currentStation.id, latestSnapshot]]),
     groupBindingsByStation: new Map(),
     incidents: [],
     balanceFactsReady: false,
@@ -141,6 +172,14 @@ function station(overrides: Partial<Station> = {}): Station {
     updatedAt: "2026-08-27T10:34:00Z",
     ...overrides,
   };
+}
+
+function collectionSummary(status: StationCollectionSummary["status"]): StationCollectionSummary {
+  return { status, reasonCodes: [], revision: 1 };
+}
+
+function authorizationSummary(status: StationAuthorizationSummary["status"]): StationAuthorizationSummary {
+  return { status, credentialRevision: 1, reasonCode: null, revision: 1 };
 }
 
 function snapshot(overrides: Partial<CollectorSnapshot> = {}): CollectorSnapshot {

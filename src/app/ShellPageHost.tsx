@@ -64,6 +64,7 @@ const ShellPageSlot = memo(function ShellPageSlot({
       <div
         aria-hidden={inert}
         className="app-page-transition-layer"
+        data-shell-page-scroll-container
         data-page-transition-kind="shell"
         data-page-transition-layer
         data-page-transition-page-id={routeId}

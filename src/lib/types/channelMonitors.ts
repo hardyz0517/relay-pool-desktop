@@ -285,6 +285,14 @@ export type ChannelStatusRow = {
   selectedWindow: ChannelStatusWindowSummaryV2;
 };
 
+export type ChannelMonitorLatestSummary = {
+  monitorId: string;
+  stationId: string;
+  stationKeyId: string | null;
+  latest: ChannelStatusLatestResult | null;
+  running: ChannelStatusRunningExecution | null;
+};
+
 export type ChannelStatusAggregate = {
   totalRows: number;
   returnedRows: number;

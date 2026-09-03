@@ -67,23 +67,12 @@ afterEach(async () => {
 });
 
 describe("useStationPublishedStatus", () => {
-  it("refreshes with the closed published-status collector task and invalidates only related keys", async () => {
-    const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries");
-
+  it("refreshes with the closed published-status collector task", async () => {
     await act(async () => {
       await controller!.refresh();
     });
 
     expect(mocks.collectStationTask).toHaveBeenCalledWith("station-1", "published_status");
-    expect(invalidateQueries).toHaveBeenCalledWith({
-      queryKey: queryKeys.stationPublishedStatusRoot,
-    });
-    expect(invalidateQueries).toHaveBeenCalledWith({
-      queryKey: queryKeys.collectorRuns("station-1"),
-    });
-    expect(invalidateQueries).toHaveBeenCalledWith({
-      queryKey: queryKeys.collectorSnapshots("station-1"),
-    });
   });
 
   it("retries a workspace read without triggering another collection", async () => {

@@ -5,6 +5,22 @@ export function listStations() {
   return getActiveBackendClient().stations.listStations();
 }
 
+export function loadStationAssets() {
+  return getActiveBackendClient().stations.loadStationAssets();
+}
+
+export function loadStationDetail(stationId: string) {
+  return getActiveBackendClient().stations.loadStationDetail(stationId);
+}
+
+export function getStationDetailRevision(stationId: string) {
+  return getActiveBackendClient().stations.getStationDetailRevision(stationId);
+}
+
+export function getStationAssetsRevision() {
+  return getActiveBackendClient().stations.getStationAssetsRevision();
+}
+
 export function createStation(input: StationInput) {
   return getActiveBackendClient().stations.createStation(input);
 }

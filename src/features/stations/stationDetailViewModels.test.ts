@@ -25,6 +25,11 @@ function station(stationType: Station["stationType"]): Station {
     lowBalanceThresholdCny: null,
     collectionIntervalMinutes: 5,
     status: "healthy",
+    collectionSummary: {
+      status: "healthy",
+      reasonCodes: [],
+      revision: 1,
+    },
     latencyMs: null,
     lastCheckedAt: null,
     lastPricingFetchedAt: null,

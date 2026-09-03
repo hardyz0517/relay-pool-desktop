@@ -26,6 +26,7 @@ import {
 import { updateStationSession } from "@/lib/api/stationKeys";
 import { queryKeys } from "@/lib/query/queryKeys";
 import { invalidateAlertingReadModels } from "@/lib/query/alertingQuerySynchronization";
+import { synchronizeStationReadModels } from "@/lib/query/stationCollectionQuerySynchronization";
 import {
   captureSessionStatusQueryOptions,
   collectorRunsQueryOptions,
@@ -163,20 +164,17 @@ export function CollectorsPage({ onOpenRoutingDeepLink }: CollectorsPageProps = 
       includeRuns?: boolean;
     } = {},
   ) {
-    if (options.includeStations) {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.stations });
-    }
-    await queryClient.invalidateQueries({ queryKey: queryKeys.stationAsset(stationId) });
-    await queryClient.invalidateQueries({ queryKey: queryKeys.collectorSnapshots(stationId) });
-    await queryClient.invalidateQueries({ queryKey: queryKeys.keyPool });
-    await queryClient.invalidateQueries({ queryKey: queryKeys.pricing });
-    if (options.includeRuns) {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.collectorRuns(stationId) });
+    const scopes = [`station_collection:${stationId}`];
+    if (options.includeCapture) scopes.push(`station_authorization:${stationId}`);
+    const synchronization = await synchronizeStationReadModels(queryClient, {
+      mutationId: `foreground:${stationId}:${Date.now()}`,
+      affectedScopes: scopes,
+      revisionVector: [],
+    });
+    if (!synchronization.refreshed && synchronization.errors[0]) {
+      throw synchronization.errors[0];
     }
     await invalidateAlertingReadModels(queryClient);
-    if (options.includeCapture) {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.captureSessionStatus(stationId) });
-    }
   }
 
   async function handleCollect() {

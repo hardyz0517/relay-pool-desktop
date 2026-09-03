@@ -10,7 +10,9 @@ export type StationBalanceCurrentFact = {
   currency: string;
   lowBalanceThreshold: number | null;
   status: string | null;
-  source: "balance_snapshot" | "station_cache" | "missing";
+  /** Current balance facts are either a typed snapshot or explicitly absent.
+   * Station compatibility cache columns are intentionally not an authority. */
+  source: "balance_snapshot" | "missing";
   sourceLabel: string;
   updatedAt: string | null;
   collectedAt: string | null;
@@ -88,26 +90,6 @@ function factForStation(
     };
   }
 
-  if (
-    typeof station.balanceCny === "number" ||
-    typeof station.lowBalanceThresholdCny === "number" ||
-    station.lastCheckedAt
-  ) {
-    return {
-      stationId: station.id,
-      snapshotId: null,
-      value: finiteOrNull(station.balanceCny),
-      currency: BALANCE_CURRENCY,
-      lowBalanceThreshold: finiteOrNull(station.lowBalanceThresholdCny),
-      status: balanceStatusFor(station.balanceCny, station.lowBalanceThresholdCny),
-      source: "station_cache",
-      sourceLabel: "station_config",
-      updatedAt: station.lastCheckedAt,
-      collectedAt: null,
-      sourceSnapshot: null,
-    };
-  }
-
   return {
     stationId: station.id,
     snapshotId: null,
@@ -121,23 +103,6 @@ function factForStation(
     collectedAt: null,
     sourceSnapshot: null,
   };
-}
-
-function balanceStatusFor(value: number | null, threshold: number | null) {
-  if (value == null || !Number.isFinite(value)) {
-    return null;
-  }
-  if (value <= 0) {
-    return "depleted";
-  }
-  if (threshold != null && Number.isFinite(threshold) && value <= threshold) {
-    return "low";
-  }
-  return "normal";
-}
-
-function finiteOrNull(value: number | null) {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function toTime(value: string | null) {

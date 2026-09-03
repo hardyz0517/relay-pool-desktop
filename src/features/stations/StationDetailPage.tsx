@@ -3,20 +3,18 @@ import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft } from "lucide-react";
 import { Button, EmptyState, useToast } from "@/components/ui";
 import { readError } from "@/lib/errors";
-import { listCurrentAlertingIncidents } from "@/lib/api/alerting";
-import { collectStationTask, getLatestCollectorSnapshot, startManualAuthorization } from "@/lib/api/collector";
-import { listCollectorRuns } from "@/lib/api/collectorRuns";
-import { listBalanceSnapshotsForStation } from "@/lib/api/economics";
-import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
-import { getStationCredentials, listStationKeys } from "@/lib/api/stationKeys";
-import { listStations, openStationWebsite } from "@/lib/api/stations";
-import type { AlertingIncident } from "@/lib/types/alerting";
+import { collectStationTask, startManualAuthorization } from "@/lib/api/collector";
+import { openStationWebsite } from "@/lib/api/stations";
+import { stationDetailReadModelQueryOptions } from "@/lib/query/resourceQueries";
+import { reconcileStationDetailReadModel } from "@/lib/query/stationCollectionQuerySynchronization";
+import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import type { CollectorSnapshot, CollectorTaskType } from "@/lib/types/collector";
 import type { CollectorRun } from "@/lib/types/collectorRuns";
 import type { BalanceSnapshot } from "@/lib/types/economics";
 import type { GroupRateRecord, StationGroupBinding } from "@/lib/types/groupFacts";
 import type { RoutingDeepLink } from "@/lib/types/routingDeepLinks";
 import type { StationCredentials, StationKey } from "@/lib/types/stationKeys";
+import type { StationDetailIncident, StationDetailReadModel } from "@/lib/types/stationAssets";
 import type { Station } from "@/lib/types/stations";
 import {
   buildStationDetailViewModel,
@@ -29,10 +27,7 @@ import {
 } from "./components/StationDetailContent";
 import { StationPublishedStatusSection } from "./components/StationPublishedStatusSection";
 import { RechargeDialog } from "./components/RechargeDialog";
-import {
-  invalidateStationPublishedStatusCollectionQueries,
-  useStationPublishedStatus,
-} from "./useStationPublishedStatus";
+import { useStationPublishedStatus } from "./useStationPublishedStatus";
 
 type StationDetailPageProps = {
   stationId: string | null;
@@ -55,10 +50,8 @@ type DetailData = {
   latestSnapshot: CollectorSnapshot | null;
   credentials: StationCredentials | null;
   stationKeys: StationKey[];
-  incidents: AlertingIncident[];
+  incidents: StationDetailIncident[];
 };
-
-type LoadMode = "initial" | "silent";
 
 const refreshTaskByAction: Record<StationDetailRefreshAction, CollectorTaskType> = {
   balance: "balance",
@@ -82,15 +75,11 @@ export function StationDetailPage({
   const toast = useToast();
   const queryClient = useQueryClient();
   const publishedStatus = useStationPublishedStatus(stationId);
+  const detailQuery = useActivityQuery(stationDetailReadModelQueryOptions(stationId));
+  const refetchDetail = detailQuery.refetch;
   const mountedRef = useRef(true);
-  const loadRequestRef = useRef(0);
   const refreshRequestRef = useRef(0);
   const activeStationIdRef = useRef<string | null>(stationId);
-  const [detailData, setDetailData] = useState<DetailData | null>(() =>
-    initialStation && initialStation.id === stationId ? createDetailDataSeed(initialStation) : null,
-  );
-  const [initialLoading, setInitialLoading] = useState(false);
-  const [pageError, setPageError] = useState<string | null>(null);
   const [sectionError, setSectionError] = useState<string | null>(null);
   const [loadingAction, setLoadingAction] = useState<StationDetailLoadingAction | null>(null);
   const [rechargeCenterOpen, setRechargeCenterOpen] = useState(false);
@@ -99,17 +88,8 @@ export function StationDetailPage({
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      loadRequestRef.current += 1;
       refreshRequestRef.current += 1;
     };
-  }, []);
-
-  const isLoadCurrent = useCallback((id: string, requestId: number) => {
-    return (
-      mountedRef.current &&
-      loadRequestRef.current === requestId &&
-      activeStationIdRef.current === id
-    );
   }, []);
 
   const isRefreshCurrent = useCallback((id: string, requestId: number) => {
@@ -120,110 +100,50 @@ export function StationDetailPage({
     );
   }, []);
 
-  const loadDetail = useCallback(async (id: string, mode: LoadMode) => {
-    const requestId = loadRequestRef.current + 1;
-    loadRequestRef.current = requestId;
-
-    if (mode === "initial") {
-      setInitialLoading(true);
-      setPageError(null);
-      setSectionError(null);
-      setDetailData(null);
-    }
-
-    try {
-      const [
-        stations,
-        credentials,
-        stationKeys,
-        groupBindings,
-        groupRates,
-        collectorRuns,
-        latestSnapshot,
-        balanceSnapshots,
-        alertingPage,
-      ] = await Promise.all([
-        listStations(),
-        getStationCredentials(id),
-        listStationKeys(id),
-        listStationGroupBindings(id),
-        listGroupRateRecords(id),
-        listCollectorRuns(id),
-        getLatestCollectorSnapshot(id),
-        listBalanceSnapshotsForStation(id),
-        listCurrentAlertingIncidents({ stationId: id, limit: 100 }),
-      ]);
-      const station = stations.find((item) => item.id === id);
-
-      if (!station) {
-        throw new Error("未找到中转站");
-      }
-
-      if (!isLoadCurrent(id, requestId)) {
-        return null;
-      }
-
-      const nextData: DetailData = {
-        station,
-        credentials,
-        stationKeys,
-        groupBindings,
-        groupRates,
-        collectorRuns,
-        latestSnapshot,
-        balances: balanceSnapshots,
-        incidents: alertingPage.items,
-      };
-      setDetailData(nextData);
-      setPageError(null);
-      setSectionError(null);
-      return nextData;
-    } catch (requestError) {
-      const message = readError(requestError);
-      if (isLoadCurrent(id, requestId)) {
-        if (mode === "initial") {
-          setPageError(message);
-          setDetailData(null);
-        } else {
-          setSectionError(message);
-        }
-      }
-      throw requestError;
-    } finally {
-      if (isLoadCurrent(id, requestId) && mode === "initial") {
-        setInitialLoading(false);
-      }
-    }
-  }, [isLoadCurrent]);
-
   useEffect(() => {
     activeStationIdRef.current = stationId;
     refreshRequestRef.current += 1;
     setLoadingAction(null);
     setRechargeCenterOpen(false);
+    setSectionError(null);
+  }, [stationId]);
 
-    if (!stationId) {
-      loadRequestRef.current += 1;
-      setDetailData(null);
-      setInitialLoading(false);
-      setPageError("未选择中转站");
-      setSectionError(null);
-      return;
+  useEffect(() => {
+    if (!stationId) return;
+    let disposed = false;
+    let inFlight = false;
+    const tracker = new Map<string, number>();
+    const reconcile = () => {
+      if (disposed || inFlight) return;
+      inFlight = true;
+      void reconcileStationDetailReadModel(queryClient, stationId, tracker)
+        .catch(() => undefined)
+        .finally(() => {
+          inFlight = false;
+        });
+    };
+    const reconcileWhenVisible = () => {
+      if (document.visibilityState === "visible") reconcile();
+    };
+    document.addEventListener("visibilitychange", reconcileWhenVisible);
+    window.addEventListener("pageshow", reconcile);
+    const intervalId = window.setInterval(reconcile, 30_000);
+    reconcile();
+    return () => {
+      disposed = true;
+      document.removeEventListener("visibilitychange", reconcileWhenVisible);
+      window.removeEventListener("pageshow", reconcile);
+      window.clearInterval(intervalId);
+    };
+  }, [queryClient, stationId]);
+
+  const detailData = useMemo<DetailData | null>(() => {
+    const detail = detailQuery.data?.data;
+    if (detail) {
+      return detailDataFromReadModel(detail);
     }
-
-    if (initialStation?.id === stationId) {
-      setDetailData((current) =>
-        current?.station.id === stationId ? current : createDetailDataSeed(initialStation),
-      );
-      setInitialLoading(false);
-      setPageError(null);
-      setSectionError(null);
-      void loadDetail(stationId, "silent").catch(() => undefined);
-      return;
-    }
-
-    void loadDetail(stationId, "initial").catch(() => undefined);
-  }, [initialStation, loadDetail, stationId]);
+    return initialStation?.id === stationId ? createDetailDataSeed(initialStation) : null;
+  }, [detailQuery.data, initialStation, stationId]);
 
   const viewModel = useMemo<StationDetailViewModel | null>(() => {
     if (!detailData) {
@@ -246,13 +166,14 @@ export function StationDetailPage({
       if (!isRefreshCurrent(stationId, requestId)) {
         return;
       }
-      if (action === "full") {
-        await invalidateStationPublishedStatusCollectionQueries(queryClient, stationId);
+      const refreshed = await refetchDetail();
+      if (refreshed.error) {
+        throw refreshed.error;
       }
-      const nextData = await loadDetail(stationId, "silent");
-      if (!nextData || !isRefreshCurrent(stationId, requestId)) {
+      if (!refreshed.data || !isRefreshCurrent(stationId, requestId)) {
         return;
       }
+      const nextData = detailDataFromReadModel(refreshed.data.data);
       if (result.snapshot.status === "manual_required") {
         toast.info(
           `「${nextData.station.name}」需重新授权`,
@@ -277,7 +198,7 @@ export function StationDetailPage({
         setLoadingAction(null);
       }
     }
-  }, [isRefreshCurrent, loadDetail, loadingAction, queryClient, stationId, toast]);
+  }, [isRefreshCurrent, loadingAction, refetchDetail, stationId, toast]);
 
   const handleManualAuthorization = useCallback(async () => {
     if (!stationId || loadingAction) {
@@ -297,7 +218,7 @@ export function StationDetailPage({
     }
   }, [loadingAction, stationId, toast]);
 
-  if (initialLoading) {
+  if (stationId && detailQuery.isPending && !detailData) {
     return (
       <div className="rounded-[var(--surface-radius)] border border-border bg-surface px-4 py-5 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">
         正在读取中转站详情...
@@ -308,7 +229,7 @@ export function StationDetailPage({
   if (!viewModel) {
     return (
       <EmptyState
-        title={pageError ?? "未找到中转站"}
+        title={!stationId ? "未选择中转站" : detailQuery.error ? readError(detailQuery.error) : "未找到中转站"}
         description="返回中转站资产后可重新选择。"
         action={
           <Button variant="secondary" onClick={onBack}>
@@ -363,6 +284,26 @@ export function StationDetailPage({
       />
     </>
   );
+}
+
+function detailDataFromReadModel(
+  detail: StationDetailReadModel,
+): DetailData {
+  return {
+    station: {
+      ...detail.asset.station,
+      collectionSummary: detail.asset.collectionSummary,
+      authorizationSummary: detail.asset.authorizationSummary,
+    },
+    credentials: detail.credentials,
+    stationKeys: detail.asset.keys,
+    groupBindings: detail.groupBindings,
+    groupRates: detail.groupRates,
+    collectorRuns: detail.collectorRuns,
+    latestSnapshot: detail.latestSnapshot,
+    balances: detail.balances,
+    incidents: detail.incidents,
+  };
 }
 
 

@@ -17,13 +17,16 @@ import {
 import { getProxyStatus, listRequestLogs } from "@/lib/api/proxy";
 import { getSettings } from "@/lib/api/settings";
 import { listKeyPoolItems } from "@/lib/api/stationKeys";
-import { listStations } from "@/lib/api/stations";
+import { listStations, loadStationAssets, loadStationDetail } from "@/lib/api/stations";
 import {
   getChannelMonitorExecution,
   listChannelMonitorAttempts,
   listChannelMonitorExecutions,
   listMonitoringCapabilities,
   loadChannelMonitoringWorkspace,
+  loadChannelMonitorLatestSummary,
+  listChannelMonitors,
+  listChannelMonitorTemplates,
   loadChannelStatusWorkspace,
 } from "@/lib/queries/channelQueries";
 import type {
@@ -39,6 +42,9 @@ import {
 import type { PricingGroupMonitorStatusInput } from "@/lib/types/pricingMonitoring";
 import { queryKeys } from "@/lib/query/queryKeys";
 import { withQueryTimeout } from "@/lib/query/withQueryTimeout";
+import { recordMonitoringPerformance } from "@/lib/monitoringPerformance";
+
+const collectMonitoringMetrics = import.meta.env.DEV;
 
 export const settingsQueryOptions = () =>
   queryOptions({
@@ -89,7 +95,36 @@ export const stationsQueryOptions = (refetchInterval: number | false = false) =>
     queryKey: queryKeys.stations,
     queryFn: listStations,
     staleTime: 5_000,
-    refetchInterval,
+    refetchInterval: refetchInterval === false
+      ? (query) => (query.state.status === "error" ? 5_000 : false)
+      : refetchInterval,
+  });
+
+export const stationAssetsReadModelQueryOptions = () =>
+  queryOptions({
+    queryKey: queryKeys.stationAssets,
+    queryFn: () => withQueryTimeout(loadStationAssets(), "station assets read model", 6_000),
+    staleTime: 30_000,
+  });
+
+export const stationDetailReadModelQueryOptions = (stationId: string | null) =>
+  queryOptions({
+    queryKey: queryKeys.stationDetail(stationId ?? ""),
+    enabled: Boolean(stationId),
+    queryFn: async () => {
+      const envelope = await withQueryTimeout(
+        loadStationDetail(stationId ?? ""),
+        `station detail read model ${stationId ?? ""}`,
+        6_000,
+      );
+      if (envelope.data.asset.station.id !== stationId) {
+        throw new Error("未找到中转站");
+      }
+      return envelope;
+    },
+    staleTime: 30_000,
+    retry: false,
+    meta: { suppressGlobalErrorNotification: true },
   });
 
 export const stationAssetQueryOptions = (stationId: string) =>
@@ -143,7 +178,9 @@ export const keyPoolQueryOptions = (refetchInterval: number | false = false) =>
     queryKey: queryKeys.keyPool,
     queryFn: listKeyPoolItems,
     staleTime: 5_000,
-    refetchInterval,
+    refetchInterval: refetchInterval === false
+      ? (query) => (query.state.status === "error" ? 5_000 : false)
+      : refetchInterval,
   });
 
 export const stationPublishedStatusQueryOptions = (stationId: string | null) =>
@@ -196,7 +233,29 @@ export const channelStatusQueryOptions = (
 ) =>
   queryOptions({
     queryKey: [...queryKeys.channelStatus, input],
-    queryFn: () => loadChannelStatusWorkspace(input),
+    queryFn: async () => {
+      const started = collectMonitoringMetrics ? performance.now() : 0;
+      try {
+        const data = await loadChannelStatusWorkspace(input);
+        if (collectMonitoringMetrics) {
+          recordMonitoringPerformance({
+            name: "channel-status-query",
+            durationMs: performance.now() - started,
+            queryCalls: 1,
+            cacheHit: false,
+            rowCount: data.rows.length,
+            trendCellCount: data.rows.reduce((total, row) => total + row.recent.length + row.hourlyBuckets.length + row.dailyBuckets.length, 0),
+            dtoBytes: JSON.stringify(data).length,
+          });
+        }
+        return data;
+      } catch (error) {
+        if (collectMonitoringMetrics) {
+          recordMonitoringPerformance({ name: "channel-status-query-error", durationMs: performance.now() - started });
+        }
+        throw error;
+      }
+    },
     staleTime: 5_000,
     refetchInterval,
   });
@@ -228,10 +287,11 @@ export const channelMonitorAttemptsQueryOptions = (
     staleTime: 5_000,
   });
 
-export const monitoringCapabilitiesQueryOptions = () =>
+export const monitoringCapabilitiesQueryOptions = (enabled = true) =>
   queryOptions({
     queryKey: queryKeys.monitoringCapabilities,
     queryFn: listMonitoringCapabilities,
+    enabled,
     staleTime: 60_000,
   });
 
@@ -266,4 +326,58 @@ export const channelMonitoringQueryOptions = (refetchInterval: number | false = 
     queryFn: loadChannelMonitoringWorkspace,
     staleTime: 5_000,
     refetchInterval,
+  });
+
+export const channelMonitorLatestSummaryQueryOptions = (refetchInterval: number | false = false) =>
+  queryOptions({
+    queryKey: queryKeys.channelMonitorLatestSummary,
+    queryFn: async () => {
+      const started = collectMonitoringMetrics ? performance.now() : 0;
+      try {
+        const data = await loadChannelMonitorLatestSummary();
+        if (collectMonitoringMetrics) {
+          recordMonitoringPerformance({
+            name: "channel-latest-summary-query",
+            durationMs: performance.now() - started,
+            queryCalls: 1,
+            cacheHit: false,
+            rowCount: data.length,
+            dtoBytes: JSON.stringify(data).length,
+          });
+        }
+        return data;
+      } catch (error) {
+        if (collectMonitoringMetrics) {
+          recordMonitoringPerformance({
+            name: "channel-latest-summary-query-error",
+            durationMs: performance.now() - started,
+            queryCalls: 1,
+            cacheHit: false,
+          });
+        }
+        throw error;
+      }
+    },
+    staleTime: 5_000,
+    refetchInterval,
+  });
+
+export const channelMonitorsQueryOptions = (refetchInterval: number | false = false) =>
+  queryOptions({
+    queryKey: queryKeys.channelMonitors,
+    queryFn: listChannelMonitors,
+    staleTime: 5_000,
+    refetchInterval: refetchInterval === false
+      ? (query) => (query.state.status === "error" ? 5_000 : false)
+      : refetchInterval,
+  });
+
+export const channelMonitorTemplatesQueryOptions = (refetchInterval: number | false = false) =>
+  queryOptions({
+    queryKey: queryKeys.channelMonitorTemplates,
+    queryFn: listChannelMonitorTemplates,
+    staleTime: 60_000,
+    refetchInterval: refetchInterval === false
+      ? (query) => (query.state.status === "error" ? 5_000 : false)
+      : refetchInterval,
   });

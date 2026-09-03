@@ -19,6 +19,7 @@ export const queryKeys = {
   stationAssetsForStations: (stationIds: readonly string[]) =>
     ["stationAssets", "stations", stationIds] as const,
   stationAsset: (stationId: string) => ["stationAssets", stationId] as const,
+  stationDetail: (stationId: string) => ["stationDetail", stationId] as const,
   collectorSnapshots: (stationId: string) => ["collectorSnapshots", stationId] as const,
   collectorRuns: (stationId: string) => ["collectorRuns", stationId] as const,
   stationPublishedStatusRoot: ["stationPublishedStatus"] as const,
@@ -30,6 +31,9 @@ export const queryKeys = {
   modelPriceSyncState: ["modelPriceSyncState"] as const,
   balanceSnapshots: ["balanceSnapshots"] as const,
   channelMonitoring: ["channelMonitoring"] as const,
+  channelMonitors: ["channelMonitors"] as const,
+  channelMonitorTemplates: ["channelMonitorTemplates"] as const,
+  channelMonitorLatestSummary: ["channelMonitorLatestSummary"] as const,
   pricing: ["pricing"] as const,
   pricingGroupMonitorStatus: (input: PricingGroupMonitorStatusInput) =>
     ["pricingGroupMonitorStatus", input.schemaVersion, input.groupRefsHash, input.groups] as const,

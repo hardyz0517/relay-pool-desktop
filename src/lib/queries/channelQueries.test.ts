@@ -3,17 +3,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setActiveBackendClient } from "@/lib/bridge/activeBackendClient";
 import type { BackendClient } from "@/lib/bridge/BackendClient";
 
-import { loadChannelMonitoringWorkspace, loadChannelStatusWorkspace } from "./channelQueries";
+import { loadChannelMonitorLatestSummary, loadChannelMonitoringWorkspace, loadChannelStatusWorkspace } from "./channelQueries";
 
 describe("channel query backend cutover", () => {
   const channels = {
     loadChannelMonitoringWorkspace: vi.fn(async () => ({
       monitors: [],
-      statusWorkspace: {} as never,
+      latestSummary: [],
       stations: [],
       keyPoolItems: [],
       templates: [],
     })),
+    loadChannelMonitorLatestSummary: vi.fn(async () => []),
     loadChannelStatusWorkspace: vi.fn(async () => ({
       keyPoolItems: [],
       requestLogs: [],
@@ -35,9 +36,11 @@ describe("channel query backend cutover", () => {
   it("routes channel workspaces through the active backend client", async () => {
     await loadChannelMonitoringWorkspace();
     await loadChannelStatusWorkspace();
+    await loadChannelMonitorLatestSummary();
 
     expect(channels.loadChannelMonitoringWorkspace).toHaveBeenCalledTimes(1);
     expect(channels.loadChannelStatusWorkspace).toHaveBeenCalledTimes(1);
+    expect(channels.loadChannelMonitorLatestSummary).toHaveBeenCalledTimes(1);
   });
 });
 

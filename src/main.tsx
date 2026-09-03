@@ -10,6 +10,7 @@ import { ThemeProvider } from "@/theme/ThemeProvider";
 import { initializeTheme } from "@/theme/themeBootstrap";
 import { App } from "@/app/App";
 import { AlertingReadModelSynchronizer } from "@/app/AlertingReadModelSynchronizer";
+import { StationReadModelSynchronizer } from "@/app/StationReadModelSynchronizer";
 import { BackendBootstrap } from "@/app/bootstrap/BackendBootstrap";
 import { DataStoreBootstrap } from "@/features/data-recovery/DataStoreBootstrap";
 import { createDesktopBackendClient } from "@/lib/bridge/DesktopBackend";
@@ -27,6 +28,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
           <UpdaterProvider>
             <QueryErrorNotifier />
             <AlertingReadModelSynchronizer />
+            <StationReadModelSynchronizer />
             <BackendBootstrap
               createClient={createDesktopBackendClient}
               renderDataStoreBootstrap={(renderReady) => <DataStoreBootstrap renderReady={renderReady} />}

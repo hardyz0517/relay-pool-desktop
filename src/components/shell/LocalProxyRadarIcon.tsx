@@ -56,20 +56,50 @@ export function LocalProxyRadarIcon({
     const handleDocumentVisibility = () => {
       setDocumentVisible(document.visibilityState !== "hidden");
     };
+    const handleWindowFocus = () => {
+      // WebView2 can deliver the first intersection batch while the window is
+      // still being shown. A focused window is visible to the user even when
+      // that initial visibility signal was stale.
+      if (document.visibilityState !== "hidden") {
+        setDocumentVisible(true);
+      }
+    };
     document.addEventListener("visibilitychange", handleDocumentVisibility);
+    window.addEventListener("focus", handleWindowFocus);
+    window.addEventListener("pageshow", handleWindowFocus);
 
     if (typeof IntersectionObserver === "undefined") {
-      return () => document.removeEventListener("visibilitychange", handleDocumentVisibility);
+      return () => {
+        document.removeEventListener("visibilitychange", handleDocumentVisibility);
+        window.removeEventListener("focus", handleWindowFocus);
+        window.removeEventListener("pageshow", handleWindowFocus);
+      };
     }
 
     const observer = new IntersectionObserver(([entry]) => {
-      setIsVisible(entry?.isIntersecting ?? false);
+      // Keep the previous visibility value if the browser delivers an empty
+      // batch. A malformed/transient observer callback must not turn an
+      // active icon into a permanently static one.
+      if (entry) {
+        // A partial WebView shim may omit geometry. There is no safe way to
+        // conclude that the icon is off-screen without a rectangle, so retain
+        // the current visible state until a complete entry arrives.
+        if (!entry.isIntersecting && !entry.boundingClientRect) {
+          return;
+        }
+        if (!entry.isIntersecting && isTransientlyVisible(entry)) {
+          return;
+        }
+        setIsVisible(entry.isIntersecting);
+      }
     });
     observer.observe(node);
 
     return () => {
       observer.disconnect();
       document.removeEventListener("visibilitychange", handleDocumentVisibility);
+      window.removeEventListener("focus", handleWindowFocus);
+      window.removeEventListener("pageshow", handleWindowFocus);
     };
   }, []);
 
@@ -90,12 +120,36 @@ export function LocalProxyRadarIcon({
       aria-hidden="true"
       className={cn(
         "local-proxy-globe",
-        active && isVisible && documentVisible && "local-proxy-globe--active",
+        active && "local-proxy-globe--active",
+        active && (!isVisible || !documentVisible) && "local-proxy-globe--paused",
         className,
       )}
       data-state={active ? "active" : "idle"}
       data-visible={isVisible && documentVisible ? "true" : "false"}
       style={style}
     />
+  );
+}
+
+function isTransientlyVisible(entry: IntersectionObserverEntry): boolean {
+  const { boundingClientRect } = entry;
+  // Some WebView/test shims omit the rect even though the entry itself is
+  // valid. Treat that as an ordinary non-intersecting result instead of
+  // throwing from the observer callback and leaving the component stuck.
+  if (!boundingClientRect || boundingClientRect.width <= 0 || boundingClientRect.height <= 0) {
+    return false;
+  }
+
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+  if (viewportWidth <= 0 || viewportHeight <= 0) {
+    return false;
+  }
+
+  return (
+    boundingClientRect.right > 0 &&
+    boundingClientRect.bottom > 0 &&
+    boundingClientRect.left < viewportWidth &&
+    boundingClientRect.top < viewportHeight
   );
 }

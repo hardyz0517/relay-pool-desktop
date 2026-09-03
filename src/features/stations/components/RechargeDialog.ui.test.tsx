@@ -38,6 +38,12 @@ function successfulScan() {
       createdAt: "1",
     },
     events: [],
+    receipt: {
+      mutationId: "mutation-1",
+      committedAtMs: 1,
+      affectedScopes: [],
+      revisionVector: [],
+    },
   };
 }
 

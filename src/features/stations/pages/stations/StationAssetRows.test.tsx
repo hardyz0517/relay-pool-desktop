@@ -52,18 +52,28 @@ function stationAssetRow(overrides: Partial<StationAssetRow> = {}): StationAsset
     latestBalance: null,
     currentBalance: {
       stationId: rowStation.id,
-      value: 8,
+      value: null,
       currency: "CNY",
       lowBalanceThreshold: null,
       snapshotId: null,
       status: null,
-      source: "station_cache",
-      sourceLabel: "station_cache",
+      source: "missing",
+      sourceLabel: "missing",
       updatedAt: null,
       collectedAt: null,
       sourceSnapshot: null,
     },
-    latestSnapshot: null,
+    collectionSummary: {
+      status: "healthy",
+      reasonCodes: [],
+      revision: 1,
+    },
+    authorizationSummary: {
+      status: "unknown",
+      credentialRevision: 0,
+      reasonCode: null,
+      revision: 1,
+    },
     riskEvents: [],
     rateChips: [],
     participatesInRouting: true,
@@ -97,7 +107,7 @@ describe("StationAssetRows", () => {
       ),
     );
 
-    expect(host.textContent).toContain("8.00USD");
+    expect(host.textContent).toContain("未采集");
 
     const actionStrip = host.querySelector<HTMLElement>("[data-station-action-strip]");
     expect(actionStrip?.className).toContain("md:focus-within:opacity-100");

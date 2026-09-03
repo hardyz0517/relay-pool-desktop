@@ -10,6 +10,9 @@ import type {
 import { normalizeGroupCategory } from "@/lib/groupCategories";
 import { groupVisualMetaFor, type StationGroupVisualPlatform } from "@/lib/groupVisualMeta";
 import { protocolLabel } from "@/lib/channelMonitorDisplay";
+import { measureMonitoring } from "@/lib/monitoringPerformance";
+
+export type ChannelStatusDisplayMode = "table" | "cards" | "both";
 
 export type ChannelWindow = ChannelStatusWorkspaceWindow;
 
@@ -93,6 +96,88 @@ export type ChannelStatusWorkspaceView = {
   rows: ChannelStatusRowView[];
 };
 
+// The workspace is refreshed every five seconds and the backend returns fresh
+// object identities even when a row's facts did not change. Keep the equality
+// contract next to the view model so table/card renderers can share it and a
+// newly-added view field cannot silently be ignored by one renderer.
+const channelStatusRowScalarKeys: readonly (keyof ChannelStatusRowView)[] = [
+  "rowKey",
+  "monitorId",
+  "monitorName",
+  "stationId",
+  "stationKeyId",
+  "targetName",
+  "stationName",
+  "keyName",
+  "groupName",
+  "visualPlatform",
+  "visualPlatformLabel",
+  "enabled",
+  "balancePaused",
+  "modelLabel",
+  "currentTone",
+  "latestProbeTone",
+  "currentLabel",
+  "currentReason",
+  "runningExecutionId",
+  "latestExecutionId",
+  "availabilityPercent",
+  "availabilityLabel",
+  "latencyMs",
+  "latencyLabel",
+  "ttfbMs",
+  "ttfbLabel",
+  "firstContentMs",
+  "firstContentLabel",
+  "endpointPingMs",
+  "endpointPingLabel",
+  "lastCheckedAtMs",
+  "lastCheckedLabel",
+  "dirty",
+  "corrupt",
+];
+
+const trendCellKeys: readonly (keyof TrendCellView)[] = [
+  "id",
+  "tone",
+  "label",
+  "title",
+  "modelLabel",
+  "timeLabel",
+  "availabilityLabel",
+  "httpStatus",
+  "latencyLabel",
+  "latencyMs",
+  "startMs",
+  "endMs",
+  "total",
+];
+
+export function areChannelStatusRowViewsEqual(
+  left: ChannelStatusRowView,
+  right: ChannelStatusRowView,
+): boolean {
+  if (left === right) return true;
+  for (const key of channelStatusRowScalarKeys) {
+    if (left[key] !== right[key]) return false;
+  }
+  return areTrendCellsEqual(left.recentTrend, right.recentTrend)
+    && areTrendCellsEqual(left.trend, right.trend);
+}
+
+function areTrendCellsEqual(left: TrendCellView[], right: TrendCellView[]) {
+  if (left === right) return true;
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    const leftCell = left[index];
+    const rightCell = right[index];
+    for (const key of trendCellKeys) {
+      if (leftCell[key] !== rightCell[key]) return false;
+    }
+  }
+  return true;
+}
+
 export const defaultChannelStatusFilters: ChannelStatusFilters = {
   search: "",
   enabled: "all",
@@ -131,6 +216,7 @@ export function createChannelStatusWorkspaceInput({
 
 export function buildChannelStatusWorkspaceView(
   workspace: ChannelStatusWorkspace | undefined,
+  displayMode: ChannelStatusDisplayMode = "both",
 ): ChannelStatusWorkspaceView {
   if (!workspace) {
     return {
@@ -138,12 +224,21 @@ export function buildChannelStatusWorkspaceView(
     };
   }
 
-  return {
-    rows: workspace.rows.map((row) => buildRowView(row, workspace.window)),
-  };
+  return measureMonitoring(
+    "channel-status-view-model",
+    () => ({ rows: workspace.rows.map((row) => buildRowView(row, workspace.window, displayMode)) }),
+    {
+      rowCount: workspace.rows.length,
+      trendCellCount: workspace.rows.reduce((total, row) => total + row.recent.length + row.hourlyBuckets.length + row.dailyBuckets.length, 0),
+    },
+  );
 }
 
-export function buildRowView(row: ChannelStatusRow, window: ChannelWindow): ChannelStatusRowView {
+export function buildRowView(
+  row: ChannelStatusRow,
+  window: ChannelWindow,
+  displayMode: ChannelStatusDisplayMode = "both",
+): ChannelStatusRowView {
   const latest = row.latest;
   const selected = row.selectedWindow;
   const runningExecutionId = row.running?.executionId ?? null;
@@ -203,8 +298,8 @@ export function buildRowView(row: ChannelStatusRow, window: ChannelWindow): Chan
     endpointPingLabel: formatLatency(row.target.endpointPing?.latencyMs ?? null),
     lastCheckedAtMs: selected.latestCheckedAtMs,
     lastCheckedLabel: formatTime(selected.latestCheckedAtMs),
-    recentTrend: buildTrend(row, "recent"),
-    trend: buildTrend(row, window),
+    recentTrend: displayMode === "table" ? [] : buildTrend(row, "recent"),
+    trend: displayMode === "cards" ? [] : buildTrend(row, window),
     dirty: selected.dirty || row.hourlyBuckets.some((bucket) => bucket.dirty) || row.dailyBuckets.some((bucket) => bucket.dirty),
     corrupt: selected.corrupt || row.hourlyBuckets.some((bucket) => bucket.corrupt) || row.dailyBuckets.some((bucket) => bucket.corrupt),
   };
@@ -268,12 +363,7 @@ export function formatTime(value: number | null | undefined) {
   if (Number.isNaN(date.getTime())) {
     return "--";
   }
-  return date.toLocaleString("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatCachedDate(timeFormatter, value);
 }
 
 function formatTrendTime(value: number | null | undefined) {
@@ -284,14 +374,46 @@ function formatTrendTime(value: number | null | undefined) {
   if (Number.isNaN(date.getTime())) {
     return "--";
   }
-  return date.toLocaleString("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  }).replace(/\//g, "-");
+  return formatCachedDate(trendTimeFormatter, value).replace(/\//g, "-");
+}
+
+const timeFormatter = new Intl.DateTimeFormat("zh-CN", {
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
+const trendTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: false,
+});
+
+const DATE_FORMAT_CACHE_LIMIT = 2_048;
+const dateFormatCaches = new Map<Intl.DateTimeFormat, Map<number, string>>([
+  [timeFormatter, new Map()],
+  [trendTimeFormatter, new Map()],
+]);
+
+function formatCachedDate(formatter: Intl.DateTimeFormat, value: number) {
+  const cache = dateFormatCaches.get(formatter)!;
+  const cached = cache.get(value);
+  if (cached) {
+    return cached;
+  }
+  const formatted = formatter.format(new Date(value));
+  if (cache.size >= DATE_FORMAT_CACHE_LIMIT) {
+    const oldest = cache.keys().next().value;
+    if (oldest !== undefined) {
+      cache.delete(oldest);
+    }
+  }
+  cache.set(value, formatted);
+  return formatted;
 }
 
 function recentPointToCell(point: ChannelStatusRecentPoint, index: number, primaryModel: string): TrendCellView {
@@ -305,7 +427,7 @@ function recentPointToCell(point: ChannelStatusRecentPoint, index: number, prima
   const timeLabel = formatTrendTime(point.checkedAtMs);
   const latencyLabel = formatLatency(point.latencyMs);
   const modelLabel = point.effectiveModel ?? primaryModel;
-  return {
+  const view = {
     id: point.targetResultId || `${point.executionId}-${index}`,
     tone,
     label: availabilityLabel,
@@ -330,6 +452,7 @@ function recentPointToCell(point: ChannelStatusRecentPoint, index: number, prima
     endMs: point.checkedAtMs,
     total: 1,
   };
+  return view;
 }
 
 function bucketToCell(bucket: ChannelStatusBucket, modelLabel: string): TrendCellView {

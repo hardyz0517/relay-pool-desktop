@@ -11,7 +11,11 @@ import type { CollectorSnapshot } from "@/lib/types/collector";
 import type { BalanceSnapshot } from "@/lib/types/economics";
 import type { GroupRateRecord, StationGroupBinding } from "@/lib/types/groupFacts";
 import type { StationKey } from "@/lib/types/stationKeys";
-import type { Station } from "@/lib/types/stations";
+import type {
+  Station,
+  StationAuthorizationSummary,
+  StationCollectionSummary,
+} from "@/lib/types/stations";
 
 export type RateChip = {
   label: string;
@@ -98,7 +102,8 @@ export type StationAssetRow = {
   balanceFactsReady: boolean;
   latestBalance: BalanceSnapshot | null;
   currentBalance: StationBalanceCurrentFact;
-  latestSnapshot: CollectorSnapshot | null;
+  collectionSummary: StationCollectionSummary;
+  authorizationSummary: StationAuthorizationSummary;
   riskEvents: AlertingIncident[];
   rateChips: RateChip[];
   participatesInRouting: boolean;
@@ -106,18 +111,21 @@ export type StationAssetRow = {
 
 export function buildStationAssetRows({
   stations,
+  stationStateByStation,
   keysByStation,
   balances,
-  snapshotsByStation,
   groupBindingsByStation,
   groupRatesByStation,
   incidents,
   balanceFactsReady = true,
 }: {
   stations: Station[];
+  stationStateByStation: Map<string, {
+    collectionSummary: StationCollectionSummary;
+    authorizationSummary: StationAuthorizationSummary;
+  }>;
   keysByStation: Map<string, StationKey[]>;
   balances: BalanceSnapshot[];
-  snapshotsByStation: Map<string, CollectorSnapshot | null>;
   groupBindingsByStation: Map<string, StationGroupBinding[]>;
   groupRatesByStation?: Map<string, GroupRateRecord[]>;
   incidents: AlertingIncident[];
@@ -137,6 +145,10 @@ export function buildStationAssetRows({
     );
     const enabledKeyCount = keys.length > 0 ? keys.filter((key) => key.enabled).length : station.keyCount;
     const groupIssueReasons = buildStationGroupIssueReasons(groupBindings, keys);
+    const state = stationStateByStation.get(station.id);
+    if (!state) {
+      throw new Error(`Missing typed Station state for ${station.id}`);
+    }
     return {
       station,
       enabledKeyCount,
@@ -147,12 +159,12 @@ export function buildStationAssetRows({
       balanceFactsReady,
       latestBalance: currentBalance?.sourceSnapshot ?? null,
       currentBalance: currentBalance ?? buildCurrentStationBalanceFacts({ stations: [station], balances: [] }).get(station.id)!,
-      latestSnapshot: snapshotsByStation.get(station.id) ?? null,
+      collectionSummary: state.collectionSummary,
+      authorizationSummary: state.authorizationSummary,
       riskEvents,
       rateChips: rateChipsForStation(
         groupBindings,
         groupRates,
-        snapshotsByStation.get(station.id) ?? null,
       ),
       participatesInRouting: station.enabled && enabledKeyCount > 0,
     };
@@ -162,10 +174,9 @@ export function buildStationAssetRows({
 function rateChipsForStation(
   bindings: StationGroupBinding[],
   rates: GroupRateRecord[],
-  snapshot: CollectorSnapshot | null,
 ): RateChip[] {
   const currentFactChips = rateChipsFromCurrentFacts(bindings, rates);
-  return currentFactChips.length > 0 ? currentFactChips : extractRateChips(snapshot);
+  return currentFactChips;
 }
 
 export function rateChipsFromCurrentFacts(
@@ -182,28 +193,13 @@ export function rateChipsFromCurrentFacts(
     }));
 }
 
-export function extractRateChips(snapshot: CollectorSnapshot | null): RateChip[] {
-  const rates = Array.isArray(snapshot?.normalizedJson.rateMultipliers)
-    ? (snapshot?.normalizedJson.rateMultipliers as Array<Record<string, unknown>>)
-    : [];
-  return rates.slice(0, 3).map((rate) => {
-    const group = String(rate.groupName ?? rate.group ?? rate.name ?? "default");
-    const multiplier = Number(rate.multiplier ?? rate.rate ?? rate.value ?? 1);
-    return {
-      label: group,
-      value: Number.isFinite(multiplier) ? `${multiplier.toFixed(2)}x` : "-",
-      tone: !Number.isFinite(multiplier) ? "neutral" : multiplier > 1 ? "warning" : multiplier < 1 ? "good" : "neutral",
-    };
-  });
-}
-
 export function stationIssueTags(row: StationAssetRow): StationIssueTag[] {
   const tags: StationIssueTag[] = [];
   const balanceValue = row.currentBalance.value;
   const lowBalanceThreshold = row.currentBalance.lowBalanceThreshold ?? row.station.lowBalanceThresholdCny;
   const collectionTag = stationCollectionIssueTag(row);
 
-  if (!row.station.enabled || row.station.status === "disabled") {
+  if (!row.station.enabled) {
     tags.push(createStationIssueTag("disabled"));
   }
 
@@ -253,27 +249,21 @@ export function filterStationAssetRowsByIssue(
 }
 
 function stationCollectionIssueTag(row: StationAssetRow): StationIssueTag | null {
-  const snapshotSummary = row.latestSnapshot?.summaryJson ?? {};
-  const loginRequired =
-    row.latestSnapshot?.status === "manual_required" ||
-    snapshotSummary.loginRequired === true ||
-    snapshotSummary.loginStatus === "manual_required";
-
   // Authorization is actionable even when the affected task (such as
   // published_status) is independent from the station's core health status.
-  if (loginRequired) {
-    return createStationIssueTag("login_required", row.latestSnapshot?.errorMessage ?? "当前登录状态需要重新进行窗口授权");
+  if (row.authorizationSummary.status === "reauthorization_required") {
+    return createStationIssueTag("login_required", "当前登录状态需要重新进行窗口授权");
   }
 
-  if (row.station.status === "warning") {
+  if (row.collectionSummary.status === "degraded") {
     return createStationIssueTag("collection_warning", "站点核心采集状态需要关注，请打开详情查看最近任务");
   }
 
-  if (row.station.status === "error") {
+  if (row.collectionSummary.status === "failed") {
     return createStationIssueTag("collection_failed", "站点核心采集状态异常，请打开详情查看最近任务");
   }
 
-  if (row.station.status === "unchecked") {
+  if (row.collectionSummary.status === "not_collected") {
     return createStationIssueTag("not_collected");
   }
 

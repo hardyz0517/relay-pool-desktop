@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import type { DragEndEvent, DragStartEvent } from "@dnd-kit/core";
 import { useQueryClient } from "@tanstack/react-query";
 import { createChannelMonitor, updateChannelMonitor } from "@/lib/api/channelMonitors";
@@ -17,7 +17,8 @@ import { buildStationGroupOptionsFromCurrentFactsForSelect, findMatchingGroupOpt
 import { deriveStationGroupDisplayFacts } from "@/lib/projections/groupFacts";
 import { queryKeys } from "@/lib/query/queryKeys";
 import { invalidatePricingMonitoringQueries } from "@/lib/query/pricingMonitoringInvalidation";
-import { channelMonitoringQueryOptions, keyPoolQueryOptions, stationsQueryOptions } from "@/lib/query/resourceQueries";
+import { refreshRoutingQueries } from "@/lib/query/routingQuerySynchronization";
+import { channelMonitorLatestSummaryQueryOptions, channelMonitorTemplatesQueryOptions, channelMonitorsQueryOptions, keyPoolQueryOptions, stationsQueryOptions } from "@/lib/query/resourceQueries";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import type { StationGroupOption } from "@/lib/types/groupFacts";
 import type { StationKeyCapabilities } from "@/lib/types/routing";
@@ -59,13 +60,15 @@ export function useKeyPoolPageController({
   const queryClient = useQueryClient();
   const keyPoolItemsQuery = useActivityQuery(keyPoolQueryOptions());
   const stationsQuery = useActivityQuery(stationsQueryOptions());
-  const channelMonitoringQuery = useActivityQuery(channelMonitoringQueryOptions(5_000));
+  const channelMonitorsQuery = useActivityQuery(channelMonitorsQueryOptions(5_000));
+  const channelMonitorLatestSummaryQuery = useActivityQuery(channelMonitorLatestSummaryQueryOptions(5_000));
+  const monitorTemplatesQuery = useActivityQuery(channelMonitorTemplatesQueryOptions());
   const connectivityOperation = useConnectivityOperation();
   const stations = stationsQuery.data ?? [];
   const items = keyPoolItemsQuery.data ?? [];
-  const monitors = channelMonitoringQuery.data?.monitors ?? [];
-  const channelStatusRows = channelMonitoringQuery.data?.statusWorkspace.rows ?? [];
-  const monitorTemplates = channelMonitoringQuery.data?.templates ?? [];
+  const monitors = channelMonitorsQuery.data ?? [];
+  const channelStatusRows = channelMonitorLatestSummaryQuery.data ?? [];
+  const monitorTemplates = monitorTemplatesQuery.data ?? [];
   const [selectedStationId, setSelectedStationId] = useState<string>("all");
   const [filterMode, setFilterMode] = useState<FilterMode>("all");
   const [query, setQuery] = useState("");
@@ -86,12 +89,24 @@ export function useKeyPoolPageController({
   const [testingKeyId, setTestingKeyId] = useState<string | null>(null);
   const [monitoringKeyId, setMonitoringKeyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const queryError = keyPoolItemsQuery.error ?? stationsQuery.error ?? channelMonitoringQuery.error;
+  const queryError = keyPoolItemsQuery.error ?? stationsQuery.error ?? channelMonitorsQuery.error ?? monitorTemplatesQuery.error;
   const displayError = error ?? (queryError ? readError(queryError) : null);
+  const monitoringSummaryStale = channelMonitorLatestSummaryQuery.data !== undefined
+    && channelMonitorLatestSummaryQuery.dataUpdatedAt > 0
+    && Date.now() - channelMonitorLatestSummaryQuery.dataUpdatedAt > 15_000;
+  const [, setMonitoringFreshnessTick] = useState(0);
+  useEffect(() => {
+    const updatedAt = channelMonitorLatestSummaryQuery.dataUpdatedAt;
+    if (channelMonitorLatestSummaryQuery.data === undefined || updatedAt <= 0) return;
+    const delay = Math.max(0, updatedAt + 15_000 - Date.now());
+    const timeout = window.setTimeout(() => {
+      setMonitoringFreshnessTick((current) => current + 1);
+    }, delay);
+    return () => window.clearTimeout(timeout);
+  }, [channelMonitorLatestSummaryQuery.data, channelMonitorLatestSummaryQuery.dataUpdatedAt]);
   const loading =
     keyPoolItemsQuery.isLoading ||
-    stationsQuery.isLoading ||
-    (channelMonitoringQuery.isPending && channelMonitoringQuery.data === undefined);
+    stationsQuery.isLoading;
 
   const activeDragItem = useMemo(
     () => items.find((item) => item.id === activeDragId) ?? null,
@@ -147,6 +162,12 @@ export function useKeyPoolPageController({
       ...(includeStations
         ? [queryClient.invalidateQueries({ queryKey: queryKeys.stations })]
         : []),
+      // Key mutations can change monitor target expansion and spendability.
+      // Invalidate the shared monitoring boundary so status, dashboard and
+      // key-pool projections refresh immediately instead of waiting for the
+      // next five-second summary tick.
+      invalidatePricingMonitoringQueries(queryClient),
+      refreshRoutingQueries(queryClient),
     ]);
   }
 
@@ -569,6 +590,13 @@ export function useKeyPoolPageController({
     loading,
     monitorByKey,
     monitorStatusByKey,
+    monitoringSummaryError: channelMonitorLatestSummaryQuery.error
+      ? readError(channelMonitorLatestSummaryQuery.error)
+      : null,
+    monitoringSummaryHasData: channelMonitorLatestSummaryQuery.data !== undefined,
+    monitoringSummaryRefreshing: channelMonitorLatestSummaryQuery.isFetching,
+    monitoringSummaryStale,
+    retryMonitoringSummary: () => channelMonitorLatestSummaryQuery.refetch(),
     monitoringKeyId,
     pendingDeleteItem,
     query,

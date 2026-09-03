@@ -1,25 +1,12 @@
 import { useCallback } from "react";
-import { type QueryClient, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { collectStationTask } from "@/lib/api/collector";
 import { stationPublishedStatusQueryOptions } from "@/lib/query/resourceQueries";
-import { queryKeys } from "@/lib/query/queryKeys";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 
 const PUBLISHED_STATUS_TASK = "published_status" as const;
 
-export async function invalidateStationPublishedStatusCollectionQueries(
-  queryClient: QueryClient,
-  stationId: string,
-) {
-  await Promise.all([
-    queryClient.invalidateQueries({ queryKey: queryKeys.stationPublishedStatusRoot }),
-    queryClient.invalidateQueries({ queryKey: queryKeys.collectorRuns(stationId) }),
-    queryClient.invalidateQueries({ queryKey: queryKeys.collectorSnapshots(stationId) }),
-  ]);
-}
-
 export function useStationPublishedStatus(stationId: string | null) {
-  const queryClient = useQueryClient();
   const workspaceQuery = useActivityQuery(
     stationPublishedStatusQueryOptions(stationId),
   );
@@ -28,10 +15,6 @@ export function useStationPublishedStatus(stationId: string | null) {
     mutationFn: async () => {
       if (!stationId) return;
       await collectStationTask(stationId, PUBLISHED_STATUS_TASK);
-    },
-    onSuccess: async () => {
-      if (!stationId) return;
-      await invalidateStationPublishedStatusCollectionQueries(queryClient, stationId);
     },
   });
 

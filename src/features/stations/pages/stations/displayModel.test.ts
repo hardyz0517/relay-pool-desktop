@@ -29,7 +29,7 @@ describe("stations page display model", () => {
         station: { balanceCny: 12.345 },
         latestBalance: null,
       } as StationAssetRow),
-    ).toEqual({ amount: "12.35", currency: "USD" });
+    ).toEqual({ amount: "未采集", currency: "" });
     expect(
       formatStationBalanceParts({
         station: { balanceCny: null },

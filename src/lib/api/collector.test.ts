@@ -165,5 +165,11 @@ function runResult() {
       createdAt: "now",
     },
     events: [],
+    receipt: {
+      mutationId: "mutation-1",
+      committedAtMs: 1,
+      affectedScopes: [],
+      revisionVector: [],
+    },
   };
 }

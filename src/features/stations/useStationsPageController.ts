@@ -26,11 +26,11 @@ import { queryKeys } from "@/lib/query/queryKeys";
 import { discoverCreatedStationKeyModels } from "@/lib/stationKeyModelDiscovery";
 import {
   currentStationBalanceSnapshotsQueryOptions,
-  stationAssetsQueryOptions,
-  stationsQueryOptions,
+  stationAssetsReadModelQueryOptions,
 } from "@/lib/query/resourceQueries";
 import { alertingCurrentQueryOptions } from "@/lib/queries/alertingQueries";
 import { invalidateAlertingReadModels } from "@/lib/query/alertingQuerySynchronization";
+import { invalidatePricingMonitoringQueries } from "@/lib/query/pricingMonitoringInvalidation";
 import { refreshRoutingQueries } from "@/lib/query/routingQuerySynchronization";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import type { CollectorSnapshot } from "@/lib/types/collector";
@@ -98,17 +98,20 @@ export function useStationsPageController({
   const [issueFilter, setIssueFilter] = useState<StationIssueFilterValue>("all");
   const [error, setError] = useState<string | null>(null);
 
-  const stationsQuery = useActivityQuery(stationsQueryOptions());
+  const stationAssetsQuery = useActivityQuery(stationAssetsReadModelQueryOptions());
   const balancesQuery = useActivityQuery(
     currentStationBalanceSnapshotsQueryOptions(BALANCE_BACKGROUND_SYNC_INTERVAL_MS),
   );
   const alertingQuery = useActivityQuery(alertingCurrentQueryOptions({ limit: 100 }));
-  const stations = stationsQuery.data ?? [];
+  const stations: Station[] = useMemo(
+    () => stationAssetsQuery.data?.data.rows.map((row) => row.station) ?? [],
+    [stationAssetsQuery.data],
+  );
   const stationIds = useMemo(() => stations.map((station) => station.id), [stations]);
   const balanceSnapshots = balancesQuery.data ?? [];
   const alertingIncidents = alertingQuery.data?.items ?? [];
-  const loading = stationsQuery.isPending && stationsQuery.data === undefined;
-  const queryError = stationsQuery.error ? readError(stationsQuery.error) : null;
+  const loading = stationAssetsQuery.isPending && stationAssetsQuery.data === undefined;
+  const queryError = stationAssetsQuery.error ? readError(stationAssetsQuery.error) : null;
   const loadError = queryError ?? error;
 
   function startStationAction(stationId: string, action: StationAction) {
@@ -137,19 +140,18 @@ export function useStationsPageController({
     }
   }
   const balanceFactsReady = balancesQuery.data !== undefined;
-  const stationAssetsQuery = useActivityQuery(stationAssetsQueryOptions(stationIds));
-  const assetSnapshotsByStation = useMemo(
-    () => {
-      const latestSnapshotsByStation = new Map(
-        (stationAssetsQuery.data ?? []).map((snapshot) => [snapshot.stationId, snapshot]),
-      );
-      return new Map(
-        stations.map((station) => [station.id, latestSnapshotsByStation.get(station.id) ?? null]),
-      );
-    },
-    [stationAssetsQuery.data, stations],
+  const stationStateByStation = useMemo(
+    () => new Map(
+      (stationAssetsQuery.data?.data.rows ?? []).map((row) => [
+        row.station.id,
+        {
+          collectionSummary: row.collectionSummary,
+          authorizationSummary: row.authorizationSummary,
+        },
+      ] as const),
+    ),
+    [stationAssetsQuery.data],
   );
-
   useEffect(() => {
     if (!drawerStationId) {
       setDrawerVisible(false);
@@ -193,31 +195,29 @@ export function useStationsPageController({
     [activeDragId, stations],
   );
   const keysByStation = useMemo(() => {
-    const map = new Map<string, StationKey[]>();
+    const map = new Map<string, StationKey[]>(
+      (stationAssetsQuery.data?.data.rows ?? []).map((row) => [
+        row.station.id,
+        row.keys as unknown as StationKey[],
+      ] as const),
+    );
     if (activeDialogStation && stationKeys.length > 0) {
       map.set(activeDialogStation.id, stationKeys);
     }
     return map;
-  }, [activeDialogStation, stationKeys]);
-  const snapshotsByStation = useMemo(() => {
-    const map = new Map(assetSnapshotsByStation);
-    if (detailStation && snapshot) {
-      map.set(detailStation.id, snapshot);
-    }
-    return map;
-  }, [assetSnapshotsByStation, detailStation, snapshot]);
+  }, [activeDialogStation, stationAssetsQuery.data, stationKeys]);
   const stationAssetRows = useMemo(
     () =>
       buildStationAssetRows({
         stations,
+        stationStateByStation,
         keysByStation,
         balances: balanceSnapshots,
         balanceFactsReady,
-        snapshotsByStation,
         groupBindingsByStation,
         incidents: alertingIncidents,
       }),
-    [balanceFactsReady, balanceSnapshots, alertingIncidents, groupBindingsByStation, keysByStation, snapshotsByStation, stations],
+    [balanceFactsReady, balanceSnapshots, alertingIncidents, groupBindingsByStation, keysByStation, stationStateByStation, stations],
   );
   const filteredStationAssetRows = useMemo(
     () => filterStationAssetRowsByIssue(stationAssetRows, issueFilter),
@@ -276,6 +276,7 @@ export function useStationsPageController({
         queryClient.invalidateQueries({ queryKey: queryKeys.balanceSnapshots }),
         queryClient.invalidateQueries({ queryKey: queryKeys.stationAssets }),
         invalidateAlertingReadModels(queryClient),
+        invalidatePricingMonitoringQueries(queryClient),
         refreshRoutingQueries(queryClient),
       ]);
     },
@@ -462,19 +463,15 @@ export function useStationsPageController({
     if (oldIndex < 0 || newIndex < 0) {
       return;
     }
-    const previousStations = stations;
     const nextStations = [...stations];
     const [moved] = nextStations.splice(oldIndex, 1);
     nextStations.splice(newIndex, 0, moved);
     await cancelStationSharedQueries();
-    queryClient.setQueryData(queryKeys.stations, nextStations);
     try {
-      const savedStations = await reorderStations(nextStations.map((station) => station.id));
-      queryClient.setQueryData(queryKeys.stations, savedStations);
-      await queryClient.invalidateQueries({ queryKey: queryKeys.stations });
+      await reorderStations(nextStations.map((station) => station.id));
+      await invalidateStationSharedQueries();
       toast.success("站点排序已保存");
     } catch (requestError) {
-      queryClient.setQueryData(queryKeys.stations, previousStations);
       toast.error("保存站点排序失败", readError(requestError));
     }
   }
@@ -561,7 +558,6 @@ export function useStationsPageController({
     try {
       await cancelStationSharedQueries();
       const result = await collectSub2apiStation(station.id);
-      await invalidateStationSharedQueries();
       if (station.id === selectedStationId || station.id === drawerStationId) {
         await refreshExtras(station.id);
       }
@@ -609,7 +605,6 @@ export function useStationsPageController({
     try {
       await cancelStationSharedQueries();
       const result = await collectStationTask(station.id, "balance");
-      await invalidateStationSharedQueries();
       if (station.id === selectedStationId || station.id === drawerStationId) {
         await refreshExtras(station.id);
       }
@@ -702,6 +697,7 @@ export function useStationsPageController({
     activeDialogStation,
     activeDragRow,
     attentionCount,
+    balanceSnapshots,
     alertingIncidents,
     closeDialog,
     closeDrawer,

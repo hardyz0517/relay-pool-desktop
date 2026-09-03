@@ -32,7 +32,8 @@ import {
   dashboardCumulativeRequestMetricsQueryOptions,
   dashboardLiveRequestMetricsQueryOptions,
   keyPoolQueryOptions,
-  channelMonitoringQueryOptions,
+  channelMonitorLatestSummaryQueryOptions,
+  channelMonitorsQueryOptions,
   proxyStatusQueryOptions,
   requestLogsQueryOptions,
   settingsQueryOptions,
@@ -129,7 +130,21 @@ export function DashboardPage({
     requestLogsQueryOptions(proxyRunning ? 2_000 : false),
   );
   const keyPoolQuery = useActivityQuery(keyPoolQueryOptions());
-  const channelMonitoringQuery = useActivityQuery(channelMonitoringQueryOptions(5_000));
+  const channelMonitorsQuery = useActivityQuery(channelMonitorsQueryOptions(5_000));
+  const channelMonitorLatestSummaryQuery = useActivityQuery(channelMonitorLatestSummaryQueryOptions(5_000));
+  const [, setMonitoringFreshnessTick] = useState(0);
+  const latestSummaryStale = channelMonitorLatestSummaryQuery.data !== undefined
+    && channelMonitorLatestSummaryQuery.dataUpdatedAt > 0
+    && Date.now() - channelMonitorLatestSummaryQuery.dataUpdatedAt > 15_000;
+  useEffect(() => {
+    const updatedAt = channelMonitorLatestSummaryQuery.dataUpdatedAt;
+    if (channelMonitorLatestSummaryQuery.data === undefined || updatedAt <= 0) return;
+    const delay = Math.max(0, updatedAt + 15_000 - Date.now());
+    const timeout = window.setTimeout(() => {
+      setMonitoringFreshnessTick((current) => current + 1);
+    }, delay);
+    return () => window.clearTimeout(timeout);
+  }, [channelMonitorLatestSummaryQuery.data, channelMonitorLatestSummaryQuery.dataUpdatedAt]);
   const routingRuntimeQuery = useActivityQuery({
     queryKey: routingQueryKeys.runtimeOverlay(),
     queryFn: loadRoutingRuntimeOverlayQuery,
@@ -162,9 +177,9 @@ export function DashboardPage({
   const keyPoolItems = keyPoolQuery.data ?? [];
   const keyHealthSummary = useMemo(() => summarizeDashboardKeyHealth(
     keyPoolItems,
-    channelMonitoringQuery.data?.monitors ?? [],
-    channelMonitoringQuery.data?.statusWorkspace.rows ?? [],
-  ), [channelMonitoringQuery.data, keyPoolItems]);
+    channelMonitorsQuery.data ?? [],
+    channelMonitorLatestSummaryQuery.data ?? [],
+  ), [channelMonitorLatestSummaryQuery.data, channelMonitorsQuery.data, keyPoolItems]);
   const currentConcurrencyByKeyId = useMemo(
     () => new Map(
       (routingRuntimeQuery.data?.candidates ?? []).map((candidate) => [
@@ -483,6 +498,28 @@ export function DashboardPage({
             </Button>
           ) : null}
         </div>
+        {(channelMonitorLatestSummaryQuery.isFetching || channelMonitorLatestSummaryQuery.isError || latestSummaryStale) && (
+          <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground" role="status">
+            <span>
+              {channelMonitorLatestSummaryQuery.isFetching
+                ? "监控摘要更新中…"
+                : channelMonitorLatestSummaryQuery.isError
+                  ? channelMonitorLatestSummaryQuery.data
+                    ? `监控摘要更新失败，继续显示上次成功数据：${readError(channelMonitorLatestSummaryQuery.error)}`
+                    : `监控摘要读取失败：${readError(channelMonitorLatestSummaryQuery.error)}`
+                  : "监控摘要数据可能已过期"}
+            </span>
+            {!channelMonitorLatestSummaryQuery.isFetching ? (
+              <button
+                type="button"
+                className="shrink-0 text-primary underline-offset-2 hover:underline"
+                onClick={() => void channelMonitorLatestSummaryQuery.refetch()}
+              >
+                立即刷新
+              </button>
+            ) : null}
+          </div>
+        )}
       </section>
 
       <div className="grid min-w-0 items-start gap-4 md:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">

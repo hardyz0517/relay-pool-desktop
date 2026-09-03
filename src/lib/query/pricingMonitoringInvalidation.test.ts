@@ -11,7 +11,10 @@ describe("pricing monitoring invalidation", () => {
       queryKey: ["pricingGroupMonitorStatus"],
     });
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["channelMonitoring"] });
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["channelMonitors"] });
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["channelMonitorLatestSummary"] });
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["channelMonitorTemplates"] });
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["channelStatus"] });
-    expect(invalidateQueries).toHaveBeenCalledTimes(4);
+    expect(invalidateQueries).toHaveBeenCalledTimes(7);
   });
 });

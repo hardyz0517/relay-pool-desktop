@@ -136,7 +136,7 @@ describe("channel status V2 view model", () => {
     expect(markup).toContain("可用性");
     expect(markup).not.toContain("正常率");
     expect(markup).not.toContain("最近探测");
-    expect(markup).toContain("md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4");
+    expect(markup).toContain("grid gap-3");
     expect(markup).toContain("flex w-full min-w-0 items-end gap-[2px]");
     expect(markup).toContain("h-5");
     expect(markup).not.toContain("<button");

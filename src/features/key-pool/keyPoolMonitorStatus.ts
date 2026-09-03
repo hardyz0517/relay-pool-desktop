@@ -1,5 +1,5 @@
 import type { StatusTone } from "@/components/ui";
-import type { ChannelMonitor, ChannelStatusOutcome, ChannelStatusRow } from "@/lib/types/channelMonitors";
+import type { ChannelMonitor, ChannelMonitorLatestSummary, ChannelStatusOutcome, ChannelStatusRow } from "@/lib/types/channelMonitors";
 
 export type KeyPoolMonitorStatus = {
   label: string;
@@ -16,17 +16,15 @@ const outcomeStatus: Record<ChannelStatusOutcome, KeyPoolMonitorStatus> = {
 
 export function keyPoolMonitorStatus(
   monitor: ChannelMonitor | null,
-  rows: ChannelStatusRow[],
+  rows: Array<ChannelMonitorLatestSummary | ChannelStatusRow>,
 ): KeyPoolMonitorStatus | null {
   if (!monitor?.enabled || monitor.targetType !== "station_key" || !monitor.stationKeyId) {
     return null;
   }
 
-  const row = rows.find(
-    (candidate) =>
-      candidate.monitor.id === monitor.id &&
-      candidate.target.stationKeyId === monitor.stationKeyId,
-  );
+  const row = rows.find((candidate) => "monitorId" in candidate
+    ? candidate.monitorId === monitor.id && candidate.stationKeyId === monitor.stationKeyId
+    : candidate.monitor.id === monitor.id && candidate.target.stationKeyId === monitor.stationKeyId);
   if (!row) {
     return outcomeStatus.missing;
   }

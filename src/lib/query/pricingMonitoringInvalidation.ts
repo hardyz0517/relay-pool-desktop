@@ -11,6 +11,9 @@ export function invalidatePricingMonitoringQueries(queryClient: QueryClient) {
     queryClient.invalidateQueries({ queryKey: queryKeys.pricing }),
     queryClient.invalidateQueries({ queryKey: queryKeys.pricingGroupMonitorStatusPrefix }),
     queryClient.invalidateQueries({ queryKey: queryKeys.channelMonitoring }),
+    queryClient.invalidateQueries({ queryKey: queryKeys.channelMonitors }),
+    queryClient.invalidateQueries({ queryKey: queryKeys.channelMonitorLatestSummary }),
+    queryClient.invalidateQueries({ queryKey: queryKeys.channelMonitorTemplates }),
     queryClient.invalidateQueries({ queryKey: queryKeys.channelStatus }),
   ]);
 }

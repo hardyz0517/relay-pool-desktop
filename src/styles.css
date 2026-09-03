@@ -290,25 +290,18 @@ input[type="number"]::-webkit-outer-spin-button {
 }
 
 .local-proxy-globe--active {
+  /* Routing activity is intentional feedback, even when the OS requests
+     reduced motion. Visibility/document state is handled by the paused class. */
   animation: localProxyGlobeSpin 2000ms steps(16, end) infinite;
   background-image: var(--local-proxy-globe-sprite-light);
 }
 
-.dark .local-proxy-globe--active {
-  background-image: var(--local-proxy-globe-sprite-dark);
+.local-proxy-globe--active.local-proxy-globe--paused {
+  animation-play-state: paused;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .local-proxy-globe--active {
-    animation: none;
-    background-image: var(--local-proxy-globe-static-light);
-    background-size: 100% 100%;
-    background-position: 0 0;
-  }
-
-  .dark .local-proxy-globe--active {
-    background-image: var(--local-proxy-globe-static-dark);
-  }
+.dark .local-proxy-globe--active {
+  background-image: var(--local-proxy-globe-sprite-dark);
 }
 
 .app-page-transition-stack {

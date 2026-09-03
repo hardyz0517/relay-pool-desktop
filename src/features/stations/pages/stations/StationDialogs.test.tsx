@@ -3,6 +3,7 @@ import { act, type FormEvent } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "@/components/ui/ToastProvider";
+import type { BalanceSnapshot } from "@/lib/types/economics";
 import type { StationKey } from "@/lib/types/stationKeys";
 import type { Station } from "@/lib/types/stations";
 import { emptyForm, emptyKeyForm } from "./formModel";
@@ -73,6 +74,41 @@ function stationKey(overrides: Partial<StationKey> = {}): StationKey {
   };
 }
 
+function balanceSnapshot(overrides: Partial<BalanceSnapshot> = {}): BalanceSnapshot {
+  return {
+    id: "balance-1",
+    stationId: "station-1",
+    stationKeyId: null,
+    scope: "station",
+    value: 8,
+    currency: "USD",
+    creditUnit: null,
+    usedValue: null,
+    totalValue: null,
+    todayRequestCount: null,
+    totalRequestCount: null,
+    todayConsumption: null,
+    totalConsumption: null,
+    todayBaseConsumption: null,
+    totalBaseConsumption: null,
+    todayTokenCount: null,
+    totalTokenCount: null,
+    todayInputTokenCount: null,
+    todayOutputTokenCount: null,
+    totalInputTokenCount: null,
+    totalOutputTokenCount: null,
+    accountConcurrencyLimit: null,
+    lowBalanceThreshold: null,
+    status: "normal",
+    source: "test",
+    confidence: 1,
+    collectedAt: "2026-01-02T00:00:00Z",
+    createdAt: "2026-01-02T00:00:00Z",
+    updatedAt: "2026-01-02T00:00:00Z",
+    ...overrides,
+  };
+}
+
 describe("StationDialogs", () => {
   it("delegates station form changes and submit to page handlers", async () => {
     const onChange = vi.fn();
@@ -131,6 +167,7 @@ describe("StationDialogs", () => {
         <ToastProvider>
           <DetailBody
             activeDialogStation={station()}
+            balances={[balanceSnapshot()]}
             incidents={[]}
             collectorRuns={[]}
             credentials={null}
@@ -154,6 +191,38 @@ describe("StationDialogs", () => {
 
     expect(onEditKey).toHaveBeenCalledWith(key);
     expect(onDeleteKey).toHaveBeenCalledWith(key);
+
+    await act(async () => root.unmount());
+  });
+
+  it("fails closed when no typed balance snapshot exists", async () => {
+    const host = document.createElement("div");
+    const root = createRoot(host);
+
+    await act(async () =>
+      root.render(
+        <ToastProvider>
+          <DetailBody
+            activeDialogStation={station({ balanceCny: 42 })}
+            balances={[]}
+            incidents={[]}
+            collectorRuns={[]}
+            credentials={null}
+            groupBindings={[]}
+            keyCountLabel="0 把"
+            rateRecords={[]}
+            snapshot={null}
+            snapshots={[]}
+            stationKeys={[]}
+            onDeleteKey={vi.fn()}
+            onEditKey={vi.fn()}
+          />
+        </ToastProvider>,
+      ),
+    );
+
+    expect(host.textContent).toContain("未采集");
+    expect(host.textContent).not.toContain("$42.00");
 
     await act(async () => root.unmount());
   });

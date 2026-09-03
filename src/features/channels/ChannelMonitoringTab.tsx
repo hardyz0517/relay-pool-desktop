@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { Profiler, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Copy, Edit3, Play, Plus, RefreshCw, Route, Trash2 } from "lucide-react";
 import { Button, ConfirmDialog, EmptyState, IconButton, StatusBadge, useToast } from "@/components/ui";
@@ -11,7 +11,15 @@ import {
 } from "@/lib/api/channelMonitors";
 import { readError } from "@/lib/errors";
 import { invalidatePricingMonitoringQueries } from "@/lib/query/pricingMonitoringInvalidation";
-import { channelMonitoringQueryOptions, monitoringCapabilitiesQueryOptions } from "@/lib/query/resourceQueries";
+import { queryKeys } from "@/lib/query/queryKeys";
+import {
+  channelMonitorLatestSummaryQueryOptions,
+  channelMonitorTemplatesQueryOptions,
+  channelMonitorsQueryOptions,
+  keyPoolQueryOptions,
+  monitoringCapabilitiesQueryOptions,
+  stationsQueryOptions,
+} from "@/lib/query/resourceQueries";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import type {
   ChannelMonitor,
@@ -24,6 +32,7 @@ import type { KeyPoolItem } from "@/lib/types/stationKeys";
 import type { Station } from "@/lib/types/stations";
 import { profileLabel, protocolLabel } from "@/lib/channelMonitorDisplay";
 import { ChannelMonitorForm } from "./ChannelMonitorForm";
+import { recordMonitoringPerformance } from "@/lib/monitoringPerformance";
 import {
   formatInterval,
   formatTargetLabel,
@@ -57,26 +66,50 @@ export function ChannelMonitoringTab({
 }: ChannelMonitoringTabProps) {
   const toast = useToast();
   const queryClient = useQueryClient();
-  const workspaceQuery = useActivityQuery(channelMonitoringQueryOptions());
-  const capabilitiesQuery = useActivityQuery(monitoringCapabilitiesQueryOptions());
-  const workspace = workspaceQuery.data;
-  const monitors = workspace?.monitors ?? [];
-  const stations = workspace?.stations ?? [];
-  const keys = workspace?.keyPoolItems ?? [];
-  const templates = workspace?.templates ?? [];
-  const latestStatusByMonitor = useMemo(
-    () => buildLatestStatusByMonitor(workspace?.statusWorkspace.rows ?? []),
-    [workspace?.statusWorkspace.rows],
-  );
-  const loading = workspaceQuery.isPending && workspace === undefined;
   const [saving, setSaving] = useState(false);
   const [actionState, setActionState] = useState<ActionState>(null);
   const [error, setError] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [editingMonitor, setEditingMonitor] = useState<ChannelMonitor | null>(null);
   const [pendingDeleteMonitor, setPendingDeleteMonitor] = useState<ChannelMonitor | null>(null);
-  const displayError = error ?? (workspaceQuery.error ? readError(workspaceQuery.error) : null);
+  const firstContentRecorded = useRef(false);
+  // Definitions and labels are relatively static. Keep them in their own
+  // cache entries so a five-second status refresh never re-reads the whole
+  // management workspace. Mutations invalidate these canonical keys.
+  const monitorsQuery = useActivityQuery(channelMonitorsQueryOptions());
+  const latestSummaryQuery = useActivityQuery(channelMonitorLatestSummaryQueryOptions(5_000));
+  const stationsQuery = useActivityQuery(stationsQueryOptions());
+  const keyPoolQuery = useActivityQuery(keyPoolQueryOptions());
+  const templatesQuery = useActivityQuery(channelMonitorTemplatesQueryOptions());
+  const [, setFreshnessTick] = useState(0);
+  const capabilitiesQuery = useActivityQuery(monitoringCapabilitiesQueryOptions(formOpen));
+  const monitors = monitorsQuery.data ?? [];
+  const stations = stationsQuery.data ?? [];
+  const keys = keyPoolQuery.data ?? [];
+  const templates = templatesQuery.data ?? [];
+  const latestStatusByMonitor = useMemo(
+    () => buildLatestStatusByMonitor(latestSummaryQuery.data ?? []),
+    [latestSummaryQuery.data],
+  );
+  const loading = [monitorsQuery, stationsQuery, keyPoolQuery, templatesQuery].some(
+    (query) => query.isPending && query.data === undefined,
+  );
+  const queryError = monitorsQuery.error
+    ?? stationsQuery.error
+    ?? keyPoolQuery.error
+    ?? templatesQuery.error
+    ?? latestSummaryQuery.error;
+  const displayError = error ?? (queryError ? readError(queryError) : null);
   const capabilitiesError = capabilitiesQuery.error ? readError(capabilitiesQuery.error) : null;
+  const hasSummary = latestSummaryQuery.data !== undefined;
+  const stale = hasSummary && latestSummaryQuery.dataUpdatedAt > 0 && Date.now() - latestSummaryQuery.dataUpdatedAt > 15_000;
+
+  useEffect(() => {
+    if (!hasSummary || latestSummaryQuery.dataUpdatedAt <= 0) return;
+    const delay = Math.max(0, latestSummaryQuery.dataUpdatedAt + 15_000 - Date.now());
+    const timeout = window.setTimeout(() => setFreshnessTick((current) => current + 1), delay);
+    return () => window.clearTimeout(timeout);
+  }, [hasSummary, latestSummaryQuery.dataUpdatedAt]);
 
   const summary = useMemo(() => {
     const enabledCount = monitors.filter((monitor) => monitor.enabled).length;
@@ -98,7 +131,14 @@ export function ChannelMonitoringTab({
   async function refresh(showSuccess = false) {
     setError(null);
     try {
-      await invalidatePricingMonitoringQueries(queryClient);
+      // Static labels are intentionally not polled every five seconds, but a
+      // manual retry must also recover a failed station/key read. Successful
+      // mutation refreshes still use the same canonical invalidation boundary.
+      await Promise.all([
+        invalidatePricingMonitoringQueries(queryClient),
+        queryClient.invalidateQueries({ queryKey: queryKeys.stations }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.keyPool }),
+      ]);
       if (showSuccess) {
         toast.success("渠道监控已刷新");
       }
@@ -164,17 +204,22 @@ export function ChannelMonitoringTab({
   }
 
   async function handleDuplicate(monitor: ChannelMonitor) {
-    if (!capabilitiesQuery.data) {
-      toast.error(
-        "复制监控失败",
-        capabilitiesError ?? "监控能力仍在加载，请稍后重试",
-      );
-      return;
+    let capabilities = capabilitiesQuery.data;
+    if (!capabilities) {
+      try {
+        // The capabilities query is intentionally disabled while the form is
+        // closed. A duplicate still needs the same canonical validation, so
+        // fetch it on demand instead of keeping an always-on subscription.
+        capabilities = await queryClient.fetchQuery(monitoringCapabilitiesQueryOptions());
+      } catch (requestError) {
+        toast.error("复制监控失败", capabilitiesError ?? readError(requestError));
+        return;
+      }
     }
     const validationError = validateMonitorDraft(monitorToDraft(monitor), {
       templates,
       keys,
-      capabilities: capabilitiesQuery.data,
+      capabilities,
     });
     if (validationError) {
       toast.error("复制监控失败", validationError);
@@ -233,7 +278,35 @@ export function ChannelMonitoringTab({
   }
 
   return (
+    <Profiler
+      id="channel-monitoring"
+      onRender={(_id, phase, actualDuration) => {
+        recordMonitoringPerformance({
+          name: "channel-monitoring-react-commit",
+          durationMs: actualDuration,
+          phase,
+        });
+        if (phase === "mount" && !firstContentRecorded.current) {
+          firstContentRecorded.current = true;
+          recordMonitoringPerformance({
+            name: "channel-monitoring-first-content",
+            durationMs: actualDuration,
+            phase,
+          });
+        }
+      }}
+    >
     <PageScaffold title="渠道监控" actions={headerActions}>
+      {(latestSummaryQuery.isFetching || stale) && (
+        <div className="mb-3 flex items-center justify-between gap-2 text-xs text-muted-foreground" role="status">
+          <span>{latestSummaryQuery.isFetching ? "正在更新监控状态…" : "监控状态数据可能已过期"}</span>
+          {stale && !latestSummaryQuery.isFetching ? (
+            <button type="button" className="text-primary underline-offset-2 hover:underline" onClick={() => void latestSummaryQuery.refetch()}>
+              立即刷新
+            </button>
+          ) : null}
+        </div>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap gap-2">
           <SummaryPill label="监控" value={`${summary.total}`} />
@@ -256,7 +329,19 @@ export function ChannelMonitoringTab({
         </div>
       </div>
 
-      {displayError && <div className="rounded-[var(--surface-radius)] border border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">{displayError}</div>}
+      {displayError && (
+        <div className="flex items-center justify-between gap-3 rounded-[var(--surface-radius)] border border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">
+          <span>{displayError}</span>
+          <button
+            type="button"
+            className="shrink-0 text-danger-foreground underline-offset-2 hover:underline"
+            onClick={() => void refresh()}
+            disabled={latestSummaryQuery.isFetching}
+          >
+            重试
+          </button>
+        </div>
+      )}
 
       {monitors.length === 0 ? (
         <EmptyState
@@ -296,6 +381,7 @@ export function ChannelMonitoringTab({
         onConfirm={() => void handleConfirmDelete()}
       />
     </PageScaffold>
+    </Profiler>
   );
 }
 
@@ -660,16 +746,22 @@ function SummaryPill({
 }
 
 function buildLatestStatusByMonitor(
-  rows: Array<{ monitor: { id: string }; latest: ChannelStatusLatestResult | null }>,
+  rows: Array<{
+    monitor?: { id: string };
+    monitorId?: string;
+    latest: ChannelStatusLatestResult | null;
+  }>,
 ) {
   const statuses = new Map<string, ChannelStatusLatestResult>();
   for (const row of rows) {
     if (!row.latest) {
       continue;
     }
-    const current = statuses.get(row.monitor.id);
+    const monitorId = row.monitor?.id ?? row.monitorId;
+    if (!monitorId) continue;
+    const current = statuses.get(monitorId);
     if (!current || compareLatestStatus(row.latest, current) > 0) {
-      statuses.set(row.monitor.id, row.latest);
+      statuses.set(monitorId, row.latest);
     }
   }
   return statuses;

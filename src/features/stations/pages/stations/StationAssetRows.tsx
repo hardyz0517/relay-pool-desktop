@@ -85,7 +85,7 @@ export function StationAssetListRow({
   const issueTags = stationIssueTags(row);
   const balance = formatStationBalanceParts(row);
   const lastCollectText = formatRelativeTime(
-    row.latestBalance?.updatedAt ?? row.latestBalance?.collectedAt ?? station.lastCheckedAt ?? station.updatedAt,
+    row.latestBalance?.updatedAt ?? row.latestBalance?.collectedAt ?? null,
   );
 
   return (
@@ -251,12 +251,7 @@ function supportsManualAuthorization(station: Station) {
 }
 
 function rowNeedsManualAuthorization(row: StationAssetRow) {
-  const summary = row.latestSnapshot?.summaryJson ?? {};
-  return (
-    row.latestSnapshot?.status === "manual_required" ||
-    summary.loginRequired === true ||
-    summary.loginStatus === "manual_required"
-  );
+  return row.authorizationSummary.status === "reauthorization_required";
 }
 
 function StationIssueTagBadge({ tag }: { tag: StationIssueTag }) {

@@ -11,6 +11,34 @@ export type StationStatus =
   | "disabled"
   | "unchecked";
 
+export type StationCollectionStatus =
+  | "not_collected"
+  | "collecting"
+  | "healthy"
+  | "degraded"
+  | "failed"
+  | "stale";
+
+export type StationCollectionSummary = {
+  status: StationCollectionStatus | string;
+  reasonCodes: string[];
+  revision: number;
+};
+
+export type StationAuthorizationStatus =
+  | "unknown"
+  | "verifying"
+  | "valid"
+  | "reauthorization_required"
+  | "indeterminate";
+
+export type StationAuthorizationSummary = {
+  status: StationAuthorizationStatus | string;
+  credentialRevision: number;
+  reasonCode: string | null;
+  revision: number;
+};
+
 export type StationProxyMode = "inherit" | "direct" | "system" | "manual";
 
 export type Station = {
@@ -39,7 +67,10 @@ export type Station = {
   note: string | null;
   createdAt: string;
   updatedAt: string;
+  collectionSummary?: StationCollectionSummary | null;
+  authorizationSummary?: StationAuthorizationSummary | null;
 };
+
 
 export type StationInput = {
   name: string;

@@ -7,6 +7,8 @@ import { listStationGroupOptions } from "@/lib/api/groupFacts";
 import { saveStationKeyWithDefaults } from "@/lib/api/stationKeys";
 import { readError } from "@/lib/errors";
 import { queryKeys } from "@/lib/query/queryKeys";
+import { invalidatePricingMonitoringQueries } from "@/lib/query/pricingMonitoringInvalidation";
+import { refreshRoutingQueries } from "@/lib/query/routingQuerySynchronization";
 import { stationsQueryOptions } from "@/lib/query/resourceQueries";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import type { StationGroupOption } from "@/lib/types/groupFacts";
@@ -187,6 +189,8 @@ export function AddKeyPage({ initialStationId, onBack, onCreated }: AddKeyPagePr
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.keyPool }),
         queryClient.invalidateQueries({ queryKey: queryKeys.stations }),
+        invalidatePricingMonitoringQueries(queryClient),
+        refreshRoutingQueries(queryClient),
       ]);
       toast.success("密钥已添加");
       onCreated?.();

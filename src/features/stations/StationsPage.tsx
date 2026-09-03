@@ -48,6 +48,7 @@ export function StationsPage({
     activeDialogStation,
     activeDragRow,
     attentionCount,
+    balanceSnapshots,
     alertingIncidents,
     closeDialog,
     closeDrawer,
@@ -277,6 +278,7 @@ export function StationsPage({
               <div className="min-h-0 flex-1 overflow-auto">
                 <DetailBody
                   activeDialogStation={detailStation}
+                  balances={balanceSnapshots}
                   incidents={alertingIncidents.filter((event) => event.stationId === detailStation.id)}
                   credentials={credentials}
                   keyCountLabel={keyCountLabel}

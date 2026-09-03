@@ -61,19 +61,23 @@ export type StationDetailViewModel = {
   changeItems: StationDetailDiagnosticItem[];
 };
 
+export type StationDetailIncidentFact = Pick<
+  AlertingIncident,
+  | "eventType"
+  | "lifecycleState"
+  | "severity"
+  | "groupName"
+  | "stationId"
+  | "episodeNumber"
+  | "occurrenceCount"
+  | "lastSeenAtMs"
+> & Record<string, unknown>;
+
 const stationTypeLabels: Record<string, string> = {
   sub2api: "Sub2API",
   newapi: "NewAPI",
   "openai-compatible": "自定义接口",
   custom: "自定义接口",
-};
-
-const stationStatusLabels: Record<string, string> = {
-  healthy: "采集正常",
-  warning: "采集需关注",
-  error: "采集异常",
-  disabled: "禁用",
-  unchecked: "未采集",
 };
 
 const bindingStatusLabels: Record<string, string> = {
@@ -109,22 +113,29 @@ export function formatStationStatusLabel(station: Station) {
   if (!station.enabled) {
     return "禁用";
   }
-  return stationStatusLabels[station.status] ?? station.status;
+  const status = station.collectionSummary?.status;
+  if (status === "healthy") return "采集正常";
+  if (status === "degraded") return "采集需关注";
+  if (status === "failed") return "采集异常";
+  if (status === "not_collected" || status === "stale") return "未采集";
+  return "未采集";
 }
 
 export function statusTone(station: Station): DetailTone {
-  if (!station.enabled || station.status === "disabled") {
+  if (!station.enabled) {
     return "muted";
   }
-  if (station.status === "healthy") {
+  const status = station.collectionSummary?.status;
+  if (status === "healthy") {
     return "good";
   }
-  if (station.status === "warning") {
+  if (status === "degraded") {
     return "warning";
   }
-  if (station.status === "error") {
+  if (status === "failed") {
     return "error";
   }
+  if (status) return "neutral";
   return "neutral";
 }
 
@@ -191,7 +202,7 @@ export function buildMetricCards(station: Station, balances: BalanceSnapshot[]):
     {
       label: "当前余额",
       value: formatMoney(currentValue, currency),
-      helper: currentBalance.source !== "missing" ? `来源：${formatBalanceSourceLabel(currentBalance.sourceLabel)}` : "来自站点配置或尚未采集",
+      helper: currentBalance.source !== "missing" ? `来源：${formatBalanceSourceLabel(currentBalance.sourceLabel)}` : "尚未采集余额",
       tone: balanceTone,
     },
     {
@@ -301,7 +312,7 @@ export function buildStationDetailViewModel({
   latestSnapshot: CollectorSnapshot | null;
   credentials: StationCredentials | null;
   stationKeys: StationKey[];
-  incidents: AlertingIncident[];
+  incidents: StationDetailIncidentFact[];
 }): StationDetailViewModel {
   const activeIncidents = incidents
     .filter(
@@ -320,8 +331,6 @@ export function buildStationDetailViewModel({
     latestRun?.finishedAt,
     latestRun?.startedAt,
     latestSnapshot?.fetchedAt,
-    station.lastCheckedAt,
-    station.updatedAt,
   ]);
 
   return {
@@ -412,7 +421,7 @@ function buildSnapshotItems(snapshot: CollectorSnapshot | null): StationDetailDi
   ];
 }
 
-function buildIncidentItems(incidents: AlertingIncident[]): StationDetailDiagnosticItem[] {
+function buildIncidentItems(incidents: StationDetailIncidentFact[]): StationDetailDiagnosticItem[] {
   if (incidents.length === 0) {
     return [
       {

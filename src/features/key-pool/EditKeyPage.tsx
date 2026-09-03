@@ -9,6 +9,8 @@ import { saveStationKeyWithDefaults } from "@/lib/api/stationKeys";
 import { readError } from "@/lib/errors";
 import { deriveStationGroupDisplayFacts } from "@/lib/projections/groupFacts";
 import { queryKeys } from "@/lib/query/queryKeys";
+import { invalidatePricingMonitoringQueries } from "@/lib/query/pricingMonitoringInvalidation";
+import { refreshRoutingQueries } from "@/lib/query/routingQuerySynchronization";
 import { keyPoolQueryOptions } from "@/lib/query/resourceQueries";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import { cn } from "@/lib/utils";
@@ -278,6 +280,8 @@ export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProp
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.keyPool }),
         queryClient.invalidateQueries({ queryKey: queryKeys.stations }),
+        invalidatePricingMonitoringQueries(queryClient),
+        refreshRoutingQueries(queryClient),
       ]);
       toast.success("密钥已更新");
       onUpdated?.();

@@ -1,11 +1,14 @@
-import type { CSSProperties, ReactNode } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { Gauge, Timer } from "lucide-react";
+import { useShellPageVirtualizerTarget } from "@/app/navigation/useShellPageVirtualizerTarget";
 import { Sub2ApiPlatformIcon } from "@/components/group/Sub2ApiPlatformIcon";
 import { EmptyState, StatusBadge } from "@/components/ui";
 import { groupVisualClassNames } from "@/lib/groupVisualStyles";
 import { cn } from "@/lib/utils";
 import {
   availabilityHue,
+  areChannelStatusRowViewsEqual,
   type ChannelStatusRowView,
   type StatusTone,
 } from "../channelStatusViewModel";
@@ -30,6 +33,86 @@ export function ChannelStatusCardGrid({
   rows,
   loading,
 }: ChannelStatusCardGridProps) {
+  const gridContainerRef = useRef<HTMLDivElement>(null);
+  const [columnCount, setColumnCount] = useState(1);
+  const hasRows = rows.length > 0;
+  useEffect(() => {
+    const updateColumns = () => {
+      const width = gridContainerRef.current?.clientWidth ?? window.innerWidth;
+      setColumnCount(width >= 1536 ? 4 : width >= 1280 ? 3 : width >= 768 ? 2 : 1);
+    };
+    updateColumns();
+    window.addEventListener("resize", updateColumns);
+    const resizeObserver = typeof ResizeObserver !== "undefined" && gridContainerRef.current
+      ? new ResizeObserver(updateColumns)
+      : null;
+    if (resizeObserver && gridContainerRef.current) {
+      resizeObserver.observe(gridContainerRef.current);
+    }
+    return () => {
+      window.removeEventListener("resize", updateColumns);
+      resizeObserver?.disconnect();
+    };
+  }, [hasRows]);
+
+  const gridRows = useMemo(() => {
+    const groups: ChannelStatusRowView[][] = [];
+    for (let index = 0; index < rows.length; index += columnCount) {
+      groups.push(rows.slice(index, index + columnCount));
+    }
+    return groups;
+  }, [columnCount, rows]);
+  const shouldVirtualize = gridRows.length > 20;
+  const {
+    targetRef: virtualListRef,
+    scrollElement,
+    scrollMargin,
+    resolved: scrollTargetResolved,
+  } = useShellPageVirtualizerTarget<HTMLDivElement>();
+  const virtualizationEnabled = shouldVirtualize && scrollElement !== null;
+  const renderVirtualRows = virtualizationEnabled || (shouldVirtualize && !scrollTargetResolved);
+  const virtualizer = useVirtualizer({
+    count: virtualizationEnabled ? gridRows.length : 0,
+    getScrollElement: () => scrollElement,
+    estimateSize: () => 250,
+    getItemKey: (index) => gridRows[index]?.[0]?.rowKey ?? index,
+    gap: 12,
+    overscan: 4,
+    scrollMargin,
+  });
+  const virtualItems = virtualizer.getVirtualItems();
+  const renderedVirtualItems = virtualItems.length > 0
+    ? virtualItems
+    : renderVirtualRows
+      ? [{ index: 0, start: scrollMargin, end: scrollMargin + 250, key: gridRows[0]?.[0]?.rowKey ?? 0 }]
+      : [];
+  const estimatedTotalSize = gridRows.length * 250 + Math.max(0, gridRows.length - 1) * 12;
+  const virtualTotalSize = virtualizationEnabled
+    ? virtualizer.getTotalSize()
+    : estimatedTotalSize;
+  const topPadding = Math.max(
+    0,
+    (renderedVirtualItems[0]?.start ?? scrollMargin) - scrollMargin,
+  );
+  const bottomPadding = Math.max(
+    0,
+    virtualTotalSize -
+      ((renderedVirtualItems[renderedVirtualItems.length - 1]?.end ?? scrollMargin) -
+        scrollMargin),
+  );
+
+  const renderGridRow = (gridRow: ChannelStatusRowView[], index: number) => (
+    <div
+      key={gridRow[0]?.rowKey ?? index}
+      data-index={index}
+      ref={virtualizationEnabled ? virtualizer.measureElement : undefined}
+      className="grid gap-3"
+      style={{ gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))` }}
+    >
+      {gridRow.map((row) => <MemoizedChannelStatusCard key={row.rowKey} row={row} />)}
+    </div>
+  );
+
   if (rows.length === 0) {
     return (
       <EmptyState
@@ -40,13 +123,16 @@ export function ChannelStatusCardGrid({
   }
 
   return (
-    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-      {rows.map((row) => (
-        <ChannelStatusCard
-          key={row.rowKey}
-          row={row}
-        />
-      ))}
+    <div ref={gridContainerRef} data-channel-status-card-grid>
+      <div
+        ref={virtualListRef}
+        className="flex flex-col gap-3"
+        style={renderVirtualRows ? { paddingTop: topPadding, paddingBottom: bottomPadding } : undefined}
+      >
+        {renderVirtualRows
+          ? renderedVirtualItems.map((item) => renderGridRow(gridRows[item.index], item.index))
+          : gridRows.map(renderGridRow)}
+      </div>
     </div>
   );
 }
@@ -55,7 +141,7 @@ type ChannelStatusCardProps = {
   row: ChannelStatusRowView;
 };
 
-function ChannelStatusCard({ row }: ChannelStatusCardProps) {
+const MemoizedChannelStatusCard = memo(function ChannelStatusCard({ row }: ChannelStatusCardProps) {
   const availabilityHueValue = availabilityHue(row.availabilityPercent);
   const platformClassNames = groupVisualClassNames[row.visualPlatform];
 
@@ -143,7 +229,7 @@ function ChannelStatusCard({ row }: ChannelStatusCardProps) {
 
     </article>
   );
-}
+}, (previous, next) => areChannelStatusRowViewsEqual(previous.row, next.row));
 
 function MetricTile({ icon, label, value, title }: { icon: ReactNode; label: string; value: string; title?: string }) {
   return (

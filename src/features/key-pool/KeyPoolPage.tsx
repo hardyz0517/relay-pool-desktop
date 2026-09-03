@@ -70,6 +70,11 @@ export function KeyPoolPage(props: KeyPoolPageShellProps) {
     loading,
     monitorByKey,
     monitorStatusByKey,
+    monitoringSummaryError,
+    monitoringSummaryHasData,
+    monitoringSummaryRefreshing,
+    monitoringSummaryStale,
+    retryMonitoringSummary,
     monitoringKeyId,
     pendingDeleteItem,
     query,
@@ -142,6 +147,28 @@ export function KeyPoolPage(props: KeyPoolPageShellProps) {
         {displayError && (
           <div className="mb-3 rounded-[var(--surface-radius)] border border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">
             {displayError}
+          </div>
+        )}
+        {(monitoringSummaryRefreshing || monitoringSummaryError || monitoringSummaryStale) && (
+          <div className="mb-3 flex items-center justify-between gap-2 text-xs text-muted-foreground" role="status">
+            <span>
+              {monitoringSummaryRefreshing
+                ? "监控摘要更新中…"
+                : monitoringSummaryError
+                  ? monitoringSummaryHasData
+                    ? `监控摘要更新失败，继续显示上次成功数据：${monitoringSummaryError}`
+                    : `监控摘要读取失败：${monitoringSummaryError}`
+                  : "监控摘要数据可能已过期"}
+            </span>
+            {!monitoringSummaryRefreshing ? (
+              <button
+                type="button"
+                className="shrink-0 text-primary underline-offset-2 hover:underline"
+                onClick={() => void retryMonitoringSummary()}
+              >
+                立即刷新
+              </button>
+            ) : null}
           </div>
         )}
         {loading ? (

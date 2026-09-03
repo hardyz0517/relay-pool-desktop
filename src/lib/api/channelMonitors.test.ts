@@ -79,6 +79,7 @@ describe("channel monitor backend cutover", () => {
     })),
     duplicateChannelMonitorTemplate: vi.fn(async () => ({} as never)),
     deleteChannelMonitorTemplate: vi.fn(async () => undefined),
+    loadChannelMonitorLatestSummary: vi.fn(async () => []),
     loadChannelMonitoringWorkspace: vi.fn(async () => ({} as never)),
     loadChannelStatusWorkspace: vi.fn(async () => ({} as never)),
   };

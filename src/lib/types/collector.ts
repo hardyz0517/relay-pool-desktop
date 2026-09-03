@@ -50,9 +50,22 @@ export type CollectorEvent = {
   status: string;
 };
 
+export type MutationRevision = {
+  scope: string;
+  revision: number;
+};
+
+export type MutationReceipt = {
+  mutationId: string;
+  committedAtMs: number;
+  affectedScopes: string[];
+  revisionVector: MutationRevision[];
+};
+
 export type CollectorRunResult = {
   snapshot: CollectorSnapshot;
   events: CollectorEvent[];
+  receipt: MutationReceipt;
 };
 
 export type StationRedemptionResult = {

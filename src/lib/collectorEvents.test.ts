@@ -18,6 +18,12 @@ function result(events: CollectorRunResult["events"]): CollectorRunResult {
       createdAt: "1700000000000",
     },
     events,
+    receipt: {
+      mutationId: "collector-operation-fixture",
+      committedAtMs: 1_700_000_000_000,
+      affectedScopes: ["station_collection:station-1"],
+      revisionVector: [{ scope: "station_collection:station-1", revision: 3 }],
+    },
   };
 }
 

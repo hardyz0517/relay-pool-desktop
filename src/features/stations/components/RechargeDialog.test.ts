@@ -16,6 +16,12 @@ const run = (summaryJson: Record<string, unknown>, normalizedJson: Record<string
     createdAt: "1",
   },
   events: [],
+  receipt: {
+    mutationId: "mutation-1",
+    committedAtMs: 1,
+    affectedScopes: [],
+    revisionVector: [],
+  },
 });
 
 describe("recharge collection result parsing", () => {

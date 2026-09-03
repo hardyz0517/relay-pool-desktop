@@ -1,4 +1,4 @@
-import type { ChannelMonitor, ChannelStatusRow } from "@/lib/types/channelMonitors";
+import type { ChannelMonitor, ChannelMonitorLatestSummary, ChannelStatusRow } from "@/lib/types/channelMonitors";
 import type { KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
 import { findStationKeyMonitor } from "@/lib/channelMonitorViewModel";
 
@@ -16,7 +16,7 @@ const outcomeTone = {
 export function summarizeDashboardKeyHealth(
   keys: Array<Pick<KeyPoolItem, "id" | "enabled">>,
   monitors: ChannelMonitor[],
-  statusRows: ChannelStatusRow[],
+  statusRows: Array<ChannelMonitorLatestSummary | ChannelStatusRow>,
 ): DashboardKeyHealthSummary {
   const summary: DashboardKeyHealthSummary = {
     unchecked: 0,
@@ -46,16 +46,17 @@ export function summarizeDashboardKeyHealth(
 
 function dashboardMonitorStatus(
   monitor: ChannelMonitor | null,
-  rows: ChannelStatusRow[],
+    rows: Array<ChannelMonitorLatestSummary | ChannelStatusRow>,
 ) {
   if (!monitor?.enabled || monitor.targetType !== "station_key" || !monitor.stationKeyId) {
     return null;
   }
-  const row = rows.find(
-    (candidate) =>
-      candidate.monitor.id === monitor.id &&
-      candidate.target.stationKeyId === monitor.stationKeyId,
-  );
+  const row = rows.find((candidate) => {
+    if ("monitorId" in candidate) {
+      return candidate.monitorId === monitor.id && candidate.stationKeyId === monitor.stationKeyId;
+    }
+    return candidate.monitor.id === monitor.id && candidate.target.stationKeyId === monitor.stationKeyId;
+  });
   const outcome = row?.latest?.outcome ?? "missing";
   return { tone: row?.running ? "info" : outcomeTone[outcome] };
 }
