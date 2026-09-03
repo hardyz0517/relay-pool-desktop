@@ -71,9 +71,13 @@ assert.ok(
 
 assert.ok(
   stationCatalogSource.includes("pub(crate) async fn due_collector_task") &&
-    stationCatalogSource.includes("collector_task_state.updated_at") &&
+    stationCatalogSource.includes("ROW_NUMBER() OVER") &&
+    stationCatalogSource.includes("latest_run.last_at") &&
+    stationCatalogSource.includes("active_operation.task_type = ?1") &&
+    stationCatalogSource.includes("active_operation.task_type = 'unspecified'") &&
+    stationCatalogSource.includes("active_operation.status IN ('queued', 'running')") &&
     stationCatalogSource.includes("(?2 * 60000) <= ?3"),
-  "due query should keep each task interval and persisted task state semantics",
+  "due query should use the typed collector run ledger and suppress active operations",
 );
 assert.ok(
   stationCollectorSource.includes("CollectorTask::Balance") &&

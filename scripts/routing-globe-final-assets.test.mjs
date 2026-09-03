@@ -87,7 +87,9 @@ assert.match(preview, /--globe-static:url\('\.\/routing-globe-static-24-light\.p
 assert.match(preview, /0 degree front-facing static baseline/);
 assert.match(preview, /--globe-end:-384px/);
 assert.match(preview, /--globe-end:-512px/);
-assert.match(preview, /@media\(prefers-reduced-motion:reduce\)/);
+assert.doesNotMatch(preview, /@media\(prefers-reduced-motion:reduce\)/);
+assert.match(preview, /Active routing keeps rotating even when the system requests reduced motion/);
+assert.doesNotMatch(preview, /globe--reduced/);
 assert.match(preview, /Active/);
 assert.match(preview, /Inactive/);
 assert.match(preview, /Reduced motion/);

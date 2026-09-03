@@ -1,39 +1,39 @@
 {
   "kind": "status-monitoring-read-model-performance",
-  "generatedAt": "2026-07-29T17:34:16.537593+00:00",
-  "databasePath": "C:\\Users\\Hardy\\AppData\\Local\\Temp\\relay-pool-monitoring-read-model-performance-bd0be21aa4034ada8b848a082f91f360\\monitoring-read-model-performance.sqlite3",
+  "generatedAt": "2026-09-02T06:07:41.982890+00:00",
+  "databasePath": "C:\\Users\\Hardy\\AppData\\Local\\Temp\\relay-pool-monitoring-read-model-performance-b142b077cb8a461e98a8d3a1c025b317\\monitoring-read-model-performance.sqlite3",
   "fixture": {
     "monitorRows": 500,
     "targetResults": 500000,
     "attempts": 100000,
     "workspaceRows": 500,
-    "dbSizeBytes": 372191232
+    "dbSizeBytes": 374099968
   },
   "workspace": {
     "samplesMs": [
-      222.279,
-      134.9312,
-      130.6557,
-      131.0511,
-      131.1852,
-      128.7428,
-      126.9101,
-      124.8714,
-      125.7828,
-      129.2563,
-      129.1676,
-      127.6588,
-      128.0407,
-      127.1887,
-      125.7325,
-      125.7575,
-      129.7788,
-      127.6126,
-      129.8355,
-      127.6741
+      324.3028,
+      204.0763,
+      201.7674,
+      197.4026,
+      196.5086,
+      197.4145,
+      192.9948,
+      193.872,
+      197.3034,
+      192.384,
+      195.9538,
+      198.3666,
+      193.9144,
+      192.606,
+      196.8904,
+      195.4452,
+      191.7727,
+      198.0109,
+      196.5948,
+      195.1379
     ],
-    "medianMs": 128.39175,
-    "p95Ms": 134.9312,
+    "medianMs": 196.55169999999998,
+    "p95Ms": 204.0763,
     "limitMs": 250,
     "rowCounts": {
       "baseRows": 500,
@@ -2109,55 +2109,85 @@
         "id": 2,
         "parent": 0,
         "notused": 0,
-        "detail": "CO-ROUTINE ranked"
+        "detail": "CO-ROUTINE latest_monitor_execution"
       },
       {
         "id": 5,
         "parent": 2,
         "notused": 0,
-        "detail": "CO-ROUTINE (subquery-503)"
+        "detail": "CO-ROUTINE (subquery-504)"
       },
       {
         "id": 7,
         "parent": 5,
         "notused": 0,
-        "detail": "CO-ROUTINE scoped"
+        "detail": "CO-ROUTINE requested"
       },
       {
-        "id": 8,
+        "id": 10,
         "parent": 7,
+        "notused": 0,
+        "detail": "MATERIALIZE scoped"
+      },
+      {
+        "id": 12,
+        "parent": 10,
         "notused": 0,
         "detail": "SCAN 500 CONSTANT ROWS"
       },
       {
-        "id": 1513,
-        "parent": 5,
+        "id": 2517,
+        "parent": 7,
         "notused": 516,
-        "detail": "SCAN s"
+        "detail": "SCAN scoped"
       },
       {
-        "id": 1516,
+        "id": 2525,
+        "parent": 7,
+        "notused": 0,
+        "detail": "USE TEMP B-TREE FOR DISTINCT"
+      },
+      {
+        "id": 2530,
+        "parent": 5,
+        "notused": 336,
+        "detail": "SCAN requested"
+      },
+      {
+        "id": 2533,
         "parent": 5,
         "notused": 123,
         "detail": "SEARCH e USING INDEX idx_channel_monitor_executions_monitor_started (monitor_id=?)"
       },
       {
-        "id": 1540,
+        "id": 2559,
         "parent": 5,
         "notused": 0,
         "detail": "USE TEMP B-TREE FOR ORDER BY"
       },
       {
-        "id": 1561,
+        "id": 2582,
         "parent": 2,
         "notused": 336,
-        "detail": "SCAN (subquery-503)"
+        "detail": "SCAN (subquery-504)"
       },
       {
-        "id": 1612,
+        "id": 2640,
         "parent": 0,
-        "notused": 336,
-        "detail": "SCAN ranked"
+        "notused": 216,
+        "detail": "SCAN s"
+      },
+      {
+        "id": 2644,
+        "parent": 0,
+        "notused": 0,
+        "detail": "BLOOM FILTER ON e (rn=? AND monitor_id=?)"
+      },
+      {
+        "id": 2664,
+        "parent": 0,
+        "notused": 57,
+        "detail": "SEARCH e USING AUTOMATIC PARTIAL COVERING INDEX (rn=? AND monitor_id=?)"
       }
     ],
     "hourlyRollups": [

@@ -21,6 +21,8 @@
     {"identity":"crate::services::proxy::startup_auto_start::schedule::tauri::async_runtime::spawn","owner":"Task 17","introduced_shard":"S4-T17-proxy-runtime-coordination","delete_shard":"permanent-proxy-startup-scheduler","expiry_stage":8,"reason":"Startup auto-start schedules one owned proxy runtime start after setup without taking over request lifecycle."},
     {"identity":"crate::services::monitoring::runner::spawn_prepared_execution::<method>::spawn","owner":"Monitoring V2 runner","introduced_shard":"status-monitoring-v2-production-cutover","delete_shard":"permanent-supervised-monitoring-runner","expiry_stage":8,"reason":"The TaskSupervisor-owned Monitoring V2 runner keeps at most four worker futures in an owned JoinSet, applies station and key limits, and cancels plus drains the set during shutdown."},
     {"identity":"crate::commands::capture::schedule_capture_script_injection::tauri::async_runtime::spawn","owner":"Task 17.B2","introduced_shard":"S4-T17B2-capture-window-blocking-executor","delete_shard":"permanent-capture-script-scheduler","expiry_stage":8,"reason":"The capture command owns a short-lived, idempotent script reinjection sequence for the capture WebView after navigation; it does not own business work or persistence."},
+    {"identity":"crate::run::tauri::async_runtime::spawn","owner":"Station authorization reliability","introduced_shard":"station-collection-authorization-state-reliability","delete_shard":"permanent-post-auth-work-scheduler","expiry_stage":8,"reason":"Application startup schedules recovery of durable post-authorization work after runtime services are registered; persisted claim fences and retry state remain the correctness boundary."},
+    {"identity":"crate::services::domain_revision_updates::spawn_domain_revision_event_bridge::tauri::async_runtime::spawn","owner":"Station authorization reliability","introduced_shard":"station-collection-authorization-state-reliability","delete_shard":"permanent-domain-revision-bridge","expiry_stage":8,"reason":"The composition-owned bridge forwards bounded post-commit revision hints to Tauri; durable SQLite projections remain authoritative when notices lag or are dropped."},
     {"identity":"crate::observability::runtime::service::<impl>::open_with_segment_bytes::<method>::spawn","owner":"Runtime logging observability upgrade","introduced_shard":"runtime-logging-writer-worker","delete_shard":"permanent-runtime-log-service","expiry_stage":8,"reason":"RuntimeLogService owns the bounded JSONL writer worker; event producers only try_send typed lines and shutdown flushes the owned worker."}
   ],
   "http_client_construction_allowlist": [
@@ -56,6 +58,18 @@
       "registered_commands": 121,
       "owner": "Tasks 3-7 and 23",
       "delete_task": 23
+    }
+  },
+  "owner_boundaries": {
+    "crate::application::queries::collector_history::CollectorHistoryQuery": {
+      "responsibility": "read-only collector run and snapshot history",
+      "forbidden_responsibilities": ["terminal commit", "projection mutation", "capture orchestration"],
+      "consumers": [
+        "crate::application::command_facades::collector_metadata",
+        "crate::application::queries::station_detail"
+      ],
+      "owner": "Task 7",
+      "introduced_stage": 6
     }
   },
   "allowlist_policy": {

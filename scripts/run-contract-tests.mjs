@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 
 const contracts = [
   ["node", ["scripts/station-auto-collector.test.mjs"]],
+  ["node", ["scripts/station-collection-authority.test.mjs"]],
   ["node", ["scripts/manual-authorization-capability.test.mjs"]],
   ["node", ["scripts/tauri-command-fallback.test.mjs"]],
   ["node", ["scripts/tauri-error-classification-ownership.test.mjs"]],

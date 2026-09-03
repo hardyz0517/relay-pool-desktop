@@ -3674,8 +3674,8 @@
             "temporary": false
         },
         {
-            "from": "application::queries::station_detail",
-            "to": "models::routing_read_models",
+            "from": "application::queries::station_assets",
+            "to": "persistence::stores::station_state_store",
             "temporary": false
         },
         {
@@ -6451,6 +6451,121 @@
         {
             "from": "application::routing",
             "to": "application::queries::station_key_circuit_read",
+            "temporary": false
+        },
+        {
+            "from": "application::command_facades::settings_stations",
+            "to": "ipc::dto::stations",
+            "temporary": false
+        },
+        {
+            "from": "application::routing_policy_impact",
+            "to": "models::routing_policy",
+            "temporary": false
+        },
+        {
+            "from": "background_tasks::routing_generation_cutover_runner",
+            "to": "application::routing_policy_impact",
+            "temporary": false
+        },
+        {
+            "from": "lib",
+            "to": "services::domain_revision_updates",
+            "temporary": false
+        },
+        {
+            "from": "persistence::stores::credential_store",
+            "to": "application::collection_state",
+            "temporary": false
+        },
+        {
+            "from": "persistence::stores::credential_store",
+            "to": "services::time",
+            "temporary": false
+        },
+        {
+            "from": "persistence::stores::routing_store",
+            "to": "persistence::stores::routing_policy_v3_stage_upgrade",
+            "temporary": false
+        },
+        {
+            "from": "services::domain_revision_updates",
+            "to": "application::queries::read_model_revision",
+            "temporary": false
+        },
+        {
+            "from": "application::collectors",
+            "to": "application::collection_state",
+            "temporary": false
+        },
+        {
+            "from": "application::collectors",
+            "to": "application::queries::read_model_revision",
+            "temporary": false
+        },
+        {
+            "from": "application::command_facades::capture",
+            "to": "application::queries::read_model_revision",
+            "temporary": false
+        },
+        {
+            "from": "application::model_mapping",
+            "to": "application::queries::read_model_revision",
+            "temporary": false
+        },
+        {
+            "from": "application::queries::key_detail",
+            "to": "application::queries::read_model_revision",
+            "temporary": false
+        },
+        {
+            "from": "application::queries::station_assets",
+            "to": "application::queries::read_model_revision",
+            "temporary": false
+        },
+        {
+            "from": "application::command_facades::settings_stations",
+            "to": "models::routing_read_models",
+            "temporary": false
+        },
+        {
+            "from": "application::queries::station_detail",
+            "to": "application::queries::read_model_revision",
+            "temporary": false
+        },
+        {
+            "from": "application::queries::station_detail",
+            "to": "models::routing_read_models",
+            "temporary": false
+        },
+        {
+            "from": "application::queries::station_detail",
+            "to": "persistence::stores::alerting::workspace",
+            "temporary": false
+        },
+        {
+            "from": "ipc::dto::stations",
+            "to": "models::routing_read_models",
+            "temporary": false
+        },
+        {
+            "from": "models::routing_read_models",
+            "to": "models::collector",
+            "temporary": false
+        },
+        {
+            "from": "models::routing_read_models",
+            "to": "models::collector_runs",
+            "temporary": false
+        },
+        {
+            "from": "models::routing_read_models",
+            "to": "models::credentials",
+            "temporary": false
+        },
+        {
+            "from": "models::routing_read_models",
+            "to": "models::pricing",
             "temporary": false
         }
     ],

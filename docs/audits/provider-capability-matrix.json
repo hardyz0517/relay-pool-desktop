@@ -47,10 +47,20 @@
           ]
         },
         "authorization": {
-          "status": "unsupported",
-          "declaredInRegistry": false,
+          "status": "supported",
+          "declaredInRegistry": true,
           "fixtureIds": [
-            "sub2api-authorization-unsupported"
+            "sub2api-authorization-success",
+            "sub2api-authorization-partial",
+            "sub2api-authorization-auth-failure",
+            "sub2api-authorization-rate-limit",
+            "sub2api-authorization-server-failure",
+            "sub2api-authorization-malformed",
+            "sub2api-authorization-unknown-shape",
+            "sub2api-authorization-cancel",
+            "sub2api-authorization-budget-exhaustion",
+            "sub2api-authorization-stale-endpoint-revision",
+            "sub2api-authorization-redaction"
           ]
         }
       }

@@ -1,6 +1,6 @@
 # Station 采集与授权状态可靠性治理计划
 
-状态：Proposed（仅完成调查与方案设计，尚未实施）
+状态：本轮可交付实现完成；真实 WebView/账号验收与旧字段物理删除为发布/后续 no-go
 
 日期：2026-09-02
 
@@ -15,6 +15,46 @@
 - 当前代码、生成 IPC 契约与自动化门禁
 
 本文是一次专项升级计划，不是当前实现事实。实施完成后，当前事实应回写到长期规范或审计记录，不把本文长期维护成第二份产品规范。
+
+> 当前状态以 [`../audits/2026-09-03-station-collection-authorization-qualification.md`](../audits/2026-09-03-station-collection-authorization-qualification.md) 为准。本轮可交付实现已完成：typed projection、原子 Full 提交、授权/capture 隔离、revision 同步、普通 operation 启动恢复和 history query owner 均已落地。真实 WebView/账号验收由使用者执行；旧兼容字段的物理删除受升级与回滚资格约束，作为发布/后续 no-go 单独跟踪，不阻塞本轮工程实现收口。
+
+## 实施台账（2026-09-02）
+
+已完成的核心落地：
+
+- typed `CollectionPlan`/`TaskOutcome`/授权 reducer 已接入 Full terminal commit；parent、children、facts、typed task/collection projection、告警和 revision 在同一 SQLite 写事务中提交。旧 `collector_task_state` 仅由测试兼容夹具写入。
+- 新增 migration 0072/0073：授权 projection、post-authorization durable work、collection projection 与 `collector_operations` ledger；授权 session 与 work intent 同事务落盘，支持幂等 claim、退避和 endpoint/credential/operation fence。
+- WebView capture 已改为独立 `capture` 历史证据，不再写 collection task state 或 `stations.status`；授权成功由 authenticated self-probe 产生 valid 证据，再异步触发 Full。
+- Sub2API authorization driver 已拥有 authenticated self-probe：仅接受有界 identity endpoint 的 2xx 响应和可解析身份；重新授权不会把 capture 流量伪造成 Full collection 成功。
+- capture close、cancel、窗口关闭、失败和 shutdown 都会写入 durable capture operation terminal；终态写入失败时回滚内存 commit，授权凭据已落盘但 ledger 失败时释放本地会话锁并交由启动恢复处理。
+- Station Asset read model 在单个 `ReadSession` 中批量读取 typed projections；缺失/畸形 projection fail closed；前端只用 collection/authorization summary，并由唯一 revision scope synchronizer 失效查询。
+- Station Detail 使用独立 station-scoped revision（migration 0074），其所有读取源由触发器推进，并在同一 `ReadSession` 中读取 rows 与 revision；station_id 迁移同时推进 OLD/NEW scope。
+- Station Detail 前端按真实 DTO 结构合并 `asset.collectionSummary` / `asset.authorizationSummary`，不再丢弃 sibling typed summary 后回退到旧 `station.status`；冲突回归用例已覆盖“旧 warning + typed healthy”。
+- 删除未接入生产的 Station detail 内部 owner、未使用的站点列表入口和告警摘要旁路；移除 Full sequential fallback，所有 `CollectorApplyPort` 实现必须显式提供 atomic Full 行为。
+- legacy collector status 聚合器和 JSON current reducer 已删除；`stations.status` 不再有生产写入，仅在兼容 DTO/历史 schema 中保留，明确不作为新 read model authority。
+- `parent_run_id` 已从生产请求校验、Full 构造、run-key/幂等和授权告警控制流移除；Full 事务仅将真实 parent run id 写入 child history，测试兼容字段不参与序列化哈希。
+- 普通（非 capture）`collector_operations` 已接入 Tauri 启动恢复：遗留 `queued/running` row 会按 endpoint、credential、intent fence 原子归档为 `interrupted` 或 `superseded`，同时关闭遗留 running history。这样崩溃产生的孤儿 operation 不会永久压制 scheduler 对 Station 的重新准入。
+- 运行与 snapshot 历史读取已提取到只读 `CollectorHistoryQuery`；Station Detail 和 metadata facade 均通过该 owner 读取，`CollectorService` 的生产历史查询入口已删除，只保留 `cfg(test)` 兼容 shim，并有架构门禁阻止职责回流。
+- 数据库升级链已兼容首个开发版 schema `0072`：仅在历史 checksum 和三张表/触发器/revision 的结构同时精确匹配时，于已验证备份后原子重建无 freshness fence 的派生 collection projection、补齐 Station Asset revisions，再将 checksum 对齐 canonical `0072` 并继续执行 `0073`/`0074`；任何未知漂移保持 fail-closed。
+
+已通过的验证：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml`、`cargo check --locked --manifest-path src-tauri/Cargo.toml`。
+- post-auth 同事务、幂等 claim、退避、崩溃恢复、stale endpoint 丢弃、stale completion fence、Full 原子回滚/回放、capture 隔离、Station Asset projection 缺失与 malformed JSON 测试。
+- `pnpm generate:bindings`、相关 Vitest（revision synchronizer、Station asset view model、capture/status 相关用例）和 `pnpm build`。
+- `pnpm verify:fast`：dead-code、架构绕过、TypeScript、生成绑定、Tauri 安全、ESLint 和 TypeScript 检查已通过；Rust 编译仍有仓库既有 warnings。
+- `pnpm generate:bindings --check`：4 个生成物双运行确定性检查通过，canonical hash 为 `348427e08cd5ebf61dbdd6042f2808e8b964834fb0c666e68f72bdca54099793`。
+- migration `0072`/`0073`/`0074`、collector 并发/故障注入、Sub2API self-probe、capture recovery、Station Detail、Station Asset 与前端 revision synchronizer 定向测试均通过；portable schema fingerprint 为 `186cfa24875a390293f89ed87b3ec199a80a865ac0c73b5319656ca0f4cf2c6e`。
+- 已知旧 schema `0072` 的生产升级入口回归通过：升级到 latest、canonical `0072` checksum/结构、21 个 Station Asset revision triggers、foreign-key clean 和升级前备份可恢复均已断言；无 freshness fence 的旧 collection projection 属于派生数据，升级时清空并由正常采集重新生成，不改动 Station、凭据和历史事实源。
+- schema `0072` 兼容增量完成后，`cargo fmt -- --check`、`cargo check --locked`、`station_collection_reliability_migration`（2 passed）、冻结 schema15 升级 fixture（3 passed）、startup upgrade 单元矩阵（15 passed）和 `pnpm verify:fast` 均取得退出码 0。
+- 最新工作区的 `pnpm verify:full` 已通过（退出码 0）：Rust 主库 `1552 passed`，完整集成矩阵通过；前端 `145` 个测试文件、`679` 个测试通过，生产构建、Rust format/clippy/all-targets/release checks、架构/安全/迁移/生成契约门禁均通过。由于 Windows 页面文件/链接资源限制，使用 `CARGO_BUILD_JOBS=1`、`RUST_TEST_THREADS=1` 和 `RELAY_POOL_NPM_AUDIT_TIMEOUT_MS=300000` 串行完成；这是资源约束，不是放宽断言或跳过门禁。输出仍含仓库既有 Rust/ESLint warning、React `act(...)` 提示和 Vite chunk-size warning，但无失败项。
+
+仍需外部验收或独立资格判定的事项：
+
+- 真实 Tauri WebView 中的重新授权、authenticated self-probe、post-auth Full、离线失败和重启恢复仍需发布前验收；自动化测试没有伪装成真实线上账号验证。
+- `stations.status` 兼容列/DTO 仍存在，待所有旧消费者完成资格审计后再执行物理删除；当前已保证它不是 current projection authority，物理删除属于独立 no-go 门禁。
+- `collector_runs.parent_run_id` 仍为历史 schema/portable 兼容列，但 production 控制流零引用；需完成备份恢复、portable import/export、旧 fixture 和真实 WebView 验收后，另行评审 DROP。
+- `CollectorApplyRequest` 的 credential revision 端到端传播与 clear-credentials 的显式授权 revision 语义已由全量门禁覆盖；若后续代码回归，必须在发布前修复，避免旧采集结果覆盖新凭据。
 
 ## 1. 结论与升级原则
 
@@ -498,6 +538,8 @@ event 丢失的兜底策略：
 
 `CollectorService` 可在迁移期间作为 composition facade，但最终不能继续同时拥有 query、command、transaction、projection 和 alert policy。facade 每迁移一个 caller 就删除对应旧方法，最后删除或仅保留有真实编排职责的窄入口。
 
+本轮已完成其中的 history 边界：`CollectorHistoryQuery` 成为 run/snapshot history 的唯一生产 application owner，组合 read model 通过 `_in_session` 方法保持同一读取快照；`CollectorService` 不再提供生产 history query。其余 metadata/commit 编排继续按真实 caller 渐进收敛，不重新引入旧状态 authority，也不以机械拆文件作为本轮完成条件。
+
 ### 10.2 强制删除/替换项
 
 | 当前项 | 目标动作 | 删除门槛 |
@@ -661,6 +703,13 @@ event 丢失的兜底策略：
 - CollectorService 不再同时承担 command/query/transaction/projection/capture。
 - dead-code inventory 没有本计划新增的临时 exception。
 
+**本轮落地状态**
+
+- collection/authorization current authority、capture 解耦和 revision 同步已切换到目标链路；生产旧 writer/reducer 已退出。
+- run/snapshot history 已由只读 `CollectorHistoryQuery` 接管，旧 service 仅有 test-only compatibility shim。
+- 普通 operation 启动恢复已进入 app startup composition，并由孤儿 operation 不再阻塞调度的回归测试覆盖。
+- 旧列/表的物理删除因升级、portable、备份恢复和 rollback floor 尚未取得资格，按 Task 8 no-go 保留，不作为本轮实现未完成项。
+
 ### Task 8：迁移资格、物理删除与文档收口
 
 **工作**
@@ -771,7 +820,7 @@ Task 3-8 属于跨层共享事实和架构变更，合并资格使用 `pnpm veri
 
 ## 15. 完成定义
 
-本计划只有同时满足以下条件才可标记 Completed：
+本轮可交付实现按以下条件判定完成；真实账号/WebView 发布验收和兼容字段物理删除使用后述独立 no-go，不把外部验收伪装成自动化通过：
 
 - 本次事故 fixture 和并发/故障注入矩阵全部通过。
 - Full collection 不存在跨事务暴露 parent/child 中间 current state。
@@ -785,6 +834,12 @@ Task 3-8 属于跨层共享事实和架构变更，合并资格使用 `pnpm veri
 - 新 owner、forbidden dependencies、query bound、安全 redaction 和生成契约均有自动门禁。
 - 相关 Rust tests、Vitest、`pnpm build`、`pnpm verify:fast`、`pnpm verify:full` 实际通过；未执行项有明确原因和影响说明。
 - 当前规范、审计、schema/portable fingerprint、生成 bindings 与实现一致。
+
+本轮代码与 authority 切换已按“可交付实现完成”收口；验证结论仍只认实际命令结果，当前文档更新时最新 delta 的最终全量门禁尚未记录。以下事项不属于已完成声明：
+
+- 真实 Tauri WebView/真实站点账号的重新授权、self-probe、post-auth Full、页面刷新、离线、取消/关闭和重启恢复验收；
+- `collector_task_state`、`stations.status`/旧时间字段和 `collector_runs.parent_run_id` 的物理 DROP，以及与其绑定的 portable、备份恢复、旧版本升级和 rollback floor 资格；
+- 最新 delta 合入后的最终 `pnpm verify:full` 结果在实际执行完成前不得预写为通过。
 
 ## 16. 实施顺序上的硬约束
 

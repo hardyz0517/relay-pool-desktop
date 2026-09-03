@@ -35,6 +35,17 @@ For an ordinary schema change:
 6. Update release documentation to declare the new latest schema.
 7. Run architecture and release gates.
 
+Once any development or release build can have applied a migration, that migration is frozen just like a released migration. Do not amend its SQL in place. If an already-applied development migration was changed accidentally, the supported repair must:
+
+- recognize only the exact known historical checksum and exact released schema shape;
+- run after a verified pre-upgrade backup and complete the missing durable postconditions atomically;
+- replace or discard only derived state that cannot satisfy the new correctness fences, while preserving source/business data;
+- update the migration checksum only after the canonical postconditions and foreign-key checks pass;
+- keep unknown checksums or unknown schema shapes fail-closed;
+- include a production-path regression that upgrades the frozen historical shape to latest and proves the backup remains recoverable.
+
+A blanket checksum bypass, manual edit of `_sqlx_migrations`, or a repair that only rewrites the checksum is never an acceptable upgrade path.
+
 Expected production change budget for a normal schema release:
 
 | Required | Usually Forbidden |

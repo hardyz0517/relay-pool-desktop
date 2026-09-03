@@ -118,7 +118,7 @@ def create_fixture(connection, monitor_rows, target_results, attempts):
             consecutive_failure_threshold, fallback_models_json, created_at, updated_at,
             protocol_kind, client_profile_id, client_profile_version, primary_model,
             fallback_models_v2_json, retry_max_attempts_per_model, retry_initial_backoff_ms,
-            retry_max_backoff_ms, risk_daily_probe_budget, health_writeback_mode,
+            retry_max_backoff_ms, risk_daily_probe_budget, health_policy_mode,
             health_failure_threshold, health_recovery_threshold, attempt_timeout_ms,
             execution_timeout_ms, schedule_revision, next_due_at_ms
         ) VALUES (
@@ -213,9 +213,6 @@ def create_fixture(connection, monitor_rows, target_results, attempts):
                     1,
                     "perf-profile-hash" if attempted else None,
                     "standard_api" if attempted else "legacy_http_only",
-                    "observe_only",
-                    "observe_only" if attempted else "not_applicable",
-                    None,
                     100 + (j % 200) if attempted else None,
                     "protocol_validated" if attempted else "legacy_http_only",
                     finished - 900,
@@ -232,9 +229,12 @@ def create_fixture(connection, monitor_rows, target_results, attempts):
             terminal_failure_kind, terminal_reason, requested_model, effective_model, used_fallback,
             attempt_count, decisive_attempt_id, protocol_kind, resolved_adapter_kind,
             client_profile_id, client_profile_version, request_profile_hash, traffic_equivalence,
-            health_writeback_mode, health_writeback_decision, health_writeback_reason, latency_ms,
+            latency_ms,
             semantic_confidence, started_at_ms, finished_at_ms, created_at_ms
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        )
         """,
         target_rows(),
     )
@@ -406,17 +406,25 @@ def measure_workspace(connection, monitor_rows, samples):
     """
     running_sql = f"""
         WITH scoped(monitor_id, station_key_id) AS (VALUES {scoped}),
-        ranked AS (
-            SELECT e.id AS execution_id, e.monitor_id, s.station_key_id, e.status,
+        latest_monitor_execution AS (
+            SELECT e.id AS execution_id, e.monitor_id, e.status,
+                   e.trigger_kind, e.trigger_request_id,
+                   e.planned_at_ms, e.started_at_ms,
                    ROW_NUMBER() OVER (
-                       PARTITION BY e.monitor_id, s.station_key_id
+                       PARTITION BY e.monitor_id
                        ORDER BY COALESCE(e.started_at_ms, e.planned_at_ms) DESC, e.id DESC
                    ) AS rn
             FROM channel_monitor_executions e
-            JOIN scoped s ON s.monitor_id = e.monitor_id
+            JOIN (SELECT DISTINCT monitor_id FROM scoped) requested
+              ON requested.monitor_id = e.monitor_id
             WHERE e.status IN ('queued', 'running')
         )
-        SELECT * FROM ranked WHERE rn = 1
+        SELECT e.execution_id, e.monitor_id, s.station_key_id, e.status,
+               e.trigger_kind, e.trigger_request_id,
+               e.planned_at_ms, e.started_at_ms
+        FROM latest_monitor_execution e
+        JOIN scoped s ON s.monitor_id = e.monitor_id
+        WHERE e.rn = 1
     """
     rollup_sql = f"""
         WITH scoped(monitor_id, station_key_id) AS (VALUES {scoped})
