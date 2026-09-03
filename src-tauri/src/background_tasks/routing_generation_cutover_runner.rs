@@ -21,7 +21,9 @@ use crate::{
         routing_generation_coordinator::{
             RoutingGenerationCoordinator, RoutingGenerationCoordinatorError,
         },
-        routing_policy_control_plane::RoutingPolicyMutationCoordinator,
+        routing_policy_control_plane::{
+            FastActivationResult, RoutingPolicyFastActivationPort, RoutingPolicyMutationCoordinator,
+        },
         routing_policy_impact::RoutingPolicyImpact,
         station_key_circuit::{
             CircuitTransition, StationKeyCircuit, StationKeyCircuitConfig, StationKeyCircuitState,
@@ -58,16 +60,24 @@ const SYSTEM_MAX_COOLDOWN_MS: u64 = 24 * 60 * 60 * 1_000;
 // user-configurable policy field.
 const SYSTEM_CUTOVER_FENCE_TIMEOUT_MS: i64 = 30_000;
 
-/// Outcome of the bounded interactive activation lane.
+/// Composition adapter for the application-owned fast-activation port.
 ///
-/// `NotApplicable` is deliberately not an error.  It means the candidate is
-/// still safe to process through the supervised generation runner (for
-/// example, a CAS race or an incomplete build).  Persistence failures and
-/// corrupted generation evidence must never be downgraded to this outcome.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum FastActivationResult {
-    Activated,
-    NotApplicable { reason: &'static str },
+/// The mutation coordinator deliberately depends only on the narrow port;
+/// this adapter keeps generation-building implementation details in the
+/// supervised background-task boundary.
+pub(crate) struct RoutingGenerationFastActivationPort;
+
+impl RoutingPolicyFastActivationPort for RoutingGenerationFastActivationPort {
+    fn try_fast_activate_for_policy_revision(
+        &self,
+        runtime: PersistenceHandle,
+        policy_revision: u64,
+    ) -> futures_util::future::BoxFuture<'static, Result<FastActivationResult, PersistenceError>>
+    {
+        Box::pin(async move {
+            self::try_fast_activate_for_policy_revision(&runtime, policy_revision).await
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2100,18 +2110,26 @@ async fn load_staged_build_input_for_revision(
         return Ok(None);
     };
     let policy_generation_id = row.get::<String, _>("policy_generation_id");
-    if registry.active.as_ref().is_some_and(|active| {
+    let same_active_policy = registry.active.as_ref().is_some_and(|active| {
         active.policy_generation_id == policy_generation_id
             && active.status == RoutingGenerationStatus::Active
-    }) {
-        return Ok(None);
-    }
+    });
     let policy_revision = u64::try_from(row.get::<i64, _>("config_revision"))
         .map_err(|_| PersistenceError::ConstraintViolation)?;
     if policy_revision == 0 {
         return Err(PersistenceError::ConstraintViolation);
     }
     if expected_policy_revision.is_some_and(|expected| expected != policy_revision) {
+        return Ok(None);
+    }
+    let source_profile_changed = if let Some(active) = registry.active.as_ref() {
+        quality_context_changed(read.connection(), &active.quality_generation_id).await?
+    } else {
+        false
+    };
+    // Monitor mutations do not create a policy generation, so this freshness
+    // check must run before the same-policy fast return.
+    if same_active_policy && !source_profile_changed {
         return Ok(None);
     }
     let policy_json = serde_json::from_str::<Value>(&row.get::<String, _>("config_json"))
@@ -2153,11 +2171,6 @@ async fn load_staged_build_input_for_revision(
         })
     } else {
         None
-    };
-    let source_profile_changed = if let Some(active) = active.as_ref() {
-        quality_context_changed(read.connection(), &active.generation.quality_generation_id).await?
-    } else {
-        false
     };
     let (quality_tail, circuit_tail) = if let Some(active) = active.as_ref() {
         let quality_tail: i64 = sqlx::query_scalar(
@@ -2585,6 +2598,44 @@ mod tests {
         write.commit().await.expect("commit routing key seed");
     }
 
+    async fn seed_monitor_for_routing_key(handle: &PersistenceHandle, station_key_id: &str) {
+        let mut write = handle.begin_write().await.expect("begin monitor seed");
+        sqlx::query(
+            "INSERT INTO channel_monitor_request_templates (
+                 id, name, endpoint_kind, method, path, request_body_json,
+                 enabled, built_in, created_at, updated_at
+             ) VALUES (
+                 'generation-template', 'Generation template', 'chat', 'POST',
+                 '/v1/chat/completions', '{}', 1, 0, '1', '1'
+             )",
+        )
+        .execute(write.connection())
+        .await
+        .expect("insert monitor template");
+        sqlx::query(
+            "INSERT INTO channel_monitors (
+                 id, name, target_type, station_id, station_key_id,
+                 template_id, enabled, interval_seconds, timeout_seconds,
+                 created_at, updated_at
+             ) VALUES (
+                 'generation-monitor', 'Generation monitor', 'station_key',
+                 'generation-station', ?1, 'generation-template', 1, 60, 30,
+                 '1', '1'
+             )",
+        )
+        .bind(station_key_id)
+        .execute(write.connection())
+        .await
+        .expect("insert monitor");
+        write.commit().await.expect("commit monitor seed");
+    }
+
+    async fn build_active_default_generation(handle: &PersistenceHandle) -> String {
+        clear_seeded_policy_rows(handle).await;
+        seed_routing_key(handle, "generation-key").await;
+        build_and_activate_policy(handle, 1, &RoutingPolicyConfigV3::default()).await
+    }
+
     fn generation_observation(
         id: &str,
         source: ObservationSource,
@@ -2812,6 +2863,108 @@ mod tests {
                 circuit_policy_changed: false,
             }
         );
+    }
+
+    #[tokio::test]
+    async fn unchanged_active_policy_skips_when_monitoring_profile_is_current() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let runtime =
+            PersistenceRuntime::initialize_new(&root.path().join("profile-current.sqlite3"))
+                .await
+                .expect("initialize runtime");
+        let handle = runtime.handle();
+        build_active_default_generation(&handle).await;
+
+        assert!(load_staged_build_input(&handle)
+            .await
+            .expect("load unchanged staged input")
+            .is_none());
+
+        runtime.close().await.expect("close runtime");
+    }
+
+    #[tokio::test]
+    async fn unchanged_active_policy_rebuilds_when_monitoring_profile_changes() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let runtime =
+            PersistenceRuntime::initialize_new(&root.path().join("profile-changed.sqlite3"))
+                .await
+                .expect("initialize runtime");
+        let handle = runtime.handle();
+        let base_id = build_active_default_generation(&handle).await;
+        seed_monitor_for_routing_key(&handle, "generation-key").await;
+
+        let input = load_staged_build_input(&handle)
+            .await
+            .expect("load changed staged input")
+            .expect("monitoring profile change must schedule a rebuild");
+        assert_eq!(
+            input.policy_generation_id,
+            load_runtime_generation(&handle, &base_id)
+                .await
+                .policy_generation_id
+        );
+        assert_eq!(
+            input.rebuild_plan,
+            ComponentRebuildPlan {
+                quality: true,
+                circuit: false,
+                quality_policy_changed: false,
+                circuit_policy_changed: false,
+            }
+        );
+        let rebuilt_id = build_ready_from_input(&handle, input, &CancellationToken::new())
+            .await
+            .expect("build generation with fresh monitoring profile")
+            .expect("monitoring profile rebuild must complete");
+        let rebuilt = load_runtime_generation(&handle, &rebuilt_id).await;
+        let base = load_runtime_generation(&handle, &base_id).await;
+        assert_ne!(rebuilt.quality_generation_id, base.quality_generation_id);
+        assert_eq!(rebuilt.circuit_generation_id, base.circuit_generation_id);
+        let mut read = handle
+            .begin_read()
+            .await
+            .expect("begin rebuilt snapshot read");
+        let monitoring_eligible: i64 = sqlx::query_scalar(
+            "SELECT item.monitoring_source_eligible
+             FROM routing_quality_generation_v3 generation
+             JOIN routing_quality_source_profile_snapshot_item_v3 item
+               ON item.snapshot_id = generation.source_profile_snapshot_id
+             WHERE generation.quality_generation_id = ?1
+               AND item.station_key_id = 'generation-key'",
+        )
+        .bind(&rebuilt.quality_generation_id)
+        .fetch_one(read.connection())
+        .await
+        .expect("load rebuilt monitoring profile");
+        assert_eq!(monitoring_eligible, 1);
+        drop(read);
+
+        runtime.close().await.expect("close runtime");
+    }
+
+    #[tokio::test]
+    async fn changed_policy_still_schedules_a_rebuild() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let runtime =
+            PersistenceRuntime::initialize_new(&root.path().join("policy-changed.sqlite3"))
+                .await
+                .expect("initialize runtime");
+        let handle = runtime.handle();
+        build_active_default_generation(&handle).await;
+
+        let mut changed_policy = RoutingPolicyConfigV3::default();
+        changed_policy.retry.consecutive_failure_threshold = 4;
+        insert_staged_policy(&handle, 2, &changed_policy).await;
+
+        let input = load_staged_build_input(&handle)
+            .await
+            .expect("load changed policy input")
+            .expect("policy change must schedule a rebuild");
+        assert_eq!(input.policy_revision, 2);
+        assert!(input.rebuild_plan.circuit);
+
+        runtime.close().await.expect("close runtime");
     }
 
     #[tokio::test]

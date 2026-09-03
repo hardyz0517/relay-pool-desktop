@@ -212,6 +212,27 @@ impl RoutingGenerationStore {
             .map_err(|_| corrupt("staged policy generation is invalid"))
     }
 
+    /// Return the newest durable policy revision eligible for activation.
+    /// Keeping this query in the generation store keeps application
+    /// coordinators independent of SQLx and centralizes the staged-policy
+    /// status predicate used by the cutover protocol.
+    pub(crate) async fn latest_staged_policy_revision(
+        &self,
+        connection: &mut SqliteConnection,
+    ) -> Result<Option<u64>, PersistenceError> {
+        let revision: Option<i64> = sqlx::query_scalar(
+            "SELECT MAX(config_revision) FROM routing_policy_v3_staged
+             WHERE scope = 'active' AND status IN ('staged', 'ready', 'active')",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        revision
+            .map(|value| {
+                u64::try_from(value).map_err(|_| corrupt("staged policy revision is negative"))
+            })
+            .transpose()
+    }
+
     pub(crate) async fn insert_building_runtime_generation(
         &self,
         connection: &mut SqliteConnection,
@@ -291,7 +312,11 @@ impl RoutingGenerationStore {
         // A rollback rebuilds from a retired policy generation. That policy
         // must remain retired while its replacement runtime generation is
         // qualified; activation will atomically move it back to active.
-        let policy_affected = if policy_status == "retired" {
+        let policy_affected = if matches!(policy_status.as_str(), "active" | "retired") {
+            // A same-policy rebuild (for example after a monitor profile
+            // mutation) may share the currently active policy generation.
+            // Keep that policy active while the replacement runtime tuple is
+            // qualified; cutover will swap component statuses atomically.
             1
         } else {
             sqlx::query(

@@ -489,9 +489,17 @@ function ResponsivenessFormula() {
 function CostFormula() {
   return (
     <FormulaLine ariaLabel="成本因子换算">
-      <mi>C</mi><mo>(</mo><mi>m</mi><mo>)</mo><mo>=</mo><mo>⌊</mo>
-      <mfrac><mrow><msup><mn>10</mn><mn>4</mn></msup><mo>·</mo><msup><mn>10</mn><mn>6</mn></msup></mrow><mrow><msup><mn>10</mn><mn>6</mn></msup><mo>+</mo><mi>round</mi><mo>(</mo><msup><mn>10</mn><mn>6</mn></msup><mo>·</mo><mi>m</mi><mo>)</mo></mrow></mfrac>
-      <mo>⌋</mo>
+      <msub><mi>S</mi><mi>cost</mi></msub><mo>=</mo>
+      <mfrac>
+        <mn>100</mn>
+        <mrow>
+          <mn>1</mn><mo>+</mo>
+          <msup>
+            <mfrac><mi>m</mi><mrow><mn>2</mn><mi>r</mi></mrow></mfrac>
+            <mn>2</mn>
+          </msup>
+        </mrow>
+      </mfrac>
     </FormulaLine>
   );
 }
@@ -829,13 +837,15 @@ function summaryInputs(
 ) {
   if (label === "成本") {
     const multiplier = factor.inputs.find((input) => input.label === "密钥有效倍率")?.value;
+    const reference = factor.inputs.find((input) => input.label === "参与计分倍率中位数 r")?.value;
     const hasMultiplier = Boolean(multiplier && multiplier !== "暂无数据");
-    if (!hasMultiplier) {
-      return <span className="text-warning-foreground">密钥倍率暂不可用，当前采用默认中性分 {formatBasisPoints(factor.score)}。</span>;
+    const hasReference = Boolean(reference && reference !== "暂无数据");
+    if (!hasMultiplier || !hasReference) {
+      return <span className="text-warning-foreground">密钥倍率或参与计分中位数暂不可用，成本因子未纳入评分。</span>;
     }
     return (
       <span>
-        密钥有效倍率 {multiplier}
+        密钥有效倍率 {multiplier}{reference ? ` · 参与计分倍率中位数 r ${reference}` : ""}
       </span>
     );
   }

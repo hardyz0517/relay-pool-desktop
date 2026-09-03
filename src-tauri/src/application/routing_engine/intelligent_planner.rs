@@ -4,7 +4,7 @@ use sha2::Digest;
 
 use super::{
     dispatch::DispatchDecision,
-    factors::cost_score,
+    factors::{cost_efficiency_from_multiplier, cost_score, multiplier_median},
     fixed_point::{BasisPoints, FactorContribution, UtilityScore},
     planning_snapshot::{CandidateSnapshot, PlanningSnapshot},
     tiers::{classify_tier, AvailabilityTier},
@@ -55,6 +55,12 @@ pub(crate) fn plan_snapshot(
     if snapshot.runtime.in_flight >= snapshot.runtime.max_concurrency {
         return Err(PlannerError::RuntimeAtCapacity);
     }
+    let cost_reference_multiplier = multiplier_median(
+        snapshot
+            .candidates
+            .iter()
+            .filter_map(|candidate| candidate.pricing.rate_multiplier),
+    );
     let mut planned = snapshot
         .candidates
         .iter()
@@ -64,9 +70,14 @@ pub(crate) fn plan_snapshot(
             } else {
                 candidate.model_variants.iter().cloned().map(Some).collect()
             };
-            variants
-                .into_iter()
-                .filter_map(move |variant| planned_candidate(candidate, variant, &snapshot.policy))
+            variants.into_iter().filter_map(move |variant| {
+                planned_candidate(
+                    candidate,
+                    variant,
+                    &snapshot.policy,
+                    cost_reference_multiplier,
+                )
+            })
         })
         .collect::<Vec<_>>();
     if planned.is_empty() {
@@ -127,6 +138,7 @@ fn planned_candidate(
     candidate: &CandidateSnapshot,
     variant: Option<CandidateModelVariant>,
     policy: &RoutingPolicyConfigV2,
+    cost_reference_multiplier: Option<f64>,
 ) -> Option<PlannedCandidate> {
     if !candidate.hard_eligible {
         return None;
@@ -145,7 +157,8 @@ fn planned_candidate(
     if candidate.capability_basis_points == 0 {
         return None;
     }
-    let (total, contributions) = weighted_score_components(candidate, policy, None)?;
+    let (total, contributions) =
+        weighted_score_components(candidate, policy, None, cost_reference_multiplier)?;
     let target_rank = variant.as_ref().map(|value| value.target_rank).unwrap_or(0);
     let routing_identity = variant
         .as_ref()
@@ -259,20 +272,32 @@ pub(crate) fn candidate_score_breakdown_with_cost_basis(
     policy: &RoutingPolicyConfigV2,
     cost_basis_override: Option<u16>,
 ) -> Option<CandidateScoreBreakdown> {
-    weighted_score_components(candidate, policy, cost_basis_override).map(|(score, factors)| {
-        CandidateScoreBreakdown {
+    weighted_score_components(candidate, policy, cost_basis_override, None).map(
+        |(score, factors)| CandidateScoreBreakdown {
             total: score.get(),
             factors,
-        }
-    })
+        },
+    )
 }
 
 fn weighted_score_components(
     candidate: &CandidateSnapshot,
     policy: &RoutingPolicyConfigV2,
     cost_basis_override: Option<u16>,
+    cost_reference_multiplier: Option<f64>,
 ) -> Option<(BasisPoints, [FactorContribution; 4])> {
-    let cost = cost_score(cost_basis_override.or(candidate.cost_basis_points));
+    let cost_basis = cost_basis_override
+        .or_else(|| {
+            candidate
+                .pricing
+                .rate_multiplier
+                .zip(cost_reference_multiplier)
+                .and_then(|(multiplier, reference)| {
+                    cost_efficiency_from_multiplier(multiplier, reference)
+                })
+        })
+        .or(candidate.cost_basis_points);
+    let cost = cost_score(cost_basis);
     let scores = [
         candidate.reliability_basis_points,
         candidate.responsiveness_basis_points,
@@ -415,7 +440,7 @@ mod tests {
         let policy = RoutingPolicyConfigV2::default();
 
         let (score, contributions) =
-            weighted_score_components(&candidate, &policy, None).expect("fallback score");
+            weighted_score_components(&candidate, &policy, None, None).expect("fallback score");
 
         assert_eq!(score.get(), 5_429);
         assert_eq!(contributions[0].weight.get(), 0);
@@ -430,7 +455,7 @@ mod tests {
         candidate.cost_basis_points = None;
 
         let (score, contributions) =
-            weighted_score_components(&candidate, &RoutingPolicyConfigV2::default(), None)
+            weighted_score_components(&candidate, &RoutingPolicyConfigV2::default(), None, None)
                 .expect("score from remaining factors");
 
         assert_ne!(score.get(), 5_000);
@@ -456,13 +481,70 @@ mod tests {
         policy.cost_weight = 0;
         policy.preference_weight = 0;
 
-        let planned = planned_candidate(&candidate, None, &policy)
+        let planned = planned_candidate(&candidate, None, &policy, None)
             .expect("quality-unavailable candidate remains sortable");
 
         assert_eq!(planned.utility.value(), BasisPoints::ZERO);
         assert!(planned.contributions.iter().all(|factor| {
             factor.weight == BasisPoints::ZERO && factor.contribution == BasisPoints::ZERO
         }));
+    }
+
+    #[test]
+    fn planner_derives_cost_scores_from_the_snapshot_median() {
+        let mut lower = scoring_candidate("lower");
+        lower.pricing.rate_multiplier = Some(0.02);
+        lower.cost_basis_points = Some(1_000);
+        let mut higher = scoring_candidate("higher");
+        higher.pricing.rate_multiplier = Some(0.04);
+        higher.cost_basis_points = Some(9_000);
+        let snapshot = PlanningSnapshot {
+            snapshot_id: "cost-median".into(),
+            durable_revision: 1,
+            configured_key_count: 2,
+            capability_match_count: 2,
+            candidate_cap_count: 2,
+            routing_runtime_generation_id: None,
+            routing_generation_fence_revision: 0,
+            routing_policy_revision: 1,
+            routing_quality_revision: 0,
+            routing_health_revision: 0,
+            quality_projection_backlog: 0,
+            quality_projection_lag_seconds: 0,
+            quality_stale: false,
+            policy: RoutingPolicyConfigV2::default(),
+            attempt_budget:
+                crate::application::routing_policy::AttemptBudgetProfileV1::from_policy(
+                    1,
+                    &crate::models::routing_policy::RetryFailoverPolicyV2::default(),
+                )
+                .expect("attempt budget"),
+            profile: DispatchAlgorithmProfile::default(),
+            candidates: vec![lower, higher],
+            model_fallback_trigger: None,
+            runtime: RuntimeOverlaySnapshot {
+                runtime_instance_id: "runtime".into(),
+                runtime_revision: 1,
+                candidate_set_revision: 1,
+                in_flight: 0,
+                max_concurrency: 1,
+                affinity_station_key_id: None,
+            },
+        };
+
+        let plan = plan_snapshot(&snapshot, b"seed", 1).expect("plan");
+        let lower = plan
+            .candidates
+            .iter()
+            .find(|candidate| candidate.station_key_id == "lower")
+            .expect("lower candidate");
+        let higher = plan
+            .candidates
+            .iter()
+            .find(|candidate| candidate.station_key_id == "higher")
+            .expect("higher candidate");
+        assert_eq!(lower.contributions[2].score.get(), 9_000);
+        assert_eq!(higher.contributions[2].score.get(), 6_923);
     }
 
     #[test]

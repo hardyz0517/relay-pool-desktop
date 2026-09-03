@@ -302,11 +302,12 @@ async fn routing_v3_migrations_register_and_satisfy_schema_postconditions() {
     .fetch_one(&mut connection)
     .await
     .expect("schema compatibility");
-    assert_eq!(latest, 71);
-    assert_eq!(
-        MIGRATOR.iter().map(|migration| migration.version).max(),
-        Some(71)
-    );
+    let current_schema = MIGRATOR
+        .iter()
+        .map(|migration| migration.version)
+        .max()
+        .expect("migration registry is not empty");
+    assert_eq!(latest, current_schema);
     assert!(MIGRATOR.iter().any(|migration| migration.version == 61));
     assert!(MIGRATOR.iter().any(|migration| migration.version == 62));
     assert!(MIGRATOR.iter().any(|migration| migration.version == 63));

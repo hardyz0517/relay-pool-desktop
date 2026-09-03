@@ -172,16 +172,11 @@ impl RoutingGenerationCoordinator {
         {
             return Err(RoutingGenerationCoordinatorError::Conflict);
         }
-        let latest_policy_revision: Option<i64> = sqlx::query_scalar(
-            "SELECT MAX(config_revision) FROM routing_policy_v3_staged
-             WHERE scope = 'active' AND status IN ('staged', 'ready', 'active')",
-        )
-        .fetch_one(write.connection())
-        .await
-        .map_err(PersistenceError::from)?;
-        if latest_policy_revision.and_then(|revision| u64::try_from(revision).ok())
-            != Some(target.policy_revision)
-        {
+        let latest_policy_revision = self
+            .store
+            .latest_staged_policy_revision(write.connection())
+            .await?;
+        if latest_policy_revision != Some(target.policy_revision) {
             return Err(RoutingGenerationCoordinatorError::Conflict);
         }
         if !self

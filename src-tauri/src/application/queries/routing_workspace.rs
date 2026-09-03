@@ -858,6 +858,7 @@ pub(crate) fn workspace_snapshot_from_canonical_candidates(
     request: &RouteRequestFacts,
     input: RoutingWorkspaceSnapshotInput,
     generated_at_ms: i64,
+    cost_reference_multiplier: Option<f64>,
 ) -> RoutingWorkspaceSnapshot {
     let limit = input.limit.unwrap_or(128).clamp(1, 1024);
     let start = input
@@ -893,6 +894,7 @@ pub(crate) fn workspace_snapshot_from_canonical_candidates(
                 plan_diagnostics,
                 attempt_diagnostics,
                 circuit_snapshot,
+                cost_reference_multiplier,
             )
         })
         .collect::<Vec<_>>();
@@ -1432,6 +1434,7 @@ fn candidate_from_canonical(
     plan_diagnostics: &BTreeMap<String, RoutingCandidatePlanDiagnostics>,
     attempt_diagnostics: &BTreeMap<String, RoutingAttemptCountDiagnostics>,
     circuit_snapshot: &StationKeyCircuitReadSnapshot,
+    cost_reference_multiplier: Option<f64>,
 ) -> RoutingWorkspaceCandidate {
     let quality_scope = format!("station_key:{}", candidate.station_key_id);
     let quality_summary = quality_summaries.get(&quality_scope);
@@ -1564,6 +1567,12 @@ fn candidate_from_canonical(
                             economics.credit_per_cny.unwrap_or(1.0),
                         )
                     })
+                    .map(|value| format!("{value:.4}x"))
+                    .unwrap_or_else(|| "暂无数据".to_string()),
+            ),
+            score_input(
+                "参与计分倍率中位数 r",
+                cost_reference_multiplier
                     .map(|value| format!("{value:.4}x"))
                     .unwrap_or_else(|| "暂无数据".to_string()),
             ),

@@ -376,6 +376,22 @@ impl RoutingStore {
         Ok(rows.into_iter().map(row_to_balance_snapshot).collect())
     }
 
+    pub(crate) async fn list_balance_snapshots_for_station_bounded(
+        &self,
+        read: &mut ReadSession,
+        station_id: &str,
+        limit: u32,
+    ) -> Result<Vec<BalanceSnapshot>, PersistenceError> {
+        let rows = sqlx::query(&balance_snapshot_select_sql(
+            "WHERE station_id = ?1 ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT ?2",
+        ))
+        .bind(station_id)
+        .bind(limit)
+        .fetch_all(read.connection())
+        .await?;
+        Ok(rows.into_iter().map(row_to_balance_snapshot).collect())
+    }
+
     pub(crate) async fn list_station_endpoint_health(
         &self,
         read: &mut ReadSession,

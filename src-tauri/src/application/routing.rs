@@ -729,16 +729,34 @@ impl RoutingService {
                 )
                 .await
                 .map_err(ApplicationError::from)?;
+            let resolved_pricing = result
+                .snapshot
+                .candidates
+                .iter()
+                .filter_map(|candidate| {
+                    pricing.get(&candidate.station_key_id).map(|resolution| {
+                        (
+                            candidate.station_key_id.clone(),
+                            pricing_context_from_resolution(
+                                &candidate.station_key_id,
+                                model,
+                                Some(resolution),
+                            ),
+                        )
+                    })
+                })
+                .collect::<std::collections::BTreeMap<_, _>>();
+            let cost_reference_multiplier =
+                crate::application::routing_engine::factors::multiplier_median(
+                    resolved_pricing
+                        .values()
+                        .filter_map(|context| context.effective_rate_multiplier),
+                );
             for candidate in &mut result.snapshot.candidates {
-                if let Some(resolution) = pricing.get(&candidate.station_key_id) {
-                    let resolved = pricing_context_from_resolution(
-                        &candidate.station_key_id,
-                        model,
-                        Some(resolution),
-                    );
+                if let Some(resolved) = resolved_pricing.get(&candidate.station_key_id) {
                     let request_pricing = request_cost_comparison_context(
                         PricingRouteKind::Inference,
-                        Some(&resolved),
+                        Some(resolved),
                     );
                     // The workspace score is a key-level routing signal. Use
                     // the trusted effective multiplier as its stable cost
@@ -746,7 +764,14 @@ impl RoutingService {
                     // input/output tariff.
                     candidate.cost_basis_points = resolved
                         .effective_rate_multiplier
-                        .and_then(crate::application::routing_engine::factors::cost_efficiency_from_multiplier);
+                        .and_then(|multiplier| {
+                            cost_reference_multiplier.and_then(|reference| {
+                                crate::application::routing_engine::factors::cost_efficiency_from_multiplier(
+                                    multiplier,
+                                    reference,
+                                )
+                            })
+                        });
                     candidate.pricing = RoutePlanPricingSnapshot {
                         basis: request_pricing.basis,
                         rate_multiplier: resolved.effective_rate_multiplier,
@@ -1047,6 +1072,7 @@ impl RoutingService {
             planner_evaluation,
             planner_evaluation_code,
             workspace_revisions,
+            cost_reference_multiplier,
         ) = planning_result
             .map(|result| {
                 let workspace_revisions = RoutingWorkspaceRevisionSnapshot {
@@ -1094,8 +1120,15 @@ impl RoutingService {
                         RoutingPlannerEvaluationStatus::Unavailable,
                         Some("planner_assessment_source_mismatch".to_string()),
                         workspace_revisions,
+                        None,
                     );
                 }
+                let cost_reference_multiplier =
+                    crate::application::routing_engine::factors::multiplier_median(
+                        result.snapshot.candidates.iter().filter_map(|candidate| {
+                            multiplier_by_key.get(&candidate.station_key_id).copied()
+                        }),
+                    );
                 for assessment in &result.assessments {
                     let status = match (assessment.eligibility, assessment.candidate_set) {
                         (
@@ -1135,10 +1168,12 @@ impl RoutingService {
                         let multiplier_cost_basis = multiplier_by_key
                             .get(&candidate.station_key_id)
                             .copied()
-                            .and_then(
-                                crate::application::routing_engine::factors::
-                                    cost_efficiency_from_multiplier,
-                            );
+                            .and_then(|multiplier| {
+                                cost_reference_multiplier.and_then(|reference| {
+                                    crate::application::routing_engine::factors::
+                                        cost_efficiency_from_multiplier(multiplier, reference)
+                                })
+                            });
                         candidate_score_breakdown_with_cost_basis(
                             candidate,
                             &planner_policy_config,
@@ -1174,6 +1209,7 @@ impl RoutingService {
                     RoutingPlannerEvaluationStatus::Available,
                     None,
                     workspace_revisions,
+                    cost_reference_multiplier,
                 )
             })
             .unwrap_or_else(|| {
@@ -1187,6 +1223,7 @@ impl RoutingService {
                             .unwrap_or_else(|| "planner_build_unavailable".to_string()),
                     ),
                     RoutingWorkspaceRevisionSnapshot::default(),
+                    None,
                 )
             });
         Ok(workspace_snapshot_from_canonical_candidates(
@@ -1208,6 +1245,7 @@ impl RoutingService {
             &request,
             input,
             now_ms,
+            cost_reference_multiplier,
         ))
     }
 

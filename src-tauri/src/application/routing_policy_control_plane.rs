@@ -8,10 +8,12 @@
 
 use std::{path::PathBuf, sync::Arc};
 
+use futures_util::future::BoxFuture;
+
 use crate::{
     application::{error::ApplicationError, routing::RoutingService},
-    background_tasks::routing_generation_cutover_runner::FastActivationResult,
     models::{document_sync::TrustedDocumentSource, routing_policy::RoutingPolicyDocumentV3},
+    persistence::runtime::PersistenceHandle,
     persistence::{error::PersistenceError, stores::routing_policy_store::StoredRoutingPolicy},
     services::proxy::{
         limits::ProxyStartupResourceLimits, runtime::ProxyRuntimeState,
@@ -19,19 +21,90 @@ use crate::{
     },
 };
 
+/// Outcome of the bounded interactive activation lane.
+///
+/// `NotApplicable` is deliberately not an error. It means the candidate is
+/// still safe to process through the supervised generation runner (for
+/// example, a CAS race or an incomplete build). Persistence failures and
+/// corrupted generation evidence must never be downgraded to this outcome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FastActivationResult {
+    Activated,
+    NotApplicable { reason: &'static str },
+}
+
+/// Narrow application port for the optional interactive generation fast lane.
+///
+/// The application mutation coordinator owns policy validation and mutation
+/// serialization; generation materialization remains a background-task
+/// concern. Keeping this callback at the boundary avoids an application ->
+/// background_tasks dependency (and the resulting module cycle) while still
+/// allowing composition to wire the production implementation.
+pub(crate) trait RoutingPolicyFastActivationPort: Send + Sync {
+    fn try_fast_activate_for_policy_revision(
+        &self,
+        runtime: PersistenceHandle,
+        policy_revision: u64,
+    ) -> BoxFuture<'static, Result<FastActivationResult, PersistenceError>>;
+}
+
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=routing-policy.fast-activation-test-default; owner=application/routing_policy_control_plane; remove_when=all isolated coordinator tests inject an explicit fast-activation port"
+    )
+)]
+struct NoopRoutingPolicyFastActivationPort;
+
+impl RoutingPolicyFastActivationPort for NoopRoutingPolicyFastActivationPort {
+    fn try_fast_activate_for_policy_revision(
+        &self,
+        _runtime: PersistenceHandle,
+        _policy_revision: u64,
+    ) -> BoxFuture<'static, Result<FastActivationResult, PersistenceError>> {
+        Box::pin(async {
+            Ok(FastActivationResult::NotApplicable {
+                reason: "fast_activation_unavailable",
+            })
+        })
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct RoutingPolicyMutationCoordinator {
     routing: Arc<RoutingService>,
     proxy: Arc<ProxyRuntimeState>,
+    fast_activation: Arc<dyn RoutingPolicyFastActivationPort>,
     mutation_gate: Arc<tokio::sync::Mutex<()>>,
     generation_gate: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl RoutingPolicyMutationCoordinator {
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=routing-policy.fast-activation-compat-constructor; owner=application/routing_policy_control_plane; remove_when=all compositions and tests use new_with_fast_activation"
+        )
+    )]
     pub(crate) fn new(routing: Arc<RoutingService>, proxy: Arc<ProxyRuntimeState>) -> Self {
+        Self::new_with_fast_activation(
+            routing,
+            proxy,
+            Arc::new(NoopRoutingPolicyFastActivationPort),
+        )
+    }
+
+    pub(crate) fn new_with_fast_activation(
+        routing: Arc<RoutingService>,
+        proxy: Arc<ProxyRuntimeState>,
+        fast_activation: Arc<dyn RoutingPolicyFastActivationPort>,
+    ) -> Self {
         Self {
             routing,
             proxy,
+            fast_activation,
             mutation_gate: Arc::new(tokio::sync::Mutex::new(())),
             generation_gate: Arc::new(tokio::sync::Mutex::new(())),
         }
@@ -77,11 +150,12 @@ impl RoutingPolicyMutationCoordinator {
             let Some(_generation_gate) = self.try_lock_generation_lane() else {
                 return Ok(stored);
             };
-            crate::background_tasks::routing_generation_cutover_runner::try_fast_activate_for_policy_revision(
-                &self.routing.persistence_handle(),
-                stored.revision,
-            )
-            .await?
+            self.fast_activation
+                .try_fast_activate_for_policy_revision(
+                    self.routing.persistence_handle(),
+                    stored.revision,
+                )
+                .await?
         } else {
             FastActivationResult::NotApplicable {
                 reason: "runtime_unavailable",
@@ -124,14 +198,15 @@ impl RoutingPolicyMutationCoordinator {
                 let Some(_generation_gate) = self.try_lock_generation_lane() else {
                     return Ok(stored);
                 };
-                crate::background_tasks::routing_generation_cutover_runner::try_fast_activate_for_policy_revision(
-                    &self.routing.persistence_handle(),
-                    stored
-                        .as_ref()
-                        .expect("stored policy change is present")
-                        .revision,
-                )
-                .await?
+                self.fast_activation
+                    .try_fast_activate_for_policy_revision(
+                        self.routing.persistence_handle(),
+                        stored
+                            .as_ref()
+                            .expect("stored policy change is present")
+                            .revision,
+                    )
+                    .await?
             } else {
                 FastActivationResult::NotApplicable {
                     reason: "runtime_unavailable",
