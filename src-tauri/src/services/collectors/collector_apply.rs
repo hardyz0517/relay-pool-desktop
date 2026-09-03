@@ -2,7 +2,8 @@ use crate::{
     application::{
         collectors::{
             CanonicalBalanceFact, CanonicalCollectorFacts, CanonicalGroupFact, CanonicalRateFact,
-            CollectorApplyOutcome, CollectorApplyRequest, CollectorService,
+            CollectorApplyOutcome, CollectorApplyRequest, CollectorFullApplyOutcome,
+            CollectorService,
         },
         error::ApplicationError,
     },
@@ -24,20 +25,28 @@ pub(crate) trait CollectorApplyPort: Send + Sync {
                 + 'a,
         >,
     >;
+
+    /// Apply a Full operation as one atomic write.
+    ///
+    /// The method is intentionally required on every port implementation:
+    /// silently falling back to parent-then-child writes would reintroduce a
+    /// partially visible Full operation and violate the terminal commit
+    /// invariant. Test/dry-run ports that do not support Full must return a
+    /// typed error instead of emulating it sequentially.
+    fn apply_full<'a>(
+        &'a self,
+        parent: CollectorApplyRequest,
+        children: Vec<CollectorApplyRequest>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<CollectorFullApplyOutcome, ApplicationError>>
+                + Send
+                + 'a,
+        >,
+    >;
 }
 
-#[derive(Clone)]
-pub(crate) struct V2CollectorApplyAdapter {
-    service: CollectorService,
-}
-
-impl V2CollectorApplyAdapter {
-    pub(crate) fn new(service: CollectorService) -> Self {
-        Self { service }
-    }
-}
-
-impl CollectorApplyPort for V2CollectorApplyAdapter {
+impl CollectorApplyPort for CollectorService {
     fn apply<'a>(
         &'a self,
         request: CollectorApplyRequest,
@@ -48,61 +57,84 @@ impl CollectorApplyPort for V2CollectorApplyAdapter {
                 + 'a,
         >,
     > {
-        Box::pin(self.service.apply_result(request))
+        Box::pin(self.apply_result(request))
+    }
+
+    fn apply_full<'a>(
+        &'a self,
+        parent: CollectorApplyRequest,
+        children: Vec<CollectorApplyRequest>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<CollectorFullApplyOutcome, ApplicationError>>
+                + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(self.apply_full_result(parent, children))
     }
 }
 
-/// Applies one collector result through the V2 application port.
+/// Applies one collector result through the atomic application port.
 ///
-/// Station discovery and upstream calls remain owned by the legacy collector
-/// coordinator for now; this boundary guarantees that the resulting run,
-/// snapshot, facts, health transitions, and change events are written by V2.
-pub(crate) async fn apply_station_output_v2(
+/// Station discovery and upstream calls remain outside the terminal write;
+/// this boundary guarantees that run, snapshot, facts, projections and
+/// revisions are committed by the canonical collector owner.
+pub(crate) async fn apply_station_output(
     port: &dyn CollectorApplyPort,
     station_id: String,
     endpoint_revision: i64,
-    parent_run_id: Option<String>,
+    credential_revision: i64,
+    intent_sequence: i64,
     output: AdapterOutput,
 ) -> Result<crate::application::collectors::CollectorApplyOutcome, ApplicationError> {
-    if station_id.trim().is_empty() || endpoint_revision < 1 {
+    if station_id.trim().is_empty()
+        || endpoint_revision < 1
+        || credential_revision < 1
+        || intent_sequence < 1
+    {
         return Err(ApplicationError::ConstraintViolation);
     }
     let run_key = run_key_for_current_intent(
         &station_id,
         endpoint_revision,
+        credential_revision,
+        intent_sequence,
         &output,
-        parent_run_id.as_deref(),
     );
-    apply_adapter_output(
-        port,
+    let request = collector_apply_request_from_output(
         run_key,
         station_id,
         endpoint_revision,
-        parent_run_id,
+        credential_revision,
+        intent_sequence,
         None,
         output,
-    )
-    .await
+    )?;
+    port.apply(request).await
 }
 
-async fn apply_adapter_output(
-    port: &dyn CollectorApplyPort,
+pub(crate) fn collector_apply_request_from_output(
     run_key: String,
     station_id: String,
     endpoint_revision: i64,
-    parent_run_id: Option<String>,
+    credential_revision: i64,
+    intent_sequence: i64,
     next_due_at: Option<String>,
     output: AdapterOutput,
-) -> Result<CollectorApplyOutcome, ApplicationError> {
+) -> Result<CollectorApplyRequest, ApplicationError> {
     let mut facts = output.facts;
     let published_status = facts.published_status.take();
     append_station_balance_aggregates(&mut facts.balances);
     let endpoint_counts = endpoint_counts_from_summary(&output.summary_json);
-    let request = CollectorApplyRequest {
+    Ok(CollectorApplyRequest {
         run_key,
         station_id,
         endpoint_revision,
-        parent_run_id,
+        credential_revision,
+        intent_sequence,
+        #[cfg(test)]
+        parent_run_id: None,
         adapter: output.adapter,
         task_type: output.task.as_str().to_string(),
         status: output.status.clone(),
@@ -186,8 +218,7 @@ async fn apply_adapter_output(
         next_due_at,
         execution_started_at_ms: output.execution_started_at_ms,
         execution_duration_ms: output.execution_duration_ms,
-    };
-    port.apply(request).await
+    })
 }
 
 fn endpoint_counts_from_summary(summary: &serde_json::Value) -> (i64, i64, i64) {
@@ -362,18 +393,36 @@ fn shared_optional_text_value<'a>(
     values.all(|value| value == Some(first)).then_some(first)
 }
 
-fn run_key_for_current_intent(
+pub(crate) fn run_key_for_current_intent(
     station_id: &str,
     endpoint_revision: i64,
+    credential_revision: i64,
+    intent_sequence: i64,
     output: &AdapterOutput,
-    parent_run_id: Option<&str>,
 ) -> String {
     let intent_id = correlation::current_id_string()
         .unwrap_or_else(|| uuid::Uuid::now_v7().simple().to_string());
-    let parent_scope = parent_run_id.unwrap_or("root");
     format!(
-        "collector:{station_id}:{endpoint_revision}:{}:{parent_scope}:{intent_id}",
+        "collector:{station_id}:{endpoint_revision}:{credential_revision}:{intent_sequence}:{}:{intent_id}",
         output.task.as_str()
+    )
+}
+
+/// Full operations use the same intent-scoped key derivation as single-task
+/// operations, but construct requests before the atomic apply boundary.
+pub(crate) fn run_key_for_current_intent_for_full(
+    station_id: &str,
+    endpoint_revision: i64,
+    credential_revision: i64,
+    intent_sequence: i64,
+    output: &AdapterOutput,
+) -> String {
+    run_key_for_current_intent(
+        station_id,
+        endpoint_revision,
+        credential_revision,
+        intent_sequence,
+        output,
     )
 }
 
@@ -401,9 +450,9 @@ mod tests {
     #[test]
     fn run_key_is_fresh_without_an_active_work_intent() {
         let first =
-            run_key_for_current_intent("station-1", 4, &output(CollectorTask::Balance), None);
+            run_key_for_current_intent("station-1", 4, 1, 1, &output(CollectorTask::Balance));
         let second =
-            run_key_for_current_intent("station-1", 4, &output(CollectorTask::Balance), None);
+            run_key_for_current_intent("station-1", 4, 1, 1, &output(CollectorTask::Balance));
 
         assert_ne!(first, second);
     }
@@ -416,32 +465,36 @@ mod tests {
                     run_key_for_current_intent(
                         "station-1",
                         4,
+                        1,
+                        1,
                         &output(CollectorTask::Balance),
-                        None,
                     ),
                     run_key_for_current_intent(
                         "station-1",
                         4,
+                        1,
+                        1,
                         &output(CollectorTask::Balance),
-                        None,
                     ),
                     run_key_for_current_intent(
                         "station-1",
                         5,
+                        1,
+                        1,
                         &output(CollectorTask::Balance),
-                        None,
                     ),
                     run_key_for_current_intent(
                         "station-1",
                         4,
+                        1,
+                        1,
                         &output(CollectorTask::Groups),
-                        None,
                     ),
                 )
             })
             .await;
         let next_click = correlation::in_command_scope("collect_station_task", async {
-            run_key_for_current_intent("station-1", 4, &output(CollectorTask::Balance), None)
+            run_key_for_current_intent("station-1", 4, 1, 1, &output(CollectorTask::Balance))
         })
         .await;
 

@@ -109,9 +109,16 @@ impl ProviderDraftCommandFacade {
     ) -> Result<ProviderDraftPreview, ProviderDraftCommandError> {
         let draft = self.drafts.get(draft_id.clone()).await?;
         let fingerprint = ProviderDraftService::runtime_fingerprint(&draft.payload);
+        let credential_revision = draft.revision.max(1);
         let finish_draft_id = draft_id.clone();
         let source = self.source(draft_id.clone());
-        let prepared = collectors::prepare_station_collection_route_v2(&source, draft_id, task)?;
+        let prepared = collectors::prepare_station_collection_route(
+            &source,
+            draft_id,
+            task,
+            credential_revision,
+            1,
+        )?;
         let prepared = match prepared {
             collectors::PreparedStationCollectionRoute::Sub2Api(prepared) => {
                 collectors::finish_sub2api_collection_v2(
@@ -126,6 +133,7 @@ impl ProviderDraftCommandFacade {
             collectors::PreparedStationCollectionRoute::NewApi(prepared) => {
                 let source = self.source(finish_draft_id);
                 collectors::finish_newapi_collection_v2(
+                    &source,
                     &source,
                     self.providers.as_ref(),
                     &self.outbound,
@@ -249,6 +257,30 @@ impl CollectorSourcePort for ProviderDraftCollectorSource {
         station_id: String,
     ) -> Result<Vec<StationGroupBinding>, String> {
         block_on_draft_source(self.drafts.list_groups(&station_id)).map_err(app_error)
+    }
+}
+
+impl collectors::CollectorAuthorizationPort for ProviderDraftCollectorSource {
+    fn station_authorization_revision<'a>(
+        &'a self,
+        station_id: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Result<i64, String>> {
+        Box::pin(async move {
+            self.drafts
+                .get(station_id.to_string())
+                .await
+                .map(|draft| draft.revision.max(1))
+                .map_err(app_error)
+        })
+    }
+
+    fn allocate_station_collection_intent<'a>(
+        &'a self,
+        _station_id: &'a str,
+        _endpoint_revision: i64,
+        _credential_revision: i64,
+    ) -> futures_util::future::BoxFuture<'a, Result<i64, String>> {
+        Box::pin(async { Ok(1) })
     }
 }
 

@@ -10,7 +10,8 @@ use crate::{
             ChannelMonitorAttemptHistoryInputDto, ChannelMonitorAttemptPageDto,
             ChannelMonitorExecutionDetailDto, ChannelMonitorExecutionIdInputDto,
             ChannelMonitorExecutionListInputDto, ChannelMonitorExecutionPageDto,
-            ChannelStatusWorkspaceInputDto, MonitoringCapabilityCatalogDto,
+            ChannelMonitorLatestSummaryDto, ChannelStatusWorkspaceInputDto,
+            MonitoringCapabilityCatalogDto,
         },
         EmptyInputDto,
     },
@@ -36,6 +37,31 @@ pub async fn load_channel_status_workspace(
             let input = ChannelStatusWorkspaceInputDto::parse(input)?;
             facade
                 .load_channel_status_workspace(input)
+                .await
+                .map_err(super::public_command_application_error)
+        },
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn load_channel_monitor_latest_summary(
+    facade: State<'_, ChannelStatusCommandFacade>,
+    input: Value,
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
+) -> Result<Vec<ChannelMonitorLatestSummaryDto>, error::CommandError> {
+    correlation::in_command_scope_with_runtime_context(
+        "load_channel_monitor_latest_summary",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            crate::ipc::dto::EmptyInputDto::parse(input)?;
+            facade
+                .load_channel_monitor_latest_summary()
                 .await
                 .map_err(super::public_command_application_error)
         },

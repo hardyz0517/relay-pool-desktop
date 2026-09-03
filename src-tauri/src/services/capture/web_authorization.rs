@@ -4,14 +4,20 @@ use serde_json::Value;
 pub(crate) struct VerifiedWebAuthorizationSession {
     pub cookie_header: String,
     pub newapi_user_id: String,
+    pub credential_revision: i64,
     pub session_source: String,
 }
 
 impl VerifiedWebAuthorizationSession {
-    pub(crate) fn new(cookie_header: String, newapi_user_id: String) -> Self {
+    pub(crate) fn new(
+        cookie_header: String,
+        newapi_user_id: String,
+        credential_revision: i64,
+    ) -> Self {
         Self {
             cookie_header,
             newapi_user_id,
+            credential_revision,
             session_source: "web_authorization".to_string(),
         }
     }
@@ -181,7 +187,7 @@ mod tests {
     #[test]
     fn verified_web_authorization_session_uses_stable_source() {
         let session =
-            VerifiedWebAuthorizationSession::new("session=abc".to_string(), "42".to_string());
+            VerifiedWebAuthorizationSession::new("session=abc".to_string(), "42".to_string(), 7);
 
         assert_eq!(session.session_source, "web_authorization");
     }

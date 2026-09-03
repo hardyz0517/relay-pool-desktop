@@ -753,31 +753,364 @@
       }
     },
     {
-      "id": "sub2api-authorization-unsupported",
+      "id": "sub2api-authorization-success",
       "providerKind": "sub2api",
       "capability": "authorization",
-      "scenario": "unsupported",
+      "scenario": "success",
       "endpointRole": "authorization",
       "requestSchema": {
-        "kind": "none",
-        "reason": "Task 19.A registry entry does not declare an authorization driver"
+        "method": "GET",
+        "websitePath": "/api/user/self",
+        "auth": "authenticated Sub2API session cookie"
       },
       "responseSchema": {
-        "kind": "driver_failure",
-        "failureKind": "unsupported"
+        "status": 200,
+        "body": {
+          "data": {
+            "id": "account-42"
+          }
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "sub2api-session-canary"
+        ]
+      },
+      "source": {
+        "kind": "sub2api-authorization-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Authenticated Sub2API self-probe succeeds with a parseable identity."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": {
+          "status": "authorized"
+        }
+      }
+    },
+    {
+      "id": "sub2api-authorization-partial",
+      "providerKind": "sub2api",
+      "capability": "authorization",
+      "scenario": "partial",
+      "endpointRole": "authorization",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/user/self",
+        "ownerBoundary": "capture persists the session; driver validates identity"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "user": {
+            "id": "account-42"
+          }
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "sub2api-session-canary"
+        ]
+      },
+      "source": {
+        "kind": "sub2api-authorization-driver-fixture",
+        "path": "src-tauri/src/application/command_facades/capture.rs",
+        "provenance": "Capture-owned persistence is separate from the Sub2API self-probe."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": {
+          "status": "authorized_with_capture_owned_commit"
+        }
+      }
+    },
+    {
+      "id": "sub2api-authorization-auth-failure",
+      "providerKind": "sub2api",
+      "capability": "authorization",
+      "scenario": "auth_failure",
+      "endpointRole": "authorization",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/user/self",
+        "auth": "expired session cookie"
+      },
+      "responseSchema": {
+        "status": 401,
+        "body": {
+          "message": "unauthorized"
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "sub2api-session-canary"
+        ]
+      },
+      "source": {
+        "kind": "sub2api-authorization-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Expired Sub2API session is classified as authentication rejection."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "auth_rejected",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-authorization-rate-limit",
+      "providerKind": "sub2api",
+      "capability": "authorization",
+      "scenario": "rate_limit",
+      "endpointRole": "authorization",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/user/self"
+      },
+      "responseSchema": {
+        "status": 429,
+        "body": {
+          "message": "rate limited"
+        }
       },
       "redaction": {
         "status": "not_applicable",
         "secretCanaries": []
       },
       "source": {
-        "kind": "stage19a-registry-descriptor",
-        "path": "src-tauri/src/services/collectors/drivers/mod.rs",
-        "provenance": "Static registry declares Sub2API with no authorization capability."
+        "kind": "sub2api-authorization-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Sub2API self-probe rate-limit failure remains retryable."
       },
       "expected": {
-        "registryStatus": "unsupported",
-        "failureKind": "unsupported",
+        "registryStatus": "supported",
+        "failureKind": "rate_limited",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-authorization-server-failure",
+      "providerKind": "sub2api",
+      "capability": "authorization",
+      "scenario": "server_failure",
+      "endpointRole": "authorization",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/user/self"
+      },
+      "responseSchema": {
+        "status": 503,
+        "body": {
+          "message": "service unavailable"
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "sub2api-authorization-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Provider-unavailable response does not mutate authorization truth."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "provider_unavailable",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-authorization-malformed",
+      "providerKind": "sub2api",
+      "capability": "authorization",
+      "scenario": "malformed",
+      "endpointRole": "authorization",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/user/self"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "data": {
+            "quota": 1
+          }
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "sub2api-authorization-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Successful HTTP without identity is rejected as malformed authorization evidence."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "malformed_payload",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-authorization-unknown-shape",
+      "providerKind": "sub2api",
+      "capability": "authorization",
+      "scenario": "unknown_shape",
+      "endpointRole": "authorization",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/user/self"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "profile": {
+            "id": "not-trusted"
+          }
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "sub2api-authorization-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Unknown identity shape fails closed instead of inferring authorization."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "malformed_payload",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-authorization-cancel",
+      "providerKind": "sub2api",
+      "capability": "authorization",
+      "scenario": "cancel",
+      "endpointRole": "authorization",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/user/self",
+        "cancellation": "before response"
+      },
+      "responseSchema": {
+        "kind": "driver_failure",
+        "failureKind": "cancelled"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "sub2api-authorization-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Cancellation before the self-probe response is a typed terminal outcome."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "cancelled",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-authorization-budget-exhaustion",
+      "providerKind": "sub2api",
+      "capability": "authorization",
+      "scenario": "budget_exhaustion",
+      "endpointRole": "authorization",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/user/self",
+        "budget": "expired"
+      },
+      "responseSchema": {
+        "kind": "driver_failure",
+        "failureKind": "budget_exhausted"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "sub2api-authorization-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Expired request budget prevents the self-probe from starting."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "budget_exhausted",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-authorization-stale-endpoint-revision",
+      "providerKind": "sub2api",
+      "capability": "authorization",
+      "scenario": "stale_endpoint_revision",
+      "endpointRole": "authorization",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/user/self",
+        "commitBarrier": "captured endpoint revision is checked before persistence"
+      },
+      "responseSchema": {
+        "kind": "application_failure",
+        "failureKind": "stale_revision"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "sub2api-authorization-capture-facade-fixture",
+        "path": "src-tauri/src/application/command_facades/capture.rs",
+        "provenance": "Authorization evidence cannot commit after the station endpoint changes."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "stale_endpoint_revision",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-authorization-redaction",
+      "providerKind": "sub2api",
+      "capability": "authorization",
+      "scenario": "redaction",
+      "endpointRole": "authorization",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/user/self",
+        "auth": "session cookie"
+      },
+      "responseSchema": {
+        "status": 401,
+        "body": {
+          "message": "bad session=sub2api-session-canary"
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "sub2api-session-canary"
+        ]
+      },
+      "source": {
+        "kind": "sub2api-authorization-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Authorization diagnostics redact session material and retain only safe evidence."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "auth_rejected",
         "canonicalFacts": null
       }
     },

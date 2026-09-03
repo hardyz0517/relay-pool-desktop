@@ -59,42 +59,42 @@ impl StationCatalogStore {
                    (SELECT COUNT(*) FROM station_keys WHERE station_keys.station_id = stations.id) AS key_count,
                    enabled, priority, credit_per_cny, balance_raw, balance_cny,
                    low_balance_threshold_cny, collection_interval_minutes,
-                   CASE
-                       WHEN enabled = 0 THEN 'disabled'
-                       WHEN EXISTS (
-                           SELECT 1 FROM collector_task_state task_state
-                           JOIN collector_runs runs ON runs.id = task_state.last_run_id
-                           WHERE task_state.station_id = stations.id
-                             AND runs.parent_run_id IS NULL
-                             AND task_state.task_type IN ('balance', 'groups', 'detect', 'full')
-                             AND task_state.last_status = 'failed'
-                       ) THEN 'error'
-                       WHEN EXISTS (
-                           SELECT 1 FROM collector_task_state task_state
-                           JOIN collector_runs runs ON runs.id = task_state.last_run_id
-                           WHERE task_state.station_id = stations.id
-                             AND runs.parent_run_id IS NULL
-                             AND task_state.task_type IN ('balance', 'groups', 'detect', 'full')
-                             AND (
-                                 task_state.last_status = 'manual_required'
-                                 OR (task_state.task_type <> 'full' AND task_state.last_status = 'partial')
-                             )
-                       ) THEN 'warning'
-                       ELSE status
-                   END AS status,
+                   -- Scheduling only needs station identity/configuration.
+                   -- Collection health is exposed through typed projections;
+                   -- never derive a status from legacy task rows here.
+                   'unchecked' AS status,
                    latency_ms,
                    last_checked_at, last_pricing_fetched_at, note, created_at,
                    stations.updated_at AS updated_at,
                    (SELECT masked_value FROM secrets WHERE secrets.id = stations.api_key_secret_id) AS api_key_masked,
                    api_key_secret_id, collector_proxy_mode, collector_proxy_url
             FROM stations
-            LEFT JOIN collector_task_state
-              ON collector_task_state.station_id = stations.id
-             AND collector_task_state.task_type = ?1
+            LEFT JOIN (
+                SELECT station_id, task_type,
+                       CAST(COALESCE(finished_at, started_at, created_at) AS INTEGER) AS last_at,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY station_id, task_type
+                           ORDER BY CAST(COALESCE(finished_at, started_at, created_at) AS INTEGER) DESC,
+                                    created_at DESC, id DESC
+                       ) AS row_number
+                FROM collector_runs
+                WHERE task_type = ?1
+            ) AS latest_run
+              ON latest_run.station_id = stations.id
+             AND latest_run.task_type = ?1
+             AND latest_run.row_number = 1
             WHERE enabled = 1
+              AND NOT EXISTS (
+                   SELECT 1
+                   FROM collector_operations active_operation
+                   WHERE active_operation.station_id = stations.id
+                     AND (active_operation.task_type = ?1
+                          OR active_operation.task_type = 'unspecified')
+                     AND active_operation.status IN ('queued', 'running')
+              )
               AND (
-                   collector_task_state.updated_at IS NULL
-                   OR CAST(collector_task_state.updated_at AS INTEGER) + (?2 * 60000) <= ?3
+                   latest_run.last_at IS NULL
+                   OR latest_run.last_at + (?2 * 60000) <= ?3
               )
             ORDER BY priority ASC, created_at ASC, id ASC
             LIMIT ?4
@@ -135,10 +135,10 @@ impl StationCatalogStore {
                 id, name, station_type, website_url, api_base_url, endpoint_revision,
                 api_key, api_key_secret_id, collector_proxy_mode, collector_proxy_url,
                 enabled, priority, credit_per_cny, balance_raw, balance_cny,
-                low_balance_threshold_cny, collection_interval_minutes, status,
+                low_balance_threshold_cny, collection_interval_minutes,
                 latency_ms, last_checked_at, last_pricing_fetched_at, note, created_at, updated_at
             ) VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, NULL, ?7, ?8, ?9, ?10, ?11, NULL, NULL, ?12,
-                ?13, ?14, NULL, NULL, NULL, ?15, ?16, ?17)
+                ?13, NULL, NULL, NULL, ?14, ?15, ?16)
             "#,
         )
         .bind(&station.id)
@@ -154,11 +154,6 @@ impl StationCatalogStore {
         .bind(station.input.credit_per_cny)
         .bind(station.input.low_balance_threshold_cny)
         .bind(i64::from(station.input.collection_interval_minutes))
-        .bind(if station.input.enabled {
-            "unchecked"
-        } else {
-            "disabled"
-        })
         .bind(normalize_optional_string(station.input.note))
         .bind(&station.now)
         .bind(&station.now)
@@ -328,10 +323,6 @@ async fn update_station(
             credit_per_cny = ?11,
             low_balance_threshold_cny = ?12,
             collection_interval_minutes = ?13,
-            status = CASE WHEN ?10 = 0 THEN 'disabled'
-                          WHEN ?17 = 1 THEN 'unchecked'
-                          WHEN status = 'disabled' THEN 'unchecked'
-                          ELSE status END,
             note = ?14,
             last_checked_at = CASE WHEN ?17 = 1 THEN NULL ELSE last_checked_at END,
             last_pricing_fetched_at = CASE WHEN ?17 = 1 THEN NULL ELSE last_pricing_fetched_at END,
@@ -520,29 +511,7 @@ where
                (SELECT COUNT(*) FROM station_keys WHERE station_keys.station_id = stations.id) AS key_count,
                enabled, priority, credit_per_cny, balance_raw, balance_cny,
                 low_balance_threshold_cny, collection_interval_minutes,
-                CASE
-                    WHEN enabled = 0 THEN 'disabled'
-                    WHEN EXISTS (
-                        SELECT 1 FROM collector_task_state task_state
-                        JOIN collector_runs runs ON runs.id = task_state.last_run_id
-                        WHERE task_state.station_id = stations.id
-                          AND runs.parent_run_id IS NULL
-                          AND task_state.task_type IN ('balance', 'groups', 'detect', 'full')
-                          AND task_state.last_status = 'failed'
-                    ) THEN 'error'
-                    WHEN EXISTS (
-                        SELECT 1 FROM collector_task_state task_state
-                        JOIN collector_runs runs ON runs.id = task_state.last_run_id
-                        WHERE task_state.station_id = stations.id
-                          AND runs.parent_run_id IS NULL
-                          AND task_state.task_type IN ('balance', 'groups', 'detect', 'full')
-                          AND (
-                              task_state.last_status = 'manual_required'
-                              OR (task_state.task_type <> 'full' AND task_state.last_status = 'partial')
-                          )
-                    ) THEN 'warning'
-                    ELSE status
-                END AS status,
+                CASE WHEN enabled = 0 THEN 'disabled' ELSE 'unchecked' END AS status,
                 latency_ms,
                last_checked_at, last_pricing_fetched_at, note, created_at, updated_at,
                (SELECT masked_value FROM secrets WHERE secrets.id = stations.api_key_secret_id) AS api_key_masked,
@@ -567,29 +536,7 @@ where
                (SELECT COUNT(*) FROM station_keys WHERE station_keys.station_id = stations.id) AS key_count,
                enabled, priority, credit_per_cny, balance_raw, balance_cny,
                 low_balance_threshold_cny, collection_interval_minutes,
-                CASE
-                    WHEN enabled = 0 THEN 'disabled'
-                    WHEN EXISTS (
-                        SELECT 1 FROM collector_task_state task_state
-                        JOIN collector_runs runs ON runs.id = task_state.last_run_id
-                        WHERE task_state.station_id = stations.id
-                          AND runs.parent_run_id IS NULL
-                          AND task_state.task_type IN ('balance', 'groups', 'detect', 'full')
-                          AND task_state.last_status = 'failed'
-                    ) THEN 'error'
-                    WHEN EXISTS (
-                        SELECT 1 FROM collector_task_state task_state
-                        JOIN collector_runs runs ON runs.id = task_state.last_run_id
-                        WHERE task_state.station_id = stations.id
-                          AND runs.parent_run_id IS NULL
-                          AND task_state.task_type IN ('balance', 'groups', 'detect', 'full')
-                          AND (
-                              task_state.last_status = 'manual_required'
-                              OR (task_state.task_type <> 'full' AND task_state.last_status = 'partial')
-                          )
-                    ) THEN 'warning'
-                    ELSE status
-                END AS status,
+                CASE WHEN enabled = 0 THEN 'disabled' ELSE 'unchecked' END AS status,
                 latency_ms,
                last_checked_at, last_pricing_fetched_at, note, created_at, updated_at,
                (SELECT masked_value FROM secrets WHERE secrets.id = stations.api_key_secret_id) AS api_key_masked,

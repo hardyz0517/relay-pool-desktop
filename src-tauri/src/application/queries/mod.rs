@@ -1,5 +1,6 @@
 pub(crate) mod change_center_workspace;
 pub(crate) mod channel_status;
+pub(crate) mod collector_history;
 pub(crate) mod dashboard_metrics;
 pub(crate) mod key_pool;
 pub(crate) mod pricing_comparison;
@@ -10,5 +11,6 @@ pub(crate) mod routing_protection;
 pub(crate) mod routing_runtime;
 pub(crate) mod routing_workspace;
 pub(crate) mod station_assets;
+pub(crate) mod station_detail;
 pub(crate) mod station_key_circuit_read;
 pub(crate) mod station_published_status;

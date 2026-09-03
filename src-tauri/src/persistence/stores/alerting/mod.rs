@@ -270,25 +270,6 @@ pub(crate) struct LegacyCollectorFailureGroup {
 }
 
 impl IncidentStore {
-    /// Return the latest observation summary for an active incident. The
-    /// application layer owns interpretation of the JSON payload; this store
-    /// method only applies the lifecycle/condition boundary in SQL.
-    pub(crate) async fn active_observation_summary_json(
-        &self,
-        session: &mut WriteSession,
-        condition_key: &str,
-    ) -> Result<Option<String>, PersistenceError> {
-        Ok(sqlx::query_scalar::<_, String>(
-            "SELECT last_observation_summary_json FROM change_incidents
-             WHERE condition_key = ?1
-               AND lifecycle_state IN ('pending', 'open', 'recovering')
-             LIMIT 1",
-        )
-        .bind(condition_key)
-        .fetch_optional(session.connection())
-        .await?)
-    }
-
     pub(crate) async fn delete_resolved_by_id(
         &self,
         session: &mut WriteSession,

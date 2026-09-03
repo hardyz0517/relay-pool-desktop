@@ -21,6 +21,8 @@ pub(crate) struct CollectorRunStart {
     pub request_hash: String,
     pub station_id: String,
     pub endpoint_revision: i64,
+    /// Historical parent linkage. New control flow must use operation_id /
+    /// intent_sequence; this field is populated only for compatibility reads.
     pub parent_run_id: Option<String>,
     pub adapter: String,
     pub task_type: String,
@@ -56,6 +58,19 @@ pub(crate) struct CollectorRunFinish {
     pub error_code: Option<String>,
     pub error_message: Option<String>,
     pub snapshot_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct StationCollectionProjectionWrite {
+    pub station_id: String,
+    pub status: String,
+    pub reason_codes_json: String,
+    pub revision: i64,
+    pub endpoint_revision: i64,
+    pub credential_revision: i64,
+    pub intent_sequence: i64,
+    pub operation_id: String,
+    pub updated_at_ms: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -208,6 +223,7 @@ pub(crate) struct RateTransition {
     pub new_effective_rate_multiplier: Option<f64>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone)]
 pub(crate) struct CollectorTaskStateWrite {
     pub station_id: String,
@@ -218,10 +234,288 @@ pub(crate) struct CollectorTaskStateWrite {
     pub next_due_at: Option<String>,
 }
 
+const COLLECTOR_OPERATION_PLAN_VERSION: &str = "collector-plan-v1";
+const COLLECTOR_OPERATION_REASON_MAX_BYTES: usize = 128;
+
+pub(crate) fn collector_operation_key(
+    station_id: &str,
+    endpoint_revision: i64,
+    credential_revision: i64,
+    intent_sequence: i64,
+) -> String {
+    format!(
+        "collector-intent:{station_id}:{endpoint_revision}:{credential_revision}:{intent_sequence}"
+    )
+}
+
+pub(crate) fn capture_operation_key(
+    station_id: &str,
+    endpoint_revision: i64,
+    credential_revision: i64,
+    intent_sequence: i64,
+) -> String {
+    format!(
+        "capture-intent:{station_id}:{endpoint_revision}:{credential_revision}:{intent_sequence}"
+    )
+}
+
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct CollectorStore;
 
 impl CollectorStore {
+    pub(crate) async fn start_capture_operation(
+        &self,
+        session: &mut WriteSession,
+        station_id: &str,
+        endpoint_revision: i64,
+        credential_revision: i64,
+        now_ms: i64,
+    ) -> Result<(String, i64), PersistenceError> {
+        if station_id.trim().is_empty() || now_ms < 0 {
+            return Err(PersistenceError::ConstraintViolation);
+        }
+        self.assert_endpoint_revision(session, station_id, endpoint_revision)
+            .await?;
+        self.assert_station_credential_revision(session, station_id, credential_revision)
+            .await?;
+        let scope = format!("station_capture_intent:{station_id}");
+        sqlx::query(
+            "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance)
+             VALUES (?1, 1, ?2, 'transactional_write')
+             ON CONFLICT(scope) DO UPDATE SET
+               revision = domain_revisions.revision + 1,
+               updated_at_ms = excluded.updated_at_ms,
+               provenance = 'transactional_write'",
+        )
+        .bind(&scope)
+        .bind(now_ms)
+        .execute(session.connection())
+        .await?;
+        let intent_sequence =
+            sqlx::query_scalar::<_, i64>("SELECT revision FROM domain_revisions WHERE scope = ?1")
+                .bind(scope)
+                .fetch_one(session.connection())
+                .await?;
+        let operation_id = capture_operation_key(
+            station_id,
+            endpoint_revision,
+            credential_revision,
+            intent_sequence,
+        );
+        sqlx::query(
+            "INSERT INTO collector_operations (
+                operation_id, operation_key, station_id, endpoint_revision,
+                credential_revision, intent_sequence, plan_version, task_type,
+                trigger_kind, status, started_at_ms, finished_at_ms,
+                reason_code, reason_detail, created_at_ms, updated_at_ms
+             ) VALUES (?1, ?1, ?2, ?3, ?4, ?5, ?6, 'capture',
+                       'webview', 'running', ?7, NULL, NULL, NULL, ?7, ?7)",
+        )
+        .bind(&operation_id)
+        .bind(station_id)
+        .bind(endpoint_revision)
+        .bind(credential_revision)
+        .bind(intent_sequence)
+        .bind(COLLECTOR_OPERATION_PLAN_VERSION)
+        .bind(now_ms)
+        .execute(session.connection())
+        .await?;
+        Ok((operation_id, intent_sequence))
+    }
+
+    pub(crate) async fn finish_capture_operation(
+        &self,
+        session: &mut WriteSession,
+        operation_id: &str,
+        station_id: &str,
+        endpoint_revision: i64,
+        credential_revision: i64,
+        intent_sequence: i64,
+        terminal_status: &str,
+        reason_code: Option<&str>,
+        now_ms: i64,
+    ) -> Result<(), PersistenceError> {
+        if operation_id
+            != capture_operation_key(
+                station_id,
+                endpoint_revision,
+                credential_revision,
+                intent_sequence,
+            )
+            || !matches!(terminal_status, "succeeded" | "cancelled" | "interrupted")
+            || now_ms < 0
+            || reason_code.is_some_and(|value| value.len() > COLLECTOR_OPERATION_REASON_MAX_BYTES)
+        {
+            return Err(PersistenceError::ConstraintViolation);
+        }
+        let updated = sqlx::query(
+            "UPDATE collector_operations
+             SET status = ?1, finished_at_ms = ?2, reason_code = ?3,
+                 reason_detail = NULL, updated_at_ms = ?2
+             WHERE operation_id = ?4 AND station_id = ?5
+               AND endpoint_revision = ?6 AND credential_revision = ?7
+               AND intent_sequence = ?8 AND task_type = 'capture'
+               AND status IN ('queued', 'running')",
+        )
+        .bind(terminal_status)
+        .bind(now_ms)
+        .bind(reason_code.map(str::trim).filter(|value| !value.is_empty()))
+        .bind(operation_id)
+        .bind(station_id)
+        .bind(endpoint_revision)
+        .bind(credential_revision)
+        .bind(intent_sequence)
+        .execute(session.connection())
+        .await?
+        .rows_affected();
+        if updated == 0 {
+            let status = sqlx::query_scalar::<_, String>(
+                "SELECT status FROM collector_operations WHERE operation_id = ?1",
+            )
+            .bind(operation_id)
+            .fetch_optional(session.connection())
+            .await?;
+            if status.as_deref() == Some(terminal_status) {
+                return Ok(());
+            }
+        }
+        if updated != 1 {
+            return Err(PersistenceError::InvariantViolation(
+                "capture operation cannot enter terminal state".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn interrupt_active_capture_operations(
+        &self,
+        session: &mut WriteSession,
+        now_ms: i64,
+    ) -> Result<u64, PersistenceError> {
+        if now_ms < 0 {
+            return Err(PersistenceError::ConstraintViolation);
+        }
+        sqlx::query(
+            "UPDATE collector_operations
+             SET status = 'interrupted', finished_at_ms = ?1,
+                 reason_code = 'process_shutdown', reason_detail = NULL,
+                 updated_at_ms = ?1
+             WHERE task_type = 'capture' AND status IN ('queued', 'running')",
+        )
+        .bind(now_ms)
+        .execute(session.connection())
+        .await
+        .map(|result| result.rows_affected())
+        .map_err(Into::into)
+    }
+
+    /// Reconcile collector work that was left active when the process exited.
+    ///
+    /// Collection intents are durable reservations, so a queued/running row
+    /// must never be left blocking the scheduler indefinitely.  Rows whose
+    /// endpoint, credential, or intent fence is no longer current are terminal
+    /// `superseded`; rows still carrying the current fence are recoverable
+    /// `interrupted` work and may be re-admitted by the scheduler.
+    pub(crate) async fn recover_active_collector_operations(
+        &self,
+        session: &mut WriteSession,
+        now_ms: i64,
+    ) -> Result<u64, PersistenceError> {
+        if now_ms < 0 {
+            return Err(PersistenceError::ConstraintViolation);
+        }
+
+        let operations = sqlx::query(
+            "SELECT operation_id, station_id, endpoint_revision,
+                    credential_revision, intent_sequence
+             FROM collector_operations
+             WHERE status IN ('queued', 'running')
+               AND (
+                    (task_type = 'unspecified' AND trigger_kind = 'unspecified')
+                    OR (
+                        task_type IN ('detect', 'balance', 'groups', 'published_status', 'full')
+                        AND trigger_kind = 'collector'
+                    )
+               )",
+        )
+        .fetch_all(session.connection())
+        .await?;
+
+        let mut recovered = 0_u64;
+        for operation in operations {
+            let operation_id = operation.get::<String, _>("operation_id");
+            let station_id = operation.get::<String, _>("station_id");
+            let endpoint_revision = operation.get::<i64, _>("endpoint_revision");
+            let credential_revision = operation.get::<i64, _>("credential_revision");
+            let intent_sequence = operation.get::<i64, _>("intent_sequence");
+
+            let current = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*)
+                 FROM stations AS station
+                 JOIN domain_revisions AS credential
+                   ON credential.scope = 'station_account:' || station.id
+                 JOIN domain_revisions AS intent
+                   ON intent.scope = 'station_collection_intent:' || station.id
+                 WHERE station.id = ?1
+                   AND station.endpoint_revision = ?2
+                   AND credential.revision = ?3
+                   AND intent.revision = ?4",
+            )
+            .bind(&station_id)
+            .bind(endpoint_revision)
+            .bind(credential_revision)
+            .bind(intent_sequence)
+            .fetch_one(session.connection())
+            .await?
+                == 1;
+            let (status, reason_code) = if current {
+                ("interrupted", "process_shutdown")
+            } else {
+                ("superseded", "stale_revision")
+            };
+
+            let updated = sqlx::query(
+                "UPDATE collector_operations
+                 SET status = ?1, finished_at_ms = ?2, reason_code = ?3,
+                     reason_detail = NULL, updated_at_ms = ?2
+                 WHERE operation_id = ?4
+                   AND status IN ('queued', 'running')
+                   AND (
+                        (task_type = 'unspecified' AND trigger_kind = 'unspecified')
+                        OR (
+                            task_type IN ('detect', 'balance', 'groups', 'published_status', 'full')
+                            AND trigger_kind = 'collector'
+                        )
+                   )",
+            )
+            .bind(status)
+            .bind(now_ms)
+            .bind(reason_code)
+            .bind(&operation_id)
+            .execute(session.connection())
+            .await?
+            .rows_affected();
+            recovered += updated;
+        }
+
+        // A process can exit after the collector run is inserted but before
+        // the operation ledger is terminalized.  Close those historical rows
+        // as interrupted so the due query sees a bounded completion time.
+        sqlx::query(
+            "UPDATE collector_runs
+             SET status = 'interrupted', finished_at = ?1,
+                 error_code = COALESCE(error_code, 'process_shutdown'),
+                 error_message = COALESCE(error_message, 'collector interrupted by process shutdown')
+             WHERE task_type IN ('detect', 'balance', 'groups', 'published_status', 'full')
+               AND status = 'running'",
+        )
+        .bind(now_ms.to_string())
+        .execute(session.connection())
+        .await?;
+
+        Ok(recovered)
+    }
+
     pub(crate) async fn list_station_snapshots(
         &self,
         read: &mut ReadSession,
@@ -257,21 +551,11 @@ impl CollectorStore {
                    snapshots.summary_json, snapshots.normalized_json,
                    snapshots.raw_json_redacted, snapshots.error_message, snapshots.created_at
             FROM collector_snapshots AS snapshots
-            LEFT JOIN collector_runs AS runs ON runs.id = snapshots.run_id
-            LEFT JOIN collector_task_state AS task_state
-              ON task_state.station_id = snapshots.station_id
-             AND task_state.task_type = runs.task_type
-             AND task_state.last_run_id = snapshots.run_id
             WHERE snapshots.station_id = ?1
-            ORDER BY CASE
-                WHEN task_state.last_status = 'manual_required' THEN 0
-                WHEN runs.task_type IN ('balance', 'groups', 'detect', 'full')
-                     AND task_state.last_status = 'failed' THEN 1
-                WHEN runs.task_type IN ('balance', 'groups', 'detect', 'full')
-                     AND task_state.last_status = 'partial' THEN 2
-                ELSE 3
-            END,
-            snapshots.created_at DESC, snapshots.id DESC
+            -- Snapshots are historical evidence. Current collection and
+            -- authorization state come from typed projections; do not let an
+            -- old manual-required row outrank a newer terminal result.
+            ORDER BY snapshots.created_at DESC, snapshots.id DESC
             LIMIT 1
             "#,
         )
@@ -464,67 +748,500 @@ impl CollectorStore {
         Ok(())
     }
 
-    pub(crate) async fn update_station_collection_status(
+    pub(crate) async fn assert_station_credential_revision(
+        &self,
+        session: &mut WriteSession,
+        station_id: &str,
+        credential_revision: i64,
+    ) -> Result<(), PersistenceError> {
+        if credential_revision < 1 {
+            return Err(PersistenceError::ConstraintViolation);
+        }
+        let scope = format!("station_account:{station_id}");
+        let revision =
+            sqlx::query_scalar::<_, i64>("SELECT revision FROM domain_revisions WHERE scope = ?1")
+                .bind(&scope)
+                .fetch_optional(session.connection())
+                .await?
+                .ok_or_else(|| PersistenceError::RevisionUnavailable(scope.clone()))?;
+        if revision != credential_revision {
+            return Err(PersistenceError::StaleRevision);
+        }
+        Ok(())
+    }
+
+    /// Advance the durable station-collection watermark in the same terminal
+    /// write transaction as the run and projection. The returned revision is
+    /// safe to publish after commit as a freshness hint.
+    pub(crate) async fn advance_station_collection_revision(
+        &self,
+        session: &mut WriteSession,
+        station_id: &str,
+        updated_at_ms: i64,
+    ) -> Result<i64, PersistenceError> {
+        if station_id.trim().is_empty() || updated_at_ms < 0 {
+            return Err(PersistenceError::ConstraintViolation);
+        }
+        let scope = format!("station_collection:{station_id}");
+        sqlx::query(
+            "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance)
+             VALUES (?1, 1, ?2, 'transactional_write')
+             ON CONFLICT(scope) DO UPDATE SET
+               revision = domain_revisions.revision + 1,
+               updated_at_ms = excluded.updated_at_ms,
+               provenance = 'transactional_write'",
+        )
+        .bind(&scope)
+        .bind(updated_at_ms)
+        .execute(session.connection())
+        .await?;
+        sqlx::query_scalar::<_, i64>("SELECT revision FROM domain_revisions WHERE scope = ?1")
+            .bind(scope)
+            .fetch_one(session.connection())
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Persist a stale completion as terminal history before the application
+    /// returns a stale-revision error. No current projection or fact write is
+    /// allowed after this method reports `false`.
+    pub(crate) async fn fence_collector_operation_for_commit(
         &self,
         session: &mut WriteSession,
         station_id: &str,
         endpoint_revision: i64,
-        task_type: &str,
-        collector_status: &str,
-        collected_at: &str,
-        pricing_collected: bool,
-    ) -> Result<(), PersistenceError> {
-        let task_statuses = sqlx::query(
-            "SELECT task_state.task_type, task_state.last_status, snapshots.summary_json
-             FROM collector_task_state AS task_state
-             JOIN collector_runs AS runs ON runs.id = task_state.last_run_id
-             LEFT JOIN collector_snapshots AS snapshots ON snapshots.id = runs.snapshot_id
-             WHERE task_state.station_id = ?1
-               AND task_state.task_type <> ?2
-               AND runs.parent_run_id IS NULL
-               AND task_state.task_type IN ('balance', 'groups', 'detect', 'full')",
+        credential_revision: i64,
+        intent_sequence: i64,
+        updated_at_ms: i64,
+    ) -> Result<bool, PersistenceError> {
+        if station_id.trim().is_empty()
+            || endpoint_revision < 1
+            || credential_revision < 1
+            || intent_sequence < 1
+            || updated_at_ms < 0
+        {
+            return Err(PersistenceError::ConstraintViolation);
+        }
+        let current = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*)
+             FROM stations AS station
+             JOIN domain_revisions AS credential
+               ON credential.scope = 'station_account:' || station.id
+             JOIN domain_revisions AS intent
+               ON intent.scope = 'station_collection_intent:' || station.id
+             WHERE station.id = ?1
+               AND station.endpoint_revision = ?2
+               AND credential.revision = ?3
+               AND intent.revision = ?4",
         )
-        .bind(station_id)
-        .bind(task_type)
-        .fetch_all(session.connection())
-        .await?;
-        let mut statuses = task_statuses
-            .iter()
-            .map(|row| {
-                let status = row.get::<String, _>("last_status");
-                if row.get::<String, _>("task_type") != "full" {
-                    return status;
-                }
-                row.get::<Option<String>, _>("summary_json")
-                    .and_then(|summary| serde_json::from_str::<Value>(&summary).ok())
-                    .map(|summary| project_station_collection_status(&summary, &status))
-                    .unwrap_or(status)
-            })
-            .collect::<Vec<_>>();
-        statuses.push(collector_status.to_string());
-        let station_status = aggregate_station_collection_status(&statuses)?;
-        let affected = sqlx::query(
-            r#"
-            UPDATE stations
-            SET status = CASE WHEN enabled = 0 THEN 'disabled' ELSE ?1 END,
-                last_checked_at = ?2,
-                last_pricing_fetched_at = CASE WHEN ?3 = 1 THEN ?2 ELSE last_pricing_fetched_at END,
-                updated_at = ?2
-            WHERE id = ?4 AND endpoint_revision = ?5
-            "#,
-        )
-        .bind(station_status)
-        .bind(collected_at)
-        .bind(i64::from(pricing_collected))
         .bind(station_id)
         .bind(endpoint_revision)
+        .bind(credential_revision)
+        .bind(intent_sequence)
+        .fetch_one(session.connection())
+        .await?
+            == 1;
+        if current {
+            return Ok(true);
+        }
+        let operation_key = collector_operation_key(
+            station_id,
+            endpoint_revision,
+            credential_revision,
+            intent_sequence,
+        );
+        let updated = sqlx::query(
+            "UPDATE collector_operations
+             SET status = 'superseded', finished_at_ms = ?1,
+                 reason_code = 'stale_revision', reason_detail = NULL,
+                 updated_at_ms = ?1
+             WHERE operation_key = ?2
+               AND status IN ('queued', 'running')",
+        )
+        .bind(updated_at_ms)
+        .bind(&operation_key)
         .execute(session.connection())
         .await?
         .rows_affected();
-        if affected != 1 {
-            return Err(PersistenceError::StaleRevision);
+        if updated == 0 {
+            let existing_status = sqlx::query_scalar::<_, String>(
+                "SELECT status FROM collector_operations
+                 WHERE operation_key = ?1",
+            )
+            .bind(&operation_key)
+            .fetch_optional(session.connection())
+            .await?;
+            if existing_status.as_deref() == Some("superseded") {
+                return Ok(false);
+            }
+        }
+        if updated != 1 {
+            return Err(PersistenceError::InvariantViolation(
+                "stale collector completion has no active operation ledger row".into(),
+            ));
+        }
+        Ok(false)
+    }
+
+    pub(crate) async fn mark_collector_operation_running(
+        &self,
+        session: &mut WriteSession,
+        station_id: &str,
+        endpoint_revision: i64,
+        credential_revision: i64,
+        intent_sequence: i64,
+        task_type: &str,
+        started_at_ms: i64,
+    ) -> Result<(), PersistenceError> {
+        if task_type.trim().is_empty() || task_type.len() > 64 || started_at_ms < 0 {
+            return Err(PersistenceError::ConstraintViolation);
+        }
+        let operation_key = collector_operation_key(
+            station_id,
+            endpoint_revision,
+            credential_revision,
+            intent_sequence,
+        );
+        let updated = sqlx::query(
+            "UPDATE collector_operations
+             SET task_type = CASE WHEN task_type = 'unspecified' THEN ?1 ELSE task_type END,
+                 trigger_kind = CASE WHEN trigger_kind = 'unspecified' THEN 'collector' ELSE trigger_kind END,
+                 status = 'running', started_at_ms = COALESCE(started_at_ms, ?2),
+                 updated_at_ms = ?2
+             WHERE operation_key = ?3
+               AND status IN ('queued', 'running')",
+        )
+        .bind(task_type)
+        .bind(started_at_ms)
+        .bind(operation_key)
+        .execute(session.connection())
+        .await?
+        .rows_affected();
+        if updated != 1 {
+            return Err(PersistenceError::InvariantViolation(
+                "collector operation cannot enter running state".into(),
+            ));
         }
         Ok(())
+    }
+
+    pub(crate) async fn finish_collector_operation(
+        &self,
+        session: &mut WriteSession,
+        station_id: &str,
+        endpoint_revision: i64,
+        credential_revision: i64,
+        intent_sequence: i64,
+        terminal_status: &str,
+        reason_code: Option<&str>,
+        finished_at_ms: i64,
+    ) -> Result<(), PersistenceError> {
+        if !matches!(
+            terminal_status,
+            "succeeded"
+                | "partially_succeeded"
+                | "failed"
+                | "cancelled"
+                | "interrupted"
+                | "superseded"
+        ) || finished_at_ms < 0
+            || reason_code.is_some_and(|value| value.len() > COLLECTOR_OPERATION_REASON_MAX_BYTES)
+        {
+            return Err(PersistenceError::ConstraintViolation);
+        }
+        let operation_key = collector_operation_key(
+            station_id,
+            endpoint_revision,
+            credential_revision,
+            intent_sequence,
+        );
+        let updated = sqlx::query(
+            "UPDATE collector_operations
+             SET status = ?1, finished_at_ms = ?2, reason_code = ?3,
+                 reason_detail = NULL, updated_at_ms = ?2
+             WHERE operation_key = ?4
+               AND status IN ('queued', 'running')",
+        )
+        .bind(terminal_status)
+        .bind(finished_at_ms)
+        .bind(reason_code.map(str::trim).filter(|value| !value.is_empty()))
+        .bind(&operation_key)
+        .execute(session.connection())
+        .await?
+        .rows_affected();
+        if updated == 0 {
+            let existing_status = sqlx::query_scalar::<_, String>(
+                "SELECT status FROM collector_operations
+                 WHERE operation_key = ?1",
+            )
+            .bind(&operation_key)
+            .fetch_optional(session.connection())
+            .await?;
+            if existing_status.as_deref() == Some(terminal_status) {
+                return Ok(());
+            }
+        }
+        if updated != 1 {
+            return Err(PersistenceError::InvariantViolation(
+                "collector operation cannot enter terminal state".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Read the durable station-collection revision inside an existing write
+    /// transaction. Keeping this query in the persistence store prevents
+    /// application services from depending on SQLx details while preserving
+    /// the transaction's revision fence.
+    pub(crate) async fn station_collection_revision(
+        &self,
+        session: &mut WriteSession,
+        station_id: &str,
+    ) -> Result<Option<i64>, PersistenceError> {
+        if station_id.trim().is_empty() {
+            return Err(PersistenceError::ConstraintViolation);
+        }
+        sqlx::query_scalar::<_, i64>("SELECT revision FROM domain_revisions WHERE scope = ?1")
+            .bind(format!("station_collection:{station_id}"))
+            .fetch_optional(session.connection())
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Allocate the next durable station-scoped collection intent before any
+    /// provider request leaves the process.  SQLite serializes this write,
+    /// making the returned sequence monotonic across concurrent callers and
+    /// process restarts.
+    pub(crate) async fn allocate_station_collection_intent(
+        &self,
+        session: &mut WriteSession,
+        station_id: &str,
+        endpoint_revision: i64,
+        credential_revision: i64,
+        updated_at_ms: i64,
+    ) -> Result<i64, PersistenceError> {
+        if station_id.trim().is_empty()
+            || endpoint_revision < 1
+            || credential_revision < 1
+            || updated_at_ms < 0
+        {
+            return Err(PersistenceError::ConstraintViolation);
+        }
+        self.assert_endpoint_revision(session, station_id, endpoint_revision)
+            .await?;
+        self.assert_station_credential_revision(session, station_id, credential_revision)
+            .await?;
+        let scope = format!("station_collection_intent:{station_id}");
+        sqlx::query(
+            "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance)
+             VALUES (?1, 1, ?2, 'transactional_write')
+             ON CONFLICT(scope) DO UPDATE SET
+               revision = domain_revisions.revision + 1,
+               updated_at_ms = excluded.updated_at_ms,
+               provenance = 'transactional_write'",
+        )
+        .bind(&scope)
+        .bind(updated_at_ms)
+        .execute(session.connection())
+        .await?;
+        let intent_sequence =
+            sqlx::query_scalar::<_, i64>("SELECT revision FROM domain_revisions WHERE scope = ?1")
+                .bind(&scope)
+                .fetch_one(session.connection())
+                .await?;
+        let operation_key = collector_operation_key(
+            station_id,
+            endpoint_revision,
+            credential_revision,
+            intent_sequence,
+        );
+        sqlx::query(
+            "INSERT INTO collector_operations (
+                operation_id, operation_key, station_id, endpoint_revision,
+                credential_revision, intent_sequence, plan_version, task_type,
+                trigger_kind, status, started_at_ms, finished_at_ms,
+                reason_code, reason_detail, created_at_ms, updated_at_ms
+             ) VALUES (?1, ?1, ?2, ?3, ?4, ?5, ?6, 'unspecified',
+                       'unspecified', 'queued', NULL, NULL, NULL, NULL, ?7, ?7)",
+        )
+        .bind(operation_key)
+        .bind(station_id)
+        .bind(endpoint_revision)
+        .bind(credential_revision)
+        .bind(intent_sequence)
+        .bind(COLLECTOR_OPERATION_PLAN_VERSION)
+        .bind(updated_at_ms)
+        .execute(session.connection())
+        .await?;
+        Ok(intent_sequence)
+    }
+
+    /// Reject a result carrying an intent allocated before a newer intent.
+    /// This check is deliberately independent of completion timestamps: an
+    /// older, slower provider response must never mutate current facts.
+    pub(crate) async fn assert_station_collection_intent(
+        &self,
+        session: &mut WriteSession,
+        station_id: &str,
+        endpoint_revision: i64,
+        credential_revision: i64,
+        intent_sequence: i64,
+    ) -> Result<(), PersistenceError> {
+        if station_id.trim().is_empty() || intent_sequence < 1 {
+            return Err(PersistenceError::ConstraintViolation);
+        }
+        let scope = format!("station_collection_intent:{station_id}");
+        let current =
+            sqlx::query_scalar::<_, i64>("SELECT revision FROM domain_revisions WHERE scope = ?1")
+                .bind(&scope)
+                .fetch_optional(session.connection())
+                .await?;
+        let current = match current {
+            Some(current) => current,
+            None => {
+                #[cfg(test)]
+                {
+                    sqlx::query(
+                        "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance)
+                         VALUES (?1, 1, 0, 'transactional_write')",
+                    )
+                    .bind(&scope)
+                    .execute(session.connection())
+                    .await?;
+                    1
+                }
+                #[cfg(not(test))]
+                {
+                    return Err(PersistenceError::RevisionUnavailable(scope.clone()));
+                }
+            }
+        };
+        if intent_sequence != current {
+            return Err(PersistenceError::StaleRevision);
+        }
+        self.assert_endpoint_revision(session, station_id, endpoint_revision)
+            .await?;
+        self.assert_station_credential_revision(session, station_id, credential_revision)
+            .await
+    }
+
+    /// Upsert the typed station collection projection in the same terminal
+    /// transaction as the run and its facts.
+    pub(crate) async fn upsert_station_collection_projection(
+        &self,
+        session: &mut WriteSession,
+        projection: &StationCollectionProjectionWrite,
+    ) -> Result<(), PersistenceError> {
+        if projection.station_id.trim().is_empty()
+            || projection.status.trim().is_empty()
+            || projection.reason_codes_json.trim().is_empty()
+            || projection.operation_id.trim().is_empty()
+            || projection.revision < 1
+            || projection.endpoint_revision < 1
+            || projection.credential_revision < 1
+            || projection.intent_sequence < 1
+            || projection.updated_at_ms < 0
+        {
+            return Err(PersistenceError::ConstraintViolation);
+        }
+        // Resolve the current watermark before issuing the write. A SQL
+        // UPSERT condition can prevent a stale update, but it cannot
+        // distinguish that case from an equal-fence write belonging to a
+        // different operation. Surface the latter as an invariant violation
+        // so the surrounding terminal transaction rolls back completely.
+        if let Some(row) = sqlx::query(
+            "SELECT revision, intent_sequence, operation_id, updated_at_ms
+             FROM station_collection_projection WHERE station_id = ?1",
+        )
+        .bind(&projection.station_id)
+        .fetch_optional(session.connection())
+        .await?
+        {
+            let current_revision = row.try_get::<i64, _>("revision")?;
+            let current_intent_sequence = row.try_get::<i64, _>("intent_sequence")?;
+            let current_operation_id = row.try_get::<String, _>("operation_id")?;
+            let current_updated_at_ms = row.try_get::<i64, _>("updated_at_ms")?;
+
+            if projection.intent_sequence < current_intent_sequence {
+                return Err(PersistenceError::StaleRevision);
+            }
+            if projection.intent_sequence == current_intent_sequence {
+                if projection.operation_id != current_operation_id {
+                    return Err(PersistenceError::InvariantViolation(
+                        "equal station collection intent belongs to a different operation"
+                            .to_string(),
+                    ));
+                }
+                // An idempotent replay may arrive with an older timestamp or
+                // revision. Keep the first committed projection in that case.
+                if projection.updated_at_ms < current_updated_at_ms
+                    || projection.revision < current_revision
+                {
+                    return Ok(());
+                }
+            }
+        }
+        sqlx::query(
+            "INSERT INTO station_collection_projection
+                (station_id, status, reason_codes_json, revision, endpoint_revision,
+                 credential_revision, intent_sequence, operation_id, updated_at_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+             ON CONFLICT(station_id) DO UPDATE SET
+                status = excluded.status,
+                reason_codes_json = excluded.reason_codes_json,
+                revision = excluded.revision,
+                endpoint_revision = excluded.endpoint_revision,
+                credential_revision = excluded.credential_revision,
+                intent_sequence = excluded.intent_sequence,
+                operation_id = excluded.operation_id,
+                updated_at_ms = excluded.updated_at_ms",
+        )
+        .bind(&projection.station_id)
+        .bind(&projection.status)
+        .bind(&projection.reason_codes_json)
+        .bind(projection.revision)
+        .bind(projection.endpoint_revision)
+        .bind(projection.credential_revision)
+        .bind(projection.intent_sequence)
+        .bind(&projection.operation_id)
+        .bind(projection.updated_at_ms)
+        .execute(session.connection())
+        .await?;
+        Ok(())
+    }
+
+    /// Return the typed task owning the current authorization-expiry state.
+    pub(crate) async fn authorization_expiry_task_type(
+        &self,
+        session: &mut WriteSession,
+        station_id: &str,
+    ) -> Result<Option<String>, PersistenceError> {
+        if station_id.trim().is_empty() {
+            return Err(PersistenceError::ConstraintViolation);
+        }
+        sqlx::query_scalar::<_, String>(
+            "WITH ranked AS (
+                 SELECT task_type, status,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY task_type
+                            ORDER BY CAST(COALESCE(finished_at, started_at, created_at) AS INTEGER) DESC,
+                                     created_at DESC, id DESC
+                        ) AS row_number
+                 FROM collector_runs
+                 WHERE station_id = ?1
+                   AND task_type IN ('balance', 'groups', 'detect', 'full', 'published_status')
+                   AND status IN ('success', 'partial', 'failed', 'manual_required')
+             )
+             SELECT task_type
+             FROM ranked
+             WHERE row_number = 1 AND status = 'manual_required'
+             ORDER BY task_type ASC
+             LIMIT 1",
+        )
+        .bind(station_id)
+        .fetch_optional(session.connection())
+        .await
+        .map_err(Into::into)
     }
 
     pub(crate) async fn upsert_station_group_binding(
@@ -1060,7 +1777,8 @@ impl CollectorStore {
         }))
     }
 
-    pub(crate) async fn update_task_state(
+    #[cfg(test)]
+    pub(crate) async fn update_task_state_for_test(
         &self,
         session: &mut WriteSession,
         state: &CollectorTaskStateWrite,
@@ -1101,16 +1819,26 @@ impl CollectorStore {
         station_id: &str,
     ) -> Result<Vec<String>, PersistenceError> {
         let rows = sqlx::query_scalar::<_, String>(
-            "SELECT task_state.task_type
-             FROM collector_task_state AS task_state
-             JOIN collector_runs AS runs ON runs.id = task_state.last_run_id
-             WHERE task_state.station_id = ?1
-               AND runs.parent_run_id IS NULL
+            "WITH ranked AS (
+                 SELECT task_type, status,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY task_type
+                            ORDER BY CAST(COALESCE(finished_at, started_at, created_at) AS INTEGER) DESC,
+                                     created_at DESC, id DESC
+                        ) AS row_number
+                 FROM collector_runs
+                 WHERE station_id = ?1
+                   AND task_type IN ('balance', 'groups', 'detect', 'full')
+                   AND status IN ('success', 'partial', 'failed', 'manual_required')
+             )
+             SELECT task_type
+             FROM ranked
+             WHERE row_number = 1
                -- `manual_required` is an authorization/action-required state,
                -- not a collector failure. It is projected separately as an
                -- authorization-expired incident by the application layer.
-               AND task_state.last_status = 'failed'
-               AND task_state.task_type IN ('balance', 'groups', 'detect', 'full')",
+               AND status = 'failed'
+             ORDER BY task_type ASC",
         )
         .bind(station_id)
         .fetch_all(session.connection())
@@ -1304,65 +2032,6 @@ impl CollectorStore {
         .fetch_one(session.connection())
         .await?;
         Ok(row_to_group_state(&row))
-    }
-}
-
-fn aggregate_station_collection_status(
-    statuses: &[String],
-) -> Result<&'static str, PersistenceError> {
-    if statuses.iter().any(|status| status == "failed") {
-        return Ok("error");
-    }
-    if statuses.iter().any(|status| {
-        matches!(
-            status.as_str(),
-            "partial" | "manual_required" | "needs_confirmation"
-        )
-    }) {
-        return Ok("warning");
-    }
-    if statuses.iter().any(|status| status == "success") {
-        return Ok("healthy");
-    }
-    Err(PersistenceError::InvariantViolation(
-        "collector terminal status cannot update station state".to_string(),
-    ))
-}
-
-pub(crate) fn project_station_collection_status(summary_json: &Value, fallback: &str) -> String {
-    let Some(children) = summary_json.get("childRuns").and_then(Value::as_array) else {
-        return fallback.to_string();
-    };
-    let mut has_core_children = false;
-    let mut has_failed = false;
-    let mut has_manual_required = false;
-    let mut has_partial = false;
-    let mut all_success = true;
-    for child in children.iter().filter(|child| {
-        matches!(
-            child.get("task").and_then(Value::as_str),
-            Some("balance" | "groups" | "detect")
-        )
-    }) {
-        has_core_children = true;
-        match child.get("status").and_then(Value::as_str) {
-            Some("failed") => has_failed = true,
-            Some("manual_required") => has_manual_required = true,
-            Some("partial") => has_partial = true,
-            Some("success") => {}
-            _ => all_success = false,
-        }
-    }
-    if has_failed {
-        "failed".to_string()
-    } else if has_manual_required {
-        "manual_required".to_string()
-    } else if has_partial {
-        "partial".to_string()
-    } else if has_core_children && all_success {
-        "success".to_string()
-    } else {
-        fallback.to_string()
     }
 }
 

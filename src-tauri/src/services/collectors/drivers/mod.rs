@@ -28,12 +28,15 @@ pub fn static_provider_entries() -> Vec<ProviderEntry> {
                         supports_reveal: true,
                         supports_result_unknown_reconciliation: true,
                     }),
-                    authorization: None,
+                    authorization: Some(AuthorizationCapabilityDescriptor {
+                        supports_header_validation: false,
+                        supports_session_validation: true,
+                    }),
                 },
             },
             collector: Some(Arc::new(sub2api::Sub2ApiCollectorDriver)),
             remote_key: Some(Arc::new(sub2api::Sub2ApiRemoteKeyDriver)),
-            authorization: None,
+            authorization: Some(Arc::new(sub2api::Sub2ApiAuthorizationDriver)),
         },
         ProviderEntry {
             descriptor: ProviderDescriptor {

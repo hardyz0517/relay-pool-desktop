@@ -3,8 +3,10 @@ use std::{num::NonZeroUsize, sync::Arc};
 use crate::{
     application::{
         error::ApplicationError, queries::station_assets::StationAssetsQuery,
-        settings::SettingsService, stations::StationService,
+        queries::station_detail::StationDetailQuery, settings::SettingsService,
+        stations::StationService,
     },
+    ipc::dto::stations::{StationAuthorizationSummaryDto, StationCollectionSummaryDto, StationDto},
     models::{
         settings::{AppSettings, UpdateSettingsInput},
         stations::{CreateStationInput, Station, UpdateStationInput},
@@ -19,6 +21,7 @@ pub(crate) struct SettingsStationsCommandFacade {
     settings: Arc<SettingsService>,
     tray_behavior: Arc<TrayBehaviorState>,
     station_assets: Arc<StationAssetsQuery>,
+    station_detail: Arc<StationDetailQuery>,
     station_collection_coordinator: StationCollectionCoordinator,
 }
 
@@ -27,6 +30,7 @@ impl SettingsStationsCommandFacade {
         stations: Arc<StationService>,
         settings: Arc<SettingsService>,
         station_assets: Arc<StationAssetsQuery>,
+        station_detail: Arc<StationDetailQuery>,
         tray_behavior: Arc<TrayBehaviorState>,
         station_collection_coordinator: StationCollectionCoordinator,
     ) -> Self {
@@ -35,11 +39,12 @@ impl SettingsStationsCommandFacade {
             settings,
             tray_behavior,
             station_assets,
+            station_detail,
             station_collection_coordinator,
         }
     }
 
-    pub(crate) async fn list_stations(&self) -> Result<Vec<Station>, ApplicationError> {
+    pub(crate) async fn list_station_dtos(&self) -> Result<Vec<StationDto>, ApplicationError> {
         let read_model = self
             .station_assets
             .load(crate::application::pagination::PageLimit::new(500).expect("bounded limit"))
@@ -48,7 +53,24 @@ impl SettingsStationsCommandFacade {
             .data
             .rows
             .into_iter()
-            .map(|row| row.station)
+            .map(|row| {
+                let collection_summary = StationCollectionSummaryDto {
+                    status: row.collection_summary.status,
+                    reason_codes: row.collection_summary.reason_codes,
+                    revision: row.collection_summary.revision,
+                };
+                let authorization_summary = StationAuthorizationSummaryDto {
+                    status: row.authorization_summary.status,
+                    credential_revision: row.authorization_summary.credential_revision,
+                    reason_code: row.authorization_summary.reason_code,
+                    revision: row.authorization_summary.revision,
+                };
+                StationDto::from_station_with_summaries(
+                    row.station,
+                    collection_summary,
+                    authorization_summary,
+                )
+            })
             .collect())
     }
 
@@ -105,6 +127,42 @@ impl SettingsStationsCommandFacade {
         self.tray_behavior
             .set(TrayBehavior::from_setting(&settings.tray_behavior));
         Ok(settings)
+    }
+
+    pub(crate) async fn load_station_assets(
+        &self,
+    ) -> Result<
+        crate::models::routing_read_models::ReadModelEnvelope<
+            crate::models::routing_read_models::StationAssetsReadModel,
+        >,
+        ApplicationError,
+    > {
+        self.station_assets
+            .load(crate::application::pagination::PageLimit::new(500).expect("bounded limit"))
+            .await
+    }
+
+    pub(crate) async fn station_assets_revision(&self) -> Result<i64, ApplicationError> {
+        self.station_assets.revision().await
+    }
+
+    pub(crate) async fn load_station_detail(
+        &self,
+        station_id: &str,
+    ) -> Result<
+        crate::models::routing_read_models::ReadModelEnvelope<
+            crate::models::routing_read_models::StationDetailReadModel,
+        >,
+        ApplicationError,
+    > {
+        self.station_detail.load(station_id).await
+    }
+
+    pub(crate) async fn station_detail_revision(
+        &self,
+        station_id: &str,
+    ) -> Result<i64, ApplicationError> {
+        self.station_detail.revision(station_id).await
     }
 }
 

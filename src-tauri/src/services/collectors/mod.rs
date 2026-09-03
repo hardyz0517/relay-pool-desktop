@@ -25,10 +25,8 @@ mod manual_authorization;
 pub mod orchestration;
 pub mod output;
 
-// Preserve the crate-local composition path while the V2 apply boundary is
-// owned by the collector consumer rather than a legacy persistence module.
 pub(crate) mod apply {
-    pub(crate) use super::collector_apply::{CollectorApplyPort, V2CollectorApplyAdapter};
+    pub(crate) use super::collector_apply::CollectorApplyPort;
 }
 use std::{
     sync::Arc,
@@ -94,6 +92,24 @@ pub(crate) trait CollectorSourcePort: Send + Sync {
         &self,
         station_id: String,
     ) -> Result<Vec<StationGroupBinding>, String>;
+}
+
+/// Async boundary for state that is read or mutated while a collector task is
+/// already running on Tokio.  The synchronous `CollectorSourcePort` is kept
+/// for the blocking preparation phase only; callers must not use its
+/// `block_on` implementations from an async task.
+pub(crate) trait CollectorAuthorizationPort: Send + Sync {
+    fn station_authorization_revision<'a>(
+        &'a self,
+        station_id: &'a str,
+    ) -> BoxFuture<'a, Result<i64, String>>;
+
+    fn allocate_station_collection_intent<'a>(
+        &'a self,
+        station_id: &'a str,
+        endpoint_revision: i64,
+        credential_revision: i64,
+    ) -> BoxFuture<'a, Result<i64, String>>;
 }
 
 #[derive(Clone)]
@@ -358,6 +374,40 @@ impl CollectorSourcePort for V2CollectorSourceAdapter {
     }
 }
 
+impl CollectorAuthorizationPort for V2CollectorSourceAdapter {
+    fn station_authorization_revision<'a>(
+        &'a self,
+        station_id: &'a str,
+    ) -> BoxFuture<'a, Result<i64, String>> {
+        async move {
+            self.credentials
+                .station_authorization_revision(station_id.to_string())
+                .await
+                .map_err(application_error)
+        }
+        .boxed()
+    }
+
+    fn allocate_station_collection_intent<'a>(
+        &'a self,
+        station_id: &'a str,
+        endpoint_revision: i64,
+        credential_revision: i64,
+    ) -> BoxFuture<'a, Result<i64, String>> {
+        async move {
+            self.collectors
+                .allocate_station_collection_intent(
+                    station_id,
+                    endpoint_revision,
+                    credential_revision,
+                )
+                .await
+                .map_err(application_error)
+        }
+        .boxed()
+    }
+}
+
 impl drivers::newapi::auth::NewApiAuthSessionSource for dyn CollectorSourcePort + '_ {
     fn resolve_newapi_session(
         &self,
@@ -383,11 +433,6 @@ pub(crate) enum PreparedStationCollectionRoute {
     NewApi(PreparedNewApiCollection),
 }
 
-pub(crate) enum PreparedStationTaskRoute {
-    Sub2Api(PreparedSub2ApiCollection),
-    NewApi(PreparedNewApiCollection),
-}
-
 pub(crate) enum PreparedNewApiCollection {
     Immediate(PreparedStationCollection),
     Driver(PreparedNewApiDriverCollection),
@@ -396,6 +441,8 @@ pub(crate) enum PreparedNewApiCollection {
 pub(crate) struct PreparedNewApiDriverCollection {
     station_id: String,
     endpoint_revision: i64,
+    credential_revision: i64,
+    intent_sequence: i64,
     task: CollectorTask,
     driver_tasks: Vec<CollectorTask>,
     enabled_key_count: usize,
@@ -421,6 +468,8 @@ pub(crate) enum PreparedSub2ApiCollection {
 pub(crate) struct PreparedSub2ApiDriverCollection {
     station_id: String,
     endpoint_revision: i64,
+    credential_revision: i64,
+    intent_sequence: i64,
     task: CollectorTask,
     driver_tasks: Vec<CollectorTask>,
     enabled_key_count: usize,
@@ -490,10 +539,12 @@ impl contract::DriverSecretAccessor for StaticSecretAccessor {
     }
 }
 
-pub(crate) fn prepare_station_collection_route_v2(
+pub(crate) fn prepare_station_collection_route(
     source: &dyn CollectorSourcePort,
     station_id: String,
     task: CollectorTask,
+    credential_revision: i64,
+    intent_sequence: i64,
 ) -> Result<PreparedStationCollectionRoute, ApplicationError> {
     let station = source
         .station_for_collector(&station_id)
@@ -501,28 +552,26 @@ pub(crate) fn prepare_station_collection_route_v2(
     let provider = provider_kind_for_station_type(&station.station_type)
         .map_err(|_| ApplicationError::ConstraintViolation)?;
     match provider {
-        contract::ProviderKind::Sub2Api => prepare_sub2api_collection_v2(source, station, task)
-            .map(PreparedStationCollectionRoute::Sub2Api),
-        contract::ProviderKind::NewApi => prepare_newapi_collection_v2(source, station, task)
-            .map(PreparedStationCollectionRoute::NewApi),
-    }
-}
-
-pub(crate) fn prepare_station_task_route_v2(
-    source: &dyn CollectorSourcePort,
-    station_id: String,
-    task: CollectorTask,
-) -> Result<PreparedStationTaskRoute, ApplicationError> {
-    let station = source
-        .station_for_collector(&station_id)
-        .map_err(|_| ApplicationError::Internal)?;
-    let provider = provider_kind_for_station_type(&station.station_type)
-        .map_err(|_| ApplicationError::ConstraintViolation)?;
-    match provider {
-        contract::ProviderKind::Sub2Api => prepare_sub2api_collection_v2(source, station, task)
-            .map(PreparedStationTaskRoute::Sub2Api),
-        contract::ProviderKind::NewApi => prepare_newapi_collection_v2(source, station, task)
-            .map(PreparedStationTaskRoute::NewApi),
+        contract::ProviderKind::Sub2Api => {
+            prepare_sub2api_collection_v2(
+                source,
+                station,
+                task,
+                credential_revision,
+                intent_sequence,
+            )
+        }
+        .map(PreparedStationCollectionRoute::Sub2Api),
+        contract::ProviderKind::NewApi => {
+            prepare_newapi_collection_v2(
+                source,
+                station,
+                task,
+                credential_revision,
+                intent_sequence,
+            )
+        }
+        .map(PreparedStationCollectionRoute::NewApi),
     }
 }
 
@@ -530,8 +579,13 @@ fn prepare_sub2api_collection_v2(
     source: &dyn CollectorSourcePort,
     station: Station,
     task: CollectorTask,
+    credential_revision: i64,
+    intent_sequence: i64,
 ) -> Result<PreparedSub2ApiCollection, ApplicationError> {
     let station_id = station.id.clone();
+    if credential_revision < 1 {
+        return Err(ApplicationError::Internal);
+    }
     let driver_tasks = if task == CollectorTask::Full {
         full_child_tasks(contract::ProviderKind::Sub2Api)
     } else {
@@ -553,7 +607,7 @@ fn prepare_sub2api_collection_v2(
     {
         let handle = contract::OpaqueCredentialHandle {
             station_id: key.id.clone(),
-            credential_revision: station.endpoint_revision,
+            credential_revision,
             scope: contract::CredentialScope::StationKey,
         };
         if let Ok(secret) = source.resolve_station_key_secret(&key.id) {
@@ -581,7 +635,7 @@ fn prepare_sub2api_collection_v2(
         .map(|token| {
             let handle = contract::OpaqueCredentialHandle {
                 station_id: station_id.clone(),
-                credential_revision: station.endpoint_revision,
+                credential_revision,
                 scope: contract::CredentialScope::LoginSession,
             };
             records.push(SecretRecord {
@@ -598,7 +652,7 @@ fn prepare_sub2api_collection_v2(
         .map(|token| {
             let handle = contract::OpaqueCredentialHandle {
                 station_id: station_id.clone(),
-                credential_revision: station.endpoint_revision,
+                credential_revision,
                 scope: contract::CredentialScope::LoginSession,
             };
             records.push(SecretRecord {
@@ -617,7 +671,7 @@ fn prepare_sub2api_collection_v2(
         .map(|cookie| {
             let handle = contract::OpaqueCredentialHandle {
                 station_id: station_id.clone(),
-                credential_revision: station.endpoint_revision,
+                credential_revision,
                 scope: contract::CredentialScope::LoginSession,
             };
             records.push(SecretRecord {
@@ -651,7 +705,7 @@ fn prepare_sub2api_collection_v2(
             }
             let handle = contract::OpaqueCredentialHandle {
                 station_id: station_id.clone(),
-                credential_revision: station.endpoint_revision,
+                credential_revision,
                 scope: contract::CredentialScope::LoginPassword,
             };
             records.push(SecretRecord {
@@ -681,13 +735,15 @@ fn prepare_sub2api_collection_v2(
             .clone()
             .unwrap_or_else(|| contract::OpaqueCredentialHandle {
                 station_id: station_id.clone(),
-                credential_revision: station.endpoint_revision,
+                credential_revision,
                 scope: contract::CredentialScope::LoginSession,
             });
     Ok(PreparedSub2ApiCollection::Driver(
         PreparedSub2ApiDriverCollection {
             station_id,
             endpoint_revision: station.endpoint_revision,
+            credential_revision,
+            intent_sequence,
             task,
             driver_tasks,
             enabled_key_count,
@@ -714,8 +770,13 @@ fn prepare_newapi_collection_v2(
     source: &dyn CollectorSourcePort,
     station: Station,
     task: CollectorTask,
+    credential_revision: i64,
+    intent_sequence: i64,
 ) -> Result<PreparedNewApiCollection, ApplicationError> {
     let station_id = station.id.clone();
+    if credential_revision < 1 {
+        return Err(ApplicationError::Internal);
+    }
     let driver_tasks = if task == CollectorTask::Full {
         full_child_tasks(contract::ProviderKind::NewApi)
     } else {
@@ -790,6 +851,8 @@ fn prepare_newapi_collection_v2(
                         PreparedStationCollection {
                             station_id,
                             endpoint_revision: station.endpoint_revision,
+                            credential_revision,
+                            intent_sequence,
                             adapter: "newapi".to_string(),
                             task,
                             outputs,
@@ -820,13 +883,15 @@ fn prepare_newapi_collection_v2(
         proxy_policy_from_collector_config(proxy).map_err(|_| ApplicationError::Internal)?;
     let credential_handle = contract::OpaqueCredentialHandle {
         station_id: station_id.clone(),
-        credential_revision: station.endpoint_revision,
+        credential_revision,
         scope: contract::CredentialScope::LoginSession,
     };
     Ok(PreparedNewApiCollection::Driver(
         PreparedNewApiDriverCollection {
             station_id,
             endpoint_revision: station.endpoint_revision,
+            credential_revision,
+            intent_sequence,
             task,
             driver_tasks,
             enabled_key_count,
@@ -922,6 +987,8 @@ pub(crate) async fn finish_sub2api_collection_v2(
             Ok(PreparedStationCollection {
                 station_id: prepared.station_id,
                 endpoint_revision: prepared.endpoint_revision,
+                credential_revision: prepared.credential_revision,
+                intent_sequence: prepared.intent_sequence,
                 adapter: "sub2api".to_string(),
                 task: prepared.task,
                 outputs: adapter_outputs,
@@ -937,7 +1004,7 @@ pub(crate) async fn finish_sub2api_task_v2(
     prepared: PreparedSub2ApiCollection,
     cancellation_token: CancellationToken,
     correlation_id: Option<String>,
-) -> Result<(String, i64, AdapterOutput), ApplicationError> {
+) -> Result<(String, i64, i64, i64, AdapterOutput), ApplicationError> {
     let prepared = finish_sub2api_collection_v2(
         registry,
         outbound,
@@ -951,11 +1018,18 @@ pub(crate) async fn finish_sub2api_task_v2(
         .into_iter()
         .next()
         .ok_or(ApplicationError::ConstraintViolation)?;
-    Ok((prepared.station_id, prepared.endpoint_revision, output))
+    Ok((
+        prepared.station_id,
+        prepared.endpoint_revision,
+        prepared.credential_revision,
+        prepared.intent_sequence,
+        output,
+    ))
 }
 
 pub(crate) async fn finish_newapi_collection_v2(
     source: &dyn CollectorSourcePort,
+    authorization: &dyn CollectorAuthorizationPort,
     registry: &orchestration::ProviderRegistry,
     outbound: &AsyncOutboundClient,
     prepared: PreparedNewApiCollection,
@@ -1009,6 +1083,21 @@ pub(crate) async fn finish_newapi_collection_v2(
                     )
                     .await
                     .map_err(|_| ApplicationError::Internal)?;
+                prepared.credential_revision = authorization
+                    .station_authorization_revision(&prepared.station_id)
+                    .await
+                    .map_err(|_| ApplicationError::Internal)?;
+                prepared.intent_sequence = authorization
+                    .allocate_station_collection_intent(
+                        &prepared.station_id,
+                        prepared.endpoint_revision,
+                        prepared.credential_revision,
+                    )
+                    .await
+                    .map_err(|_| ApplicationError::Internal)?;
+                prepared.credential_handle.credential_revision = prepared.credential_revision;
+                prepared.secret_accessor.expected.credential_revision =
+                    prepared.credential_revision;
                 prepared.auth_context = Some(contract::ProviderAuthContext::NewApi {
                     user_id: session.user_id,
                     secret_purpose: contract::CredentialSecretPurpose::SessionCookie,
@@ -1068,6 +1157,8 @@ pub(crate) async fn finish_newapi_collection_v2(
             Ok(PreparedStationCollection {
                 station_id: prepared.station_id,
                 endpoint_revision: prepared.endpoint_revision,
+                credential_revision: prepared.credential_revision,
+                intent_sequence: prepared.intent_sequence,
                 adapter: "newapi".to_string(),
                 task: prepared.task,
                 outputs: adapter_outputs,
@@ -1090,6 +1181,8 @@ fn newapi_manual_required_collection(
     PreparedStationCollection {
         station_id: prepared.station_id,
         endpoint_revision: prepared.endpoint_revision,
+        credential_revision: prepared.credential_revision,
+        intent_sequence: prepared.intent_sequence,
         adapter: "newapi".to_string(),
         task: prepared.task,
         outputs,
@@ -1099,14 +1192,16 @@ fn newapi_manual_required_collection(
 
 pub(crate) async fn finish_newapi_task_v2(
     source: &dyn CollectorSourcePort,
+    authorization: &dyn CollectorAuthorizationPort,
     registry: &orchestration::ProviderRegistry,
     outbound: &AsyncOutboundClient,
     prepared: PreparedNewApiCollection,
     cancellation_token: CancellationToken,
     correlation_id: Option<String>,
-) -> Result<(String, i64, AdapterOutput), ApplicationError> {
+) -> Result<(String, i64, i64, i64, AdapterOutput), ApplicationError> {
     let prepared = finish_newapi_collection_v2(
         source,
+        authorization,
         registry,
         outbound,
         prepared,
@@ -1119,17 +1214,32 @@ pub(crate) async fn finish_newapi_task_v2(
         .into_iter()
         .next()
         .ok_or(ApplicationError::ConstraintViolation)?;
-    Ok((prepared.station_id, prepared.endpoint_revision, output))
+    Ok((
+        prepared.station_id,
+        prepared.endpoint_revision,
+        prepared.credential_revision,
+        prepared.intent_sequence,
+        output,
+    ))
 }
 
-pub(crate) async fn apply_prepared_station_task_v2(
+pub(crate) async fn apply_prepared_station_task(
     port: &dyn CollectorApplyPort,
     station_id: String,
     endpoint_revision: i64,
+    credential_revision: i64,
+    intent_sequence: i64,
     output: AdapterOutput,
 ) -> Result<CollectorApplyOutcome, ApplicationError> {
-    collector_apply::apply_station_output_v2(port, station_id, endpoint_revision, None, output)
-        .await
+    collector_apply::apply_station_output(
+        port,
+        station_id,
+        endpoint_revision,
+        credential_revision,
+        intent_sequence,
+        output,
+    )
+    .await
 }
 
 pub(crate) fn should_refresh_remote_keys_after_collection(
@@ -1144,6 +1254,8 @@ pub(crate) fn should_refresh_remote_keys_after_collection(
 pub(crate) struct PreparedStationCollection {
     station_id: String,
     endpoint_revision: i64,
+    credential_revision: i64,
+    intent_sequence: i64,
     adapter: String,
     task: CollectorTask,
     outputs: Vec<AdapterOutput>,
@@ -1209,7 +1321,7 @@ pub(crate) fn provider_draft_preview_from_prepared(
 }
 
 /// Applies a prepared task through V2 and returns a complete, bounded read model.
-pub(crate) async fn apply_prepared_station_collection_v2(
+pub(crate) async fn apply_prepared_station_collection(
     service: &CollectorService,
     port: &dyn CollectorApplyPort,
     prepared: PreparedStationCollection,
@@ -1225,18 +1337,19 @@ pub(crate) async fn apply_prepared_station_collection_v2(
         } else {
             output.task.as_str().to_string()
         };
-        let outcome = collector_apply::apply_station_output_v2(
+        let outcome = collector_apply::apply_station_output(
             port,
             prepared.station_id,
             prepared.endpoint_revision,
-            None,
+            prepared.credential_revision,
+            prepared.intent_sequence,
             output,
         )
         .await?;
         return service.result_for_apply(&outcome, &task_type).await;
     }
 
-    apply_prepared_full_collection_v2(service, port, prepared).await
+    apply_prepared_full_collection(service, port, prepared).await
 }
 
 pub(crate) struct PreparedStationLoginProbe {
@@ -1245,11 +1358,22 @@ pub(crate) struct PreparedStationLoginProbe {
     username: String,
     password: Option<String>,
     proxy: ProxyPolicy,
+    credential_revision: i64,
+    intent_sequence: i64,
+}
+
+pub(crate) fn with_login_probe_intent_sequence(
+    mut prepared: PreparedStationLoginProbe,
+    intent_sequence: i64,
+) -> PreparedStationLoginProbe {
+    prepared.intent_sequence = intent_sequence;
+    prepared
 }
 
 pub(crate) fn prepare_station_login_probe_v2(
     source: &dyn CollectorSourcePort,
     station_id: String,
+    credential_revision: i64,
 ) -> Result<PreparedStationLoginProbe, ApplicationError> {
     let station = source
         .station_for_collector(&station_id)
@@ -1257,6 +1381,9 @@ pub(crate) fn prepare_station_login_probe_v2(
     let credentials = source
         .get_station_credentials(station_id.clone())
         .map_err(|_| ApplicationError::Internal)?;
+    if credential_revision < 1 {
+        return Err(ApplicationError::Internal);
+    }
     let username = credentials.login_username.clone().unwrap_or_default();
     let password = source
         .get_station_login_password(station_id)
@@ -1278,13 +1405,16 @@ pub(crate) fn prepare_station_login_probe_v2(
         username,
         password,
         proxy,
+        credential_revision,
+        intent_sequence: 0,
     })
 }
 
 pub(crate) async fn finish_station_login_probe_v2(
     source: &dyn CollectorSourcePort,
+    authorization: &dyn CollectorAuthorizationPort,
     outbound: &AsyncOutboundClient,
-    prepared: PreparedStationLoginProbe,
+    mut prepared: PreparedStationLoginProbe,
     cancellation_token: CancellationToken,
     correlation_id: Option<String>,
 ) -> Result<PreparedStationCollection, ApplicationError> {
@@ -1336,6 +1466,18 @@ pub(crate) async fn finish_station_login_probe_v2(
                     session_user_agent: None,
                 },
                 prepared.station.endpoint_revision,
+            )
+            .await
+            .map_err(|_| ApplicationError::Internal)?;
+        prepared.credential_revision = authorization
+            .station_authorization_revision(&prepared.station.id)
+            .await
+            .map_err(|_| ApplicationError::Internal)?;
+        prepared.intent_sequence = authorization
+            .allocate_station_collection_intent(
+                &prepared.station.id,
+                prepared.station.endpoint_revision,
+                prepared.credential_revision,
             )
             .await
             .map_err(|_| ApplicationError::Internal)?;
@@ -1419,6 +1561,8 @@ fn station_login_probe_collection(
     PreparedStationCollection {
         station_id,
         endpoint_revision: prepared.station.endpoint_revision,
+        credential_revision: prepared.credential_revision,
+        intent_sequence: prepared.intent_sequence,
         adapter: "login-state".to_string(),
         task: CollectorTask::Detect,
         outputs: vec![output],
@@ -1426,32 +1570,58 @@ fn station_login_probe_collection(
     }
 }
 
-async fn apply_prepared_full_collection_v2(
+async fn apply_prepared_full_collection(
     service: &CollectorService,
     port: &dyn CollectorApplyPort,
     prepared: PreparedStationCollection,
 ) -> Result<CollectorRunResult, ApplicationError> {
     let full_output = aggregate_full_output_v2(&prepared);
-    let parent_outcome = collector_apply::apply_station_output_v2(
-        port,
+    // Build every request before entering the apply boundary. The port owns
+    // the terminal write transaction; callers must not expose a parent run
+    // before its child results are ready to be committed with it.
+    let parent_request = collector_apply::collector_apply_request_from_output(
+        collector_apply::run_key_for_current_intent_for_full(
+            &prepared.station_id,
+            prepared.endpoint_revision,
+            prepared.credential_revision,
+            prepared.intent_sequence,
+            &full_output,
+        ),
         prepared.station_id.clone(),
         prepared.endpoint_revision,
+        prepared.credential_revision,
+        prepared.intent_sequence,
         None,
         full_output,
-    )
-    .await?;
+    )?;
+    let child_requests = prepared
+        .outputs
+        .iter()
+        .cloned()
+        .map(|output| {
+            collector_apply::collector_apply_request_from_output(
+                collector_apply::run_key_for_current_intent_for_full(
+                    &prepared.station_id,
+                    prepared.endpoint_revision,
+                    prepared.credential_revision,
+                    prepared.intent_sequence,
+                    &output,
+                ),
+                prepared.station_id.clone(),
+                prepared.endpoint_revision,
+                prepared.credential_revision,
+                prepared.intent_sequence,
+                None,
+                output,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let applied = port.apply_full(parent_request, child_requests).await?;
+    let parent_outcome = applied.parent;
     let mut events = Vec::with_capacity(prepared.outputs.len() + 1);
-    for output in &prepared.outputs {
-        let outcome = collector_apply::apply_station_output_v2(
-            port,
-            prepared.station_id.clone(),
-            prepared.endpoint_revision,
-            Some(parent_outcome.run_id.clone()),
-            output.clone(),
-        )
-        .await?;
+    for (output, outcome) in prepared.outputs.iter().zip(applied.children.iter()) {
         let result = service
-            .result_for_apply(&outcome, output.task.as_str())
+            .result_for_apply(outcome, output.task.as_str())
             .await?;
         events.extend(result.events);
     }
@@ -1460,6 +1630,7 @@ async fn apply_prepared_full_collection_v2(
     Ok(CollectorRunResult {
         snapshot: parent_result.snapshot,
         events,
+        receipt: parent_result.receipt,
     })
 }
 
@@ -2048,6 +2219,8 @@ mod tests {
         let prepared = PreparedStationCollection {
             station_id: "station-1".to_string(),
             endpoint_revision: 7,
+            credential_revision: 1,
+            intent_sequence: 1,
             adapter: "newapi".to_string(),
             task: CollectorTask::Full,
             outputs: vec![AdapterOutput {
@@ -2172,6 +2345,8 @@ mod tests {
         let prepared = PreparedStationCollection {
             station_id: "station-1".to_string(),
             endpoint_revision: 7,
+            credential_revision: 1,
+            intent_sequence: 1,
             adapter: "sub2api".to_string(),
             task: CollectorTask::Full,
             outputs: vec![
@@ -2290,6 +2465,8 @@ mod tests {
         let prepared = PreparedStationCollection {
             station_id: "station-1".to_string(),
             endpoint_revision: 7,
+            credential_revision: 1,
+            intent_sequence: 1,
             adapter: "sub2api".to_string(),
             task: CollectorTask::Full,
             outputs: vec![
@@ -2332,6 +2509,8 @@ mod tests {
         let prepared = PreparedStationCollection {
             station_id: "station-1".to_string(),
             endpoint_revision: 7,
+            credential_revision: 1,
+            intent_sequence: 1,
             adapter: "sub2api".to_string(),
             task: CollectorTask::Full,
             outputs: vec![

@@ -320,6 +320,9 @@ pub enum AuthorizationStatus {
 #[derive(Debug, Clone)]
 pub struct AuthorizationOutput {
     pub status: AuthorizationStatus,
+    /// Provider-authenticated subject observed by the driver's fresh probe.
+    /// This value is never populated from browser capture evidence alone.
+    pub verified_subject_id: Option<String>,
     pub evidence: Vec<EndpointEvidence>,
     pub diagnostics: RedactedDiagnostics,
 }

@@ -54,6 +54,9 @@ const TRUSTED_INDEXES_V1: &[&str] = &[
     "idx_collector_runs_station_created",
     "idx_collector_snapshots_station_created",
     "idx_collector_task_state_due",
+    "idx_collector_operations_station_created",
+    "idx_collector_operations_due",
+    "idx_post_authorization_work_due",
     "idx_group_bindings_key_group_key",
     "idx_group_bindings_station_group_key",
     "idx_group_bindings_station_status",
@@ -210,6 +213,75 @@ const TRUSTED_TRIGGERS_V1: &[&str] = &[
     "routing_quality_generation_v3_resume_identity_immutable",
     "routing_generation_report_secret_immutable_update",
     "routing_generation_report_secret_immutable_delete",
+    // Schema 72 station-assets read-model revision triggers. These are
+    // derived-only synchronization metadata, but remain first-party schema
+    // objects on portable databases and must be accepted by the strict
+    // object validator.
+    "station_assets_revision_stations_insert",
+    "station_assets_revision_stations_update",
+    "station_assets_revision_stations_delete",
+    "station_assets_revision_station_keys_insert",
+    "station_assets_revision_station_keys_update",
+    "station_assets_revision_station_keys_delete",
+    "station_assets_revision_key_capabilities_insert",
+    "station_assets_revision_key_capabilities_update",
+    "station_assets_revision_key_capabilities_delete",
+    "station_assets_revision_endpoint_health_insert",
+    "station_assets_revision_endpoint_health_update",
+    "station_assets_revision_endpoint_health_delete",
+    "station_assets_revision_authorization_insert",
+    "station_assets_revision_authorization_update",
+    "station_assets_revision_authorization_delete",
+    "station_assets_revision_collection_insert",
+    "station_assets_revision_collection_update",
+    "station_assets_revision_collection_delete",
+    "station_assets_revision_station_secrets_insert",
+    "station_assets_revision_station_secrets_update",
+    "station_assets_revision_station_secrets_delete",
+    // Schema 74 station-detail scoped revision triggers. The target-table
+    // check below still prevents a trusted name from being retargeted.
+    "station_detail_revision_stations_insert",
+    "station_detail_revision_stations_update",
+    "station_detail_revision_stations_delete",
+    "station_detail_revision_station_keys_insert",
+    "station_detail_revision_station_keys_update",
+    "station_detail_revision_station_keys_delete",
+    "station_detail_revision_key_capabilities_insert",
+    "station_detail_revision_key_capabilities_update",
+    "station_detail_revision_key_capabilities_delete",
+    "station_detail_revision_endpoint_health_insert",
+    "station_detail_revision_endpoint_health_update",
+    "station_detail_revision_endpoint_health_delete",
+    "station_detail_revision_authorization_insert",
+    "station_detail_revision_authorization_update",
+    "station_detail_revision_authorization_delete",
+    "station_detail_revision_collection_insert",
+    "station_detail_revision_collection_update",
+    "station_detail_revision_collection_delete",
+    "station_detail_revision_credentials_insert",
+    "station_detail_revision_credentials_update",
+    "station_detail_revision_credentials_delete",
+    "station_detail_revision_station_secrets_insert",
+    "station_detail_revision_station_secrets_update",
+    "station_detail_revision_station_secrets_delete",
+    "station_detail_revision_collector_runs_insert",
+    "station_detail_revision_collector_runs_update",
+    "station_detail_revision_collector_runs_delete",
+    "station_detail_revision_collector_snapshots_insert",
+    "station_detail_revision_collector_snapshots_update",
+    "station_detail_revision_collector_snapshots_delete",
+    "station_detail_revision_group_bindings_insert",
+    "station_detail_revision_group_bindings_update",
+    "station_detail_revision_group_bindings_delete",
+    "station_detail_revision_group_rates_insert",
+    "station_detail_revision_group_rates_update",
+    "station_detail_revision_group_rates_delete",
+    "station_detail_revision_balances_insert",
+    "station_detail_revision_balances_update",
+    "station_detail_revision_balances_delete",
+    "station_detail_revision_incidents_insert",
+    "station_detail_revision_incidents_update",
+    "station_detail_revision_incidents_delete",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -613,7 +685,7 @@ mod tests {
 
         assert_eq!(fingerprint.sha256, fixture);
         assert_eq!(fingerprint.table_count, EXPECTED_USER_TABLE_COUNT_V1);
-        assert_eq!(fingerprint.index_count, 104);
+        assert_eq!(fingerprint.index_count, 107);
     }
 
     #[tokio::test]

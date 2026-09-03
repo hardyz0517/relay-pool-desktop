@@ -1,5 +1,7 @@
 use std::{future::Future, sync::Arc};
 
+use futures_util::future::BoxFuture;
+
 use crate::{
     application::{
         collectors::{CaptureSnapshotRequest, CollectorService},
@@ -38,6 +40,38 @@ pub(crate) enum StationCollectionCommandError {
     Blocking(BlockingExecutorError),
 }
 
+/// Schedules a post-authorization collection future at the runtime boundary.
+///
+/// The application facade owns durable claim/retry semantics but must not
+/// depend on Tauri's executor. Production composition supplies a scheduler;
+/// tests and isolated callers can use the no-op default while still leaving
+/// the durable work item for startup recovery.
+pub(crate) trait PostAuthorizationWorkScheduler: Send + Sync {
+    fn schedule(&self, work: BoxFuture<'static, ()>);
+}
+
+impl<F> PostAuthorizationWorkScheduler for F
+where
+    F: Fn(BoxFuture<'static, ()>) + Send + Sync,
+{
+    fn schedule(&self, work: BoxFuture<'static, ()>) {
+        self(work);
+    }
+}
+
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=station-collection.scheduler-test-default; owner=application/command_facades/station_collection; remove_when=all isolated facade tests inject an explicit scheduler"
+    )
+)]
+struct NoopPostAuthorizationWorkScheduler;
+
+impl PostAuthorizationWorkScheduler for NoopPostAuthorizationWorkScheduler {
+    fn schedule(&self, _work: BoxFuture<'static, ()>) {}
+}
+
 #[derive(Debug)]
 pub(crate) struct RechargeScanRequest {
     pub(crate) website_url: String,
@@ -69,9 +103,17 @@ pub(crate) struct StationCollectionCommandFacade {
     remote_keys: RemoteKeysCommandFacade,
     station_collection_coordinator: StationCollectionCoordinator,
     station_collection_feedback: StationCollectionFeedback,
+    post_authorization_scheduler: Arc<dyn PostAuthorizationWorkScheduler>,
 }
 
 impl StationCollectionCommandFacade {
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=station-collection.scheduler-compat-constructor; owner=application/command_facades/station_collection; remove_when=all compositions and tests use new_with_scheduler"
+        )
+    )]
     pub(crate) fn new(
         collectors: Arc<CollectorService>,
         credentials: Arc<CredentialService>,
@@ -81,6 +123,30 @@ impl StationCollectionCommandFacade {
         providers: Arc<collectors::orchestration::ProviderRegistry>,
         station_collection_coordinator: StationCollectionCoordinator,
         station_collection_feedback: StationCollectionFeedback,
+    ) -> Self {
+        Self::new_with_scheduler(
+            collectors,
+            credentials,
+            settings,
+            blocking,
+            outbound,
+            providers,
+            station_collection_coordinator,
+            station_collection_feedback,
+            Arc::new(NoopPostAuthorizationWorkScheduler),
+        )
+    }
+
+    pub(crate) fn new_with_scheduler(
+        collectors: Arc<CollectorService>,
+        credentials: Arc<CredentialService>,
+        settings: Arc<SettingsService>,
+        blocking: BlockingExecutor,
+        outbound: AsyncOutboundClient,
+        providers: Arc<collectors::orchestration::ProviderRegistry>,
+        station_collection_coordinator: StationCollectionCoordinator,
+        station_collection_feedback: StationCollectionFeedback,
+        post_authorization_scheduler: Arc<dyn PostAuthorizationWorkScheduler>,
     ) -> Self {
         let remote_keys = RemoteKeysCommandFacade::new(
             Arc::clone(&collectors),
@@ -100,6 +166,7 @@ impl StationCollectionCommandFacade {
             remote_keys,
             station_collection_coordinator,
             station_collection_feedback,
+            post_authorization_scheduler,
         }
     }
 
@@ -136,6 +203,55 @@ impl StationCollectionCommandFacade {
             Err(error) => return Err(StationCollectionCommandError::Admission(error)),
         };
         self.run_station_collection_inner(station_id, task).await
+    }
+
+    /// Claim and execute the durable collection queued by WebView
+    /// authorization.  Claiming happens before outbound work and completion
+    /// is persisted afterwards, so a crash leaves a retryable failed/running
+    /// item instead of silently dropping the required refresh.
+    pub(crate) async fn run_post_authorization_collection(&self, station_id: String) {
+        let claim = self
+            .credentials
+            .claim_post_authorization_work(station_id.clone())
+            .await;
+        let Ok(Some(work)) = claim else { return };
+        let result = self
+            .run_station_collection(station_id.clone(), CollectorTask::Full)
+            .await;
+        let (succeeded, error_code) = match result {
+            Ok(_) => (true, None),
+            Err(error) => (
+                false,
+                Some(post_authorization_error_code(&error).to_string()),
+            ),
+        };
+        let _ = self
+            .credentials
+            .finish_post_authorization_work(work, succeeded, error_code)
+            .await;
+    }
+
+    /// Schedule a durable post-authorization collection at the runtime
+    /// boundary. The work item is already committed before this method is
+    /// called, so a scheduler failure cannot lose the refresh intent.
+    pub(crate) fn schedule_post_authorization_collection(&self, station_id: String) {
+        let worker = self.clone();
+        self.post_authorization_scheduler
+            .schedule(Box::pin(async move {
+                worker.run_post_authorization_collection(station_id).await;
+            }));
+    }
+
+    /// Recover queued or backoff-eligible post-authorization work at startup.
+    /// This is intentionally bounded to the persisted station rows and uses
+    /// the same station lease/coordinator as interactive collection.
+    pub(crate) async fn recover_post_authorization_work(&self) {
+        let Ok(station_ids) = self.credentials.recover_post_authorization_work().await else {
+            return;
+        };
+        for station_id in station_ids {
+            self.schedule_post_authorization_collection(station_id);
+        }
     }
 
     /// Scan recharge pages through the same station lease and credential
@@ -459,6 +575,25 @@ impl StationCollectionCommandFacade {
         task: CollectorTask,
     ) -> Result<CollectorRunResult, StationCollectionCommandError> {
         let station_id_for_remote_keys = station_id.clone();
+        let station = self
+            .collectors
+            .station_for_collection(&station_id)
+            .await
+            .map_err(StationCollectionCommandError::Prepare)?;
+        let credential_revision = self
+            .credentials
+            .station_authorization_revision(station_id.clone())
+            .await
+            .map_err(|_| StationCollectionCommandError::Prepare(ApplicationError::Internal))?;
+        let intent_sequence = self
+            .collectors
+            .allocate_station_collection_intent(
+                &station_id,
+                station.endpoint_revision,
+                credential_revision,
+            )
+            .await
+            .map_err(StationCollectionCommandError::Prepare)?;
         let source = self.source();
         let cancellation_token = tokio_util::sync::CancellationToken::new();
         let prepared = self
@@ -470,8 +605,12 @@ impl StationCollectionCommandFacade {
                 None,
                 &cancellation_token,
                 move |_| {
-                    Ok(collectors::prepare_station_collection_route_v2(
-                        &source, station_id, task,
+                    Ok(collectors::prepare_station_collection_route(
+                        &source,
+                        station_id,
+                        task,
+                        credential_revision,
+                        intent_sequence,
                     ))
                 },
             )
@@ -496,6 +635,7 @@ impl StationCollectionCommandFacade {
             collectors::PreparedStationCollectionRoute::NewApi(prepared) => {
                 let source = self.source();
                 collectors::finish_newapi_collection_v2(
+                    &source,
                     &source,
                     self.providers.as_ref(),
                     &self.outbound,
@@ -535,6 +675,25 @@ impl StationCollectionCommandFacade {
         station_id: String,
     ) -> Result<CollectorRunResult, StationCollectionCommandError> {
         let source = self.source();
+        let station = self
+            .collectors
+            .station_for_collection(&station_id)
+            .await
+            .map_err(StationCollectionCommandError::Prepare)?;
+        let credential_revision = self
+            .credentials
+            .station_authorization_revision(station_id.clone())
+            .await
+            .map_err(|_| StationCollectionCommandError::Prepare(ApplicationError::Internal))?;
+        let intent_sequence = self
+            .collectors
+            .allocate_station_collection_intent(
+                &station_id,
+                station.endpoint_revision,
+                credential_revision,
+            )
+            .await
+            .map_err(StationCollectionCommandError::Prepare)?;
         let cancellation_token = tokio_util::sync::CancellationToken::new();
         let prepared = self
             .blocking
@@ -546,7 +705,9 @@ impl StationCollectionCommandFacade {
                 &cancellation_token,
                 move |_| {
                     Ok(collectors::prepare_station_login_probe_v2(
-                        &source, station_id,
+                        &source,
+                        station_id,
+                        credential_revision,
                     ))
                 },
             )
@@ -556,8 +717,10 @@ impl StationCollectionCommandFacade {
             .await
             .map_err(StationCollectionCommandError::Blocking)?
             .map_err(StationCollectionCommandError::Prepare)?;
+        let prepared = collectors::with_login_probe_intent_sequence(prepared, intent_sequence);
         let source = self.source();
         let prepared = collectors::finish_station_login_probe_v2(
+            &source,
             &source,
             &self.outbound,
             prepared,
@@ -581,10 +744,13 @@ impl StationCollectionCommandFacade {
         &self,
         prepared: collectors::PreparedStationCollection,
     ) -> Result<CollectorRunResult, StationCollectionCommandError> {
-        let apply = collectors::apply::V2CollectorApplyAdapter::new((*self.collectors).clone());
-        collectors::apply_prepared_station_collection_v2(&self.collectors, &apply, prepared)
-            .await
-            .map_err(StationCollectionCommandError::Apply)
+        collectors::apply_prepared_station_collection(
+            &self.collectors,
+            self.collectors.as_ref(),
+            prepared,
+        )
+        .await
+        .map_err(StationCollectionCommandError::Apply)
     }
 }
 
@@ -724,6 +890,16 @@ fn current_correlation_id() -> Option<String> {
     correlation::current().map(|id| id.as_str().to_string())
 }
 
+fn post_authorization_error_code(error: &StationCollectionCommandError) -> &'static str {
+    match error {
+        StationCollectionCommandError::Admission(_) => "admission_rejected",
+        StationCollectionCommandError::Scheduled => "scheduled_failure",
+        StationCollectionCommandError::Prepare(_) => "prepare_failed",
+        StationCollectionCommandError::Apply(_) => "apply_failed",
+        StationCollectionCommandError::Blocking(_) => "blocking_failed",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{
@@ -760,6 +936,10 @@ mod tests {
                 created_at: "1700000000000".to_string(),
             },
             events: Vec::new(),
+            receipt: crate::models::collector::MutationReceipt::without_revision(
+                "station-collection-fixture",
+                1_700_000_000_000,
+            ),
         }
     }
 

@@ -218,6 +218,18 @@ pub struct ChannelStatusTarget {
     pub endpoint_ping: Option<ChannelStatusEndpointPing>,
 }
 
+/// Lightweight read model used by pages that only need current monitor health.
+/// It intentionally excludes history and rollup buckets so polling stays cheap.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelMonitorLatestSummary {
+    pub monitor_id: String,
+    pub station_id: String,
+    pub station_key_id: Option<String>,
+    pub latest: Option<ChannelStatusLatestResult>,
+    pub running: Option<ChannelStatusRunningExecution>,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ChannelStatusEndpointPing {

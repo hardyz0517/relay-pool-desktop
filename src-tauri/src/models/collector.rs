@@ -30,11 +30,54 @@ pub struct CollectorEvent {
     pub status: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MutationRevision {
+    pub scope: String,
+    pub revision: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MutationReceipt {
+    pub mutation_id: String,
+    pub committed_at_ms: i64,
+    pub affected_scopes: Vec<String>,
+    pub revision_vector: Vec<MutationRevision>,
+}
+
+impl MutationReceipt {
+    pub fn without_revision(mutation_id: impl Into<String>, committed_at_ms: i64) -> Self {
+        Self {
+            mutation_id: mutation_id.into(),
+            committed_at_ms: committed_at_ms.max(0),
+            affected_scopes: Vec::new(),
+            revision_vector: Vec::new(),
+        }
+    }
+
+    pub fn for_scope(
+        mutation_id: impl Into<String>,
+        committed_at_ms: i64,
+        scope: impl Into<String>,
+        revision: i64,
+    ) -> Self {
+        let scope = scope.into();
+        Self {
+            mutation_id: mutation_id.into(),
+            committed_at_ms: committed_at_ms.max(0),
+            affected_scopes: vec![scope.clone()],
+            revision_vector: vec![MutationRevision { scope, revision }],
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CollectorRunResult {
     pub snapshot: CollectorSnapshot,
     pub events: Vec<CollectorEvent>,
+    pub receipt: MutationReceipt,
 }
 
 #[derive(Debug, Clone, Deserialize)]

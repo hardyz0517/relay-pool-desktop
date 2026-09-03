@@ -148,7 +148,7 @@ fn schema15_fixture_upgrades_through_production_startup_route_and_restarts() {
         [0x07; 32],
     )
     .expect("schema 15 production startup upgrade");
-    assert_eq!(first.schema_version, 71);
+    assert_eq!(first.schema_version, 74);
     assert_eq!(first.open_mode, "writable");
     assert!(first.plan_step_count > 0);
     assert!(first.restart_ready);
@@ -168,14 +168,14 @@ fn schema15_fixture_upgrades_through_production_startup_route_and_restarts() {
             &database_path,
             "SELECT schema_version FROM persistence_schema_compatibility WHERE singleton_key = 1"
         ),
-        71
+        74
     );
     assert_eq!(
         query_i64(
             &database_path,
             "SELECT MAX(version) FROM _sqlx_migrations WHERE success = 1"
         ),
-        71
+        74
     );
     assert_eq!(
         query_i64(
@@ -390,7 +390,7 @@ fn schema15_fixture_upgrades_through_production_startup_route_and_restarts() {
         [0x07; 32],
     )
     .expect("second startup must be idempotent and writable");
-    assert_eq!(second.schema_version, 71);
+    assert_eq!(second.schema_version, 74);
     assert_eq!(second.open_mode, "writable");
     assert!(second.restart_ready);
     assert_eq!(

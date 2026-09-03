@@ -7,9 +7,9 @@ use crate::{
     models::monitoring::{
         ChannelMonitorAttemptHistoryInput, ChannelMonitorAttemptPage,
         ChannelMonitorExecutionDetail, ChannelMonitorExecutionIdInput,
-        ChannelMonitorExecutionListInput, ChannelMonitorExecutionPage, ChannelStatusWorkspaceInput,
-        ChannelStatusWorkspaceV2, MonitoringCapabilityCatalog, MonitoringClientProfileCapability,
-        MonitoringProtocolCapability, ProtocolKind,
+        ChannelMonitorExecutionListInput, ChannelMonitorExecutionPage, ChannelMonitorLatestSummary,
+        ChannelStatusWorkspaceInput, ChannelStatusWorkspaceV2, MonitoringCapabilityCatalog,
+        MonitoringClientProfileCapability, MonitoringProtocolCapability, ProtocolKind,
     },
     persistence::runtime::PersistenceHandle,
     services::monitoring::profiles::registry::BuiltinProfileRegistry,
@@ -32,6 +32,12 @@ impl ChannelStatusQuery {
         input: ChannelStatusWorkspaceInput,
     ) -> Result<ChannelStatusWorkspaceV2, ApplicationError> {
         self.read_model.load_workspace(input).await
+    }
+
+    pub(crate) async fn load_latest_summary(
+        &self,
+    ) -> Result<Vec<ChannelMonitorLatestSummary>, ApplicationError> {
+        self.read_model.load_latest_summary().await
     }
 
     pub(crate) async fn list_executions(

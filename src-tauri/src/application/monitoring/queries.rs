@@ -14,12 +14,12 @@ use crate::{
         ChannelMonitorAttemptCursor, ChannelMonitorAttemptHistoryInput, ChannelMonitorAttemptPage,
         ChannelMonitorExecutionCursor, ChannelMonitorExecutionDetail,
         ChannelMonitorExecutionIdInput, ChannelMonitorExecutionListInput,
-        ChannelMonitorExecutionPage, ChannelStatusAggregate, ChannelStatusBucket,
-        ChannelStatusBucketBoundary, ChannelStatusBucketCounts, ChannelStatusBucketKind,
-        ChannelStatusBucketLayout, ChannelStatusBucketState, ChannelStatusCursor,
-        ChannelStatusFreshness, ChannelStatusLatestResult, ChannelStatusMonitor,
-        ChannelStatusOutcome, ChannelStatusPage, ChannelStatusRecentPoint, ChannelStatusRow,
-        ChannelStatusSortDirection, ChannelStatusSortField, ChannelStatusTarget,
+        ChannelMonitorExecutionPage, ChannelMonitorLatestSummary, ChannelStatusAggregate,
+        ChannelStatusBucket, ChannelStatusBucketBoundary, ChannelStatusBucketCounts,
+        ChannelStatusBucketKind, ChannelStatusBucketLayout, ChannelStatusBucketState,
+        ChannelStatusCursor, ChannelStatusFreshness, ChannelStatusLatestResult,
+        ChannelStatusMonitor, ChannelStatusOutcome, ChannelStatusPage, ChannelStatusRecentPoint,
+        ChannelStatusRow, ChannelStatusSortDirection, ChannelStatusSortField, ChannelStatusTarget,
         ChannelStatusTimezone, ChannelStatusTimezoneSource, ChannelStatusWindowSummaryV2,
         ChannelStatusWorkspaceInput, ChannelStatusWorkspaceV2, ChannelStatusWorkspaceWindow,
     },
@@ -40,6 +40,7 @@ const DEFAULT_ATTEMPT_LIMIT: u32 = 100;
 const MAX_ATTEMPT_LIMIT: u32 = 200;
 const MAX_BASE_SCAN_ROWS: i64 = 5_000;
 const HOURLY_BUCKET_COUNT: u32 = 24;
+const SEVEN_DAY_BUCKET_COUNT: u32 = 7;
 const DAILY_BUCKET_COUNT: u32 = 30;
 
 #[derive(Clone)]
@@ -68,8 +69,13 @@ impl ChannelStatusReadModelQuery {
             .unwrap_or(DEFAULT_WORKSPACE_LIMIT)
             .clamp(1, MAX_WORKSPACE_LIMIT);
         let hourly_windows = hourly_bucket_windows(now_ms, HOURLY_BUCKET_COUNT);
+        let daily_bucket_count = if matches!(input.window, ChannelStatusWorkspaceWindow::Last7d) {
+            SEVEN_DAY_BUCKET_COUNT
+        } else {
+            DAILY_BUCKET_COUNT
+        };
         let daily_windows =
-            local_day_bucket_windows(now_ms, DAILY_BUCKET_COUNT, input.timezone_id.as_deref());
+            local_day_bucket_windows(now_ms, daily_bucket_count, input.timezone_id.as_deref());
 
         let mut read = self.runtime.begin_read().await?;
         let base_rows = self
@@ -92,51 +98,87 @@ impl ChannelStatusReadModelQuery {
             .store
             .workspace_running_executions(&mut read, &row_keys)
             .await?;
-        let hourly_rollups = self
-            .store
-            .workspace_rollups(
-                &mut read,
-                &row_keys,
-                "hour",
-                hourly_windows
-                    .windows
-                    .first()
-                    .map(|window| window.start_ms)
-                    .unwrap_or_default(),
-                hourly_windows
-                    .windows
-                    .last()
-                    .map(|window| window.end_ms)
-                    .unwrap_or_default(),
-            )
-            .await?;
-        let daily_rollups = self
-            .store
-            .workspace_rollups(
-                &mut read,
-                &row_keys,
-                "day",
-                daily_windows
-                    .windows
-                    .first()
-                    .map(|window| window.start_ms)
-                    .unwrap_or_default(),
-                daily_windows
-                    .windows
-                    .last()
-                    .map(|window| window.end_ms)
-                    .unwrap_or_default(),
-            )
-            .await?;
-        let dirty_ranges = self
-            .store
-            .workspace_dirty_ranges(
-                &mut read,
-                &row_keys,
-                min_window_start(&hourly_windows.windows, &daily_windows.windows),
-                max_window_end(&hourly_windows.windows, &daily_windows.windows),
-            )
-            .await?;
+        let load_hourly = matches!(input.window, ChannelStatusWorkspaceWindow::Last24h);
+        let load_daily = matches!(
+            input.window,
+            ChannelStatusWorkspaceWindow::Last7d | ChannelStatusWorkspaceWindow::Last30d
+        );
+        let hourly_rollups = if load_hourly {
+            self.store
+                .workspace_rollups(
+                    &mut read,
+                    &row_keys,
+                    "hour",
+                    hourly_windows
+                        .windows
+                        .first()
+                        .map(|window| window.start_ms)
+                        .unwrap_or_default(),
+                    hourly_windows
+                        .windows
+                        .last()
+                        .map(|window| window.end_ms)
+                        .unwrap_or_default(),
+                )
+                .await?
+        } else {
+            BTreeMap::new()
+        };
+        let daily_rollups = if load_daily {
+            self.store
+                .workspace_rollups(
+                    &mut read,
+                    &row_keys,
+                    "day",
+                    daily_windows
+                        .windows
+                        .first()
+                        .map(|window| window.start_ms)
+                        .unwrap_or_default(),
+                    daily_windows
+                        .windows
+                        .last()
+                        .map(|window| window.end_ms)
+                        .unwrap_or_default(),
+                )
+                .await?
+        } else {
+            BTreeMap::new()
+        };
+        let dirty_ranges = if load_hourly || load_daily {
+            self.store
+                .workspace_dirty_ranges(
+                    &mut read,
+                    &row_keys,
+                    min_window_start(
+                        if load_hourly {
+                            &hourly_windows.windows
+                        } else {
+                            &[]
+                        },
+                        if load_daily {
+                            &daily_windows.windows
+                        } else {
+                            &[]
+                        },
+                    ),
+                    max_window_end(
+                        if load_hourly {
+                            &hourly_windows.windows
+                        } else {
+                            &[]
+                        },
+                        if load_daily {
+                            &daily_windows.windows
+                        } else {
+                            &[]
+                        },
+                    ),
+                )
+                .await?
+        } else {
+            BTreeMap::new()
+        };
 
         let mut rows = base_rows
             .into_iter()
@@ -144,18 +186,31 @@ impl ChannelStatusReadModelQuery {
                 let key = (base.monitor_id.clone(), base.station_key_id.clone());
                 let recent_points = recent.get(&key).cloned().unwrap_or_default();
                 let latest = recent_points.first().map(latest_from_recent);
-                let hourly_buckets = build_buckets(
-                    &hourly_windows.windows,
-                    ChannelStatusBucketKind::Hour,
-                    hourly_rollups.get(&key),
-                    dirty_ranges.get(&key),
-                );
-                let daily_buckets = build_buckets(
-                    &daily_windows.windows,
-                    ChannelStatusBucketKind::Day,
-                    daily_rollups.get(&key),
-                    dirty_ranges.get(&key),
-                );
+                // Keep unrequested rollup buckets out of the DTO entirely. The
+                // workspace contract uses an empty collection to signal that
+                // a bucket family was not requested; constructing placeholder
+                // "missing" buckets here would waste payload and make the
+                // recent-only path look like it had rollup data.
+                let hourly_buckets = if load_hourly {
+                    build_buckets(
+                        &hourly_windows.windows,
+                        ChannelStatusBucketKind::Hour,
+                        hourly_rollups.get(&key),
+                        dirty_ranges.get(&key),
+                    )
+                } else {
+                    Vec::new()
+                };
+                let daily_buckets = if load_daily {
+                    build_buckets(
+                        &daily_windows.windows,
+                        ChannelStatusBucketKind::Day,
+                        daily_rollups.get(&key),
+                        dirty_ranges.get(&key),
+                    )
+                } else {
+                    Vec::new()
+                };
                 let running = running.get(&key).cloned();
                 let selected_window = summarize_selected_window(
                     input.window,
@@ -240,8 +295,16 @@ impl ChannelStatusReadModelQuery {
             timezone: timezone_from_bucket_set(&daily_windows),
             bucket_layout: ChannelStatusBucketLayout {
                 recent_limit: recent_target_result_limit(),
-                hourly: boundaries(&hourly_windows.windows, ChannelStatusBucketKind::Hour),
-                daily: boundaries(&daily_windows.windows, ChannelStatusBucketKind::Day),
+                hourly: if load_hourly {
+                    boundaries(&hourly_windows.windows, ChannelStatusBucketKind::Hour)
+                } else {
+                    Vec::new()
+                },
+                daily: if load_daily {
+                    boundaries(&daily_windows.windows, ChannelStatusBucketKind::Day)
+                } else {
+                    Vec::new()
+                },
             },
             aggregate,
             freshness,
@@ -252,6 +315,41 @@ impl ChannelStatusReadModelQuery {
             },
             rows: page_rows,
         })
+    }
+
+    pub(crate) async fn load_latest_summary(
+        &self,
+    ) -> Result<Vec<ChannelMonitorLatestSummary>, ApplicationError> {
+        let mut read = self.runtime.begin_read().await?;
+        let summary_keys = self.store.latest_summary_keys(&mut read).await?;
+        let row_keys = summary_keys
+            .iter()
+            .map(|row| (row.monitor_id.clone(), row.station_key_id.clone()))
+            .collect::<Vec<_>>();
+        let latest = self
+            .store
+            .workspace_recent_results(&mut read, &row_keys, 1)
+            .await?;
+        let running = self
+            .store
+            .workspace_running_executions(&mut read, &row_keys)
+            .await?;
+        Ok(summary_keys
+            .into_iter()
+            .map(|base| {
+                let key = (base.monitor_id.clone(), base.station_key_id.clone());
+                ChannelMonitorLatestSummary {
+                    monitor_id: base.monitor_id,
+                    station_id: base.station_id,
+                    station_key_id: base.station_key_id,
+                    latest: latest
+                        .get(&key)
+                        .and_then(|items| items.first())
+                        .map(latest_from_recent),
+                    running: running.get(&key).cloned(),
+                }
+            })
+            .collect())
     }
 
     pub(crate) async fn list_executions(
@@ -774,12 +872,39 @@ mod tests {
                     .await?;
                     sqlx::query(
                         r#"
+                        INSERT INTO stations (
+                            id, name, station_type, website_url, api_base_url,
+                            created_at, updated_at
+                        ) VALUES (
+                            'station-2', 'Station without keys', 'openai-compatible',
+                            'https://example-two.test', 'https://example-two.test/v1', '1', '1'
+                        )
+                        "#,
+                    )
+                    .execute(write.connection())
+                    .await?;
+                    sqlx::query(
+                        r#"
                         INSERT INTO endpoint_health_snapshot (
                             station_id, endpoint_revision, status, latency_ms,
                             checked_at, error_summary, updated_at
                         ) VALUES (
                             'station-1', 1, 'success', 48,
                             '1700000000000', NULL, '1700000000000'
+                        )
+                        "#,
+                    )
+                    .execute(write.connection())
+                    .await?;
+                    sqlx::query(
+                        r#"
+                        INSERT INTO channel_monitors (
+                            id, name, target_type, station_id, station_key_id,
+                            template_id, interval_seconds, timeout_seconds,
+                            created_at, updated_at
+                        ) VALUES (
+                            'monitor-2', 'Station monitor', 'station', 'station-2',
+                            NULL, 'builtin-openai-chat-low-token', 300, 30, '1', '1'
                         )
                         "#,
                     )
@@ -825,6 +950,54 @@ mod tests {
                     )
                     .execute(write.connection())
                     .await?;
+                    sqlx::query(
+                        r#"
+                        INSERT INTO channel_monitor_executions (
+                            id, monitor_id, trigger_kind, status, planned_at_ms,
+                            started_at_ms, finished_at_ms, config_snapshot_hash,
+                            target_count, available_count, summary_outcome, created_at_ms
+                        ) VALUES (
+                            'execution-completed', 'monitor-1', 'scheduled', 'completed',
+                            1699999999000, 1699999999001, 1699999999100, 'fixture-hash',
+                            1, 1, 'available', 1699999999000
+                        )
+                        "#,
+                    )
+                    .execute(write.connection())
+                    .await?;
+                    sqlx::query(
+                        r#"
+                        INSERT INTO channel_monitor_target_results (
+                            id, execution_id, monitor_id, station_id, station_key_id,
+                            terminal_outcome, requested_model, effective_model,
+                            attempt_count, protocol_kind, resolved_adapter_kind,
+                            client_profile_id, client_profile_version, traffic_equivalence,
+                            semantic_confidence, started_at_ms, finished_at_ms, created_at_ms
+                        ) VALUES (
+                            'target-completed', 'execution-completed', 'monitor-1',
+                            'station-1', 'key-1', 'available', 'gpt-4.1-mini',
+                            'gpt-4.1-mini', 1, 'open_ai_chat', 'openai_chat',
+                            'standard_api', 1, 'standard_api', 'protocol_validated',
+                            1699999999001, 1699999999100, 1699999999100
+                        )
+                        "#,
+                    )
+                    .execute(write.connection())
+                    .await?;
+                    sqlx::query(
+                        r#"
+                        INSERT INTO channel_monitor_executions (
+                            id, monitor_id, trigger_kind, status, planned_at_ms,
+                            started_at_ms, config_snapshot_hash, created_at_ms
+                        ) VALUES (
+                            'execution-running', 'monitor-1', 'manual', 'running',
+                            1699999999200, 1699999999201, 'fixture-running-hash',
+                            1699999999200
+                        )
+                        "#,
+                    )
+                    .execute(write.connection())
+                    .await?;
                     Ok(())
                 })
             })
@@ -837,8 +1010,9 @@ mod tests {
             .await
             .expect("load workspace");
 
-        assert_eq!(workspace.rows.len(), 1);
+        assert_eq!(workspace.rows.len(), 2);
         assert_eq!(workspace.rows[0].row_key, "monitor-1|key-1");
+        assert_eq!(workspace.rows[1].row_key, "monitor-2|");
         assert_eq!(workspace.rows[0].target.group_name.as_deref(), Some("plus"));
         assert_eq!(
             workspace.rows[0].target.effective_group_category.as_deref(),
@@ -852,7 +1026,62 @@ mod tests {
                 checked_at_ms: Some(1_700_000_000_000),
             })
         );
-        assert_eq!(workspace.aggregate.total_rows, 1);
+        assert_eq!(workspace.aggregate.total_rows, 2);
+        assert!(!workspace.rows[0].hourly_buckets.is_empty());
+        assert!(workspace.rows[0].daily_buckets.is_empty());
+        assert_eq!(
+            workspace.rows[0]
+                .latest
+                .as_ref()
+                .map(|latest| latest.target_result_id.as_str()),
+            Some("target-completed")
+        );
+        assert_eq!(
+            workspace.rows[0]
+                .running
+                .as_ref()
+                .map(|running| running.execution_id.as_str()),
+            Some("execution-running")
+        );
+        let summary = query
+            .load_latest_summary()
+            .await
+            .expect("load latest summary");
+        assert_eq!(summary.len(), 2);
+        assert_eq!(summary[0].monitor_id, "monitor-1");
+        assert_eq!(summary[0].station_id, "station-1");
+        assert_eq!(summary[0].station_key_id.as_deref(), Some("key-1"));
+        assert_eq!(summary[0].latest, workspace.rows[0].latest);
+        assert_eq!(summary[0].running, workspace.rows[0].running);
+        assert_eq!(summary[1].monitor_id, "monitor-2");
+        assert_eq!(summary[1].station_id, "station-2");
+        assert_eq!(summary[1].station_key_id, None);
+        assert_eq!(summary[1].latest, None);
+        assert_eq!(summary[1].running, None);
+
+        let recent_workspace = query
+            .load_workspace(ChannelStatusWorkspaceInput {
+                window: ChannelStatusWorkspaceWindow::Recent,
+                ..ChannelStatusWorkspaceInput::default()
+            })
+            .await
+            .expect("load recent workspace");
+        assert!(recent_workspace
+            .rows
+            .iter()
+            .all(|row| row.hourly_buckets.is_empty() && row.daily_buckets.is_empty()));
+
+        let week_workspace = query
+            .load_workspace(ChannelStatusWorkspaceInput {
+                window: ChannelStatusWorkspaceWindow::Last7d,
+                ..ChannelStatusWorkspaceInput::default()
+            })
+            .await
+            .expect("load week workspace");
+        assert!(week_workspace
+            .rows
+            .iter()
+            .all(|row| { row.hourly_buckets.is_empty() && row.daily_buckets.len() == 7 }));
         runtime.close().await.expect("close runtime");
     }
 }

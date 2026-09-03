@@ -2,9 +2,12 @@ use std::{fs, path::Path, time::Duration};
 
 use relay_pool_desktop_lib::test_support::schema_upgrade::run_schema_upgrade;
 use sqlx::{
+    migrate::Migrator,
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
     SqlitePool,
 };
+
+static MIGRATOR: Migrator = sqlx::migrate!("src/persistence/migrations");
 
 #[test]
 fn latest_schema_with_partial_sanitizer_resumes_on_next_startup() {
@@ -55,7 +58,12 @@ fn latest_schema_with_partial_sanitizer_resumes_on_next_startup() {
         [0x07; 32],
     )
     .expect("restart should resume sanitizer");
-    assert_eq!(resumed.schema_version, 71);
+    let current_schema = MIGRATOR
+        .iter()
+        .map(|migration| migration.version)
+        .max()
+        .expect("migration registry is not empty");
+    assert_eq!(resumed.schema_version, current_schema);
     assert_eq!(resumed.open_mode, "writable");
     assert_eq!(
         query_i64(

@@ -21,8 +21,18 @@ pub(crate) struct WebAuthorizationCandidate {
 pub(crate) struct CaptureCommit {
     pub endpoint_revision: i64,
     pub events: Vec<CapturedHttpEvent>,
+    pub durable_operation: Option<DurableCaptureOperation>,
     generation: u64,
     commit_id: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DurableCaptureOperation {
+    pub operation_id: String,
+    pub station_id: String,
+    pub endpoint_revision: i64,
+    pub credential_revision: i64,
+    pub intent_sequence: i64,
 }
 
 pub(crate) struct CaptureEventReceipt {
@@ -36,12 +46,30 @@ pub struct CaptureSessionStore {
 }
 
 impl CaptureSessionStore {
+    #[cfg(test)]
     pub fn start(
         &self,
         station_id: String,
         window_label: String,
         endpoint_revision: i64,
         web_authorization_cookie_url: String,
+    ) -> Result<CaptureSessionStatus, String> {
+        self.start_with_operation(
+            station_id,
+            window_label,
+            endpoint_revision,
+            web_authorization_cookie_url,
+            None,
+        )
+    }
+
+    pub(crate) fn start_with_operation(
+        &self,
+        station_id: String,
+        window_label: String,
+        endpoint_revision: i64,
+        web_authorization_cookie_url: String,
+        durable_operation: Option<DurableCaptureOperation>,
     ) -> Result<CaptureSessionStatus, String> {
         let mut sessions = self.sessions()?;
         if sessions
@@ -62,6 +90,7 @@ impl CaptureSessionStore {
             web_authorization_user_id: None,
             web_authorization_user_agent: None,
             last_error: None,
+            durable_operation,
         };
         let status = session.status();
         sessions.insert(station_id, session);
@@ -189,6 +218,45 @@ impl CaptureSessionStore {
         )
     }
 
+    pub(crate) fn begin_cancel(&self, station_id: &str) -> Result<CaptureCommit, String> {
+        let mut sessions = self.sessions()?;
+        let session = sessions
+            .get_mut(station_id)
+            .ok_or_else(|| "capture session does not exist".to_string())?;
+        let commit_id = NEXT_CAPTURE_COMMIT_ID.fetch_add(1, Ordering::Relaxed);
+        session.phase = CaptureSessionPhase::Cancelling;
+        session.active_commit_id = Some(commit_id);
+        Ok(CaptureCommit {
+            endpoint_revision: session.endpoint_revision,
+            events: session.events.clone(),
+            durable_operation: session.durable_operation.clone(),
+            generation: session.generation,
+            commit_id,
+        })
+    }
+
+    pub(crate) fn owner_id_for_window_label(
+        &self,
+        window_label: &str,
+    ) -> Result<Option<String>, String> {
+        let sessions = self.sessions()?;
+        Ok(sessions
+            .values()
+            .find(|session| session.window_label == window_label)
+            .map(|session| session.station_id.clone()))
+    }
+
+    pub(crate) fn durable_credential_revision(
+        &self,
+        station_id: &str,
+    ) -> Result<Option<i64>, String> {
+        let sessions = self.sessions()?;
+        Ok(sessions
+            .get(station_id)
+            .and_then(|session| session.durable_operation.as_ref())
+            .map(|operation| operation.credential_revision))
+    }
+
     pub(crate) fn complete_commit(
         &self,
         station_id: &str,
@@ -240,6 +308,7 @@ impl CaptureSessionStore {
             }))
     }
 
+    #[cfg(test)]
     pub fn clear(&self, station_id: &str) -> Result<CaptureSessionStatus, String> {
         let mut sessions = self.sessions()?;
         if sessions
@@ -286,6 +355,7 @@ impl CaptureSessionStore {
         Ok(CaptureCommit {
             endpoint_revision: session.endpoint_revision,
             events: session.events.clone(),
+            durable_operation: session.durable_operation.clone(),
             generation: session.generation,
             commit_id,
         })
@@ -312,6 +382,7 @@ struct CaptureSession {
     web_authorization_user_id: Option<String>,
     web_authorization_user_agent: Option<String>,
     last_error: Option<String>,
+    durable_operation: Option<DurableCaptureOperation>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -319,6 +390,7 @@ enum CaptureSessionPhase {
     Capturing,
     Finishing,
     Authorizing,
+    Cancelling,
 }
 
 impl CaptureSessionPhase {
@@ -327,6 +399,7 @@ impl CaptureSessionPhase {
             Self::Capturing => "capturing",
             Self::Finishing => "finishing",
             Self::Authorizing => "authorizing",
+            Self::Cancelling => "cancelling",
         }
     }
 }

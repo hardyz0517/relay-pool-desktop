@@ -27,7 +27,8 @@ use crate::{
         runtime::PersistenceHandle,
         stores::credential_store::{
             CredentialStore, EncryptedSecretRow, NewRemoteStationKeyRow, NewStationKeyRow,
-            StationCredentialPatch, StationKeyPatch, StationSessionPatch, StoredEncryptedSecret,
+            PostAuthorizationCollectionWork, StationCredentialPatch, StationKeyPatch,
+            StationSessionPatch, StoredEncryptedSecret,
         },
     },
 };
@@ -148,6 +149,12 @@ pub(crate) trait CredentialVault: Send + Sync {
 pub(crate) struct SavedSecretRef {
     pub(crate) secret_ref: SecretRef,
     pub(crate) station_key: StationKey,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PersistedStationSession {
+    pub(crate) operation_id: String,
+    pub(crate) authorization_revision: i64,
 }
 
 #[derive(Clone)]
@@ -890,6 +897,119 @@ impl CredentialService {
             .map_err(Into::into)
     }
 
+    pub(crate) async fn persist_station_session_with_post_auth_work(
+        &self,
+        input: PersistStationSessionInput,
+        expected_endpoint_revision: i64,
+        expected_credential_revision: i64,
+    ) -> Result<PersistedStationSession, ApplicationError> {
+        let patch = self.build_station_session_patch(input)?;
+        let operation_id = self.ids.next_id();
+        let receipt_operation_id = operation_id.clone();
+        let now_ms = self.clock.now_utc().timestamp_millis();
+        let store = self.store;
+        let (_credentials, authorization_revision) = self
+            .runtime
+            .write(|write| {
+                Box::pin(async move {
+                    store
+                        .update_station_session_if_revision_and_enqueue(
+                            write,
+                            patch,
+                            expected_endpoint_revision,
+                            expected_credential_revision,
+                            operation_id,
+                            now_ms,
+                        )
+                        .await
+                })
+            })
+            .await
+            .map_err(ApplicationError::from)?;
+        Ok(PersistedStationSession {
+            operation_id: receipt_operation_id,
+            authorization_revision,
+        })
+    }
+
+    pub(crate) async fn due_post_authorization_work(
+        &self,
+    ) -> Result<Vec<String>, ApplicationError> {
+        let mut read = self.runtime.begin_read().await?;
+        self.store
+            .due_post_authorization_work(&mut read, self.clock.now_utc().timestamp_millis())
+            .await
+            .map_err(Into::into)
+    }
+
+    pub(crate) async fn recover_post_authorization_work(
+        &self,
+    ) -> Result<Vec<String>, ApplicationError> {
+        let now_ms = self.clock.now_utc().timestamp_millis();
+        let store = self.store;
+        self.runtime
+            .write(|write| {
+                Box::pin(async move { store.recover_post_authorization_work(write, now_ms).await })
+            })
+            .await?;
+        self.due_post_authorization_work().await
+    }
+
+    pub(crate) async fn claim_post_authorization_work(
+        &self,
+        station_id: String,
+    ) -> Result<Option<PostAuthorizationCollectionWork>, ApplicationError> {
+        let now_ms = self.clock.now_utc().timestamp_millis();
+        let store = self.store;
+        self.runtime
+            .write(|write| {
+                Box::pin(async move {
+                    store
+                        .claim_post_authorization_work(write, &station_id, now_ms)
+                        .await
+                })
+            })
+            .await
+            .map_err(Into::into)
+    }
+
+    pub(crate) async fn finish_post_authorization_work(
+        &self,
+        work: PostAuthorizationCollectionWork,
+        succeeded: bool,
+        error_code: Option<String>,
+    ) -> Result<(), ApplicationError> {
+        let now_ms = self.clock.now_utc().timestamp_millis();
+        let store = self.store;
+        self.runtime
+            .write(|write| {
+                Box::pin(async move {
+                    store
+                        .finish_post_authorization_work(
+                            write,
+                            &work,
+                            succeeded,
+                            error_code.as_deref(),
+                            now_ms,
+                        )
+                        .await
+                })
+            })
+            .await
+            .map_err(Into::into)
+    }
+
+    pub(crate) async fn station_authorization_revision(
+        &self,
+        station_id: String,
+    ) -> Result<i64, ApplicationError> {
+        let mut read = self.runtime.begin_read().await?;
+        self.store
+            .station_authorization_revision(&mut read, &station_id)
+            .await
+            .map_err(Into::into)
+    }
+
     pub(crate) async fn clear_station_credentials(
         &self,
         station_id: String,
@@ -1479,6 +1599,65 @@ mod tests {
             remote_local_key_note("remote-key-1"),
             "由远端发现开关自动创建：remote-key-1"
         );
+    }
+
+    #[tokio::test]
+    async fn clearing_station_credentials_advances_authorization_revision() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let runtime = PersistenceRuntime::initialize_new(
+            &temp.path().join("clear-credentials-revision.sqlite3"),
+        )
+        .await
+        .expect("runtime");
+        let clock = Arc::new(SystemClock);
+        let ids = Arc::new(UuidV7Generator);
+        let stations = StationService::new(runtime.handle(), clock.clone(), ids.clone());
+        let credentials = CredentialService::new(
+            runtime.handle(),
+            Arc::new(DataKeyVault::for_test([37; 32])),
+            clock,
+            ids,
+        );
+        let station = stations
+            .create(CreateStationInput {
+                name: "Clear revision fixture".to_string(),
+                station_type: "newapi".to_string(),
+                website_url: "https://clear.example.test".to_string(),
+                api_base_url: "https://clear.example.test/v1".to_string(),
+                api_key: String::new(),
+                collector_proxy_mode: "direct".to_string(),
+                collector_proxy_url: None,
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
+                note: None,
+            })
+            .await
+            .expect("station");
+        credentials
+            .update_station_credentials(UpdateStationCredentialsInput {
+                station_id: station.id.clone(),
+                login_username: Some("fixture-user".to_string()),
+                login_password: Some("fixture-password".to_string()),
+                remember_password: true,
+            })
+            .await
+            .expect("credentials");
+        let before = credentials
+            .station_authorization_revision(station.id.clone())
+            .await
+            .expect("revision before clear");
+        credentials
+            .clear_station_credentials(station.id.clone())
+            .await
+            .expect("clear credentials");
+        let after = credentials
+            .station_authorization_revision(station.id)
+            .await
+            .expect("revision after clear");
+        assert_eq!(after, before + 1);
+        runtime.close().await.expect("close runtime");
     }
 
     #[tokio::test]

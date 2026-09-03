@@ -705,18 +705,28 @@ async fn collect_current_facts(
 ) -> Result<Vec<CurrentFact>, PersistenceError> {
     let mut read = handle.begin_read().await?;
     let mut facts = Vec::new();
-    let rows = sqlx::query("SELECT id, status, updated_at FROM stations WHERE enabled = 1")
-        .fetch_all(read.connection())
-        .await?;
+    // Rebuild endpoint availability from the endpoint-revision-fenced typed
+    // snapshot. `stations.status` historically mixed administrative and
+    // collector state and must not regain authority during an old-schema
+    // alerting upgrade. Missing/unchecked endpoint evidence stays unknown
+    // rather than manufacturing a healthy transition.
+    let rows = sqlx::query(
+        "SELECT stations.id, endpoint_health.status
+         FROM stations
+         JOIN endpoint_health_snapshot endpoint_health
+           ON endpoint_health.station_id = stations.id
+          AND endpoint_health.endpoint_revision = stations.endpoint_revision
+         WHERE stations.enabled = 1
+           AND endpoint_health.status IN ('success', 'failed')",
+    )
+    .fetch_all(read.connection())
+    .await?;
     for row in rows {
         let id: String = row.get("id");
         let status: String = row.get("status");
         let key =
             condition_key("station", &id).ok_or_else(|| PersistenceError::ConstraintViolation)?;
-        let abnormal = matches!(
-            status.as_str(),
-            "down" | "offline" | "error" | "failed" | "unhealthy"
-        );
+        let abnormal = status == "failed";
         facts.push(fact(
             AlertEventType::StationDown,
             key,
@@ -849,28 +859,39 @@ async fn collect_current_facts(
     }
 
     let rows = sqlx::query(
-        "SELECT station_id, task_type, last_status, consecutive_failures
-         FROM collector_task_state",
+        "WITH ranked AS (
+             SELECT station_id, task_type, status,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY station_id, task_type
+                        ORDER BY CAST(COALESCE(finished_at, started_at, created_at) AS INTEGER) DESC,
+                                 created_at DESC, id DESC
+                    ) AS row_number
+             FROM collector_runs
+             WHERE task_type IN ('balance', 'groups', 'detect', 'full', 'published_status')
+               AND status IN ('success', 'partial', 'failed', 'manual_required')
+         )
+         SELECT station_id, task_type, status
+         FROM ranked
+         WHERE row_number = 1",
     )
     .fetch_all(read.connection())
     .await?;
     for row in rows {
         let station_id: String = row.get("station_id");
         let task_type: String = row.get("task_type");
-        let status: String = row.get("last_status");
-        let failures: i64 = row.get("consecutive_failures");
+        let status: String = row.get("status");
         let key = condition_key("collector", &format!("{station_id}:{task_type}"))
             .ok_or_else(|| PersistenceError::ConstraintViolation)?;
         facts.push(fact(
             AlertEventType::CollectorFailed,
             key,
-            failures > 0 || matches!(status.as_str(), "failed" | "error" | "timeout"),
+            matches!(status.as_str(), "failed" | "error" | "timeout"),
             Severity::Warning,
             "collector_task",
             Some(task_type),
             Some(station_id),
             None,
-            serde_json::json!({ "status": status, "consecutive_failures": failures }),
+            serde_json::json!({ "status": status }),
         ));
     }
 

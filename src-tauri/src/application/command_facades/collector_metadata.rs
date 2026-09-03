@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
+    application::queries::collector_history::CollectorHistoryQuery,
     application::{collectors::CollectorService, error::ApplicationError, pagination::PageLimit},
     models::{
         collector::CollectorSnapshot,
@@ -13,11 +14,18 @@ use crate::{
 #[derive(Clone)]
 pub(crate) struct CollectorMetadataCommandFacade {
     collectors: Arc<CollectorService>,
+    history: Arc<CollectorHistoryQuery>,
 }
 
 impl CollectorMetadataCommandFacade {
-    pub(crate) fn new(collectors: Arc<CollectorService>) -> Self {
-        Self { collectors }
+    pub(crate) fn new(
+        collectors: Arc<CollectorService>,
+        history: Arc<CollectorHistoryQuery>,
+    ) -> Self {
+        Self {
+            collectors,
+            history,
+        }
     }
 
     pub(crate) async fn list_station_group_bindings(
@@ -61,7 +69,7 @@ impl CollectorMetadataCommandFacade {
         station_id: &str,
         limit: PageLimit,
     ) -> Result<Vec<CollectorRun>, ApplicationError> {
-        self.collectors.list_collector_runs(station_id, limit).await
+        self.history.list_collector_runs(station_id, limit).await
     }
 
     pub(crate) async fn list_collector_snapshots(
@@ -69,23 +77,21 @@ impl CollectorMetadataCommandFacade {
         station_id: &str,
         limit: PageLimit,
     ) -> Result<Vec<CollectorSnapshot>, ApplicationError> {
-        self.collectors
-            .list_station_snapshots(station_id, limit)
-            .await
+        self.history.list_station_snapshots(station_id, limit).await
     }
 
     pub(crate) async fn get_latest_collector_snapshot(
         &self,
         station_id: &str,
     ) -> Result<Option<CollectorSnapshot>, ApplicationError> {
-        self.collectors.latest_station_snapshot(station_id).await
+        self.history.latest_station_snapshot(station_id).await
     }
 
     pub(crate) async fn list_latest_collector_snapshots(
         &self,
         station_ids: Vec<String>,
     ) -> Result<Vec<CollectorSnapshot>, ApplicationError> {
-        self.collectors
+        self.history
             .list_latest_station_snapshots(station_ids)
             .await
     }

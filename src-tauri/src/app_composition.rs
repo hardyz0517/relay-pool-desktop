@@ -10,13 +10,15 @@ use crate::{
             AlertingCommandFacade, CaptureCommandFacade, ChannelMonitoringCommandFacade,
             ChannelStatusCommandFacade, CollectorMetadataCommandFacade, CredentialsCommandFacade,
             DashboardMetricsCommandFacade, DataDirectoryCommandFacade, KeyPoolCommandFacade,
-            LocalProxyCommandFacade, PricingCommandFacade, ProviderDraftCommandFacade,
-            RemoteKeysCommandFacade, RequestLogsCommandFacade, RoutingCommandFacade,
-            SettingsStationsCommandFacade, StationCollectionCommandFacade,
+            LocalProxyCommandFacade, PostAuthorizationWorkScheduler, PricingCommandFacade,
+            ProviderDraftCommandFacade, RemoteKeysCommandFacade, RequestLogsCommandFacade,
+            RoutingCommandFacade, SettingsStationsCommandFacade, StationCollectionCommandFacade,
             StationKeyConnectivityCommandFacade,
         },
         data_directory::DataDirectoryPort,
-        routing_policy_control_plane::RoutingPolicyMutationCoordinator,
+        routing_policy_control_plane::{
+            RoutingPolicyFastActivationPort, RoutingPolicyMutationCoordinator,
+        },
     },
     background_tasks::{
         BlockingExecutor, BlockingExecutorConfig, OperationRegistry, OperationRegistryConfig,
@@ -149,6 +151,7 @@ pub(crate) fn compose_settings_stations_command_facade(
         Arc::clone(&services.stations),
         Arc::clone(&services.settings),
         Arc::clone(&services.station_assets),
+        Arc::clone(&services.station_detail),
         tray_behavior,
         station_collection_coordinator,
     )
@@ -197,10 +200,12 @@ pub(crate) fn compose_routing_command_facade(
 pub(crate) fn compose_routing_policy_mutation_coordinator(
     services: &AppServices,
     proxy: Arc<ProxyRuntimeState>,
+    fast_activation: Arc<dyn RoutingPolicyFastActivationPort>,
 ) -> Arc<RoutingPolicyMutationCoordinator> {
-    Arc::new(RoutingPolicyMutationCoordinator::new(
+    Arc::new(RoutingPolicyMutationCoordinator::new_with_fast_activation(
         Arc::clone(&services.routing),
         proxy,
+        fast_activation,
     ))
 }
 
@@ -232,7 +237,10 @@ pub(crate) fn compose_channel_status_command_facade(
 pub(crate) fn compose_collector_metadata_command_facade(
     services: &AppServices,
 ) -> CollectorMetadataCommandFacade {
-    CollectorMetadataCommandFacade::new(Arc::clone(&services.collectors))
+    CollectorMetadataCommandFacade::new(
+        Arc::clone(&services.collectors),
+        Arc::clone(&services.collector_history),
+    )
 }
 
 pub(crate) fn compose_station_collection_command_facade(
@@ -242,8 +250,9 @@ pub(crate) fn compose_station_collection_command_facade(
     providers: Arc<ProviderRegistry>,
     station_collection_coordinator: StationCollectionCoordinator,
     station_collection_feedback: crate::services::station_collection_feedback::StationCollectionFeedback,
+    post_authorization_scheduler: Arc<dyn PostAuthorizationWorkScheduler>,
 ) -> StationCollectionCommandFacade {
-    StationCollectionCommandFacade::new(
+    StationCollectionCommandFacade::new_with_scheduler(
         Arc::clone(&services.collectors),
         Arc::clone(&services.credentials),
         Arc::clone(&services.settings),
@@ -252,6 +261,7 @@ pub(crate) fn compose_station_collection_command_facade(
         providers,
         station_collection_coordinator,
         station_collection_feedback,
+        post_authorization_scheduler,
     )
 }
 
@@ -374,6 +384,7 @@ pub(crate) fn compose_station_key_connectivity_command_facade(
 
 pub(crate) fn compose_capture_command_facade(
     services: &AppServices,
+    station_collection: Arc<crate::application::command_facades::StationCollectionCommandFacade>,
     sessions: crate::services::capture::session::CaptureSessionStore,
     outbound: AsyncOutboundClient,
     providers: Arc<ProviderRegistry>,
@@ -384,6 +395,7 @@ pub(crate) fn compose_capture_command_facade(
         Arc::clone(&services.credentials),
         Arc::clone(&services.provider_drafts),
         Arc::clone(&services.collectors),
+        station_collection,
         sessions,
         outbound,
         providers,

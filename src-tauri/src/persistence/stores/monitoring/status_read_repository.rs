@@ -17,6 +17,32 @@ use crate::{
 pub(crate) struct MonitoringStatusQueryRepository;
 
 impl MonitoringStatusQueryRepository {
+    pub(crate) async fn latest_summary_keys(
+        &self,
+        read: &mut ReadSession,
+    ) -> Result<Vec<LatestSummaryKey>, PersistenceError> {
+        let rows = sqlx::query(
+            r#"
+            SELECT m.id AS monitor_id, m.station_id, sk.id AS station_key_id
+            FROM channel_monitors m
+            LEFT JOIN station_keys sk
+              ON ((m.target_type = 'station_key' AND sk.id = m.station_key_id)
+               OR (m.target_type = 'station' AND sk.station_id = m.station_id))
+            ORDER BY m.id ASC, sk.id ASC
+            "#,
+        )
+        .fetch_all(read.connection())
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| LatestSummaryKey {
+                monitor_id: row.get("monitor_id"),
+                station_id: row.get("station_id"),
+                station_key_id: row.get("station_key_id"),
+            })
+            .collect())
+    }
+
     pub(crate) async fn list_execution_summaries(
         &self,
         read: &mut ReadSession,
@@ -179,6 +205,18 @@ impl MonitoringStatusQueryRepository {
                         ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC
                     ) AS row_number
                     FROM balance_snapshots b
+                    WHERE EXISTS (
+                        SELECT 1
+                        FROM channel_monitors m_scope
+                        WHERE m_scope.station_id = b.station_id
+                          AND (
+                              b.station_key_id IS NULL
+                              OR (
+                                  m_scope.target_type = 'station_key'
+                                  AND m_scope.station_key_id = b.station_key_id
+                              )
+                          )
+                    )
                 ) WHERE row_number = 1
             )
             SELECT
@@ -424,27 +462,36 @@ impl MonitoringStatusQueryRepository {
         query.push(
             r#"
             ),
-            ranked AS (
+            latest_monitor_execution AS (
                 SELECT
                     e.id AS execution_id,
                     e.monitor_id,
-                    s.station_key_id,
                     e.status,
                     e.trigger_kind,
                     e.trigger_request_id,
                     e.planned_at_ms,
                     e.started_at_ms,
                     ROW_NUMBER() OVER (
-                        PARTITION BY e.monitor_id, s.station_key_id
+                        PARTITION BY e.monitor_id
                         ORDER BY COALESCE(e.started_at_ms, e.planned_at_ms) DESC, e.id DESC
                     ) AS rn
                 FROM channel_monitor_executions e
-                JOIN scoped s ON s.monitor_id = e.monitor_id
+                JOIN (SELECT DISTINCT monitor_id FROM scoped) requested
+                  ON requested.monitor_id = e.monitor_id
                 WHERE e.status IN ('queued', 'running')
             )
-            SELECT *
-            FROM ranked
-            WHERE rn = 1
+            SELECT
+                e.execution_id,
+                e.monitor_id,
+                s.station_key_id,
+                e.status,
+                e.trigger_kind,
+                e.trigger_request_id,
+                e.planned_at_ms,
+                e.started_at_ms
+            FROM latest_monitor_execution e
+            JOIN scoped s ON s.monitor_id = e.monitor_id
+            WHERE e.rn = 1
             "#,
         );
         let rows = query.build().fetch_all(read.connection()).await?;
@@ -612,6 +659,13 @@ impl MonitoringStatusQueryRepository {
 }
 
 pub(crate) type StatusRowKey = (String, Option<String>);
+
+#[derive(Debug, Clone)]
+pub(crate) struct LatestSummaryKey {
+    pub(crate) monitor_id: String,
+    pub(crate) station_id: String,
+    pub(crate) station_key_id: Option<String>,
+}
 
 #[derive(Debug, Clone)]
 pub(crate) struct BaseStatusRow {

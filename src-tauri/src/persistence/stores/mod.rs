@@ -32,3 +32,4 @@ pub(crate) mod settings_store;
 pub(crate) mod station_catalog;
 pub(crate) mod station_key_circuit_store;
 pub(crate) mod station_published_status_store;
+pub(crate) mod station_state_store;

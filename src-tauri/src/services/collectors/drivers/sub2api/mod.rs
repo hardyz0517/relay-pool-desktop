@@ -20,12 +20,13 @@ use crate::{
     services::{
         collectors::{
             contract::{
-                CollectorContext, CollectorDriver, CollectorTaskKind, CreateRemoteKeyRequest,
-                CreatedRemoteKeyOutput, CredentialSecretPurpose, DeleteRemoteKeyRequest,
-                DeletedRemoteKeyOutput, DriverOutput, DriverOutputStatus, ProviderAuthContext,
-                ProviderKind, RedactedDiagnostics, RemoteKeyDriver, RemoteKeyOutput,
-                RemoteKeyRequest, RemoteKeySecret, RevealRemoteKeyRequest, RevealedRemoteKeyOutput,
-                Sub2ApiLoginCredential, Sub2ApiStationKeyCredential,
+                AuthorizationDriver, AuthorizationOutput, AuthorizationRequest,
+                AuthorizationStatus, CollectorContext, CollectorDriver, CollectorTaskKind,
+                CreateRemoteKeyRequest, CreatedRemoteKeyOutput, CredentialSecretPurpose,
+                DeleteRemoteKeyRequest, DeletedRemoteKeyOutput, DriverOutput, DriverOutputStatus,
+                ProviderAuthContext, ProviderKind, RedactedDiagnostics, RemoteKeyDriver,
+                RemoteKeyOutput, RemoteKeyRequest, RemoteKeySecret, RevealRemoteKeyRequest,
+                RevealedRemoteKeyOutput, Sub2ApiLoginCredential, Sub2ApiStationKeyCredential,
             },
             evidence::{redact_text, EndpointEvidence, EndpointRole, EvidenceSet},
             facts::CollectorFacts,
@@ -50,6 +51,21 @@ const RETRY_DELAYS: [Duration; 2] = [Duration::from_millis(300), Duration::from_
 const SUB2API_USER_UI_REQUEST_HEADER: HeaderName = HeaderName::from_static("x-user-ui-request");
 const SUB2API_MANAGEMENT_LOCALE: HeaderValue = HeaderValue::from_static("en");
 const SUB2API_MANAGEMENT_TIMEZONE: &str = "UTC";
+const AUTHORIZATION_SELF_PATHS: [&str; 13] = [
+    "/api/v1/auth/me",
+    "/api/v1/auth/session",
+    "/api/v1/user/profile",
+    "/api/v1/user/info",
+    "/api/v1/user/self",
+    "/auth/me",
+    "/auth/session",
+    "/user/profile",
+    "/user/info",
+    "/user/self",
+    "/api/user/profile",
+    "/api/user/info",
+    "/api/user/self",
+];
 
 pub const SUPPORTED_COLLECTOR_TASKS: &[CollectorTaskKind] = &[
     CollectorTaskKind::Detect,
@@ -66,6 +82,8 @@ pub const FULL_COLLECTOR_TASKS: &[CollectorTaskKind] = &[
 pub struct Sub2ApiCollectorDriver;
 
 pub struct Sub2ApiRemoteKeyDriver;
+
+pub struct Sub2ApiAuthorizationDriver;
 
 pub(crate) fn parse_browser_remote_key_payload(
     station_id: &str,
@@ -90,6 +108,92 @@ impl CollectorDriver for Sub2ApiCollectorDriver {
                 CollectorTaskKind::Balance => collect_balance(context).await,
                 CollectorTaskKind::Groups => collect_groups(context).await,
                 CollectorTaskKind::PublishedStatus => collect_published_status(context).await,
+            }
+        }
+        .boxed()
+    }
+}
+
+impl AuthorizationDriver for Sub2ApiAuthorizationDriver {
+    fn kind(&self) -> ProviderKind {
+        ProviderKind::Sub2Api
+    }
+
+    fn validate_authorization<'a>(
+        &'a self,
+        context: &'a CollectorContext<'a>,
+        request: AuthorizationRequest,
+    ) -> BoxFuture<'a, Result<AuthorizationOutput, DriverFailure>> {
+        async move {
+            validate_authorization_request(context, &request)?;
+            let website_url = website_url_from_endpoints(&request.endpoints)?;
+            let auth = sub2api_auth(context)?;
+            let cookie = resolve_session_cookie(context, &auth)
+                .await?
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| {
+                    invalid_request("Sub2API authorization session cookie is missing")
+                })?;
+            let mut evidence = Vec::new();
+            let mut saw_authenticated_json = false;
+
+            for path in AUTHORIZATION_SELF_PATHS {
+                let url = build_management_url(&website_url, path)
+                    .map_err(|error| invalid_request(redact_text(&error)))?;
+                let result = execute_bearer_json_once(
+                    context,
+                    request.endpoint_role,
+                    &url,
+                    "",
+                    Some(&cookie),
+                    None,
+                    Method::GET,
+                )
+                .await;
+                if let Some(failure) = fatal_attempt_failure(&result, request.endpoint_role) {
+                    return Err(failure);
+                }
+                evidence.push(result.evidence.clone());
+                if matches!(result.status, Some(401 | 403)) {
+                    return Err(DriverFailure::auth_rejected(
+                        FailedEndpoint {
+                            role: request.endpoint_role,
+                            status_code: result.status,
+                        },
+                        "Sub2API authorization self probe rejected the browser session",
+                    )
+                    .with_evidence(EvidenceSet::new(evidence)));
+                }
+                if !result.ok {
+                    continue;
+                }
+                saw_authenticated_json = true;
+                if let Some(subject_id) = sub2api_identity_subject(&result.payload) {
+                    return Ok(AuthorizationOutput {
+                        status: AuthorizationStatus::Authorized,
+                        verified_subject_id: Some(subject_id),
+                        evidence,
+                        diagnostics: RedactedDiagnostics {
+                            summary: Some(json!({"validated": true, "probe": path}).to_string()),
+                            raw_json_redacted: None,
+                        },
+                    });
+                }
+            }
+
+            if saw_authenticated_json {
+                Err(malformed(
+                    request.endpoint_role,
+                    evidence.last().cloned(),
+                    "Sub2API authorization self probe did not return a usable identity",
+                ))
+            } else {
+                Err(failed(
+                    DriverFailureKind::ProviderUnavailable,
+                    request.endpoint_role,
+                    Some(evidence),
+                    "Sub2API authorization self probe did not find a supported identity endpoint",
+                ))
             }
         }
         .boxed()
@@ -421,6 +525,74 @@ fn validate_remote_key_request(
         ));
     }
     website_url_from_endpoints(endpoints).map(|_| ())
+}
+
+fn validate_authorization_request(
+    context: &CollectorContext<'_>,
+    request: &AuthorizationRequest,
+) -> Result<(), DriverFailure> {
+    if context.station.provider != ProviderKind::Sub2Api
+        || request.station.provider != ProviderKind::Sub2Api
+    {
+        return Err(invalid_request(
+            "Sub2API authorization request has the wrong provider",
+        ));
+    }
+    if request.endpoint_role != EndpointRole::Authorization {
+        return Err(invalid_request(
+            "Sub2API authorization request has the wrong endpoint role",
+        ));
+    }
+    if context.station != request.station {
+        return Err(invalid_request(
+            "Sub2API authorization request station revision mismatch",
+        ));
+    }
+    if context.credential != request.credential {
+        return Err(invalid_request(
+            "Sub2API authorization request credential mismatch",
+        ));
+    }
+    if website_url_from_endpoints(&request.endpoints)? != website_url(context)? {
+        return Err(invalid_request(
+            "Sub2API authorization request endpoint mismatch",
+        ));
+    }
+    Ok(())
+}
+
+fn sub2api_identity_subject(payload: &Value) -> Option<String> {
+    const WRAPPERS: [&str; 5] = ["data", "user", "profile", "account", "session"];
+    const IDENTITY_FIELDS: [&str; 5] = ["user_id", "userId", "id", "email", "username"];
+
+    fn field_value(value: &Value) -> Option<String> {
+        if let Some(text) = value.as_str() {
+            let text = text.trim();
+            return (!text.is_empty() && text.len() <= 256).then(|| text.to_string());
+        }
+        value
+            .as_i64()
+            .filter(|value| *value >= 0)
+            .map(|value| value.to_string())
+    }
+
+    fn visit(value: &Value, depth: usize) -> Option<String> {
+        if depth > 3 {
+            return None;
+        }
+        let map = value.as_object()?;
+        for field in IDENTITY_FIELDS {
+            if let Some(subject) = map.get(field).and_then(field_value) {
+                return Some(subject);
+            }
+        }
+        WRAPPERS
+            .iter()
+            .filter_map(|field| map.get(*field))
+            .find_map(|child| visit(child, depth + 1))
+    }
+
+    visit(payload, 0)
 }
 
 fn website_url_from_endpoints(
@@ -3245,6 +3417,133 @@ mod tests {
             cancellation: CancellationToken::new(),
             correlation_id: "test-correlation".to_string(),
         }
+    }
+
+    fn authorization_test_context<'a>(
+        base_url: &str,
+        secrets: &'a HybridSessionSecretAccessor,
+        outbound: &'a AsyncOutboundClient,
+    ) -> CollectorContext<'a> {
+        let credential = test_credential();
+        CollectorContext {
+            station: test_station_identity(),
+            endpoints: test_endpoints(base_url),
+            credential: credential.clone(),
+            auth: Some(ProviderAuthContext::Sub2Api {
+                station_keys: Vec::new(),
+                access_token: None,
+                refresh_token: None,
+                session_cookie: Some(credential),
+                login: None,
+                credit_per_cny: 1.0,
+            }),
+            user_agent: Some("RelayPoolFixture/1.0".to_string()),
+            secrets,
+            outbound,
+            proxy: ProxyPolicy::Direct,
+            budget: RequestBudget::from_now(Duration::from_secs(5)),
+            cancellation: CancellationToken::new(),
+            correlation_id: "authorization-test".to_string(),
+        }
+    }
+
+    fn authorization_request(context: &CollectorContext<'_>) -> AuthorizationRequest {
+        AuthorizationRequest {
+            station: context.station.clone(),
+            endpoints: context.endpoints.clone(),
+            credential: context.credential.clone(),
+            endpoint_role: EndpointRole::Authorization,
+        }
+    }
+
+    #[tokio::test]
+    async fn authorization_driver_requires_a_fresh_authenticated_identity_probe() {
+        let server = TestHttpServer::sequence(vec![Some(json_response(
+            200,
+            json!({"data": {"user": {"id": 42}}}),
+        ))]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = HybridSessionSecretAccessor;
+        let context = authorization_test_context(&server.base_url, &secrets, &outbound);
+
+        let output = Sub2ApiAuthorizationDriver
+            .validate_authorization(&context, authorization_request(&context))
+            .await
+            .expect("authenticated identity probe");
+        let requests = server.finish();
+
+        assert_eq!(output.status, AuthorizationStatus::Authorized);
+        assert_eq!(output.verified_subject_id.as_deref(), Some("42"));
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].starts_with("GET /api/v1/auth/me "));
+        assert!(!output
+            .diagnostics
+            .summary
+            .as_deref()
+            .unwrap_or_default()
+            .contains("browser_session"));
+    }
+
+    #[tokio::test]
+    async fn authorization_driver_rejects_an_unauthorized_cookie_without_fallback() {
+        let server = TestHttpServer::sequence(vec![Some(json_response(
+            401,
+            json!({"message": "fixture rejection"}),
+        ))]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = HybridSessionSecretAccessor;
+        let context = authorization_test_context(&server.base_url, &secrets, &outbound);
+
+        let error = Sub2ApiAuthorizationDriver
+            .validate_authorization(&context, authorization_request(&context))
+            .await
+            .expect_err("unauthorized cookie must be rejected");
+        let requests = server.finish();
+
+        assert_eq!(error.kind, DriverFailureKind::AuthRejected);
+        assert_eq!(requests.len(), 1);
+        assert!(!error
+            .sanitized_detail
+            .as_deref()
+            .unwrap_or_default()
+            .contains("browser_session"));
+    }
+
+    #[tokio::test]
+    async fn authorization_driver_rejects_success_json_without_an_identity() {
+        let responses = (0..AUTHORIZATION_SELF_PATHS.len())
+            .map(|_| Some(json_response(200, json!({"data": {"authenticated": true}}))))
+            .collect();
+        let server = TestHttpServer::sequence(responses);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = HybridSessionSecretAccessor;
+        let context = authorization_test_context(&server.base_url, &secrets, &outbound);
+
+        let error = Sub2ApiAuthorizationDriver
+            .validate_authorization(&context, authorization_request(&context))
+            .await
+            .expect_err("unrelated JSON must not prove authorization");
+
+        assert_eq!(error.kind, DriverFailureKind::MalformedPayload);
+        assert_eq!(server.finish().len(), AUTHORIZATION_SELF_PATHS.len());
+    }
+
+    #[tokio::test]
+    async fn authorization_driver_rejects_a_stale_station_revision_before_io() {
+        let server = TestHttpServer::sequence(Vec::new());
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = HybridSessionSecretAccessor;
+        let context = authorization_test_context(&server.base_url, &secrets, &outbound);
+        let mut request = authorization_request(&context);
+        request.station.endpoint_revision += 1;
+
+        let error = Sub2ApiAuthorizationDriver
+            .validate_authorization(&context, request)
+            .await
+            .expect_err("stale revision must be fenced");
+
+        assert_eq!(error.kind, DriverFailureKind::InvalidRequest);
+        assert!(server.finish().is_empty());
     }
 
     #[test]

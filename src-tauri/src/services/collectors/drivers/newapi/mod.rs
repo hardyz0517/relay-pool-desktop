@@ -321,6 +321,7 @@ impl AuthorizationDriver for NewApiAuthorizationDriver {
             }
             Ok(AuthorizationOutput {
                 status: AuthorizationStatus::Authorized,
+                verified_subject_id: Some(observed_user_id),
                 evidence: vec![endpoint],
                 diagnostics: RedactedDiagnostics {
                     summary: Some(json!({"validated": true}).to_string()),

@@ -785,7 +785,8 @@ async fn list_stations(
                s.api_key, s.api_key_secret_id, sec.masked_value AS api_key_masked,
                (SELECT COUNT(*) FROM station_keys k WHERE k.station_id = s.id) AS key_count,
                s.enabled, s.priority, s.credit_per_cny, s.balance_raw, s.balance_cny,
-               s.low_balance_threshold_cny, s.collection_interval_minutes, s.status,
+               s.low_balance_threshold_cny, s.collection_interval_minutes,
+               CASE WHEN s.enabled = 0 THEN 'disabled' ELSE 'unchecked' END AS status,
                s.latency_ms, s.last_checked_at, s.last_pricing_fetched_at, s.note,
                s.created_at, s.updated_at
         FROM stations s

@@ -140,6 +140,10 @@ mod tests {
                 created_at: "1700000000000".to_string(),
             },
             events: Vec::new(),
+            receipt: crate::models::collector::MutationReceipt::without_revision(
+                "feedback-fixture",
+                1_700_000_000_000,
+            ),
         }
     }
 

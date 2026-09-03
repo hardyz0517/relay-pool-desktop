@@ -1,16 +1,26 @@
 use std::sync::OnceLock;
 
+use serde::Serialize;
+
 use tokio::sync::broadcast;
 
 use crate::persistence::{
     error::PersistenceError, stores::asset_revision_store::AssetRevisionStore, ReadSession,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct DomainRevisionNotice {
     pub(crate) mutation_id: String,
     pub(crate) affected_scopes: Vec<String>,
-    pub(crate) revision_vector: Vec<(String, i64)>,
+    pub(crate) revision_vector: Vec<DomainRevisionVectorEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DomainRevisionVectorEntry {
+    pub(crate) scope: String,
+    pub(crate) revision: i64,
 }
 
 const REVISION_NOTICE_CAPACITY: usize = 128;
@@ -28,13 +38,6 @@ fn revision_notice_sender() -> &'static broadcast::Sender<DomainRevisionNotice> 
 ///
 /// Notices are deliberately best-effort. Consumers must re-read their source
 /// aggregate and compare the returned revision before using cached data.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "contract=read-model.domain-revision-notice; owner=frontend/bridge subscription; remove_when=frontend bridge consumes typed revision notices"
-    )
-)]
 pub(crate) fn subscribe_domain_revision_notices() -> broadcast::Receiver<DomainRevisionNotice> {
     revision_notice_sender().subscribe()
 }
@@ -48,11 +51,19 @@ pub(crate) fn publish_domain_revision_notice(notice: DomainRevisionNotice) {
 
 impl DomainRevisionNotice {
     pub(crate) fn for_scope(scope: impl Into<String>, revision: i64) -> Self {
+        Self::for_mutation_scope(uuid::Uuid::now_v7().to_string(), scope, revision)
+    }
+
+    pub(crate) fn for_mutation_scope(
+        mutation_id: impl Into<String>,
+        scope: impl Into<String>,
+        revision: i64,
+    ) -> Self {
         let scope = scope.into();
         Self {
-            mutation_id: uuid::Uuid::now_v7().to_string(),
+            mutation_id: mutation_id.into(),
             affected_scopes: vec![scope.clone()],
-            revision_vector: vec![(scope, revision)],
+            revision_vector: vec![DomainRevisionVectorEntry { scope, revision }],
         }
     }
 }
@@ -61,6 +72,15 @@ impl DomainRevisionNotice {
 /// the query. It is computed from the same read transaction as the rows.
 pub(crate) async fn load_asset_revision(read: &mut ReadSession) -> Result<i64, PersistenceError> {
     AssetRevisionStore.load(read.connection()).await
+}
+
+pub(crate) async fn load_station_detail_revision(
+    read: &mut ReadSession,
+    station_id: &str,
+) -> Result<i64, PersistenceError> {
+    AssetRevisionStore
+        .load_station_detail(read.connection(), station_id)
+        .await
 }
 
 #[cfg(test)]
@@ -74,7 +94,13 @@ mod tests {
         publish_domain_revision_notice(notice.clone());
         let received = receiver.try_recv().expect("revision notice");
         assert_eq!(received.affected_scopes, vec!["model_mapping"]);
-        assert_eq!(received.revision_vector, vec![("model_mapping".into(), 7)]);
+        assert_eq!(
+            received.revision_vector,
+            vec![DomainRevisionVectorEntry {
+                scope: "model_mapping".into(),
+                revision: 7,
+            }]
+        );
         assert!(!received.mutation_id.is_empty());
     }
 }

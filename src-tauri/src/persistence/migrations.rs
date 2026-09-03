@@ -9,7 +9,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
-    Executor, Row, Sqlite,
+    Executor, Row, Sqlite, SqliteConnection,
 };
 
 use crate::persistence::{
@@ -56,6 +56,45 @@ const LEGACY_MIGRATION_59_CHECKSUM: [u8; 48] = [
     0x43, 0x4E, 0xB0, 0x7A, 0x11, 0x5A, 0xCB, 0x01, 0x66, 0xBC, 0xB9, 0xC7, 0xBF, 0xA2, 0x6B, 0xBD,
     0xB2, 0xF4, 0x81, 0x80, 0xF8, 0xA0, 0xD1, 0x8A, 0x8B, 0x7B, 0x5E, 0x29, 0xED, 0xE3, 0xC2, 0x1D,
 ];
+
+// Databases created by the first 2026-09-02 development build contain this
+// checksum for migration 72. That build had already persisted the typed
+// projection tables, but the canonical migration subsequently added the
+// collection revision fences and Station Asset revision triggers. Reconcile
+// this exact checksum only after atomically completing and verifying those
+// missing postconditions. Unknown migration-72 drift remains a hard failure.
+const LEGACY_MIGRATION_72_CHECKSUM: [u8; 48] = [
+    0xCC, 0xA4, 0x4C, 0xD6, 0x20, 0x93, 0x5B, 0x3D, 0x58, 0x8D, 0xB7, 0xA5, 0xB4, 0xBE, 0x7A, 0xB7,
+    0xA8, 0x73, 0x78, 0x39, 0xD8, 0x3B, 0x69, 0xF9, 0xEA, 0xE3, 0xD6, 0x73, 0x64, 0x75, 0x6F, 0x9C,
+    0xAC, 0x13, 0x97, 0x76, 0x39, 0x7F, 0x4A, 0x4C, 0xD9, 0x23, 0xDE, 0x5D, 0xA1, 0x7D, 0x29, 0xE1,
+];
+
+const LEGACY_SCHEMA_72_COLLECTION_COLUMNS: &str =
+    "station_id,status,reason_codes_json,revision,operation_id,updated_at_ms";
+const CANONICAL_SCHEMA_72_COLLECTION_COLUMNS: &str = "station_id,status,reason_codes_json,revision,endpoint_revision,credential_revision,intent_sequence,operation_id,updated_at_ms";
+const SCHEMA_72_AUTHORIZATION_COLUMNS: &str = "station_id,status,credential_revision,intent_sequence,authority,reason_code,operation_id,source_operation_id,observed_at_ms,updated_at_ms";
+const SCHEMA_72_POST_AUTH_COLUMNS: &str = "station_id,endpoint_revision,credential_revision,state,attempt_count,next_attempt_at_ms,last_error_code,operation_id,created_at_ms,updated_at_ms";
+const STATION_ASSET_REVISION_TRIGGER_COUNT: i64 = 21;
+
+const LEGACY_SCHEMA_72_COLLECTION_REBUILD_SQL: &str = r#"
+DROP TABLE station_collection_projection;
+
+CREATE TABLE station_collection_projection (
+    station_id TEXT PRIMARY KEY REFERENCES stations(id) ON DELETE CASCADE,
+    status TEXT NOT NULL CHECK (status IN ('not_collected', 'collecting', 'healthy', 'degraded', 'failed', 'stale')),
+    reason_codes_json TEXT NOT NULL CHECK (json_valid(reason_codes_json)),
+    revision INTEGER NOT NULL CHECK (revision > 0),
+    endpoint_revision INTEGER NOT NULL CHECK (endpoint_revision > 0),
+    credential_revision INTEGER NOT NULL CHECK (credential_revision > 0),
+    intent_sequence INTEGER NOT NULL CHECK (intent_sequence > 0),
+    operation_id TEXT NOT NULL,
+    updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0)
+);
+
+UPDATE stations
+SET status = CASE WHEN enabled = 0 THEN 'disabled' ELSE 'unchecked' END
+WHERE status IS NULL OR status NOT IN ('disabled', 'unchecked');
+"#;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -343,11 +382,171 @@ async fn reconcile_historical_migration_checksums(
             continue;
         }
 
+        if version == 72 && actual.as_slice() == LEGACY_MIGRATION_72_CHECKSUM {
+            reconcile_legacy_migration_72(pool, expected).await?;
+            continue;
+        }
+
         return Err(PersistenceError::MigrationChecksumMismatch {
             version,
             expected: hex_checksum(expected),
             actual: hex_checksum(&actual),
         });
+    }
+    Ok(())
+}
+
+async fn reconcile_legacy_migration_72(
+    pool: &sqlx::SqlitePool,
+    canonical_checksum: &[u8],
+) -> Result<(), PersistenceError> {
+    let mut transaction = pool.begin().await?;
+    verify_legacy_migration_72_precondition(&mut transaction).await?;
+
+    // The released projection rows do not carry the endpoint, credential, or
+    // intent fences required to prove freshness. They are derived state, so
+    // fail closed by discarding them and let the normal collector repopulate
+    // the canonical projection after startup.
+    sqlx::raw_sql(LEGACY_SCHEMA_72_COLLECTION_REBUILD_SQL)
+        .execute(&mut *transaction)
+        .await?;
+    sqlx::raw_sql(canonical_schema_72_station_asset_revision_sql()?)
+        .execute(&mut *transaction)
+        .await?;
+
+    verify_legacy_migration_72_postcondition(&mut transaction).await?;
+    let checksum_update = sqlx::query(
+        "UPDATE _sqlx_migrations SET checksum = ?1
+         WHERE version = 72 AND success = 1 AND checksum = ?2",
+    )
+    .bind(canonical_checksum)
+    .bind(LEGACY_MIGRATION_72_CHECKSUM.as_slice())
+    .execute(&mut *transaction)
+    .await?;
+    if checksum_update.rows_affected() != 1 {
+        return Err(PersistenceError::InvariantViolation(
+            "legacy migration 72 checksum changed during reconciliation".to_string(),
+        ));
+    }
+    transaction.commit().await?;
+    Ok(())
+}
+
+fn canonical_schema_72_station_asset_revision_sql() -> Result<&'static str, PersistenceError> {
+    const MIGRATION: &str = include_str!("migrations/0072_station_collection_reliability.sql");
+    const START: &str =
+        "-- Station Asset is a workspace read model with one durable revision owner.";
+    const END: &str = "UPDATE persistence_schema_compatibility";
+    let (_, from_station_assets) = MIGRATION.split_once(START).ok_or_else(|| {
+        PersistenceError::InvariantViolation(
+            "canonical migration 72 is missing the Station Asset revision marker".to_string(),
+        )
+    })?;
+    let (statements, _) = from_station_assets.split_once(END).ok_or_else(|| {
+        PersistenceError::InvariantViolation(
+            "canonical migration 72 is missing its compatibility marker".to_string(),
+        )
+    })?;
+    Ok(statements)
+}
+
+async fn verify_legacy_migration_72_precondition(
+    connection: &mut SqliteConnection,
+) -> Result<(), PersistenceError> {
+    let (compatibility_version, applied_version): (i64, i64) = sqlx::query_as(
+        "SELECT
+            (SELECT schema_version FROM persistence_schema_compatibility WHERE singleton_key = 1),
+            (SELECT MAX(version) FROM _sqlx_migrations WHERE success = 1)",
+    )
+    .fetch_one(&mut *connection)
+    .await?;
+    let (collection, authorization, post_auth): (Option<String>, Option<String>, Option<String>) =
+        sqlx::query_as(
+            "SELECT
+                (SELECT group_concat(name, ',') FROM
+                    (SELECT name FROM pragma_table_info('station_collection_projection') ORDER BY cid)),
+                (SELECT group_concat(name, ',') FROM
+                    (SELECT name FROM pragma_table_info('station_authorization_projection') ORDER BY cid)),
+                (SELECT group_concat(name, ',') FROM
+                    (SELECT name FROM pragma_table_info('post_authorization_collection_work') ORDER BY cid))",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+    let (asset_triggers, asset_revision, operation_ledger, foreign_key_violations): (
+        i64,
+        i64,
+        i64,
+        i64,
+    ) = sqlx::query_as(
+        "SELECT
+            (SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'trigger' AND name LIKE 'station_assets_revision_%'),
+            (SELECT COUNT(*) FROM domain_revisions
+             WHERE scope = 'read_model:station_assets'),
+            (SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'table' AND name = 'collector_operations'),
+            (SELECT COUNT(*) FROM pragma_foreign_key_check)",
+    )
+    .fetch_one(&mut *connection)
+    .await?;
+
+    if compatibility_version != 72
+        || applied_version != 72
+        || collection.as_deref() != Some(LEGACY_SCHEMA_72_COLLECTION_COLUMNS)
+        || authorization.as_deref() != Some(SCHEMA_72_AUTHORIZATION_COLUMNS)
+        || post_auth.as_deref() != Some(SCHEMA_72_POST_AUTH_COLUMNS)
+        || asset_triggers != 0
+        || asset_revision != 0
+        || operation_ledger != 0
+        || foreign_key_violations != 0
+    {
+        return Err(PersistenceError::InvariantViolation(
+            "legacy migration 72 checksum matched but its released schema shape is not recognized"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
+async fn verify_legacy_migration_72_postcondition(
+    connection: &mut SqliteConnection,
+) -> Result<(), PersistenceError> {
+    let collection: Option<String> = sqlx::query_scalar(
+        "SELECT group_concat(name, ',') FROM
+            (SELECT name FROM pragma_table_info('station_collection_projection') ORDER BY cid)",
+    )
+    .fetch_one(&mut *connection)
+    .await?;
+    let (
+        projection_rows,
+        asset_triggers,
+        asset_revision,
+        invalid_station_statuses,
+        foreign_key_violations,
+    ): (i64, i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT
+            (SELECT COUNT(*) FROM station_collection_projection),
+            (SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'trigger' AND name LIKE 'station_assets_revision_%'),
+            (SELECT COUNT(*) FROM domain_revisions
+             WHERE scope = 'read_model:station_assets' AND revision > 0),
+            (SELECT COUNT(*) FROM stations
+             WHERE status IS NULL OR status NOT IN ('disabled', 'unchecked')),
+            (SELECT COUNT(*) FROM pragma_foreign_key_check)",
+    )
+    .fetch_one(&mut *connection)
+    .await?;
+
+    if collection.as_deref() != Some(CANONICAL_SCHEMA_72_COLLECTION_COLUMNS)
+        || projection_rows != 0
+        || asset_triggers != STATION_ASSET_REVISION_TRIGGER_COUNT
+        || asset_revision != 1
+        || invalid_station_statuses != 0
+        || foreign_key_violations != 0
+    {
+        return Err(PersistenceError::InvariantViolation(
+            "legacy migration 72 completion did not satisfy canonical postconditions".to_string(),
+        ));
     }
     Ok(())
 }
@@ -882,6 +1081,23 @@ mod tests {
         );
     }
 
+    #[test]
+    fn station_collection_reliability_checksum_is_frozen() {
+        let mut hasher = Sha384::new();
+        hasher.update(include_bytes!(
+            "migrations/0072_station_collection_reliability.sql"
+        ));
+        let checksum = hasher
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02X}"))
+            .collect::<String>();
+        assert_eq!(
+            checksum,
+            "2B2FB98A57424B048E19F42E362DFF1F853598AD3A12FC3234D3672ADD308C1AC3F04B780147814D6535FA742EB658F7"
+        );
+    }
+
     #[tokio::test]
     async fn schema_43_upgrade_applies_legacy_priority_repair() {
         let mut connection = sqlx::SqliteConnection::connect("sqlite::memory:")
@@ -1274,6 +1490,143 @@ mod tests {
         .await
         .expect("backed up timeout");
         assert_eq!(backed_up_timeout, "30");
+        backup_pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn known_legacy_schema_72_checksum_reaches_latest_schema() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join("relay-pool-v2.sqlite3");
+        initialize_database_through(&path, 72).await;
+        let pool = migration_pool_existing(&path).await.expect("open database");
+
+        let trigger_names: Vec<String> = sqlx::query_scalar(
+            "SELECT name FROM sqlite_master
+             WHERE type = 'trigger' AND name LIKE 'station_assets_revision_%'",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("station asset trigger names");
+        for trigger_name in trigger_names {
+            let statement = format!("DROP TRIGGER \"{}\"", trigger_name.replace('"', "\"\""));
+            sqlx::query(&statement)
+                .execute(&pool)
+                .await
+                .expect("drop canonical trigger for released-shape fixture");
+        }
+        sqlx::query("DELETE FROM domain_revisions WHERE scope = 'read_model:station_assets'")
+            .execute(&pool)
+            .await
+            .expect("remove canonical asset revision for released-shape fixture");
+        sqlx::raw_sql(
+            r#"
+            DROP TABLE station_collection_projection;
+            CREATE TABLE station_collection_projection (
+                station_id TEXT PRIMARY KEY REFERENCES stations(id) ON DELETE CASCADE,
+                status TEXT NOT NULL CHECK (status IN ('not_collected', 'collecting', 'healthy', 'degraded', 'failed', 'stale')),
+                reason_codes_json TEXT NOT NULL CHECK (json_valid(reason_codes_json)),
+                revision INTEGER NOT NULL CHECK (revision > 0),
+                operation_id TEXT NOT NULL,
+                updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0)
+            );
+            INSERT INTO stations (
+                id, name, station_type, website_url, api_base_url,
+                endpoint_revision, enabled, status, created_at, updated_at
+            ) VALUES (
+                'legacy-72-station', 'Legacy 72 station', 'sub2api',
+                'https://example.test', 'https://example.test/v1',
+                3, 1, 'healthy', '1', '1'
+            );
+            INSERT INTO station_collection_projection (
+                station_id, status, reason_codes_json, revision,
+                operation_id, updated_at_ms
+            ) VALUES (
+                'legacy-72-station', 'healthy', '[]', 4,
+                'legacy-72-operation', 4
+            );
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .expect("install released schema 72 shape");
+        sqlx::query("UPDATE _sqlx_migrations SET checksum = ?1 WHERE version = 72")
+            .bind(LEGACY_MIGRATION_72_CHECKSUM.as_slice())
+            .execute(&pool)
+            .await
+            .expect("install released schema 72 checksum");
+        pool.close().await;
+
+        let backup = upgrade_existing_v2_database(&path)
+            .await
+            .expect("released schema 72 reaches latest")
+            .expect("verified pre-upgrade backup");
+        assert_eq!(
+            database_schema_version(&path).await,
+            current_schema_version()
+        );
+
+        let pool = migration_pool_existing(&path)
+            .await
+            .expect("upgraded database");
+        let collection_columns: String = sqlx::query_scalar(
+            "SELECT group_concat(name, ',') FROM
+                (SELECT name FROM pragma_table_info('station_collection_projection') ORDER BY cid)",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("canonical collection projection columns");
+        let projection_rows: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM station_collection_projection")
+                .fetch_one(&pool)
+                .await
+                .expect("reset derived projection rows");
+        let asset_trigger_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'trigger' AND name LIKE 'station_assets_revision_%'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("station asset triggers");
+        let installed_checksum: Vec<u8> =
+            sqlx::query_scalar("SELECT checksum FROM _sqlx_migrations WHERE version = 72")
+                .fetch_one(&pool)
+                .await
+                .expect("canonical migration checksum");
+        let canonical_checksum = migrator()
+            .iter()
+            .find(|migration| migration.version == 72)
+            .expect("migration 72")
+            .checksum
+            .as_ref();
+        let foreign_key_violations: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM pragma_foreign_key_check")
+                .fetch_one(&pool)
+                .await
+                .expect("foreign key check");
+        assert_eq!(collection_columns, CANONICAL_SCHEMA_72_COLLECTION_COLUMNS);
+        assert_eq!(projection_rows, 0);
+        assert_eq!(asset_trigger_count, STATION_ASSET_REVISION_TRIGGER_COUNT);
+        assert_eq!(installed_checksum.as_slice(), canonical_checksum);
+        assert_eq!(foreign_key_violations, 0);
+        pool.close().await;
+
+        let backup_pool = migration_pool_existing(&backup)
+            .await
+            .expect("pre-upgrade backup");
+        let backup_columns: String = sqlx::query_scalar(
+            "SELECT group_concat(name, ',') FROM
+                (SELECT name FROM pragma_table_info('station_collection_projection') ORDER BY cid)",
+        )
+        .fetch_one(&backup_pool)
+        .await
+        .expect("released collection projection columns in backup");
+        let backup_projection_rows: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM station_collection_projection")
+                .fetch_one(&backup_pool)
+                .await
+                .expect("released projection row in backup");
+        assert_eq!(backup_columns, LEGACY_SCHEMA_72_COLLECTION_COLUMNS);
+        assert_eq!(backup_projection_rows, 1);
         backup_pool.close().await;
     }
 

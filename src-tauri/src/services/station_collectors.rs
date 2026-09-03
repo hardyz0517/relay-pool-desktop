@@ -18,11 +18,8 @@ use crate::{
     outbound::AsyncOutboundClient,
     services::{
         collectors::{
-            self,
-            apply::{CollectorApplyPort, V2CollectorApplyAdapter},
-            contract::CollectorTaskKind,
-            output::CollectorTask,
-            CollectorSourcePort, V2CollectorSourceAdapter,
+            self, apply::CollectorApplyPort, contract::CollectorTaskKind, output::CollectorTask,
+            CollectorAuthorizationPort, CollectorSourcePort, V2CollectorSourceAdapter,
         },
         station_collection_coordinator::{
             StationCollectionAdmissionError, StationCollectionCoordinator,
@@ -50,10 +47,16 @@ pub(crate) fn v2_runner_port(
         services.credentials.clone(),
         services.settings.clone(),
     ));
-    let apply: Arc<dyn CollectorApplyPort> =
-        Arc::new(V2CollectorApplyAdapter::new((*services.collectors).clone()));
+    let authorization: Arc<dyn CollectorAuthorizationPort> =
+        Arc::new(V2CollectorSourceAdapter::new(
+            services.collectors.clone(),
+            services.credentials.clone(),
+            services.settings.clone(),
+        ));
+    let apply: Arc<dyn CollectorApplyPort> = services.collectors.clone();
     let tasks: Arc<dyn StationCollectorTaskPort> = Arc::new(V2StationCollectorTaskAdapter::new(
         source,
+        authorization,
         apply,
         Arc::clone(&services.collectors),
         blocking,
@@ -103,6 +106,7 @@ pub(crate) struct StationCollectorTaskContext {
 
 pub(crate) struct V2StationCollectorTaskAdapter {
     source: Arc<dyn CollectorSourcePort>,
+    authorization: Arc<dyn CollectorAuthorizationPort>,
     apply: Arc<dyn CollectorApplyPort>,
     collectors: Arc<CollectorService>,
     blocking: BlockingExecutor,
@@ -113,6 +117,7 @@ pub(crate) struct V2StationCollectorTaskAdapter {
 impl V2StationCollectorTaskAdapter {
     pub(crate) fn new(
         source: Arc<dyn CollectorSourcePort>,
+        authorization: Arc<dyn CollectorAuthorizationPort>,
         apply: Arc<dyn CollectorApplyPort>,
         collectors: Arc<CollectorService>,
         blocking: BlockingExecutor,
@@ -121,6 +126,7 @@ impl V2StationCollectorTaskAdapter {
     ) -> Self {
         Self {
             source,
+            authorization,
             apply,
             collectors,
             blocking,
@@ -139,12 +145,29 @@ impl StationCollectorTaskPort for V2StationCollectorTaskAdapter {
     ) -> BoxFuture<'static, Result<StationCollectorTaskOutcome, String>> {
         let source = self.source.clone();
         let finish_source = self.source.clone();
+        let authorization = self.authorization.clone();
         let apply = self.apply.clone();
         let collector_service = Arc::clone(&self.collectors);
         let blocking = self.blocking.clone();
         let outbound = self.outbound.clone();
         let providers = self.providers.clone();
         Box::pin(async move {
+            let station = collector_service
+                .station_for_collection(&station_id)
+                .await
+                .map_err(|error| error.to_string())?;
+            let credential_revision = authorization
+                .station_authorization_revision(&station_id)
+                .await
+                .map_err(|error| error.to_string())?;
+            let intent_sequence = authorization
+                .allocate_station_collection_intent(
+                    &station_id,
+                    station.endpoint_revision,
+                    credential_revision,
+                )
+                .await
+                .map_err(|error| error.to_string())?;
             let operation_id = Some(format!("{}:{}", context.task_id, context.run_id));
             let prepare = blocking
                 .submit_wait_for_capacity(
@@ -154,10 +177,12 @@ impl StationCollectorTaskPort for V2StationCollectorTaskAdapter {
                     None,
                     &context.cancellation_token,
                     move |_| {
-                        Ok(collectors::prepare_station_task_route_v2(
+                        Ok(collectors::prepare_station_collection_route(
                             source.as_ref(),
                             station_id,
                             task,
+                            credential_revision,
+                            intent_sequence,
                         ))
                     },
                 )
@@ -175,7 +200,7 @@ impl StationCollectorTaskPort for V2StationCollectorTaskAdapter {
             }
             .map_err(|error| error.to_string())?;
             let prepared = match prepared {
-                collectors::PreparedStationTaskRoute::Sub2Api(prepared) => {
+                collectors::PreparedStationCollectionRoute::Sub2Api(prepared) => {
                     collectors::finish_sub2api_task_v2(
                         providers.as_ref(),
                         &outbound,
@@ -186,9 +211,10 @@ impl StationCollectorTaskPort for V2StationCollectorTaskAdapter {
                     .await
                     .map_err(|error| error.to_string())?
                 }
-                collectors::PreparedStationTaskRoute::NewApi(prepared) => {
+                collectors::PreparedStationCollectionRoute::NewApi(prepared) => {
                     collectors::finish_newapi_task_v2(
                         finish_source.as_ref(),
+                        authorization.as_ref(),
                         providers.as_ref(),
                         &outbound,
                         prepared,
@@ -202,13 +228,15 @@ impl StationCollectorTaskPort for V2StationCollectorTaskAdapter {
             ensure_collection_not_cancelled(&context.cancellation_token)?;
             let refresh_remote_keys = collectors::should_refresh_remote_keys_after_collection(
                 task,
-                prepared.2.status.as_str(),
+                prepared.4.status.as_str(),
             );
             let applied = apply_prepared_station_task_cancellable_v2(
                 apply.as_ref(),
                 prepared.0,
                 prepared.1,
                 prepared.2,
+                prepared.3,
+                prepared.4,
                 context.cancellation_token.clone(),
             )
             .await?;
@@ -228,11 +256,19 @@ async fn apply_prepared_station_task_cancellable_v2(
     apply: &dyn CollectorApplyPort,
     station_id: String,
     endpoint_revision: i64,
+    credential_revision: i64,
+    intent_sequence: i64,
     output: collectors::output::AdapterOutput,
     cancellation_token: tokio_util::sync::CancellationToken,
 ) -> Result<crate::application::collectors::CollectorApplyOutcome, String> {
-    let apply_future =
-        collectors::apply_prepared_station_task_v2(apply, station_id, endpoint_revision, output);
+    let apply_future = collectors::apply_prepared_station_task(
+        apply,
+        station_id,
+        endpoint_revision,
+        credential_revision,
+        intent_sequence,
+        output,
+    );
     tokio::select! {
         biased;
         _ = cancellation_token.cancelled() => Err("Station collector task was cancelled".to_string()),
@@ -415,6 +451,11 @@ impl StationCollectorRunnerState {
                     ))
                 })
                 .with_concurrency_key(RUNNER_CONCURRENCY_KEY)
+                .with_restart_policy(crate::background_tasks::RestartPolicy::transient(
+                    8,
+                    Duration::from_secs(1),
+                    Duration::from_secs(30),
+                ))
                 .with_shutdown_timeout(RUNNER_SHUTDOWN_TIMEOUT),
             )
             .map_err(|error| error.to_string())?;
@@ -715,17 +756,37 @@ fn ensure_collection_not_cancelled(
 
 #[cfg(test)]
 mod tests {
-    use std::num::NonZeroUsize;
+    use std::{num::NonZeroUsize, panic::AssertUnwindSafe};
 
     use super::*;
-    use crate::application::error::ApplicationError;
-    use crate::background_tasks::{TaskRunId, TaskState};
+    use crate::application::{
+        clock::{Clock, SystemClock},
+        credentials::{CredentialService, CredentialVault},
+        error::ApplicationError,
+        ids::{IdGenerator, UuidV7Generator},
+        settings::SettingsService,
+        stations::StationService,
+    };
+    use crate::background_tasks::{BlockingExecutorConfig, TaskRunId, TaskState};
     use crate::models::collector::CollectorSnapshot;
+    use crate::models::stations::CreateStationInput;
     use crate::observability::runtime::bootstrap;
     use crate::observability::runtime::{RuntimeEvent, RuntimeLogReader, RuntimeLogService};
-    use crate::services::collectors::facts::CollectorFacts;
-    use crate::services::collectors::output::AdapterOutput;
+    use crate::outbound::AsyncOutboundClientConfig;
+    use crate::persistence::runtime::PersistenceRuntime;
+    use crate::services::collectors::{
+        contract::{
+            CollectorCapabilityDescriptor, CollectorContext, CollectorDriver, DriverCapabilities,
+            DriverOutput, DriverOutputStatus, ProviderDescriptor, ProviderEntry, ProviderKind,
+            RedactedDiagnostics,
+        },
+        facts::CollectorFacts,
+        orchestration::ProviderRegistry,
+        output::AdapterOutput,
+    };
+    use crate::services::secrets::vault::DataKeyVault;
     use crate::services::station_collection_coordinator::StationCollectionCoordinator;
+    use futures_util::FutureExt;
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
         Mutex,
@@ -1168,6 +1229,10 @@ mod tests {
                     created_at: "1700000000000".to_string(),
                 },
                 events: Vec::new(),
+                receipt: crate::models::collector::MutationReceipt::without_revision(
+                    "scheduled-fixture",
+                    1_700_000_000_000,
+                ),
             },
         }
     }
@@ -1258,6 +1323,53 @@ mod tests {
                 }
             };
             Box::pin(async move { result })
+        }
+    }
+
+    struct RepeatingRunnerPort {
+        due_calls: AtomicUsize,
+        collect_calls: AtomicUsize,
+    }
+
+    impl RepeatingRunnerPort {
+        fn new() -> Self {
+            Self {
+                due_calls: AtomicUsize::new(0),
+                collect_calls: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    impl StationCollectorRunnerPort for RepeatingRunnerPort {
+        fn due_station_collections(
+            &self,
+            _limit: u32,
+        ) -> BoxFuture<'static, Result<Vec<ScheduledStationCollection>, String>> {
+            self.due_calls.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async {
+                Ok(vec![scheduled_collection(
+                    "station-repeating",
+                    &[CollectorTask::Balance],
+                )])
+            })
+        }
+
+        fn collect_task(
+            &self,
+            _station_id: String,
+            _task: CollectorTask,
+            _context: StationCollectorTaskContext,
+        ) -> BoxFuture<'static, Result<StationCollectorTaskOutcome, String>> {
+            self.collect_calls.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { Ok(task_outcome(false)) })
+        }
+
+        fn refresh_remote_keys(
+            &self,
+            _station_id: String,
+            _context: StationCollectorTaskContext,
+        ) -> BoxFuture<'static, Result<(), String>> {
+            Box::pin(async { Ok(()) })
         }
     }
 
@@ -1613,6 +1725,174 @@ mod tests {
         );
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn runner_survives_multiple_ticks_and_keeps_collecting() {
+        let supervisor = TaskSupervisor::new();
+        let port = Arc::new(RepeatingRunnerPort::new());
+        let runner = StationCollectorRunnerState::start_v2(
+            supervisor.clone(),
+            Arc::clone(&port) as Arc<dyn StationCollectorRunnerPort>,
+            coordinator(1),
+            StationCollectionFeedback::default(),
+        )
+        .expect("runner starts");
+
+        // The interval fires immediately, then every 30 seconds. Give the
+        // runner two complete scheduling opportunities and let spawned work
+        // drain between clock advances.
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(30)).await;
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(30)).await;
+        tokio::task::yield_now().await;
+
+        assert!(port.due_calls.load(Ordering::SeqCst) >= 2);
+        assert!(port.collect_calls.load(Ordering::SeqCst) >= 2);
+        assert_eq!(
+            supervisor
+                .status(&TaskId::from(RUNNER_TASK_ID))
+                .expect("runner status")
+                .state,
+            TaskState::Running
+        );
+        runner
+            .stop_and_join(Duration::from_secs(1))
+            .await
+            .expect("runner stops");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn production_task_adapter_runs_repeatedly_on_tokio_and_advances_ledger() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let runtime = PersistenceRuntime::initialize_new(
+            &temp
+                .path()
+                .join("station-collector-production-path.sqlite3"),
+        )
+        .await
+        .expect("runtime");
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock);
+        let ids: Arc<dyn IdGenerator> = Arc::new(UuidV7Generator);
+        let vault: Arc<dyn CredentialVault> = Arc::new(DataKeyVault::for_test([7; 32]));
+        let stations = StationService::new(runtime.handle(), clock.clone(), ids.clone());
+        let collectors = Arc::new(CollectorService::new(
+            runtime.handle(),
+            clock.clone(),
+            ids.clone(),
+        ));
+        let credentials = Arc::new(CredentialService::new(
+            runtime.handle(),
+            vault.clone(),
+            clock.clone(),
+            ids.clone(),
+        ));
+        let settings = Arc::new(SettingsService::new(
+            runtime.handle(),
+            clock,
+            ids,
+            vault,
+            temp.path().to_string_lossy().into_owned(),
+            None,
+        ));
+        let station = stations
+            .create(CreateStationInput {
+                name: "Automatic collection production path".to_string(),
+                station_type: "sub2api".to_string(),
+                website_url: "https://automatic-collection.example.test".to_string(),
+                api_base_url: "https://automatic-collection.example.test/v1".to_string(),
+                api_key: String::new(),
+                collector_proxy_mode: "inherit".to_string(),
+                collector_proxy_url: None,
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
+                note: None,
+            })
+            .await
+            .expect("station");
+
+        let driver_calls = Arc::new(AtomicUsize::new(0));
+        let providers = Arc::new(
+            ProviderRegistry::new(
+                vec![ProviderEntry {
+                    descriptor: ProviderDescriptor {
+                        kind: ProviderKind::Sub2Api,
+                        display_name: "Sub2API fixture",
+                        station_types: &["sub2api"],
+                        capabilities: DriverCapabilities {
+                            collector: Some(CollectorCapabilityDescriptor {
+                                supported_tasks: &[CollectorTaskKind::Balance],
+                                full_tasks: &[],
+                            }),
+                            remote_key: None,
+                            authorization: None,
+                        },
+                    },
+                    collector: Some(Arc::new(SuccessfulBalanceCollector {
+                        calls: Arc::clone(&driver_calls),
+                    })),
+                    remote_key: None,
+                    authorization: None,
+                }],
+                &[ProviderKind::Sub2Api],
+            )
+            .expect("provider registry"),
+        );
+        let source_adapter = V2CollectorSourceAdapter::new(
+            Arc::clone(&collectors),
+            Arc::clone(&credentials),
+            settings,
+        );
+        let source: Arc<dyn CollectorSourcePort> = Arc::new(source_adapter.clone());
+        let authorization: Arc<dyn CollectorAuthorizationPort> = Arc::new(source_adapter);
+        let apply: Arc<dyn CollectorApplyPort> = collectors.clone();
+        let tasks = V2StationCollectorTaskAdapter::new(
+            source,
+            authorization,
+            apply,
+            Arc::clone(&collectors),
+            BlockingExecutor::new(BlockingExecutorConfig::architecture_budget()),
+            AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget()),
+            providers,
+        );
+
+        for run_id in 1..=2 {
+            let result = AssertUnwindSafe(tasks.collect_task(
+                station.id.clone(),
+                CollectorTask::Balance,
+                StationCollectorTaskContext {
+                    task_id: TaskId::from(RUNNER_TASK_ID),
+                    run_id,
+                    correlation_id: format!("production-path-{run_id}"),
+                    cancellation_token: CancellationToken::new(),
+                },
+            ))
+            .catch_unwind()
+            .await
+            .expect("production task adapter must not panic inside Tokio")
+            .expect("production task adapter completes");
+            assert_eq!(result.result.snapshot.status, "success");
+        }
+
+        assert_eq!(driver_calls.load(Ordering::SeqCst), 2);
+        let mut read = runtime.begin_read().await.expect("ledger read");
+        let operations: Vec<(i64, String)> = sqlx::query_as(
+            "SELECT intent_sequence, status FROM collector_operations
+             WHERE station_id = ?1 ORDER BY intent_sequence",
+        )
+        .bind(&station.id)
+        .fetch_all(read.connection())
+        .await
+        .expect("operation ledger");
+        assert_eq!(
+            operations,
+            vec![(1, "succeeded".to_string()), (2, "succeeded".to_string())]
+        );
+        drop(read);
+        runtime.close().await.expect("close runtime");
+    }
+
     #[test]
     fn station_collector_blocking_errors_are_public_safe_messages() {
         assert_eq!(
@@ -1639,6 +1919,8 @@ mod tests {
             &apply,
             "station-1".to_string(),
             1,
+            1,
+            1,
             apply_output(),
             cancellation,
         )
@@ -1662,6 +1944,8 @@ mod tests {
             apply_prepared_station_task_cancellable_v2(
                 running_apply.as_ref(),
                 "station-1".to_string(),
+                1,
+                1,
                 1,
                 apply_output(),
                 running_cancellation,
@@ -1703,6 +1987,37 @@ mod tests {
         started: Arc<Notify>,
     }
 
+    struct SuccessfulBalanceCollector {
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl CollectorDriver for SuccessfulBalanceCollector {
+        fn kind(&self) -> ProviderKind {
+            ProviderKind::Sub2Api
+        }
+
+        fn collect<'a>(
+            &'a self,
+            _context: &'a CollectorContext<'a>,
+            task: CollectorTaskKind,
+        ) -> BoxFuture<'a, Result<DriverOutput, crate::services::collectors::failure::DriverFailure>>
+        {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async move {
+                assert_eq!(task, CollectorTaskKind::Balance);
+                Ok(DriverOutput {
+                    facts: CollectorFacts::default(),
+                    evidence: Vec::new(),
+                    status: DriverOutputStatus::Success,
+                    diagnostics: RedactedDiagnostics {
+                        summary: None,
+                        raw_json_redacted: None,
+                    },
+                })
+            })
+        }
+    }
+
     impl CancellableApplyPort {
         fn new() -> Self {
             Self {
@@ -1740,6 +2055,24 @@ mod tests {
                 >()
                 .await
             })
+        }
+
+        fn apply_full<'a>(
+            &'a self,
+            _parent: crate::application::collectors::CollectorApplyRequest,
+            _children: Vec<crate::application::collectors::CollectorApplyRequest>,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Result<
+                            crate::application::collectors::CollectorFullApplyOutcome,
+                            ApplicationError,
+                        >,
+                    > + Send
+                    + 'a,
+            >,
+        > {
+            Box::pin(async { Err(ApplicationError::ConstraintViolation) })
         }
     }
 

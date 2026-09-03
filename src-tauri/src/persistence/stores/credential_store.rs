@@ -4,6 +4,11 @@ use std::collections::BTreeSet;
 use sqlx::{Executor, Row, Sqlite, SqliteConnection};
 
 use crate::{
+    application::collection_state::{
+        reduce_authorization, AuthEffect, AuthorizationEvidence, AuthorizationProjection,
+        AuthorizationReduction, AuthorizationRevision, AuthorizationStatus, EvidenceAuthority,
+        ReasonCode,
+    },
     models::{
         credentials::{
             CommonLoginEmail, CommonLoginOptions, CommonLoginPassword, StationCredentials,
@@ -18,6 +23,8 @@ use crate::{
         error::PersistenceError, read_session::ReadSession, write_session::WriteSession,
     },
 };
+
+const POST_AUTHORIZATION_RECOVERY_ERROR: &str = "recovered_after_restart";
 
 #[derive(Debug, Clone)]
 pub(crate) struct EncryptedSecretRow {
@@ -177,10 +184,61 @@ pub(crate) struct StationSessionPatch {
     pub(crate) now: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PostAuthorizationCollectionWork {
+    pub(crate) station_id: String,
+    pub(crate) endpoint_revision: i64,
+    pub(crate) credential_revision: i64,
+    pub(crate) operation_id: String,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct CredentialStore;
 
 impl CredentialStore {
+    /// Project a collector's authoritative authentication rejection into the
+    /// Station authorization axis in the caller's terminal transaction.
+    ///
+    /// Collection operations have their own intent fence. The caller must
+    /// fence that operation before invoking this method; allocating the
+    /// authorization intent here gives the accepted terminal evidence a
+    /// monotonic authorization watermark without allowing an older credential
+    /// revision to overwrite a newer login.
+    pub(crate) async fn record_collector_reauthorization_requirement(
+        &self,
+        write: &mut WriteSession,
+        station_id: &str,
+        credential_revision: i64,
+        operation_id: &str,
+        observed_at_ms: i64,
+    ) -> Result<bool, PersistenceError> {
+        if station_id.trim().is_empty()
+            || credential_revision < 1
+            || operation_id.trim().is_empty()
+            || observed_at_ms < 0
+        {
+            return Err(PersistenceError::ConstraintViolation);
+        }
+        let current_revision =
+            current_station_authorization_revision(write.connection(), station_id).await?;
+        if credential_revision != current_revision {
+            return Ok(false);
+        }
+        let intent_sequence =
+            allocate_station_authorization_intent(write.connection(), station_id, observed_at_ms)
+                .await?;
+        let evidence = AuthorizationEvidence {
+            operation_id: operation_id.to_string(),
+            revision: AuthorizationRevision::new(credential_revision, intent_sequence)
+                .map_err(|_| PersistenceError::ConstraintViolation)?,
+            effect: AuthEffect::RequiresReauthorization,
+            authority: EvidenceAuthority::DriverProbe,
+            reason: ReasonCode::AuthorizationRequired,
+            observed_at_ms,
+        };
+        apply_station_authorization_evidence(write.connection(), station_id, &evidence).await
+    }
+
     pub(crate) async fn list_common_login_options(
         &self,
         read: &mut ReadSession,
@@ -371,6 +429,397 @@ impl CredentialStore {
             .ok_or(PersistenceError::NotFound)
     }
 
+    pub(crate) async fn station_authorization_revision(
+        &self,
+        read: &mut ReadSession,
+        station_id: &str,
+    ) -> Result<i64, PersistenceError> {
+        let scope = format!("station_account:{station_id}");
+        sqlx::query_scalar::<_, i64>("SELECT revision FROM domain_revisions WHERE scope = ?1")
+            .bind(scope)
+            .fetch_optional(read.connection())
+            .await?
+            .ok_or_else(|| PersistenceError::RevisionUnavailable("station_authorization".into()))
+    }
+
+    /// Persist the newly captured session and its post-authorization
+    /// collection intent in the same SQLite transaction.  A process crash
+    /// after this method returns can therefore be recovered from the durable
+    /// work row instead of losing the required collection.
+    pub(crate) async fn update_station_session_if_revision_and_enqueue(
+        &self,
+        write: &mut WriteSession,
+        patch: StationSessionPatch,
+        expected_endpoint_revision: i64,
+        expected_credential_revision: i64,
+        operation_id: String,
+        now_ms: i64,
+    ) -> Result<(StationCredentials, i64), PersistenceError> {
+        let actual_revision =
+            sqlx::query_scalar::<_, i64>("SELECT endpoint_revision FROM stations WHERE id = ?1")
+                .bind(&patch.station_id)
+                .fetch_optional(write.connection())
+                .await?
+                .ok_or(PersistenceError::NotFound)?;
+        if actual_revision != expected_endpoint_revision {
+            return Err(PersistenceError::StaleRevision);
+        }
+        let actual_credential_revision =
+            current_station_authorization_revision(write.connection(), &patch.station_id).await?;
+        if actual_credential_revision != expected_credential_revision {
+            return Err(PersistenceError::StaleRevision);
+        }
+        if now_ms < 0 || operation_id.trim().is_empty() {
+            return Err(PersistenceError::ConstraintViolation);
+        }
+        let station_id = patch.station_id.clone();
+        let credentials = self.update_station_session(write, patch).await?;
+        let credential_revision =
+            sqlx::query_scalar::<_, i64>("SELECT revision FROM domain_revisions WHERE scope = ?1")
+                .bind(format!("station_account:{station_id}"))
+                .fetch_optional(write.connection())
+                .await?
+                .ok_or_else(|| {
+                    PersistenceError::RevisionUnavailable("station_authorization".into())
+                })?;
+        let intent_sequence =
+            allocate_station_authorization_intent(write.connection(), &station_id, now_ms).await?;
+        let authorization_revision =
+            AuthorizationRevision::new(credential_revision, intent_sequence)
+                .map_err(|_| PersistenceError::ConstraintViolation)?;
+        let evidence = AuthorizationEvidence {
+            operation_id: operation_id.clone(),
+            revision: authorization_revision,
+            effect: AuthEffect::ConfirmsValid,
+            authority: EvidenceAuthority::AuthenticatedResponse,
+            reason: ReasonCode::None,
+            observed_at_ms: now_ms,
+        };
+        if !apply_station_authorization_evidence(write.connection(), &station_id, &evidence).await?
+        {
+            return Err(PersistenceError::InvariantViolation(
+                "new authorization evidence unexpectedly stale".into(),
+            ));
+        }
+        // Replacing an authorization intent must close the previous durable
+        // work and its operation history before the station-scoped upsert.
+        // This keeps a worker holding the old claim from completing it after
+        // the new credentials have become authoritative.
+        sqlx::query(
+            "UPDATE collector_operations
+             SET status = 'superseded', finished_at_ms = ?1,
+                 reason_code = 'authorization_replaced', updated_at_ms = ?1
+             WHERE operation_id = (
+                 SELECT operation_id FROM post_authorization_collection_work
+                 WHERE station_id = ?2 AND state IN ('queued', 'running', 'failed')
+             ) AND status IN ('queued', 'running')",
+        )
+        .bind(now_ms)
+        .bind(&station_id)
+        .execute(write.connection())
+        .await?;
+        sqlx::query(
+            "UPDATE post_authorization_collection_work
+             SET state = 'superseded', updated_at_ms = ?1,
+                 last_error_code = 'authorization_replaced'
+             WHERE station_id = ?2 AND state IN ('queued', 'running', 'failed')",
+        )
+        .bind(now_ms)
+        .bind(&station_id)
+        .execute(write.connection())
+        .await?;
+        sqlx::query(
+            "INSERT INTO collector_operations (
+                operation_id, operation_key, station_id, endpoint_revision,
+                credential_revision, intent_sequence, plan_version, task_type,
+                trigger_kind, status, started_at_ms, finished_at_ms,
+                reason_code, reason_detail, created_at_ms, updated_at_ms
+             ) VALUES (?1, ?1, ?2, ?3, ?4, ?5, 'collector-plan-v1',
+                       'post_authorization', 'post_authorization', 'queued',
+                       NULL, NULL, NULL, NULL, ?6, ?6)",
+        )
+        .bind(&operation_id)
+        .bind(&station_id)
+        .bind(expected_endpoint_revision)
+        .bind(credential_revision)
+        .bind(intent_sequence)
+        .bind(now_ms)
+        .execute(write.connection())
+        .await?;
+        sqlx::query(
+            r#"
+            INSERT INTO post_authorization_collection_work (
+                station_id, endpoint_revision, credential_revision, state,
+                attempt_count, next_attempt_at_ms, last_error_code,
+                operation_id, created_at_ms, updated_at_ms
+            ) VALUES (?1, ?2, ?3, 'queued', 0, ?4, NULL, ?5, ?4, ?4)
+            ON CONFLICT(station_id) DO UPDATE SET
+                endpoint_revision = excluded.endpoint_revision,
+                credential_revision = excluded.credential_revision,
+                state = 'queued',
+                attempt_count = 0,
+                next_attempt_at_ms = excluded.next_attempt_at_ms,
+                last_error_code = NULL,
+                operation_id = excluded.operation_id,
+                updated_at_ms = excluded.updated_at_ms
+            "#,
+        )
+        .bind(&station_id)
+        .bind(expected_endpoint_revision)
+        .bind(credential_revision)
+        .bind(now_ms)
+        .bind(operation_id)
+        .execute(write.connection())
+        .await?;
+        Ok((credentials, credential_revision))
+    }
+
+    pub(crate) async fn due_post_authorization_work(
+        &self,
+        read: &mut ReadSession,
+        now_ms: i64,
+    ) -> Result<Vec<String>, PersistenceError> {
+        if now_ms < 0 {
+            return Err(PersistenceError::ConstraintViolation);
+        }
+        sqlx::query_scalar(
+            "SELECT station_id FROM post_authorization_collection_work
+             WHERE state IN ('queued', 'failed')
+               AND attempt_count < max_attempts
+               AND next_attempt_at_ms <= ?1
+             ORDER BY next_attempt_at_ms ASC, station_id ASC",
+        )
+        .bind(now_ms)
+        .fetch_all(read.connection())
+        .await
+        .map_err(Into::into)
+    }
+
+    /// Reconcile durable post-authorization work before startup workers are
+    /// spawned. A running row may belong to a process that crashed, while a
+    /// changed endpoint/credential revision makes the old intent unsafe to
+    /// retry. Stale work is retained as terminal history; crashed claims are
+    /// returned to the queue.
+    /// Both operations happen in one write transaction so recovery cannot
+    /// expose a stale claim to a new worker.
+    pub(crate) async fn recover_post_authorization_work(
+        &self,
+        write: &mut WriteSession,
+        now_ms: i64,
+    ) -> Result<(), PersistenceError> {
+        if now_ms < 0 {
+            return Err(PersistenceError::ConstraintViolation);
+        }
+        sqlx::query(
+            "UPDATE collector_operations
+             SET status = 'superseded', finished_at_ms = ?1,
+                 reason_code = 'stale_revision', updated_at_ms = ?1
+             WHERE operation_id IN (
+                 SELECT operation_id FROM post_authorization_collection_work
+                 WHERE state NOT IN ('succeeded', 'superseded', 'exhausted')
+                   AND (
+                        endpoint_revision <> COALESCE((
+                            SELECT endpoint_revision FROM stations
+                            WHERE stations.id = post_authorization_collection_work.station_id
+                        ), -1)
+                        OR credential_revision <> COALESCE((
+                            SELECT revision FROM domain_revisions
+                            WHERE scope = 'station_account:' || post_authorization_collection_work.station_id
+                        ), -1)
+                   )
+             ) AND status IN ('queued', 'running')",
+        )
+        .bind(now_ms)
+        .execute(write.connection())
+        .await?;
+        sqlx::query(
+            "UPDATE post_authorization_collection_work
+             SET state = 'superseded', last_error_code = 'stale_revision',
+                 updated_at_ms = ?1
+             WHERE state NOT IN ('succeeded', 'superseded', 'exhausted')
+               AND (
+                    endpoint_revision <> COALESCE((
+                        SELECT endpoint_revision FROM stations
+                        WHERE stations.id = post_authorization_collection_work.station_id
+                    ), -1)
+                    OR credential_revision <> COALESCE((
+                        SELECT revision FROM domain_revisions
+                        WHERE scope = 'station_account:' || post_authorization_collection_work.station_id
+                    ), -1)
+               )",
+        )
+        .bind(now_ms)
+        .execute(write.connection())
+        .await?;
+
+        sqlx::query(
+            "UPDATE post_authorization_collection_work
+             SET state = 'queued', next_attempt_at_ms = ?1,
+                 last_error_code = ?2, updated_at_ms = ?1
+             WHERE state = 'running'",
+        )
+        .bind(now_ms)
+        .bind(POST_AUTHORIZATION_RECOVERY_ERROR)
+        .execute(write.connection())
+        .await?;
+        Ok(())
+    }
+
+    pub(crate) async fn claim_post_authorization_work(
+        &self,
+        write: &mut WriteSession,
+        station_id: &str,
+        now_ms: i64,
+    ) -> Result<Option<PostAuthorizationCollectionWork>, PersistenceError> {
+        if station_id.trim().is_empty() || now_ms < 0 {
+            return Err(PersistenceError::ConstraintViolation);
+        }
+        let row = sqlx::query(
+            "SELECT endpoint_revision, credential_revision, operation_id
+             FROM post_authorization_collection_work
+             WHERE station_id = ?1
+               AND state IN ('queued', 'failed')
+               AND attempt_count < max_attempts
+               AND next_attempt_at_ms <= ?2",
+        )
+        .bind(station_id)
+        .bind(now_ms)
+        .fetch_optional(write.connection())
+        .await?;
+        let Some(row) = row else { return Ok(None) };
+        let updated = sqlx::query(
+            "UPDATE post_authorization_collection_work
+             SET state = 'running', updated_at_ms = ?1
+             WHERE station_id = ?2
+               AND state IN ('queued', 'failed')
+               AND attempt_count < max_attempts
+               AND next_attempt_at_ms <= ?1",
+        )
+        .bind(now_ms)
+        .bind(station_id)
+        .execute(write.connection())
+        .await?
+        .rows_affected();
+        if updated != 1 {
+            return Ok(None);
+        }
+        Ok(Some(PostAuthorizationCollectionWork {
+            station_id: station_id.to_string(),
+            endpoint_revision: row.try_get("endpoint_revision")?,
+            credential_revision: row.try_get("credential_revision")?,
+            operation_id: row.try_get("operation_id")?,
+        }))
+    }
+
+    pub(crate) async fn finish_post_authorization_work(
+        &self,
+        write: &mut WriteSession,
+        work: &PostAuthorizationCollectionWork,
+        succeeded: bool,
+        error_code: Option<&str>,
+        now_ms: i64,
+    ) -> Result<(), PersistenceError> {
+        if work.station_id.trim().is_empty()
+            || work.operation_id.trim().is_empty()
+            || work.endpoint_revision < 1
+            || work.credential_revision < 1
+            || now_ms < 0
+        {
+            return Err(PersistenceError::ConstraintViolation);
+        }
+        if succeeded {
+            let updated = sqlx::query(
+                "UPDATE post_authorization_collection_work
+                 SET state = 'succeeded', updated_at_ms = ?1,
+                     last_error_code = NULL
+                 WHERE station_id = ?2 AND state = 'running'
+                   AND endpoint_revision = ?3
+                   AND credential_revision = ?4
+                   AND operation_id = ?5
+                   AND endpoint_revision = (
+                       SELECT endpoint_revision FROM stations WHERE id = ?2
+                   )
+                   AND credential_revision = (
+                       SELECT revision FROM domain_revisions
+                       WHERE scope = 'station_account:' || ?2
+                   )",
+            )
+            .bind(now_ms)
+            .bind(&work.station_id)
+            .bind(work.endpoint_revision)
+            .bind(work.credential_revision)
+            .bind(&work.operation_id)
+            .execute(write.connection())
+            .await?
+            .rows_affected();
+            if updated == 1 {
+                sqlx::query(
+                    "UPDATE collector_operations
+                     SET status = 'succeeded', finished_at_ms = ?1,
+                         reason_code = NULL, updated_at_ms = ?1
+                     WHERE operation_id = ?2 AND status IN ('queued', 'running')",
+                )
+                .bind(now_ms)
+                .bind(&work.operation_id)
+                .execute(write.connection())
+                .await?;
+            }
+        } else {
+            let updated = sqlx::query(
+                "UPDATE post_authorization_collection_work
+                 SET state = CASE WHEN attempt_count + 1 >= max_attempts
+                                  THEN 'exhausted' ELSE 'failed' END,
+                     attempt_count = attempt_count + 1,
+                     next_attempt_at_ms = ?1 + MIN(3600000, 1000 * (1 << MIN(attempt_count, 10))),
+                     last_error_code = ?2, updated_at_ms = ?1
+                 WHERE station_id = ?3 AND state = 'running'
+                   AND endpoint_revision = ?4
+                   AND credential_revision = ?5
+                   AND operation_id = ?6
+                   AND endpoint_revision = (
+                       SELECT endpoint_revision FROM stations WHERE id = ?3
+                   )
+                   AND credential_revision = (
+                       SELECT revision FROM domain_revisions
+                       WHERE scope = 'station_account:' || ?3
+                   )",
+            )
+            .bind(now_ms)
+            .bind(error_code.map(str::trim).filter(|value| !value.is_empty()))
+            .bind(&work.station_id)
+            .bind(work.endpoint_revision)
+            .bind(work.credential_revision)
+            .bind(&work.operation_id)
+            .execute(write.connection())
+            .await?
+            .rows_affected();
+            if updated == 1 {
+                sqlx::query(
+                    "UPDATE collector_operations
+                     SET status = CASE WHEN EXISTS (
+                             SELECT 1 FROM post_authorization_collection_work
+                             WHERE operation_id = ?2 AND state = 'exhausted'
+                         ) THEN 'failed' ELSE status END,
+                         finished_at_ms = CASE WHEN EXISTS (
+                             SELECT 1 FROM post_authorization_collection_work
+                             WHERE operation_id = ?2 AND state = 'exhausted'
+                         ) THEN ?1 ELSE finished_at_ms END,
+                         reason_code = CASE WHEN EXISTS (
+                             SELECT 1 FROM post_authorization_collection_work
+                             WHERE operation_id = ?2 AND state = 'exhausted'
+                         ) THEN 'retry_exhausted' ELSE reason_code END,
+                         updated_at_ms = ?1
+                     WHERE operation_id = ?2 AND status IN ('queued', 'running')",
+                )
+                .bind(now_ms)
+                .bind(&work.operation_id)
+                .execute(write.connection())
+                .await?;
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) async fn station_credentials(
         &self,
         read: &mut ReadSession,
@@ -458,6 +907,8 @@ impl CredentialStore {
         patch: StationCredentialPatch,
     ) -> Result<StationCredentials, PersistenceError> {
         ensure_station_exists(write.connection(), &patch.station_id).await?;
+        let authorization_revision =
+            current_station_authorization_revision(write.connection(), &patch.station_id).await?;
         let existing_secret_id = station_credential_secret_id(
             write.connection(),
             &patch.station_id,
@@ -500,7 +951,16 @@ impl CredentialStore {
         if existing_secret_id != password_secret_id {
             delete_unreferenced_secret(write.connection(), existing_secret_id.as_deref()).await?;
         }
-        station_credentials(write.connection(), &patch.station_id).await
+        let credentials = station_credentials(write.connection(), &patch.station_id).await?;
+        reconcile_authorization_after_credential_mutation(
+            write.connection(),
+            &patch.station_id,
+            authorization_revision,
+            credentials.session_status == "valid",
+            &patch.now,
+        )
+        .await?;
+        Ok(credentials)
     }
 
     pub(crate) async fn update_station_session(
@@ -509,6 +969,8 @@ impl CredentialStore {
         patch: StationSessionPatch,
     ) -> Result<StationCredentials, PersistenceError> {
         ensure_station_exists(write.connection(), &patch.station_id).await?;
+        let authorization_revision =
+            current_station_authorization_revision(write.connection(), &patch.station_id).await?;
         let existing = station_session_secret_ids(write.connection(), &patch.station_id).await?;
         let access_token_secret_id = upsert_or_existing_secret(
             write.connection(),
@@ -587,7 +1049,16 @@ impl CredentialStore {
         if existing.2 != cookie_secret_id {
             delete_unreferenced_secret(write.connection(), existing.2.as_deref()).await?;
         }
-        station_credentials(write.connection(), &patch.station_id).await
+        let credentials = station_credentials(write.connection(), &patch.station_id).await?;
+        reconcile_authorization_after_credential_mutation(
+            write.connection(),
+            &patch.station_id,
+            authorization_revision,
+            credentials.session_status == "valid",
+            &patch.now,
+        )
+        .await?;
+        Ok(credentials)
     }
 
     pub(crate) async fn update_station_session_if_revision(
@@ -614,6 +1085,18 @@ impl CredentialStore {
         station_id: &str,
     ) -> Result<StationCredentials, PersistenceError> {
         ensure_station_exists(write.connection(), station_id).await?;
+        let scope = format!("station_account:{station_id}");
+        let current_revision =
+            sqlx::query_scalar::<_, i64>("SELECT revision FROM domain_revisions WHERE scope = ?1")
+                .bind(&scope)
+                .fetch_optional(write.connection())
+                .await?
+                .ok_or_else(|| PersistenceError::RevisionUnavailable(scope.clone()))?;
+        if current_revision < 1 {
+            return Err(PersistenceError::InvariantViolation(
+                "station authorization revision is invalid".into(),
+            ));
+        }
         let secret_ids = station_all_credential_secret_ids(write.connection(), station_id).await?;
         sqlx::query("DELETE FROM station_credentials WHERE station_id = ?1")
             .bind(station_id)
@@ -622,6 +1105,17 @@ impl CredentialStore {
         for secret_id in secret_ids.iter().flatten() {
             delete_unreferenced_secret(write.connection(), Some(secret_id)).await?;
         }
+        let now = i64::try_from(crate::services::time::now_millis_for_services())
+            .unwrap_or(i64::MAX)
+            .to_string();
+        reconcile_authorization_after_credential_mutation(
+            write.connection(),
+            station_id,
+            current_revision,
+            false,
+            &now,
+        )
+        .await?;
         station_credentials(write.connection(), station_id).await
     }
 
@@ -705,7 +1199,22 @@ impl CredentialStore {
         &self,
         read: &mut ReadSession,
     ) -> Result<Vec<KeyPoolItem>, PersistenceError> {
-        list_key_pool_items(read.connection()).await
+        list_key_pool_items_filtered(read.connection(), None).await
+    }
+
+    /// Load pool rows for a bounded station set.  The station ids are passed
+    /// as a JSON array and expanded by SQLite's JSON table-valued function so
+    /// callers avoid an unbounded all-keys scan when rendering a paged asset
+    /// workspace.
+    pub(crate) async fn list_key_pool_items_for_stations(
+        &self,
+        read: &mut ReadSession,
+        station_ids_json: &str,
+    ) -> Result<Vec<KeyPoolItem>, PersistenceError> {
+        if station_ids_json.trim().is_empty() {
+            return Err(PersistenceError::ConstraintViolation);
+        }
+        list_key_pool_items_filtered(read.connection(), Some(station_ids_json)).await
     }
 
     pub(crate) async fn insert_station_key(
@@ -1000,7 +1509,7 @@ impl CredentialStore {
                 return Err(PersistenceError::NotFound);
             }
         }
-        list_key_pool_items(write.connection()).await
+        list_key_pool_items_filtered(write.connection(), None).await
     }
 
     pub(crate) async fn update_station_key_group_binding(
@@ -1660,6 +2169,268 @@ where
         .unwrap_or_else(|| default_station_credentials(station_id)))
 }
 
+async fn current_station_authorization_revision(
+    connection: &mut SqliteConnection,
+    station_id: &str,
+) -> Result<i64, PersistenceError> {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT revision FROM domain_revisions WHERE scope = 'station_account:' || ?1",
+    )
+    .bind(station_id)
+    .fetch_optional(&mut *connection)
+    .await?
+    .ok_or_else(|| PersistenceError::RevisionUnavailable(format!("station_account:{station_id}")))
+}
+
+/// Keep the authorization projection aligned with every credential mutation.
+/// SQLite's historical UPDATE trigger advances the revision for existing rows,
+/// while INSERT and DELETE do not; the compare-and-swap below fills that gap
+/// and makes the fence explicit at the application boundary.
+async fn reconcile_authorization_after_credential_mutation(
+    connection: &mut SqliteConnection,
+    station_id: &str,
+    revision_before: i64,
+    session_is_valid: bool,
+    now: &str,
+) -> Result<(), PersistenceError> {
+    let now_ms = now.parse::<i64>().map_err(|_| {
+        PersistenceError::InvariantViolation("credential timestamp is not numeric".into())
+    })?;
+    if now_ms < 0 || revision_before < 1 {
+        return Err(PersistenceError::ConstraintViolation);
+    }
+    let mut revision = current_station_authorization_revision(connection, station_id).await?;
+    if revision == revision_before {
+        let next = revision.checked_add(1).ok_or_else(|| {
+            PersistenceError::InvariantViolation("station authorization revision overflow".into())
+        })?;
+        let updated = sqlx::query(
+            "UPDATE domain_revisions
+             SET revision = ?1, updated_at_ms = ?2, provenance = 'transactional_write'
+             WHERE scope = 'station_account:' || ?3 AND revision = ?4",
+        )
+        .bind(next)
+        .bind(now_ms)
+        .bind(station_id)
+        .bind(revision)
+        .execute(&mut *connection)
+        .await?
+        .rows_affected();
+        if updated != 1 {
+            return Err(PersistenceError::RevisionConflict(format!(
+                "station_account:{station_id}"
+            )));
+        }
+        revision = next;
+    }
+
+    let effect = if session_is_valid {
+        AuthEffect::StartsVerification
+    } else {
+        AuthEffect::RequiresReauthorization
+    };
+    let intent_sequence =
+        allocate_station_authorization_intent(connection, station_id, now_ms).await?;
+    let operation_id = format!("credential-mutation:{station_id}:{revision}:{intent_sequence}");
+    let evidence = AuthorizationEvidence {
+        operation_id: operation_id.clone(),
+        revision: AuthorizationRevision::new(revision, intent_sequence)
+            .map_err(|_| PersistenceError::ConstraintViolation)?,
+        effect,
+        authority: EvidenceAuthority::CredentialStore,
+        reason: ReasonCode::None,
+        observed_at_ms: now_ms,
+    };
+    if !apply_station_authorization_evidence(connection, station_id, &evidence).await? {
+        return Err(PersistenceError::InvariantViolation(
+            "credential authorization evidence unexpectedly stale".into(),
+        ));
+    }
+
+    // Any outstanding post-auth collection was created for an older credential
+    // revision. Preserve it as terminal history and prevent stale completion.
+    sqlx::query(
+        "UPDATE collector_operations
+         SET status = 'superseded', finished_at_ms = ?1,
+             reason_code = 'credential_revision_changed', updated_at_ms = ?1
+         WHERE operation_id IN (
+             SELECT operation_id FROM post_authorization_collection_work
+             WHERE station_id = ?2 AND state IN ('queued', 'running', 'failed')
+         ) AND status IN ('queued', 'running')",
+    )
+    .bind(now_ms)
+    .bind(station_id)
+    .execute(&mut *connection)
+    .await?;
+    sqlx::query(
+        "UPDATE post_authorization_collection_work
+         SET state = 'superseded', last_error_code = 'credential_revision_changed',
+             updated_at_ms = ?1
+         WHERE station_id = ?2 AND state IN ('queued', 'running', 'failed')",
+    )
+    .bind(now_ms)
+    .bind(station_id)
+    .execute(&mut *connection)
+    .await?;
+    Ok(())
+}
+
+/// Allocate the durable Station-scoped authorization intent before applying
+/// typed evidence.  The scope is independent from the credential revision so
+/// two attempts against the same credential still have a strict order across
+/// transactions and process restarts.
+async fn allocate_station_authorization_intent(
+    connection: &mut SqliteConnection,
+    station_id: &str,
+    updated_at_ms: i64,
+) -> Result<i64, PersistenceError> {
+    if station_id.trim().is_empty() || updated_at_ms < 0 {
+        return Err(PersistenceError::ConstraintViolation);
+    }
+    ensure_station_exists(connection, station_id).await?;
+    let scope = format!("station_authorization_intent:{station_id}");
+    sqlx::query(
+        "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance)
+         VALUES (?1, 1, ?2, 'transactional_write')
+         ON CONFLICT(scope) DO UPDATE SET
+           revision = domain_revisions.revision + 1,
+           updated_at_ms = excluded.updated_at_ms,
+           provenance = 'transactional_write'",
+    )
+    .bind(&scope)
+    .bind(updated_at_ms)
+    .execute(&mut *connection)
+    .await?;
+    sqlx::query_scalar::<_, i64>("SELECT revision FROM domain_revisions WHERE scope = ?1")
+        .bind(scope)
+        .fetch_one(connection)
+        .await
+        .map_err(Into::into)
+}
+
+/// Apply authorization evidence only when both durable axes are current.
+///
+/// The allocator watermark rejects an older attempt as soon as a newer intent
+/// exists, even if that newer attempt has not completed yet.  Loading the
+/// stored projection and passing it to the typed reducer additionally keeps
+/// authority precedence and equal-watermark conflict rules effective at the
+/// persistence boundary instead of merely in reducer unit tests.
+async fn apply_station_authorization_evidence(
+    connection: &mut SqliteConnection,
+    station_id: &str,
+    evidence: &AuthorizationEvidence,
+) -> Result<bool, PersistenceError> {
+    if station_id.trim().is_empty() || evidence.revision.intent_sequence < 1 {
+        return Err(PersistenceError::ConstraintViolation);
+    }
+    let credential_revision =
+        current_station_authorization_revision(connection, station_id).await?;
+    let intent_scope = format!("station_authorization_intent:{station_id}");
+    let intent_sequence =
+        sqlx::query_scalar::<_, i64>("SELECT revision FROM domain_revisions WHERE scope = ?1")
+            .bind(&intent_scope)
+            .fetch_optional(&mut *connection)
+            .await?
+            .ok_or_else(|| PersistenceError::RevisionUnavailable(intent_scope.clone()))?;
+    if evidence.revision.credential_revision != credential_revision
+        || evidence.revision.intent_sequence != intent_sequence
+    {
+        return Ok(false);
+    }
+
+    let previous = load_station_authorization_projection(connection, station_id).await?;
+    let projection = match reduce_authorization(previous.as_ref(), evidence).map_err(|error| {
+        PersistenceError::InvariantViolation(format!("invalid authorization evidence: {error}"))
+    })? {
+        AuthorizationReduction::Applied(projection) => projection,
+        AuthorizationReduction::Stale { .. } => return Ok(false),
+    };
+    sqlx::query(
+        r#"
+        INSERT INTO station_authorization_projection (
+            station_id, status, credential_revision, intent_sequence,
+            authority, reason_code, operation_id, source_operation_id,
+            observed_at_ms, updated_at_ms
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)
+        ON CONFLICT(station_id) DO UPDATE SET
+            status = excluded.status,
+            credential_revision = excluded.credential_revision,
+            intent_sequence = excluded.intent_sequence,
+            authority = excluded.authority,
+            reason_code = excluded.reason_code,
+            operation_id = excluded.operation_id,
+            source_operation_id = excluded.source_operation_id,
+            observed_at_ms = excluded.observed_at_ms,
+            updated_at_ms = excluded.updated_at_ms
+        "#,
+    )
+    .bind(station_id)
+    .bind(enum_to_snake(projection.status))
+    .bind(projection.revision.credential_revision)
+    .bind(projection.revision.intent_sequence)
+    .bind(enum_to_snake(projection.authority))
+    .bind((projection.reason != ReasonCode::None).then(|| enum_to_snake(projection.reason)))
+    .bind(&projection.operation_id)
+    .bind(&projection.source_operation_id)
+    .bind(projection.observed_at_ms)
+    .execute(connection)
+    .await?;
+    Ok(true)
+}
+
+async fn load_station_authorization_projection(
+    connection: &mut SqliteConnection,
+    station_id: &str,
+) -> Result<Option<AuthorizationProjection>, PersistenceError> {
+    let row = sqlx::query(
+        "SELECT status, credential_revision, intent_sequence, authority,
+                reason_code, operation_id, source_operation_id, observed_at_ms
+         FROM station_authorization_projection WHERE station_id = ?1",
+    )
+    .bind(station_id)
+    .fetch_optional(connection)
+    .await?;
+    row.map(|row| {
+        let credential_revision = row.try_get::<i64, _>("credential_revision")?;
+        let intent_sequence = row.try_get::<i64, _>("intent_sequence")?;
+        let status = enum_from_snake::<AuthorizationStatus>(
+            &row.try_get::<String, _>("status")?,
+            "authorization status",
+        )?;
+        let authority = enum_from_snake::<EvidenceAuthority>(
+            &row.try_get::<String, _>("authority")?,
+            "authorization authority",
+        )?;
+        let reason = match row.try_get::<Option<String>, _>("reason_code")? {
+            Some(reason) => enum_from_snake::<ReasonCode>(&reason, "authorization reason")?,
+            None => ReasonCode::None,
+        };
+        let operation_id = row.try_get::<String, _>("operation_id")?;
+        let source_operation_id = row.try_get::<String, _>("source_operation_id")?;
+        if operation_id.trim().is_empty() || source_operation_id.trim().is_empty() {
+            return Err(PersistenceError::InvariantViolation(
+                "stored authorization operation id is empty".into(),
+            ));
+        }
+        Ok(AuthorizationProjection {
+            status,
+            revision: AuthorizationRevision::new(credential_revision, intent_sequence).map_err(
+                |_| {
+                    PersistenceError::InvariantViolation(
+                        "stored authorization revision is invalid".into(),
+                    )
+                },
+            )?,
+            authority,
+            reason,
+            operation_id,
+            source_operation_id,
+            observed_at_ms: row.try_get("observed_at_ms")?,
+        })
+    })
+    .transpose()
+}
+
 fn row_to_station_credentials(row: sqlx::sqlite::SqliteRow) -> StationCredentials {
     let login_password: Option<String> = row.get("login_password");
     StationCredentials {
@@ -1947,7 +2718,10 @@ where
     rows.into_iter().map(row_to_station_key).collect()
 }
 
-async fn list_key_pool_items<'e, E>(executor: E) -> Result<Vec<KeyPoolItem>, PersistenceError>
+async fn list_key_pool_items_filtered<'e, E>(
+    executor: E,
+    station_ids_json: Option<&str>,
+) -> Result<Vec<KeyPoolItem>, PersistenceError>
 where
     E: Executor<'e, Database = Sqlite>,
 {
@@ -1992,10 +2766,12 @@ where
         LEFT JOIN endpoint_health_snapshot eh
                ON eh.station_id = s.id
               AND eh.endpoint_revision = s.endpoint_revision
+        WHERE (?1 IS NULL OR k.station_id IN (SELECT value FROM json_each(?1)))
         ORDER BY COALESCE(k.routing_order, k.priority) ASC,
                  k.priority ASC, k.created_at ASC, k.id ASC
         "#,
     )
+    .bind(station_ids_json)
     .fetch_all(executor)
     .await?;
     rows.into_iter().map(row_to_key_pool_item).collect()
@@ -2432,6 +3208,21 @@ fn normalize_required_string(value: String, fallback: &str) -> String {
     }
 }
 
+fn enum_to_snake<T: Serialize>(value: T) -> String {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|value| value.as_str().map(ToOwned::to_owned))
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+fn enum_from_snake<T>(value: &str, field: &str) -> Result<T, PersistenceError>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    serde_json::from_value(serde_json::Value::String(value.to_string()))
+        .map_err(|_| PersistenceError::InvariantViolation(format!("stored {field} is invalid")))
+}
+
 fn serialize_string_list(values: &[String]) -> Result<String, PersistenceError> {
     let normalized = values
         .iter()
@@ -2648,5 +3439,642 @@ mod tests {
         .await
         .expect("load recreated lifecycle revision");
         assert_eq!(revision, 2);
+    }
+
+    async fn seed_post_authorization_station(
+        handle: &crate::persistence::runtime::PersistenceHandle,
+        station_id: &str,
+        endpoint_revision: i64,
+    ) {
+        let mut write = handle.begin_write().await.expect("begin station seed");
+        sqlx::query(
+            "INSERT INTO stations (
+                 id, name, station_type, website_url, api_base_url,
+                 endpoint_revision, enabled, created_at, updated_at
+             ) VALUES (?1, ?2, 'openai-compatible', ?3, ?4, ?5, 1, '1', '1')",
+        )
+        .bind(station_id)
+        .bind(format!("Post-auth {station_id}"))
+        .bind(format!("https://{station_id}.example.test"))
+        .bind(format!("https://{station_id}.example.test/v1"))
+        .bind(endpoint_revision)
+        .execute(write.connection())
+        .await
+        .expect("insert station");
+        sqlx::query(
+            "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance)
+             VALUES (?1, 1, 0, 'baseline_snapshot')",
+        )
+        .bind(format!("station_account:{station_id}"))
+        .execute(write.connection())
+        .await
+        .expect("seed station account revision");
+        write.commit().await.expect("commit station seed");
+    }
+
+    fn post_authorization_session_patch(
+        station_id: &str,
+        now: &str,
+        secret_id: &str,
+    ) -> StationSessionPatch {
+        StationSessionPatch {
+            station_id: station_id.to_string(),
+            access_token_secret: Some(EncryptedSecretRow {
+                id: secret_id.to_string(),
+                scope: "station_account".to_string(),
+                owner_id: station_id.to_string(),
+                kind: "access_token".to_string(),
+                masked_value: "sk-***".to_string(),
+                ciphertext: vec![1, 2, 3],
+                nonce: vec![4, 5, 6],
+                key_id: "test-key".to_string(),
+                encryption_version: 1,
+                value_hash: "test-hash".to_string(),
+                now: now.to_string(),
+            }),
+            refresh_token_secret: None,
+            cookie_secret: None,
+            newapi_user_id: None,
+            token_expires_at: None,
+            session_expires_at: None,
+            session_source: "webview".to_string(),
+            session_user_agent: Some("post-auth-test".to_string()),
+            now: now.to_string(),
+        }
+    }
+
+    async fn enqueue_post_authorization_work(
+        handle: &crate::persistence::runtime::PersistenceHandle,
+        station_id: &str,
+        endpoint_revision: i64,
+        expected_credential_revision: i64,
+        operation_id: &str,
+        now_ms: i64,
+        secret_id: &str,
+    ) {
+        let store = CredentialStore;
+        let mut write = handle.begin_write().await.expect("begin auth write");
+        store
+            .update_station_session_if_revision_and_enqueue(
+                &mut write,
+                post_authorization_session_patch(station_id, &now_ms.to_string(), secret_id),
+                endpoint_revision,
+                expected_credential_revision,
+                operation_id.to_string(),
+                now_ms,
+            )
+            .await
+            .expect("persist session and intent");
+        write.commit().await.expect("commit auth write");
+    }
+
+    #[tokio::test]
+    async fn older_authorization_intent_cannot_overwrite_new_verdict_for_same_credential() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let runtime = PersistenceRuntime::initialize_new(
+            &root.path().join("authorization-intent-fence.sqlite3"),
+        )
+        .await
+        .expect("initialize runtime");
+        let handle = runtime.handle();
+        let station_id = "authorization-intent-fence";
+        seed_post_authorization_station(&handle, station_id, 1).await;
+
+        let older_intent = {
+            let mut write = handle.begin_write().await.expect("begin older intent");
+            let intent = allocate_station_authorization_intent(write.connection(), station_id, 100)
+                .await
+                .expect("allocate older intent");
+            write.commit().await.expect("commit older intent");
+            intent
+        };
+        let newer_intent = {
+            let mut write = handle.begin_write().await.expect("begin newer intent");
+            let intent = allocate_station_authorization_intent(write.connection(), station_id, 101)
+                .await
+                .expect("allocate newer intent");
+            let applied = apply_station_authorization_evidence(
+                write.connection(),
+                station_id,
+                &AuthorizationEvidence {
+                    operation_id: "newer-valid".to_string(),
+                    revision: AuthorizationRevision::new(1, intent).expect("newer revision"),
+                    effect: AuthEffect::ConfirmsValid,
+                    authority: EvidenceAuthority::AuthenticatedResponse,
+                    reason: ReasonCode::None,
+                    observed_at_ms: 101,
+                },
+            )
+            .await
+            .expect("apply newer verdict");
+            assert!(applied);
+            write.commit().await.expect("commit newer verdict");
+            intent
+        };
+        assert!(newer_intent > older_intent);
+
+        let mut write = handle.begin_write().await.expect("begin stale verdict");
+        let applied = apply_station_authorization_evidence(
+            write.connection(),
+            station_id,
+            &AuthorizationEvidence {
+                operation_id: "older-rejection".to_string(),
+                revision: AuthorizationRevision::new(1, older_intent).expect("older revision"),
+                effect: AuthEffect::RequiresReauthorization,
+                authority: EvidenceAuthority::DriverProbe,
+                reason: ReasonCode::AuthorizationRequired,
+                observed_at_ms: 200,
+            },
+        )
+        .await
+        .expect("reject stale verdict without failing transaction");
+        assert!(!applied, "older intent must be classified as stale");
+        write.commit().await.expect("commit stale no-op");
+
+        let mut read = handle.begin_read().await.expect("begin projection read");
+        let (status, intent_sequence, operation_id, durable_intent): (String, i64, String, i64) =
+            sqlx::query_as(
+                "SELECT projection.status, projection.intent_sequence,
+                    projection.operation_id, revision.revision
+             FROM station_authorization_projection projection
+             JOIN domain_revisions revision
+               ON revision.scope = 'station_authorization_intent:' || projection.station_id
+             WHERE projection.station_id = ?1",
+            )
+            .bind(station_id)
+            .fetch_one(read.connection())
+            .await
+            .expect("load fenced projection");
+        assert_eq!(status, "valid");
+        assert_eq!(intent_sequence, newer_intent);
+        assert_eq!(durable_intent, newer_intent);
+        assert_eq!(operation_id, "newer-valid");
+        drop(read);
+        runtime.close().await.expect("close runtime");
+    }
+
+    #[tokio::test]
+    async fn post_authorization_session_and_work_commit_as_one_transaction() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let runtime = PersistenceRuntime::initialize_new(&root.path().join("post-auth.sqlite3"))
+            .await
+            .expect("initialize runtime");
+        let handle = runtime.handle();
+        let station_id = "post-auth-atomic";
+        seed_post_authorization_station(&handle, station_id, 1).await;
+
+        let mut write = handle.begin_write().await.expect("begin auth transaction");
+        CredentialStore
+            .update_station_session_if_revision_and_enqueue(
+                &mut write,
+                post_authorization_session_patch(station_id, "100", "post-auth-secret"),
+                1,
+                1,
+                "post-auth-operation".to_string(),
+                100,
+            )
+            .await
+            .expect("stage session and work");
+
+        // A separate read transaction cannot observe either side of the
+        // operation until the writer commits.
+        let mut read = handle.begin_read().await.expect("begin pre-commit read");
+        let credential_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM station_credentials WHERE station_id = ?1")
+                .bind(station_id)
+                .fetch_one(read.connection())
+                .await
+                .expect("count pre-commit credentials");
+        let work_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM post_authorization_collection_work WHERE station_id = ?1",
+        )
+        .bind(station_id)
+        .fetch_one(read.connection())
+        .await
+        .expect("count pre-commit work");
+        assert_eq!(credential_count, 0);
+        assert_eq!(work_count, 0);
+        drop(read);
+        write.commit().await.expect("commit auth transaction");
+
+        let mut read = handle.begin_read().await.expect("begin post-commit read");
+        let (
+            credential_count,
+            work_state,
+            authorization_status,
+            authorization_intent,
+            durable_intent,
+            operation_status,
+        ): (i64, String, String, i64, i64, String) = sqlx::query_as(
+                "SELECT
+                 (SELECT COUNT(*) FROM station_credentials WHERE station_id = ?1),
+                 (SELECT state FROM post_authorization_collection_work WHERE station_id = ?1),
+                 (SELECT status FROM station_authorization_projection WHERE station_id = ?1),
+                 (SELECT intent_sequence FROM station_authorization_projection WHERE station_id = ?1),
+                 (SELECT revision FROM domain_revisions
+                  WHERE scope = 'station_authorization_intent:' || ?1),
+                 (SELECT status FROM collector_operations
+                  WHERE operation_id = 'post-auth-operation')",
+            )
+            .bind(station_id)
+            .fetch_one(read.connection())
+            .await
+            .expect("load post-commit projections");
+        assert_eq!(credential_count, 1);
+        assert_eq!(work_state, "queued");
+        assert_eq!(authorization_status, "valid");
+        assert!(authorization_intent > 0);
+        assert_eq!(authorization_intent, durable_intent);
+        assert_eq!(operation_status, "queued");
+        drop(read);
+        runtime.close().await.expect("close runtime");
+    }
+
+    #[tokio::test]
+    async fn post_authorization_claim_is_idempotent_and_completion_is_fenced() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let runtime =
+            PersistenceRuntime::initialize_new(&root.path().join("post-auth-claim.sqlite3"))
+                .await
+                .expect("initialize runtime");
+        let handle = runtime.handle();
+        let station_id = "post-auth-claim";
+        seed_post_authorization_station(&handle, station_id, 1).await;
+        enqueue_post_authorization_work(
+            &handle,
+            station_id,
+            1,
+            1,
+            "claim-operation",
+            100,
+            "claim-secret",
+        )
+        .await;
+        let first_claim = {
+            let mut write = handle.begin_write().await.expect("begin first claim");
+            let claim = CredentialStore
+                .claim_post_authorization_work(&mut write, station_id, 100)
+                .await
+                .expect("claim work")
+                .expect("queued work");
+            write.commit().await.expect("commit first claim");
+            claim
+        };
+        let second_claim = {
+            let mut write = handle.begin_write().await.expect("begin duplicate claim");
+            let claim = CredentialStore
+                .claim_post_authorization_work(&mut write, station_id, 100)
+                .await
+                .expect("duplicate claim query");
+            write.commit().await.expect("commit duplicate claim");
+            claim
+        };
+        assert!(
+            second_claim.is_none(),
+            "running work cannot be claimed twice"
+        );
+
+        {
+            let mut write = handle.begin_write().await.expect("begin completion");
+            CredentialStore
+                .finish_post_authorization_work(&mut write, &first_claim, true, None, 200)
+                .await
+                .expect("finish claimed work");
+            write.commit().await.expect("commit completion");
+        }
+        let mut read = handle.begin_read().await.expect("read completion");
+        let state: String = sqlx::query_scalar(
+            "SELECT state FROM post_authorization_collection_work WHERE station_id = ?1",
+        )
+        .bind(station_id)
+        .fetch_one(read.connection())
+        .await
+        .expect("load completion state");
+        assert_eq!(state, "succeeded");
+        drop(read);
+        runtime.close().await.expect("close runtime");
+    }
+
+    #[tokio::test]
+    async fn post_authorization_recovery_requeues_crashed_claims() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let runtime =
+            PersistenceRuntime::initialize_new(&root.path().join("post-auth-recovery.sqlite3"))
+                .await
+                .expect("initialize runtime");
+        let handle = runtime.handle();
+        let station_id = "post-auth-recovery";
+        seed_post_authorization_station(&handle, station_id, 1).await;
+        enqueue_post_authorization_work(
+            &handle,
+            station_id,
+            1,
+            1,
+            "recovery-operation",
+            100,
+            "recovery-secret",
+        )
+        .await;
+        {
+            let mut write = handle.begin_write().await.expect("begin claim");
+            CredentialStore
+                .claim_post_authorization_work(&mut write, station_id, 100)
+                .await
+                .expect("claim recovery work")
+                .expect("queued recovery work");
+            write.commit().await.expect("commit claim");
+        }
+        {
+            let mut write = handle.begin_write().await.expect("begin recovery");
+            CredentialStore
+                .recover_post_authorization_work(&mut write, 200)
+                .await
+                .expect("recover running work");
+            write.commit().await.expect("commit recovery");
+        }
+        let mut read = handle.begin_read().await.expect("read recovered work");
+        let row = sqlx::query(
+            "SELECT state, next_attempt_at_ms, last_error_code
+             FROM post_authorization_collection_work WHERE station_id = ?1",
+        )
+        .bind(station_id)
+        .fetch_one(read.connection())
+        .await
+        .expect("load recovered row");
+        assert_eq!(row.get::<String, _>("state"), "queued");
+        assert_eq!(row.get::<i64, _>("next_attempt_at_ms"), 200);
+        assert_eq!(
+            row.get::<Option<String>, _>("last_error_code").as_deref(),
+            Some(POST_AUTHORIZATION_RECOVERY_ERROR)
+        );
+        drop(read);
+        runtime.close().await.expect("close runtime");
+    }
+
+    #[tokio::test]
+    async fn post_authorization_recovery_retains_endpoint_stale_work_as_superseded() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let runtime = PersistenceRuntime::initialize_new(
+            &root.path().join("post-auth-stale-endpoint.sqlite3"),
+        )
+        .await
+        .expect("initialize runtime");
+        let handle = runtime.handle();
+        let station_id = "post-auth-stale-endpoint";
+        seed_post_authorization_station(&handle, station_id, 1).await;
+        enqueue_post_authorization_work(
+            &handle,
+            station_id,
+            1,
+            1,
+            "stale-endpoint-operation",
+            100,
+            "stale-endpoint-secret",
+        )
+        .await;
+        {
+            let mut write = handle.begin_write().await.expect("advance endpoint");
+            sqlx::query("UPDATE stations SET endpoint_revision = 2 WHERE id = ?1")
+                .bind(station_id)
+                .execute(write.connection())
+                .await
+                .expect("advance endpoint revision");
+            write.commit().await.expect("commit endpoint change");
+        }
+        {
+            let mut write = handle.begin_write().await.expect("begin stale recovery");
+            CredentialStore
+                .recover_post_authorization_work(&mut write, 200)
+                .await
+                .expect("discard endpoint-stale work");
+            write.commit().await.expect("commit stale recovery");
+        }
+        let mut read = handle.begin_read().await.expect("read stale work");
+        let (count, state): (i64, String) = sqlx::query_as(
+            "SELECT COUNT(*), MAX(state) FROM post_authorization_collection_work WHERE station_id = ?1",
+        )
+        .bind(station_id)
+        .fetch_one(read.connection())
+        .await
+        .expect("load stale work");
+        assert_eq!(count, 1);
+        assert_eq!(state, "superseded");
+        drop(read);
+        runtime.close().await.expect("close runtime");
+    }
+
+    #[tokio::test]
+    async fn post_authorization_failure_uses_bounded_exponential_backoff() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let runtime =
+            PersistenceRuntime::initialize_new(&root.path().join("post-auth-retry.sqlite3"))
+                .await
+                .expect("initialize runtime");
+        let handle = runtime.handle();
+        let station_id = "post-auth-retry";
+        seed_post_authorization_station(&handle, station_id, 1).await;
+        enqueue_post_authorization_work(
+            &handle,
+            station_id,
+            1,
+            1,
+            "retry-operation",
+            100,
+            "retry-secret",
+        )
+        .await;
+        {
+            let mut write = handle.begin_write().await.expect("begin retry limit");
+            sqlx::query(
+                "UPDATE post_authorization_collection_work SET max_attempts = 2 WHERE station_id = ?1",
+            )
+            .bind(station_id)
+            .execute(write.connection())
+            .await
+            .expect("set retry limit");
+            write.commit().await.expect("commit retry limit");
+        }
+
+        let first_claim = {
+            let mut write = handle.begin_write().await.expect("begin retry claim");
+            let claim = CredentialStore
+                .claim_post_authorization_work(&mut write, station_id, 100)
+                .await
+                .expect("claim retry work")
+                .expect("queued retry work");
+            write.commit().await.expect("commit retry claim");
+            claim
+        };
+        {
+            let mut write = handle.begin_write().await.expect("begin first failure");
+            CredentialStore
+                .finish_post_authorization_work(
+                    &mut write,
+                    &first_claim,
+                    false,
+                    Some(" transient_failure "),
+                    1_000,
+                )
+                .await
+                .expect("record first failure");
+            write.commit().await.expect("commit first failure");
+        }
+        let mut read = handle.begin_read().await.expect("read first backoff");
+        let row = sqlx::query(
+            "SELECT state, attempt_count, next_attempt_at_ms, last_error_code
+             FROM post_authorization_collection_work WHERE station_id = ?1",
+        )
+        .bind(station_id)
+        .fetch_one(read.connection())
+        .await
+        .expect("load first backoff");
+        assert_eq!(row.get::<String, _>("state"), "failed");
+        assert_eq!(row.get::<i64, _>("attempt_count"), 1);
+        assert_eq!(row.get::<i64, _>("next_attempt_at_ms"), 2_000);
+        assert_eq!(
+            row.get::<Option<String>, _>("last_error_code").as_deref(),
+            Some("transient_failure")
+        );
+        drop(read);
+
+        let mut read = handle.begin_read().await.expect("read before retry due");
+        assert!(CredentialStore
+            .due_post_authorization_work(&mut read, 1_999)
+            .await
+            .expect("query before retry due")
+            .is_empty());
+        assert_eq!(
+            CredentialStore
+                .due_post_authorization_work(&mut read, 2_000)
+                .await
+                .expect("query at retry due"),
+            vec![station_id.to_string()]
+        );
+        drop(read);
+
+        let second_claim = {
+            let mut write = handle
+                .begin_write()
+                .await
+                .expect("begin second retry claim");
+            let claim = CredentialStore
+                .claim_post_authorization_work(&mut write, station_id, 2_000)
+                .await
+                .expect("claim second retry")
+                .expect("second retry work");
+            write.commit().await.expect("commit second retry claim");
+            claim
+        };
+        {
+            let mut write = handle.begin_write().await.expect("begin second failure");
+            CredentialStore
+                .finish_post_authorization_work(
+                    &mut write,
+                    &second_claim,
+                    false,
+                    Some("transient_failure"),
+                    2_000,
+                )
+                .await
+                .expect("record second failure");
+            write.commit().await.expect("commit second failure");
+        }
+        let mut read = handle.begin_read().await.expect("read second backoff");
+        let (attempt_count, next_attempt_at_ms): (i64, i64) = sqlx::query_as(
+            "SELECT attempt_count, next_attempt_at_ms
+             FROM post_authorization_collection_work WHERE station_id = ?1",
+        )
+        .bind(station_id)
+        .fetch_one(read.connection())
+        .await
+        .expect("load second backoff");
+        assert_eq!(attempt_count, 2);
+        assert_eq!(next_attempt_at_ms, 4_000);
+        let state: String = sqlx::query_scalar(
+            "SELECT state FROM post_authorization_collection_work WHERE station_id = ?1",
+        )
+        .bind(station_id)
+        .fetch_one(read.connection())
+        .await
+        .expect("load exhausted state");
+        assert_eq!(state, "exhausted");
+        assert!(CredentialStore
+            .due_post_authorization_work(&mut read, 4_000)
+            .await
+            .expect("query exhausted work")
+            .is_empty());
+        drop(read);
+        runtime.close().await.expect("close runtime");
+    }
+
+    #[tokio::test]
+    async fn stale_claim_cannot_complete_work_replaced_by_new_authorization() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let runtime =
+            PersistenceRuntime::initialize_new(&root.path().join("post-auth-fence.sqlite3"))
+                .await
+                .expect("initialize runtime");
+        let handle = runtime.handle();
+        let station_id = "post-auth-fence";
+        seed_post_authorization_station(&handle, station_id, 1).await;
+        enqueue_post_authorization_work(
+            &handle,
+            station_id,
+            1,
+            1,
+            "old-operation",
+            100,
+            "fence-secret-1",
+        )
+        .await;
+
+        let old_claim = {
+            let mut write = handle.begin_write().await.expect("begin old claim");
+            let claim = CredentialStore
+                .claim_post_authorization_work(&mut write, station_id, 100)
+                .await
+                .expect("claim old work")
+                .expect("old queued work");
+            write.commit().await.expect("commit old claim");
+            claim
+        };
+
+        // A second authorization supersedes the in-flight row and advances
+        // the credential revision in the same transaction.
+        enqueue_post_authorization_work(
+            &handle,
+            station_id,
+            1,
+            old_claim.credential_revision,
+            "new-operation",
+            200,
+            "fence-secret-2",
+        )
+        .await;
+
+        let mut write = handle.begin_write().await.expect("begin stale completion");
+        CredentialStore
+            .finish_post_authorization_work(&mut write, &old_claim, true, None, 300)
+            .await
+            .expect("stale completion is a no-op");
+        write.commit().await.expect("commit stale completion");
+
+        let mut read = handle.begin_read().await.expect("read fenced work");
+        let row = sqlx::query(
+            "SELECT state, credential_revision, operation_id
+             FROM post_authorization_collection_work WHERE station_id = ?1",
+        )
+        .bind(station_id)
+        .fetch_one(read.connection())
+        .await
+        .expect("load fenced work");
+        assert_eq!(row.get::<String, _>("state"), "queued");
+        assert_eq!(
+            row.get::<i64, _>("credential_revision"),
+            old_claim.credential_revision + 1
+        );
+        assert_eq!(row.get::<String, _>("operation_id"), "new-operation");
+        drop(read);
+        runtime.close().await.expect("close runtime");
     }
 }

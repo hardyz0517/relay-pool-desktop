@@ -96,7 +96,7 @@ pub(crate) enum CatalogError {
 // The v1 catalog describes the post-alerting-cutover user schema. Historical
 // `change_events` is intentionally absent; the six alerting tables below are
 // the durable replacement and must be recognized by portable migration.
-pub(crate) const EXPECTED_USER_TABLE_COUNT_V1: usize = 111;
+pub(crate) const EXPECTED_USER_TABLE_COUNT_V1: usize = 115;
 
 pub(crate) fn migration_data_catalog() -> &'static [TableCatalog] {
     TABLES
@@ -929,6 +929,64 @@ const COLLECTOR_TASK_STATE_COLUMNS: &[&str] = &[
     "next_due_at",
     "updated_at",
 ];
+const COLLECTOR_OPERATIONS_COLUMNS: &[&str] = &[
+    "operation_id",
+    "operation_key",
+    "station_id",
+    "endpoint_revision",
+    "credential_revision",
+    "intent_sequence",
+    "plan_version",
+    "task_type",
+    "trigger_kind",
+    "status",
+    "started_at_ms",
+    "finished_at_ms",
+    "reason_code",
+    "reason_detail",
+    "created_at_ms",
+    "updated_at_ms",
+];
+const POST_AUTHORIZATION_COLLECTION_WORK_COLUMNS: &[&str] = &[
+    "station_id",
+    "endpoint_revision",
+    "credential_revision",
+    "state",
+    "attempt_count",
+    "max_attempts",
+    "next_attempt_at_ms",
+    "last_error_code",
+    "operation_id",
+    "created_at_ms",
+    "updated_at_ms",
+];
+const STATION_AUTHORIZATION_PROJECTION_COLUMNS: &[&str] = &[
+    "station_id",
+    "status",
+    "credential_revision",
+    "intent_sequence",
+    "authority",
+    "reason_code",
+    "operation_id",
+    "source_operation_id",
+    "observed_at_ms",
+    "updated_at_ms",
+];
+const STATION_COLLECTION_PROJECTION_COLUMNS: &[&str] = &[
+    "station_id",
+    "status",
+    "reason_codes_json",
+    "revision",
+    "endpoint_revision",
+    "credential_revision",
+    "intent_sequence",
+    "operation_id",
+    "updated_at_ms",
+];
+const STATION_COLLECTION_PROJECTION_RULES: &[FieldRule] = &[FieldRule {
+    name: "reason_codes_json",
+    transform: FieldTransform::BoundedJson,
+}];
 const STATION_PUBLISHED_STATUS_SOURCES_COLUMNS: &[&str] = &[
     "station_id",
     "endpoint_revision",
@@ -2806,6 +2864,42 @@ const TABLES: &[TableCatalog] = &[
         false,
         COLLECTOR_TASK_STATE_COLUMNS,
         &[],
+    ),
+    table(
+        "collector_operations",
+        TablePolicy::OptionalHistory,
+        DataCategory::History,
+        DependencyStage::History,
+        true,
+        COLLECTOR_OPERATIONS_COLUMNS,
+        &[],
+    ),
+    table(
+        "post_authorization_collection_work",
+        TablePolicy::Reset,
+        DataCategory::DeviceRuntimeState,
+        DependencyStage::StationChildren,
+        false,
+        POST_AUTHORIZATION_COLLECTION_WORK_COLUMNS,
+        &[],
+    ),
+    table(
+        "station_authorization_projection",
+        TablePolicy::Reset,
+        DataCategory::DeviceRuntimeState,
+        DependencyStage::StationChildren,
+        false,
+        STATION_AUTHORIZATION_PROJECTION_COLUMNS,
+        &[],
+    ),
+    table(
+        "station_collection_projection",
+        TablePolicy::Reset,
+        DataCategory::DeviceRuntimeState,
+        DependencyStage::StationChildren,
+        false,
+        STATION_COLLECTION_PROJECTION_COLUMNS,
+        STATION_COLLECTION_PROJECTION_RULES,
     ),
     table(
         "station_published_status_sources",

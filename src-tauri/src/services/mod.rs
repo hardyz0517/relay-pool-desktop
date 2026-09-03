@@ -2,6 +2,7 @@ pub(crate) mod alerting;
 pub mod capture;
 pub mod collectors;
 pub mod data_store;
+pub(crate) mod domain_revision_updates;
 pub mod endpoint_ping;
 pub mod group_categories;
 pub mod health;

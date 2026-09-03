@@ -1,6 +1,7 @@
 pub(crate) mod alerting;
 pub(crate) mod app_services;
 pub(crate) mod clock;
+pub(crate) mod collection_state;
 pub(crate) mod collectors;
 pub(crate) mod command_facades;
 pub(crate) mod connectivity_probe;

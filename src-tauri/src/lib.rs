@@ -880,6 +880,9 @@ async fn drain_application_components(app: &tauri::AppHandle) -> Result<(), ()> 
     {
         runner.stop();
     }
+    if let Some(capture) = app.try_state::<application::command_facades::CaptureCommandFacade>() {
+        let _ = capture.interrupt_capture_operations().await;
+    }
     let mut proxy_drain_failed = false;
     if let Some(proxy) = app.try_state::<Arc<services::proxy::runtime::ProxyRuntimeState>>() {
         let drain = runtime_composition::drain_finalization(
@@ -939,6 +942,12 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
+            // Install the revision bridge before composing collectors and
+            // running startup reconciliation. It is a best-effort freshness
+            // hint; all consumers still read durable projections.
+            services::domain_revision_updates::spawn_domain_revision_event_bridge(
+                app.handle().clone(),
+            );
             app.manage(Arc::new(TrayBehaviorState::default()));
             app.manage(ipc::dto::runtime_context::RuntimeContextRegistry::new());
             app.manage(ExitCoordinator::new(Duration::from_secs(45)));
@@ -1160,10 +1169,20 @@ pub fn run() {
                             blocking_executor.clone(),
                             Arc::clone(&alerting_updates),
                         );
+                        let post_authorization_scheduler: Arc<
+                            dyn application::command_facades::PostAuthorizationWorkScheduler,
+                        > = Arc::new(
+                            |work: futures_util::future::BoxFuture<'static, ()>| {
+                                tauri::async_runtime::spawn(work);
+                            },
+                        );
                         let routing_policy_mutations =
                             app_composition::compose_routing_policy_mutation_coordinator(
                                 &app_services,
                                 Arc::clone(&proxy_runtime),
+                                Arc::new(
+                                    background_tasks::routing_generation_cutover_runner::RoutingGenerationFastActivationPort,
+                                ),
                             );
                         tauri::async_runtime::block_on(
                             application::model_mapping::initialize_from_persistence(
@@ -1293,7 +1312,11 @@ pub fn run() {
                                 Arc::clone(&provider_registry),
                                 station_collection_coordinator.clone(),
                                 station_collection_feedback.clone(),
+                                Arc::clone(&post_authorization_scheduler),
                             );
+                        let station_collection_recovery = station_collection_command_facade.clone();
+                        let station_collection_for_capture =
+                            Arc::new(station_collection_command_facade.clone());
                         let station_key_connectivity_command_facade =
                             app_composition::compose_station_key_connectivity_command_facade(
                                 &app_services,
@@ -1301,6 +1324,7 @@ pub fn run() {
                         let capture_command_facade =
                             app_composition::compose_capture_command_facade(
                                 &app_services,
+                                station_collection_for_capture,
                                 capture_session_store.clone(),
                                 outbound_client.clone(),
                                 Arc::clone(&provider_registry),
@@ -1342,6 +1366,20 @@ pub fn run() {
                         )
                         .map_err(|error| {
                             format!("failed to recover interrupted monitor executions: {error}")
+                        })?;
+                        tauri::async_runtime::block_on(
+                            app_services.collectors.interrupt_active_capture_operations(),
+                        )
+                        .map_err(|error| {
+                            format!("failed to recover interrupted capture operations: {error}")
+                        })?;
+                        tauri::async_runtime::block_on(
+                            app_services
+                                .collectors
+                                .recover_active_collector_operations(),
+                        )
+                        .map_err(|error| {
+                            format!("failed to recover active collector operations: {error}")
                         })?;
                         app.state::<Arc<TrayBehaviorState>>()
                             .set(TrayBehavior::from_setting(&settings.tray_behavior));
@@ -1546,6 +1584,15 @@ pub fn run() {
                         .map_err(|error| {
                             format!("failed to register ready runtime services: {error}")
                         })?;
+                        // Replay durable post-authorization intents after all
+                        // runtime services are registered. The worker is
+                        // best-effort and bounded by the normal station lease;
+                        // failed attempts remain persisted for backoff retry.
+                        tauri::async_runtime::spawn(async move {
+                            station_collection_recovery
+                                .recover_post_authorization_work()
+                                .await;
+                        });
                         runtime_owner
                     }
                 }
@@ -1580,6 +1627,19 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if window.label() != "main" {
+                if matches!(event, WindowEvent::CloseRequested { .. }) {
+                    let app = window.app_handle().clone();
+                    let label = window.label().to_string();
+                    tauri::async_runtime::spawn(async move {
+                        if let Some(capture) =
+                            app.try_state::<application::command_facades::CaptureCommandFacade>()
+                        {
+                            if let Ok(Some(owner_id)) = capture.owner_id_for_window_label(&label) {
+                                let _ = capture.clear_capture_session(&owner_id).await;
+                            }
+                        }
+                    });
+                }
                 return;
             }
 

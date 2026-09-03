@@ -5,8 +5,8 @@ use crate::{
     models::monitoring::{
         ChannelMonitorAttemptHistoryInput, ChannelMonitorAttemptPage,
         ChannelMonitorExecutionDetail, ChannelMonitorExecutionIdInput,
-        ChannelMonitorExecutionListInput, ChannelMonitorExecutionPage, ChannelStatusWorkspaceInput,
-        ChannelStatusWorkspaceV2, MonitoringCapabilityCatalog,
+        ChannelMonitorExecutionListInput, ChannelMonitorExecutionPage, ChannelMonitorLatestSummary,
+        ChannelStatusWorkspaceInput, ChannelStatusWorkspaceV2, MonitoringCapabilityCatalog,
     },
 };
 
@@ -25,6 +25,12 @@ impl ChannelStatusCommandFacade {
         input: ChannelStatusWorkspaceInput,
     ) -> Result<ChannelStatusWorkspaceV2, ApplicationError> {
         self.channel_status.load_workspace(input).await
+    }
+
+    pub(crate) async fn load_channel_monitor_latest_summary(
+        &self,
+    ) -> Result<Vec<ChannelMonitorLatestSummary>, ApplicationError> {
+        self.channel_status.load_latest_summary().await
     }
 
     pub(crate) async fn list_channel_monitor_executions(

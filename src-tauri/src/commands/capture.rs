@@ -55,10 +55,10 @@ pub async fn start_capture_session(
                     plan.endpoint_revision,
                     web_authorization_cookie_url,
                 )
-                .map_err(CaptureCommandError::Message)
+                .await
                 .map_err(capture_command_error)?;
             if let Err(error) = open_capture_window(app, &plan) {
-                facade.clear_prepared_session(&plan.station_id);
+                facade.clear_prepared_session(&plan.station_id).await;
                 return Err(capture_command_error(error));
             }
             Ok(status)
@@ -97,10 +97,10 @@ pub async fn start_provider_draft_authorization(
                     plan.endpoint_revision,
                     web_authorization_cookie_url,
                 )
-                .map_err(CaptureCommandError::Message)
+                .await
                 .map_err(capture_command_error)?;
             if let Err(error) = open_capture_window(app, &plan) {
-                facade.clear_prepared_session(&plan.station_id);
+                facade.clear_prepared_session(&plan.station_id).await;
                 return Err(capture_command_error(error));
             }
             Ok(status)
@@ -160,7 +160,7 @@ pub async fn record_capture_event(
 
 #[tauri::command]
 pub async fn clear_capture_session(
-    sessions: State<'_, service_capture::session::CaptureSessionStore>,
+    facade: State<'_, CaptureCommandFacade>,
     input: Value,
 
     runtime_context_registry: tauri::State<
@@ -175,7 +175,10 @@ pub async fn clear_capture_session(
         runtime_context,
         async {
             let input = CaptureStationIdInputDto::parse(input)?;
-            Ok(sessions.clear(&input.station_id)?)
+            facade
+                .clear_capture_session(&input.station_id)
+                .await
+                .map_err(capture_command_error)
         },
     )
     .await
@@ -184,7 +187,7 @@ pub async fn clear_capture_session(
 #[tauri::command]
 pub async fn close_capture_session(
     app: tauri::AppHandle,
-    sessions: State<'_, service_capture::session::CaptureSessionStore>,
+    facade: State<'_, CaptureCommandFacade>,
     input: Value,
 
     runtime_context_registry: tauri::State<
@@ -199,13 +202,17 @@ pub async fn close_capture_session(
         runtime_context,
         async {
             let input = CaptureStationIdInputDto::parse(input)?;
+            let status = facade
+                .clear_capture_session(&input.station_id)
+                .await
+                .map_err(capture_command_error)?;
             let label = capture_window_label(&input.station_id);
             if let Some(window) = app.get_webview_window(&label) {
                 window
                     .close()
                     .map_err(|error| format!("关闭网页登录窗口失败: {error}"))?;
             }
-            Ok(sessions.clear(&input.station_id)?)
+            Ok(status)
         },
     )
     .await
