@@ -2662,7 +2662,7 @@
         },
         "previewPolicyVersion": "intelligent_planner_v3",
         "readModelStatus": "available",
-        "readModelVersion": "routing_workspace_read_model_v3",
+        "readModelVersion": "routing_workspace_read_model_v4",
         "routingGroupFilter": {
           "group_type": "gpt"
         }

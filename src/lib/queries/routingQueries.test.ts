@@ -24,7 +24,7 @@ describe("routing query owner", () => {
     deleteModelAlias: vi.fn(),
     getRoutingProtectionStatus: vi.fn(),
     loadRoutingWorkspaceSnapshot: vi.fn(async () => ({
-      readModelVersion: "routing_workspace_read_model_v3",
+      readModelVersion: "routing_workspace_read_model_v4",
       generatedAtMs: 1,
       policyConfig: {
         version: 3,

@@ -24,9 +24,6 @@ describe("routing workspace view", () => {
         halfOpenLeaseInFlight: true,
         halfOpenLeaseExpiresAtMs: 123,
         recoverySuccesses: 1,
-        scoreGateStatus: "passed" as const,
-        scoreGateReason: "half_open_lease_in_flight",
-        bestClosedEffectiveScore: 8800,
       },
       effectiveScore: 8800,
       baseScore: 8800,
@@ -247,7 +244,7 @@ function candidate(overrides: Partial<RoutingWorkspaceCandidate> = {}): RoutingW
 
 function snapshot(candidates: RoutingWorkspaceCandidate[]): RoutingWorkspaceSnapshot {
   return {
-    readModelVersion: "routing_workspace_read_model_v3",
+    readModelVersion: "routing_workspace_read_model_v4",
     generatedAtMs: 1,
     policyConfig: {
       version: 3,

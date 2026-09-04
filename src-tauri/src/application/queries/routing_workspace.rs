@@ -13,7 +13,6 @@ use crate::{
         },
         routing_engine::{
             intelligent_planner::CandidateScoreBreakdown, request::RouteRequestFacts,
-            tiers::AvailabilityTier,
         },
     },
     models::{
@@ -24,7 +23,7 @@ use crate::{
     persistence::stores::routing_quality_store::RoutingAttemptCountDiagnostics,
 };
 
-pub(crate) const ROUTING_WORKSPACE_READ_MODEL_VERSION: &str = "routing_workspace_read_model_v3";
+pub(crate) const ROUTING_WORKSPACE_READ_MODEL_VERSION: &str = "routing_workspace_read_model_v4";
 pub(crate) const ROUTING_PREVIEW_POLICY_VERSION: &str = "intelligent_planner_v3";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -146,8 +145,7 @@ pub(crate) enum RoutingCandidateParticipationReason {
     CandidateLimitExceeded,
     CircuitPersistenceUnavailable,
     CircuitOpenCooldown,
-    CircuitRecoveryScoreGatePassed,
-    CircuitRecoveryScoreGateDenied,
+    CircuitRecoveryReady,
     CircuitHalfOpenIdle,
     CircuitHalfOpenLeaseOccupied,
 }
@@ -396,16 +394,6 @@ pub(crate) enum RoutingCandidateCircuitState {
     HalfOpen,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum RoutingCandidateScoreGateStatus {
-    NotApplicable,
-    WaitingCooldown,
-    Passed,
-    Denied,
-    Unavailable,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RoutingCandidateCircuitDiagnostics {
@@ -422,17 +410,12 @@ pub(crate) struct RoutingCandidateCircuitDiagnostics {
     pub(crate) half_open_lease_in_flight: bool,
     pub(crate) half_open_lease_expires_at_ms: Option<u64>,
     pub(crate) recovery_successes: Option<u16>,
-    pub(crate) score_gate_status: RoutingCandidateScoreGateStatus,
-    pub(crate) score_gate_reason: String,
-    pub(crate) best_closed_effective_score: Option<u16>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct RoutingCandidatePlanDiagnostics {
     pub(crate) effective_score: u16,
     pub(crate) base_score: u16,
-    pub(crate) target_rank: u16,
-    pub(crate) tier: AvailabilityTier,
     pub(crate) lifecycle_revision: u64,
 }
 
@@ -1030,9 +1013,12 @@ fn depleted_rank(value: Option<f64>, status: Option<&str>) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::{
-        candidate_matches_group_scope, circuit_diagnostics, depleted_rank,
-        RoutingCandidateGroupSnapshot, RoutingCandidatePlanDiagnostics,
-        RoutingCandidateScoreGateStatus, RoutingCandidateScoreWindowSnapshot,
+        candidate_matches_group_scope, candidate_participation, circuit_diagnostics, depleted_rank,
+        workspace_snapshot_from_canonical_candidates, RoutingAvailabilityStatus,
+        RoutingCandidateGroupSnapshot, RoutingCandidateParticipationReason,
+        RoutingCandidateParticipationStatus, RoutingCandidatePlanDiagnostics,
+        RoutingCandidateScoreWindowSnapshot, RoutingPlannerEvaluationStatus, RoutingScoreStatus,
+        RoutingWorkspaceRevisionSnapshot, RoutingWorkspaceSnapshotInput,
     };
     use crate::application::quality_projection::{
         rebuild_quality_summary_v3_at, QualityProjectionConfig, QUALITY_RECENT_WINDOW_MS,
@@ -1292,36 +1278,20 @@ mod tests {
     }
 
     #[test]
-    fn circuit_diagnostics_use_same_tier_closed_baseline_without_exposing_lease_identity() {
+    fn circuit_diagnostics_do_not_expose_lease_identity() {
         use std::collections::BTreeMap;
 
+        use crate::application::station_key_circuit::StationKeyCircuitState;
         use crate::application::station_key_circuit::StationKeyCircuitStatus;
-        use crate::application::{
-            routing_engine::tiers::AvailabilityTier, station_key_circuit::StationKeyCircuitState,
-        };
 
-        let plans = BTreeMap::from([
-            (
-                "recovering".to_string(),
-                RoutingCandidatePlanDiagnostics {
-                    effective_score: 9_100,
-                    base_score: 9_000,
-                    target_rank: 0,
-                    tier: AvailabilityTier::Primary,
-                    lifecycle_revision: 2,
-                },
-            ),
-            (
-                "closed".to_string(),
-                RoutingCandidatePlanDiagnostics {
-                    effective_score: 8_800,
-                    base_score: 8_800,
-                    target_rank: 0,
-                    tier: AvailabilityTier::Primary,
-                    lifecycle_revision: 1,
-                },
-            ),
-        ]);
+        let plans = BTreeMap::from([(
+            "recovering".to_string(),
+            RoutingCandidatePlanDiagnostics {
+                effective_score: 9_100,
+                base_score: 9_000,
+                lifecycle_revision: 2,
+            },
+        )]);
         let statuses = vec![StationKeyCircuitStatus {
             station_key_id: "recovering".to_string(),
             lifecycle_revision: 2,
@@ -1347,34 +1317,25 @@ mod tests {
         );
 
         let diagnostics = circuit_diagnostics("recovering", 10_000, &plans, &circuit_snapshot);
-        assert_eq!(
-            diagnostics.score_gate_status,
-            RoutingCandidateScoreGateStatus::Passed
-        );
         assert!(diagnostics.half_open_lease_in_flight);
-        assert_eq!(diagnostics.best_closed_effective_score, Some(8_800));
         let serialized = serde_json::to_string(&diagnostics).expect("serialize diagnostics");
         assert!(!serialized.contains("secret-lease-id"));
         assert!(!serialized.contains("leaseId"));
     }
 
     #[test]
-    fn circuit_score_gate_requires_strictly_higher_effective_score() {
+    fn elapsed_open_is_recovery_ready_regardless_of_relative_score() {
         use std::collections::BTreeMap;
 
+        use crate::application::station_key_circuit::StationKeyCircuitState;
         use crate::application::station_key_circuit::StationKeyCircuitStatus;
-        use crate::application::{
-            routing_engine::tiers::AvailabilityTier, station_key_circuit::StationKeyCircuitState,
-        };
 
         let plans = BTreeMap::from([
             (
                 "recovering".to_string(),
                 RoutingCandidatePlanDiagnostics {
-                    effective_score: 8_800,
-                    base_score: 8_700,
-                    target_rank: 0,
-                    tier: AvailabilityTier::Primary,
+                    effective_score: 7_000,
+                    base_score: 7_000,
                     lifecycle_revision: 2,
                 },
             ),
@@ -1383,8 +1344,6 @@ mod tests {
                 RoutingCandidatePlanDiagnostics {
                     effective_score: 8_800,
                     base_score: 8_800,
-                    target_rank: 0,
-                    tier: AvailabilityTier::Primary,
                     lifecycle_revision: 1,
                 },
             ),
@@ -1402,8 +1361,26 @@ mod tests {
                 reopen_level: 1,
             },
         }];
-        let circuit_snapshot = StationKeyCircuitReadSnapshot::project(
-            10_000,
+        let cooling_snapshot = StationKeyCircuitReadSnapshot::project(
+            1_500,
+            CircuitPersistenceGateSnapshot::default(),
+            StationKeyCircuitDurableReadSnapshot {
+                statuses: statuses.clone(),
+                persistence_gates: Vec::new(),
+                persistence_health_revision: 0,
+            },
+        );
+        let cooling = circuit_diagnostics("recovering", 1_500, &plans, &cooling_snapshot);
+        assert_eq!(
+            candidate_participation(true, RoutingScoreStatus::Scored, &cooling),
+            (
+                RoutingCandidateParticipationStatus::Excluded,
+                RoutingCandidateParticipationReason::CircuitOpenCooldown,
+            )
+        );
+
+        let recovery_snapshot = StationKeyCircuitReadSnapshot::project(
+            2_000,
             CircuitPersistenceGateSnapshot::default(),
             StationKeyCircuitDurableReadSnapshot {
                 statuses,
@@ -1411,11 +1388,93 @@ mod tests {
                 persistence_health_revision: 0,
             },
         );
-
-        let diagnostics = circuit_diagnostics("recovering", 10_000, &plans, &circuit_snapshot);
+        let diagnostics = circuit_diagnostics("recovering", 2_000, &plans, &recovery_snapshot);
         assert_eq!(
-            diagnostics.score_gate_status,
-            RoutingCandidateScoreGateStatus::Denied
+            candidate_participation(true, RoutingScoreStatus::Scored, &diagnostics),
+            (
+                RoutingCandidateParticipationStatus::ConditionallyEligible,
+                RoutingCandidateParticipationReason::CircuitRecoveryReady,
+            )
+        );
+    }
+
+    #[test]
+    fn elapsed_open_keeps_the_workspace_available_and_counts_as_conditional() {
+        use std::collections::BTreeMap;
+
+        use crate::application::station_key_circuit::{
+            StationKeyCircuitState, StationKeyCircuitStatus,
+        };
+
+        let plans = BTreeMap::from([(
+            "key-1".to_string(),
+            RoutingCandidatePlanDiagnostics {
+                effective_score: 7_000,
+                base_score: 7_000,
+                lifecycle_revision: 2,
+            },
+        )]);
+        let circuit_snapshot = StationKeyCircuitReadSnapshot::project(
+            2_000,
+            CircuitPersistenceGateSnapshot::default(),
+            StationKeyCircuitDurableReadSnapshot {
+                statuses: vec![StationKeyCircuitStatus {
+                    station_key_id: "key-1".to_string(),
+                    lifecycle_revision: 2,
+                    policy_revision: 1,
+                    lease_policy: None,
+                    state: StationKeyCircuitState::Open {
+                        state_revision: 5,
+                        opened_at_ms: 1_000,
+                        cooldown_until_ms: 2_000,
+                        consecutive_failures: 3,
+                        reopen_level: 1,
+                    },
+                }],
+                persistence_gates: Vec::new(),
+                persistence_health_revision: 0,
+            },
+        );
+        let score_statuses = BTreeMap::from([("key-1".to_string(), RoutingScoreStatus::Scored)]);
+        let snapshot = workspace_snapshot_from_canonical_candidates(
+            crate::models::routing_policy::RoutingPolicyConfigV3::default(),
+            None,
+            crate::models::routing_policy::RoutingGroupFilter::default(),
+            vec![(candidate(), None)],
+            &BTreeMap::new(),
+            &score_statuses,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            RoutingPlannerEvaluationStatus::Available,
+            None,
+            &BTreeMap::new(),
+            &plans,
+            &BTreeMap::new(),
+            &circuit_snapshot,
+            RoutingWorkspaceRevisionSnapshot::default(),
+            &request(Some("model-1")),
+            RoutingWorkspaceSnapshotInput {
+                limit: None,
+                cursor: None,
+            },
+            2_000,
+            None,
+        );
+
+        assert_eq!(
+            snapshot.availability_status,
+            RoutingAvailabilityStatus::Available
+        );
+        assert_eq!(snapshot.aggregates.conditionally_eligible_candidates, 1);
+        assert_eq!(snapshot.aggregates.excluded_candidates, 0);
+        assert_eq!(snapshot.aggregates.open_circuits, 1);
+        assert_eq!(
+            snapshot.candidates[0].participation_status,
+            RoutingCandidateParticipationStatus::ConditionallyEligible
+        );
+        assert_eq!(
+            snapshot.candidates[0].participation_reason,
+            RoutingCandidateParticipationReason::CircuitRecoveryReady
         );
     }
 }
@@ -1923,22 +1982,22 @@ fn candidate_participation(
             RoutingCandidateParticipationStatus::Eligible,
             RoutingCandidateParticipationReason::Ready,
         ),
-        RoutingCandidateCircuitState::Open => match circuit.score_gate_status {
-            RoutingCandidateScoreGateStatus::WaitingCooldown => (
-                RoutingCandidateParticipationStatus::Excluded,
-                RoutingCandidateParticipationReason::CircuitOpenCooldown,
-            ),
-            RoutingCandidateScoreGateStatus::Passed => (
-                RoutingCandidateParticipationStatus::ConditionallyEligible,
-                RoutingCandidateParticipationReason::CircuitRecoveryScoreGatePassed,
-            ),
-            RoutingCandidateScoreGateStatus::Denied
-            | RoutingCandidateScoreGateStatus::Unavailable
-            | RoutingCandidateScoreGateStatus::NotApplicable => (
-                RoutingCandidateParticipationStatus::Excluded,
-                RoutingCandidateParticipationReason::CircuitRecoveryScoreGateDenied,
-            ),
-        },
+        RoutingCandidateCircuitState::Open => {
+            if circuit
+                .cooldown_remaining_ms
+                .is_some_and(|remaining| remaining > 0)
+            {
+                (
+                    RoutingCandidateParticipationStatus::Excluded,
+                    RoutingCandidateParticipationReason::CircuitOpenCooldown,
+                )
+            } else {
+                (
+                    RoutingCandidateParticipationStatus::ConditionallyEligible,
+                    RoutingCandidateParticipationReason::CircuitRecoveryReady,
+                )
+            }
+        }
         RoutingCandidateCircuitState::HalfOpen if circuit.half_open_lease_in_flight => (
             RoutingCandidateParticipationStatus::Excluded,
             RoutingCandidateParticipationReason::CircuitHalfOpenLeaseOccupied,
@@ -1968,119 +2027,34 @@ fn circuit_diagnostics(
         })
         .unwrap_or_else(|| circuit_snapshot.fact_for(station_key_id, 1));
     let now_ms = u64::try_from(generated_at_ms.max(0)).unwrap_or_default();
-    let best_closed_effective_score = plan.and_then(|current| {
-        plan_diagnostics
-            .iter()
-            .filter(|(other_key, other)| {
-                other_key.as_str() != station_key_id
-                    && other.target_rank == current.target_rank
-                    && other.tier == current.tier
-                    && {
-                        let other_fact =
-                            circuit_snapshot.fact_for(other_key.as_str(), other.lifecycle_revision);
-                        other_fact.state == CircuitReadState::Closed
-                            && other_fact.persistence_status == CircuitPersistenceStatus::Available
-                    }
-            })
-            .map(|(_, other)| other.effective_score)
-            .max()
-    });
-    let score_gate = || match plan {
-        None => (
-            RoutingCandidateScoreGateStatus::Unavailable,
-            "candidate_score_unavailable",
-        ),
-        Some(_) if best_closed_effective_score.is_none() => (
-            RoutingCandidateScoreGateStatus::Passed,
-            "no_closed_candidate_baseline",
-        ),
-        Some(plan)
-            if best_closed_effective_score.is_some_and(|best| plan.effective_score > best) =>
-        {
-            (
-                RoutingCandidateScoreGateStatus::Passed,
-                "higher_than_best_closed_candidate",
-            )
-        }
-        Some(_) => (
-            RoutingCandidateScoreGateStatus::Denied,
-            "not_higher_than_best_closed_candidate",
-        ),
+    let common = |state| RoutingCandidateCircuitDiagnostics {
+        state,
+        state_revision: fact.state_revision,
+        lifecycle_revision: Some(fact.lifecycle_revision),
+        policy_revision: fact.policy_revision,
+        persistence_status: fact.persistence_status,
+        state_row_present: fact.state_row_present,
+        consecutive_failures: Some(fact.consecutive_failures),
+        reopen_level: fact.reopen_level,
+        cooldown_until_ms: fact.cooldown_until_ms,
+        cooldown_remaining_ms: fact
+            .cooldown_until_ms
+            .map(|until| until.saturating_sub(now_ms)),
+        half_open_lease_in_flight: fact.half_open_lease_in_flight,
+        half_open_lease_expires_at_ms: fact.half_open_lease_expires_at_ms,
+        recovery_successes: fact.recovery_successes,
     };
-
-    let common =
-        |state, score_gate_status, score_gate_reason: &str| RoutingCandidateCircuitDiagnostics {
-            state,
-            state_revision: fact.state_revision,
-            lifecycle_revision: Some(fact.lifecycle_revision),
-            policy_revision: fact.policy_revision,
-            persistence_status: fact.persistence_status,
-            state_row_present: fact.state_row_present,
-            consecutive_failures: Some(fact.consecutive_failures),
-            reopen_level: fact.reopen_level,
-            cooldown_until_ms: fact.cooldown_until_ms,
-            cooldown_remaining_ms: fact
-                .cooldown_until_ms
-                .map(|until| until.saturating_sub(now_ms)),
-            half_open_lease_in_flight: fact.half_open_lease_in_flight,
-            half_open_lease_expires_at_ms: fact.half_open_lease_expires_at_ms,
-            recovery_successes: fact.recovery_successes,
-            score_gate_status,
-            score_gate_reason: score_gate_reason.to_string(),
-            best_closed_effective_score,
-        };
     if fact.persistence_status == CircuitPersistenceStatus::Unavailable {
-        return common(
-            match fact.state {
-                CircuitReadState::Closed => RoutingCandidateCircuitState::Closed,
-                CircuitReadState::Open => RoutingCandidateCircuitState::Open,
-                CircuitReadState::HalfOpen => RoutingCandidateCircuitState::HalfOpen,
-            },
-            RoutingCandidateScoreGateStatus::Unavailable,
-            "circuit_persistence_unavailable",
-        );
+        return common(match fact.state {
+            CircuitReadState::Closed => RoutingCandidateCircuitState::Closed,
+            CircuitReadState::Open => RoutingCandidateCircuitState::Open,
+            CircuitReadState::HalfOpen => RoutingCandidateCircuitState::HalfOpen,
+        });
     }
     match fact.state {
-        CircuitReadState::Closed => common(
-            RoutingCandidateCircuitState::Closed,
-            RoutingCandidateScoreGateStatus::NotApplicable,
-            if fact.state_row_present {
-                "circuit_closed"
-            } else {
-                "default_closed_state"
-            },
-        ),
-        CircuitReadState::Open => {
-            let (score_gate_status, score_gate_reason) =
-                if fact.cooldown_until_ms.is_some_and(|until| until > now_ms) {
-                    (
-                        RoutingCandidateScoreGateStatus::WaitingCooldown,
-                        "cooldown_active",
-                    )
-                } else {
-                    score_gate()
-                };
-            common(
-                RoutingCandidateCircuitState::Open,
-                score_gate_status,
-                score_gate_reason,
-            )
-        }
-        CircuitReadState::HalfOpen => {
-            let (score_gate_status, score_gate_reason) = if fact.half_open_lease_in_flight {
-                (
-                    RoutingCandidateScoreGateStatus::Passed,
-                    "half_open_lease_in_flight",
-                )
-            } else {
-                score_gate()
-            };
-            common(
-                RoutingCandidateCircuitState::HalfOpen,
-                score_gate_status,
-                score_gate_reason,
-            )
-        }
+        CircuitReadState::Closed => common(RoutingCandidateCircuitState::Closed),
+        CircuitReadState::Open => common(RoutingCandidateCircuitState::Open),
+        CircuitReadState::HalfOpen => common(RoutingCandidateCircuitState::HalfOpen),
     }
 }
 

@@ -13,7 +13,7 @@ export type RoutingScoreStatusDto = "scored" | "excluded" | "candidate_limit" | 
 export type RoutingAvailabilityStatusDto = "available" | "capacity_exhausted" | "capacity_state_unavailable" | "all_keys_unavailable";
 export type RoutingCandidateCapacityStatusDto = "available" | "exhausted" | "state_unavailable" | "unknown";
 export type RoutingCandidateParticipationStatusDto = "eligible" | "conditionally_eligible" | "excluded" | "unavailable";
-export type RoutingCandidateParticipationReasonDto = "ready" | "administratively_disabled" | "planner_excluded" | "planner_unavailable" | "candidate_limit_exceeded" | "circuit_persistence_unavailable" | "circuit_open_cooldown" | "circuit_recovery_score_gate_passed" | "circuit_recovery_score_gate_denied" | "circuit_half_open_idle" | "circuit_half_open_lease_occupied";
+export type RoutingCandidateParticipationReasonDto = "ready" | "administratively_disabled" | "planner_excluded" | "planner_unavailable" | "candidate_limit_exceeded" | "circuit_persistence_unavailable" | "circuit_open_cooldown" | "circuit_recovery_ready" | "circuit_half_open_idle" | "circuit_half_open_lease_occupied";
 export type CircuitReadModelStatusDto = "available" | "unavailable";
 export type CircuitPersistenceStatusDto = "available" | "unavailable";
 export type CircuitReadStateDto = "closed" | "open" | "half_open";
@@ -263,7 +263,6 @@ export type RoutingCandidatePricingSnapshotDto = {
 };
 
 export type RoutingCandidateCircuitStateDto = "closed" | "open" | "half_open";
-export type RoutingCandidateScoreGateStatusDto = "not_applicable" | "waiting_cooldown" | "passed" | "denied" | "unavailable";
 
 export type RoutingCandidateQualityWindowDiagnosticsDto = {
   sampleCount: number;
@@ -340,9 +339,6 @@ export type RoutingCandidateCircuitDiagnosticsDto = {
   halfOpenLeaseInFlight: boolean;
   halfOpenLeaseExpiresAtMs: number | null;
   recoverySuccesses: number | null;
-  scoreGateStatus: RoutingCandidateScoreGateStatusDto;
-  scoreGateReason: string;
-  bestClosedEffectiveScore: number | null;
 };
 
 export type RoutingCandidateDiagnosticsDto = {

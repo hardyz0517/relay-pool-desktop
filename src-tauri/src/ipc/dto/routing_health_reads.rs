@@ -405,7 +405,7 @@ pub(crate) fn serialization_fixtures() -> Vec<Value> {
             "command":"load_routing_workspace_snapshot",
             "input":{"limit":64,"cursor":null},
             "output":{
-                "readModelVersion":"routing_workspace_read_model_v3",
+                "readModelVersion":"routing_workspace_read_model_v4",
                 "generatedAtMs":1700000000000_i64,
                 "policyConfig":{
                     "version":1,
