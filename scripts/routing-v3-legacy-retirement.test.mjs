@@ -272,6 +272,32 @@ for (const file of [
   );
 }
 
+const retiredRecoveryScoreGatePattern =
+  /half_open_score_gate|score_gate_passed|DeniedScoreGate|best_closed_effective_score|RoutingCandidateScoreGateStatus|scoreGateStatus|scoreGateReason|bestClosedEffectiveScore|circuit_recovery_score_gate_passed|circuit_recovery_score_gate_denied/u;
+for (const { relativePath, source } of readTree("src-tauri/src", ".rs")) {
+  assert.doesNotMatch(
+    stripRustTests(source),
+    retiredRecoveryScoreGatePattern,
+    `${relativePath} must keep recovery eligibility independent from scoring`,
+  );
+}
+for (const file of ["src-tauri/src/ipc/dto/routing_health_reads.typescript.txt"]) {
+  assert.doesNotMatch(
+    read(file),
+    retiredRecoveryScoreGatePattern,
+    `${file} must not expose the retired recovery score gate`,
+  );
+}
+for (const extension of [".ts", ".tsx"]) {
+  for (const { relativePath, source } of readTree("src", extension)) {
+    assert.doesNotMatch(
+      source,
+      retiredRecoveryScoreGatePattern,
+      `${relativePath} must not expose the retired recovery score gate`,
+    );
+  }
+}
+
 const rawOperationalFacts = read("src-tauri/src/models/operational/raw_facts.rs");
 const rawCandidate = rawOperationalFacts.match(/pub\(crate\) struct RawOperationalCandidateRow\s*\{[\s\S]*?\n\}/u);
 assert.ok(rawCandidate, "RawOperationalCandidateRow must remain defined");

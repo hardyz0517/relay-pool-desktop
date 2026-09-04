@@ -4,6 +4,8 @@
 
 日期：2026-08-28
 
+最近修订：2026-09-04；恢复资格改为冷却结束后的逻辑 Half-Open，评分仅负责排序。
+
 适用范围：本地 OpenAI-compatible 代理的候选排序、请求重试与故障转移、Key 级跨请求熔断、可靠性统计、主动监控样本、路由设置页和相关持久化/IPC 契约。
 
 关联入口：
@@ -12,6 +14,7 @@
 - [`../specs/INTELLIGENT_ROUTING_RETRY_FAILOVER_CONFIGURATION_SPEC.md`](../specs/INTELLIGENT_ROUTING_RETRY_FAILOVER_CONFIGURATION_SPEC.md)
 - [`../specs/ROUTING_POLICY_CONFIGURATION_SYSTEM_SPEC.md`](../specs/ROUTING_POLICY_CONFIGURATION_SYSTEM_SPEC.md)
 - [`../plans/2026-08-21-routing-retry-failover-hardening.md`](../plans/2026-08-21-routing-retry-failover-hardening.md)
+- [`../plans/2026-09-04-routing-half-open-eligibility-reliability.md`](../plans/2026-09-04-routing-half-open-eligibility-reliability.md)
 
 本文使用 `MUST`、`MUST NOT`、`SHOULD`、`MAY` 表示约束级别。
 
@@ -27,7 +30,7 @@
   -> 普通可重试错误在阈值内继续尝试当前 Key
   -> 连续失败达到阈值后打开该 Key 的熔断器并排除它
   -> 尚有额外 Key 名额时，按当前评分继续下一把 Key
-  -> 冷却结束后，仅在评分优于当前快照同一硬层最高 Closed 候选时进入 Half-Open
+  -> 冷却结束后以逻辑 Half-Open 身份进入正常评分序列，真正轮到时原子取得 Half-Open lease
   -> Half-Open 同一 Key 同时只允许一个真实请求
   -> 连续成功达到恢复阈值后回到 Closed
 ```
@@ -139,8 +142,8 @@ station_key_id
 每一轮规划使用一个不可变 `PlanningSnapshot`，依次执行：
 
 1. 解析请求模型、请求形态、重放安全和 deadline。
-2. 批量读取候选事实、质量摘要、熔断状态和运行时容量。
-3. 过滤硬资格不通过、当前请求已尝试和未到期 Open 的候选；冷却已结束的 Open Key 不直接视为 Closed，而是保留到本层 score gate 计算，通过后才重新加入排序；容量不在评分中扣分。
+2. 批量读取候选事实、质量摘要和运行时容量；Proxy 不为恢复资格预读全部 circuit status。
+3. 过滤硬资格不通过和当前请求已尝试的候选。候选按正常顺序通过容量后，在任何出站前接受单 Key durable circuit admission：冷却未到期则跳过，冷却已结束则取得唯一 Half-Open lease；容量和 circuit 都不在评分中扣分。
 4. 保持现有 Primary、Backup、Emergency 等硬层级顺序，但明确容量例外：先选择最高层；如果该层所有候选都只因本地容量准入拒绝，才进入下一层。
 5. 在当前层内计算每个候选的最终有效分数。
 6. 按包含既有亲和修正的 `effective_score` 从高到低排序；相同最终分数才按稳定的 `station_key_id` 顺序打破平局。无论分数来自 observed、optimistic 还是因部分因子不可用而按可用因子归一化得到的 fallback，只要是有限分数都进入同一个比较器；`score_status`/`quality_basis` 只能用于诊断，不能把 fallback 候选整体排到所有 scored 候选之后。只有完全没有可计算分数的候选才按 `station_key_id` 稳定兜底。亲和不得绕过硬资格、熔断、容量或既有逃逸规则。
@@ -511,20 +514,21 @@ cooldown = min(
 
 `429` 不使用特殊的站点级、账号级、端点级或容量域级等待规则，也不因为响应中的 `Retry-After` 延长当前 Key 的熔断冷却；它与其他可归责的单 Key 故障共用本节的基础等待时间和递增冷却。`Retry-After` MAY 保留在脱敏诊断中，但不得改变候选排序、请求重试预算或熔断作用域。
 
-### 8.4 Half-Open 评分门
+### 8.4 冷却结束后的逻辑 Half-Open 与排序
 
-冷却结束不等于立即发送探测。每次规划时：
+熔断状态和冷却决定恢复资格，评分只决定具备资格的候选何时被轮到。评分不得参与 circuit eligibility、不得阻止状态转换，也不得把冷却已结束的 Key 从后续故障转移候选中删除。
 
-1. 先计算当前快照中该 Open Key 所属 Primary/Backup/Emergency 硬层内、且通过硬资格的 `Closed` 候选最终分数；容量在后续准入阶段判断，不提前改写分数。不同硬层的分数不可比较。
-2. 令该硬层的 `best_closed_score` 为这些候选中的最高分；如果该硬层没有任何 `Closed` 候选，视为无比较基线。
-3. 冷却结束的 Open Key 只有在以下条件之一满足时才允许申请 Half-Open：
-   - 它的最终分数严格高于同一硬层的 `best_closed_score`；或
-   - 当前该硬层没有任何通过硬资格的 `Closed` 候选。
-4. 如果分数不高于同一硬层的 `best_closed_score`，继续保持 `Open(cooldown_elapsed)`，只记录 admission reason `half_open_admission_denied_by_score`，不消费 Half-Open lease，也不制造 synthetic 请求。若质量因子不可用但 planner 能按第 6 节的确定性 fallback 为该 Key 和同层 Closed 基线形成可比较的有限分数，则使用该 fallback 分数进行 gate；只有无法为两者形成可比较分数时才记录 `quality_unavailable` 并等待下一次规划，不能用乐观值冒充不可比较分数。`Open(cooldown_elapsed)` 是 `Open` 的派生显示状态，不是新的持久化状态。
+每次规划和准入遵循以下规则：
 
-这里比较的不是“上一把实际使用的 Key”，而是**这一次规划快照里同一硬层分数最高的 Closed Key**。例如同属 Primary 层的 A 是 Closed、评分 88；B 冷却结束、评分 92，则 B 可以进入 Half-Open；如果 B 评分 80，则即使上一请求恰好使用了 B，也不能绕过 A 的比较直接探测 B。Backup 层的 Closed Key 不能作为 Primary 层 B 的比较基线，反之亦然。这样每次恢复判断都基于当前完整候选状态，而不是某一次历史请求的偶然选择。通过评分门后仍要按容量准入规则申请真实请求。
+1. `Open` 且冷却未结束时，候选为 `excluded / circuit_open_cooldown`，不进入评分序列。
+2. `Open` 且冷却已结束时，持久状态暂时保持 `Open(cooldown_elapsed)`，投影为 `conditionally_eligible / circuit_recovery_ready`。这是逻辑 Half-Open：候选与 Closed Key 使用完全相同的 `target_rank -> availability tier -> effective_score -> stable identity` 顺序。
+3. 该候选真正按排序轮到且通过容量准入后，出站前的 circuit admission 才原子写入 `HalfOpen`、唯一 lease 和 attempt slot。并发竞争失败的请求以 `circuit_half_open_lease_occupied` 跳过，不发送请求、不消耗 `maxRetryCount`、不写质量或失败样本。
+4. `HalfOpen` 无活动 lease 时继续保持 `conditionally_eligible / circuit_half_open_idle`，在后续正常评分序列中竞争下一次独立真实请求；有活动 lease 时为 `excluded / circuit_half_open_lease_occupied`。
+5. circuit 状态持久化不可用时必须 fail-closed，候选为 `unavailable / circuit_persistence_unavailable`，任何 outbound boundary 前停止该候选。
 
-这条规则让恢复尝试服从评分目标，同时避免低评分 Key 在有更高分正常 Key 时抢占流量。24 小时无真实路由样本时，近期样本数为 `n=0`、近期权重为 `c=0`，最终按历史窗口值或历史样本不足时的乐观值参与比较；不能绕过凭据、能力、容量和冷却硬门。
+例如 A 为 Closed、90 分，B 冷却结束、85 分时，A 正常排在 B 前面；A 成功则本次不会为了恢复而强制请求 B。若 A 因容量不足、当前请求失败后被排除或已经 Open，B 仍保留资格，可以成为后续候选并取得 Half-Open lease。若 B 后来升到 95 分，它可以直接排到 A 前面。低分 B 可能长期轮不到，但不能失去被轮到的资格。
+
+本规则不增加强制轮换、最长恢复等待或 synthetic 请求。质量因子不可用时仍沿用所有候选共用的 planner unavailable 或确定性 fallback 规则，不存在恢复候选专属的评分资格判断。`Open(cooldown_elapsed)` 只是派生参与状态，不是新的持久化状态。
 
 必须有单一 supervised lease reaper 按固定周期扫描 `boundary_crossed=true` 且超过 `lease_expires_at` 的 Half-Open lease，提交带原 lease revision 的幂等过期事件；reaper 与请求 finalizer 竞争时由同一 CAS 决定唯一结果。reaper 崩溃或重复运行不得重复递增 `reopen_level`，未跨边界的 lease 只能释放而不能打开 circuit。
 
@@ -630,7 +634,7 @@ rawAttemptHardLimit = min(
 5. `candidate_cap_count>0` 且所有未尝试候选唯一阻断原因为本地容量准入拒绝，返回现有公共 `route_capacity_exhausted`；该结果不消耗 outbound retry。容量 registry/lease 服务不可用也使用该公共错误，并以诊断区分 `capacity_exhausted` 与 `capacity_state_unavailable`。`capacity_unavailable` 只作为内部分类/诊断，不作为公共 `error.code`。
 6. 如果没有未尝试候选，且原因仅是本请求已经取得 admission/跨边界后产生的 `request_exclusion`，或重试次数耗尽、deadline 到期、ReplayGate 拒绝继续重放，返回最后一个安全的 canonical failure；不得为了区分终态再次发送请求。当前请求刚使某 Key Open 也不改变这一条；后续新请求在没有未尝试且可用候选时才命中第 4 条的 `no_available_key`。
 
-所有终态都必须持久化本次 attempt 摘要和最终失败原因，不能把“重试耗尽”写成成功。已经达到阈值的 Key 保持 Open，供后续请求跳过。新增 `no_available_key` 与现有 `route_capacity_exhausted` 的对外契约均为 HTTP `503`、`error.type=service_unavailable`，不得暴露 Key、完整 URL 或内部容量信息。冷却已结束且通过 Half-Open 评分门的 Key 不属于“全部熔断”，可以申请唯一的真实恢复请求。
+所有终态都必须持久化本次 attempt 摘要和最终失败原因，不能把“重试耗尽”写成成功。已经达到阈值的 Key 保持 Open，供后续请求跳过。新增 `no_available_key` 与现有 `route_capacity_exhausted` 的对外契约均为 HTTP `503`、`error.type=service_unavailable`，不得暴露 Key、完整 URL 或内部容量信息。冷却已结束的 Open Key 属于条件可参与候选，可以按正常排序申请唯一的真实恢复请求；`no_available_key` 只覆盖冷却仍进行中、Half-Open lease 被占用、硬资格失败或 circuit persistence fail-closed 等没有可执行候选的情形。
 
 ## 10. 设置页目标结构
 
@@ -828,7 +832,7 @@ v2 -> v3 转换必须先写入独立的 staged policy/audit 记录，再由 gene
 - `retry_scheduled`：剩余 `maxRetryCount`、是否换 Key、等待原因；
 - `circuit_opened`；
 - `circuit_skipped`；
-- `half_open_admission_denied_by_score`；
+- `circuit_open_cooldown` / `circuit_half_open_lease_occupied` / `circuit_persistence_unavailable`；
 - `half_open_probe_started` / `half_open_probe_finished`；
 - `circuit_recovered` / `circuit_reopened`；
 - `request_finalized`。
@@ -837,7 +841,7 @@ v2 -> v3 转换必须先写入独立的 staged policy/audit 记录，再由 gene
 
 - “该 Key 返回上游 502，已计入可靠性失败样本，并暂时跳过当前请求。”
 - “该 Key 已连续失败 3 次，熔断至 14:32；本次改用下一把可用 Key。”
-- “该 Key 冷却已结束，但当前评分不高于本次快照同一硬层里最高分的正常 Key，暂不放行恢复请求。”
+- “该 Key 冷却已结束，已进入正常评分排序，轮到时将以一个真实请求验证恢复。”
 - “该 Key 已进入半开，仅允许一个真实请求验证恢复。”
 - “该 Key 连续成功达到 2 次，已恢复正常。”
 - “该 Key 24 小时没有真实路由样本；近期权重为 0，当前按历史窗口或历史样本不足时的乐观值计算。”
@@ -864,7 +868,7 @@ v2 -> v3 转换必须先写入独立的 staged policy/audit 记录，再由 gene
 
 - 将 Key circuit 改为连续失败阈值模型。
 - 接入 durable Open/cooldown/Half-Open/Closed 状态和 revision fence。
-- 接入 score gate、单真实请求 lease、取消释放、迟到结果保护。
+- 接入逻辑 Half-Open、单真实请求 lease、取消释放、迟到结果保护。
 - 保留容量 runtime overlay 的独立 owner。
 
 ### Phase 3：Planner 和 Retry
@@ -872,7 +876,7 @@ v2 -> v3 转换必须先写入独立的 staged policy/audit 记录，再由 gene
 - 删除生产探索预算和 rendezvous 选择；改为同层有效分数降序。
 - 将 request budget 改为 `maxRetryCount`；每次换 Key 重新读取最新 snapshot。
 - 保留 ReplayGate、deadline、commit safety 和容量内部 hard cap。
-- Half-Open score gate 只与同一 Primary/Backup/Emergency 硬层的最高 Closed 候选比较；不同硬层不得互相作比较基线。
+- 冷却结束的 Open Key 与 Closed Key 使用同一层级和评分排序；评分不参与 circuit eligibility 或状态转换。
 
 ### Phase 4：Policy migration 和前端
 
@@ -897,8 +901,8 @@ v2 -> v3 转换必须先写入独立的 staged policy/audit 记录，再由 gene
 - 最终有效分数相同使用稳定 Key tie-break；亲和沿用既有 bonus/hysteresis/逃逸规则。不再调用 weighted rendezvous、exploration budget 或随机 seed 选择。
 - Primary/Backup 等硬层级仍优先于分数跨层比较。
 - 高分 Key 正常情况下承载更多请求；容量不作为评分扣分项，只有容量准入失败时才继续尝试后面的 Key。
-- 已打开 Key 不进入普通候选序列；会话亲和不能绕过熔断。
-- Half-Open gate 只使用同一硬层的 `best_closed_score`；跨 Primary/Backup/Emergency 层的分数不参与比较。
+- 冷却仍在进行的 Open Key 不进入普通候选序列；会话亲和不能绕过熔断。
+- 冷却结束的 Open Key 无论相对分数高低都保留条件参与资格；硬层和评分只决定它在序列中的位置。
 
 ### 15.2 TNTAPI/502 回归场景
 
@@ -926,8 +930,9 @@ v2 -> v3 转换必须先写入独立的 staged policy/audit 记录，再由 gene
 
 - 连续失败达到阈值后原子 Open；成功清零 Closed 连续失败。
 - 冷却未结束时 Open 永不被普通评分选中。
-- 冷却结束但评分不高于当前 Closed 最佳候选时，不消费 Half-Open lease。
-- 评分高于当前 Closed 最佳候选时（或没有任何硬资格通过的 Closed 候选时），只允许一个并发真实请求。
+- 冷却截止时刻之前仍拒绝；截止时刻及之后无需任何评分准入参数即可竞争 Half-Open lease。
+- 低分恢复候选排在高分 Closed 候选之后但始终保留后续故障转移资格；轮到时只允许一个并发真实请求。
+- 高分 Closed 候选成功时不强制请求低分恢复候选；恢复候选后来分数更高时可以按正常排序排到前面。
 - Half-Open 连续成功达到阈值才 Close；成功必须来自独立的真实路由请求，任一可归责失败 Reopen 并按递增冷却重新等待。
 - lease race、取消、目标移除和迟到结果不会错误关闭新一轮状态。
 - Half-Open lease 的 `lease_expires_at` 不晚于请求 `deadline_at`；deadline 前的长请求持续持有唯一 lease，deadline 后由单一 reaper 只执行一次幂等重开。
@@ -946,7 +951,7 @@ v2 -> v3 转换必须先写入独立的 staged policy/audit 记录，再由 gene
 - 24 小时没有真实路由样本的 Key，其实际路由来源近期样本数为 `n=0`，按 `c=0` 使用历史窗口结果；若历史样本不足则将乐观值代入历史窗口。不写入假观测；监控来源仍按各自最小样本门槛计算。
 - 新真实样本到达后立即移除假设。
 - 假设不能越过 Open、凭据、能力和容量硬门。
-- 无随机探索、无额外轮换；Key 只有在正常评分顺序轮到它且通过 Half-Open 评分门时，才由真实请求完成恢复验证。
+- 无随机探索、无额外轮换；Key 在冷却结束后始终保留正常评分和故障转移资格，只有正常评分顺序轮到它时才由真实请求完成恢复验证。
 - 切换期间新请求不能取得 candidate admission；generation fence 超过请求 deadline 时沿用现有 deadline/timeout 公共错误并带 `routing_generation_transition` 诊断，不能伪装为 `no_available_key`，已取得 admission 的请求允许完成。
 
 ### 15.7 设置页
