@@ -212,6 +212,52 @@ impl CredentialStore {
         operation_id: &str,
         observed_at_ms: i64,
     ) -> Result<bool, PersistenceError> {
+        self.record_collector_authorization_evidence(
+            write,
+            station_id,
+            credential_revision,
+            operation_id,
+            observed_at_ms,
+            AuthEffect::RequiresReauthorization,
+            ReasonCode::AuthorizationRequired,
+        )
+        .await
+    }
+
+    /// Clear a collector-owned reauthorization verdict only after the same
+    /// credential revision produces a qualifying authenticated task result.
+    /// DriverProbe authority intentionally matches the rejection authority so
+    /// the newer intent can replace it without weakening reducer precedence.
+    pub(crate) async fn record_collector_authorization_recovery(
+        &self,
+        write: &mut WriteSession,
+        station_id: &str,
+        credential_revision: i64,
+        operation_id: &str,
+        observed_at_ms: i64,
+    ) -> Result<bool, PersistenceError> {
+        self.record_collector_authorization_evidence(
+            write,
+            station_id,
+            credential_revision,
+            operation_id,
+            observed_at_ms,
+            AuthEffect::ConfirmsValid,
+            ReasonCode::None,
+        )
+        .await
+    }
+
+    async fn record_collector_authorization_evidence(
+        &self,
+        write: &mut WriteSession,
+        station_id: &str,
+        credential_revision: i64,
+        operation_id: &str,
+        observed_at_ms: i64,
+        effect: AuthEffect,
+        reason: ReasonCode,
+    ) -> Result<bool, PersistenceError> {
         if station_id.trim().is_empty()
             || credential_revision < 1
             || operation_id.trim().is_empty()
@@ -231,9 +277,9 @@ impl CredentialStore {
             operation_id: operation_id.to_string(),
             revision: AuthorizationRevision::new(credential_revision, intent_sequence)
                 .map_err(|_| PersistenceError::ConstraintViolation)?,
-            effect: AuthEffect::RequiresReauthorization,
+            effect,
             authority: EvidenceAuthority::DriverProbe,
-            reason: ReasonCode::AuthorizationRequired,
+            reason,
             observed_at_ms,
         };
         apply_station_authorization_evidence(write.connection(), station_id, &evidence).await

@@ -1268,6 +1268,12 @@ impl CollectorService {
         if record_authorization_observation && should_record_collector_observation(&request.status)
         {
             let authorization_expired = request_requires_manual_authorization(&request);
+            let authorization_operation_id = collector_operation_key(
+                &request.station_id,
+                request.endpoint_revision,
+                request.credential_revision,
+                request.intent_sequence,
+            );
             if authorization_expired
                 && !self
                     .credentials
@@ -1275,12 +1281,7 @@ impl CollectorService {
                         write,
                         &request.station_id,
                         request.credential_revision,
-                        &collector_operation_key(
-                            &request.station_id,
-                            request.endpoint_revision,
-                            request.credential_revision,
-                            request.intent_sequence,
-                        ),
+                        &authorization_operation_id,
                         finished_ms.max(0),
                     )
                     .await?
@@ -1302,6 +1303,20 @@ impl CollectorService {
                     .is_some_and(|task_type| {
                         request_confirms_authorization_recovery(&request, task_type)
                     });
+            if authorization_recovered
+                && !self
+                    .credentials
+                    .record_collector_authorization_recovery(
+                        write,
+                        &request.station_id,
+                        request.credential_revision,
+                        &authorization_operation_id,
+                        finished_ms.max(0),
+                    )
+                    .await?
+            {
+                return Err(ApplicationError::StaleRevision);
+            }
             if authorization_expired || authorization_recovered {
                 alerting_changed |= alerting
                     .record_in_session(
@@ -4187,7 +4202,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn manual_authorization_stays_visible_after_a_later_balance_success() {
+    async fn manual_authorization_only_recovers_after_a_matching_task_success() {
         let temp = tempfile::tempdir().expect("tempdir");
         let runtime =
             PersistenceRuntime::initialize_new(&temp.path().join("manual-authorization.sqlite3"))
@@ -4324,14 +4339,29 @@ mod tests {
         .await
         .expect("authorization count after unrelated success");
         assert_eq!(authorization_count, 1);
+        let authorization_status: String = sqlx::query_scalar(
+            "SELECT status FROM station_authorization_projection WHERE station_id = ?1",
+        )
+        .bind(&station.id)
+        .fetch_one(read.connection())
+        .await
+        .expect("authorization projection after unrelated success");
+        assert_eq!(authorization_status, "reauthorization_required");
         drop(read);
 
         let mut recovered_groups =
             collector_apply_request("recovered-groups-run", &station, None, "groups", "success");
-        recovered_groups.intent_sequence = collectors
+        let recovered_groups_intent = collectors
             .allocate_station_collection_intent(&station.id, station.endpoint_revision, 1)
             .await
             .expect("groups recovery intent");
+        recovered_groups.intent_sequence = recovered_groups_intent;
+        let recovery_operation_id = collector_operation_key(
+            &station.id,
+            station.endpoint_revision,
+            1,
+            recovered_groups_intent,
+        );
         collectors
             .apply_result(recovered_groups)
             .await
@@ -4347,6 +4377,18 @@ mod tests {
         .await
         .expect("authorization count after matching success");
         assert_eq!(authorization_count, 0);
+        let authorization_projection: (String, String, Option<String>, String) = sqlx::query_as(
+            "SELECT status, authority, reason_code, source_operation_id
+             FROM station_authorization_projection WHERE station_id = ?1",
+        )
+        .bind(&station.id)
+        .fetch_one(read.connection())
+        .await
+        .expect("authorization projection after matching success");
+        assert_eq!(authorization_projection.0, "valid");
+        assert_eq!(authorization_projection.1, "driver_probe");
+        assert_eq!(authorization_projection.2, None);
+        assert_eq!(authorization_projection.3, recovery_operation_id);
         drop(read);
         runtime.close().await.expect("close runtime");
     }
@@ -4899,7 +4941,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn published_status_authorization_stays_actionable_without_degrading_core_health() {
+    async fn published_status_authorization_recovers_from_a_legacy_stale_projection() {
         let temp = tempfile::tempdir().expect("tempdir");
         let runtime = PersistenceRuntime::initialize_new(
             &temp.path().join("published-status-authorization.sqlite3"),
@@ -5010,6 +5052,89 @@ mod tests {
         .await
         .expect("published authorization count after unrelated success");
         assert_eq!(authorization_count, 1);
+        let authorization_status: String = sqlx::query_scalar(
+            "SELECT status FROM station_authorization_projection WHERE station_id = ?1",
+        )
+        .bind(&station.id)
+        .fetch_one(read.connection())
+        .await
+        .expect("published authorization projection after unrelated success");
+        assert_eq!(authorization_status, "reauthorization_required");
+        drop(read);
+
+        // Simulate a successful run written by the pre-fix application. Its
+        // collector history advanced, but the authorization projection stayed
+        // on the older manual-required operation. The next matching task must
+        // recover that durable stale projection instead of relying only on the
+        // immediately previous run status.
+        let mut write = runtime.begin_write().await.expect("legacy success write");
+        sqlx::query(
+            "INSERT INTO collector_runs (
+                 id, run_key, request_hash, station_id, endpoint_revision,
+                 parent_run_id, adapter, task_type, status, started_at,
+                 finished_at, duration_ms, endpoint_count, success_count,
+                 failure_count, manual_action_required, error_code,
+                 error_message, snapshot_id, created_at
+             ) VALUES (
+                 'legacy-published-success', 'legacy-published-success',
+                 'legacy-published-success-hash', ?1, ?2, NULL, 'sub2api',
+                 'published_status', 'success', '1700000000001',
+                 '1700000000001', 0, 1, 1, 0, 0, NULL, NULL, NULL,
+                 '1700000000001'
+             )",
+        )
+        .bind(&station.id)
+        .bind(station.endpoint_revision)
+        .execute(write.connection())
+        .await
+        .expect("legacy success history");
+        write.commit().await.expect("commit legacy success history");
+
+        let mut recovered_published_status = collector_apply_request(
+            "recovered-published-status-run",
+            &station,
+            None,
+            "published_status",
+            "success",
+        );
+        let recovery_intent = collectors
+            .allocate_station_collection_intent(&station.id, station.endpoint_revision, 1)
+            .await
+            .expect("published status recovery intent");
+        recovered_published_status.intent_sequence = recovery_intent;
+        let recovery_operation_id =
+            collector_operation_key(&station.id, station.endpoint_revision, 1, recovery_intent);
+        collectors
+            .apply_result(recovered_published_status)
+            .await
+            .expect("published status recovery apply");
+
+        let mut read = runtime
+            .begin_read()
+            .await
+            .expect("published status recovery read");
+        let authorization_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM change_incidents
+             WHERE station_id = ?1 AND event_type = 'authorization_expired'
+               AND lifecycle_state IN ('pending', 'open', 'recovering')",
+        )
+        .bind(&station.id)
+        .fetch_one(read.connection())
+        .await
+        .expect("published authorization count after matching success");
+        assert_eq!(authorization_count, 0);
+        let authorization_projection: (String, String, Option<String>, String) = sqlx::query_as(
+            "SELECT status, authority, reason_code, source_operation_id
+             FROM station_authorization_projection WHERE station_id = ?1",
+        )
+        .bind(&station.id)
+        .fetch_one(read.connection())
+        .await
+        .expect("published authorization projection after matching success");
+        assert_eq!(authorization_projection.0, "valid");
+        assert_eq!(authorization_projection.1, "driver_probe");
+        assert_eq!(authorization_projection.2, None);
+        assert_eq!(authorization_projection.3, recovery_operation_id);
         drop(read);
         runtime.close().await.expect("close runtime");
     }

@@ -1221,21 +1221,44 @@ impl CollectorStore {
         }
         sqlx::query_scalar::<_, String>(
             "WITH ranked AS (
-                 SELECT task_type, status,
-                        ROW_NUMBER() OVER (
-                            PARTITION BY task_type
-                            ORDER BY CAST(COALESCE(finished_at, started_at, created_at) AS INTEGER) DESC,
-                                     created_at DESC, id DESC
+                 SELECT task_type, status, manual_action_required, error_code,
+                         ROW_NUMBER() OVER (
+                             PARTITION BY task_type
+                             ORDER BY CAST(COALESCE(finished_at, started_at, created_at) AS INTEGER) DESC,
+                                      created_at DESC, id DESC
                         ) AS row_number
                  FROM collector_runs
                  WHERE station_id = ?1
                    AND task_type IN ('balance', 'groups', 'detect', 'full', 'published_status')
                    AND status IN ('success', 'partial', 'failed', 'manual_required')
+             ), live_failure AS (
+                 SELECT task_type
+                 FROM ranked
+                 WHERE row_number = 1
+                   AND (status = 'manual_required'
+                        OR manual_action_required = 1
+                        OR error_code = 'manual_authorization_required')
+                 ORDER BY task_type ASC
+                 LIMIT 1
+             ), projected_failure AS (
+                 SELECT operation.task_type
+                 FROM station_authorization_projection AS projection
+                 JOIN collector_operations AS operation
+                   ON operation.operation_key = projection.source_operation_id
+                 WHERE projection.station_id = ?1
+                   AND projection.status = 'reauthorization_required'
+                   AND projection.authority = 'driver_probe'
+                   AND operation.station_id = projection.station_id
+                   AND operation.credential_revision = projection.credential_revision
+                   AND operation.task_type IN ('balance', 'groups', 'detect', 'full', 'published_status')
+                 LIMIT 1
              )
              SELECT task_type
-             FROM ranked
-             WHERE row_number = 1 AND status = 'manual_required'
-             ORDER BY task_type ASC
+             FROM live_failure
+             UNION ALL
+             SELECT task_type
+             FROM projected_failure
+             WHERE NOT EXISTS (SELECT 1 FROM live_failure)
              LIMIT 1",
         )
         .bind(station_id)

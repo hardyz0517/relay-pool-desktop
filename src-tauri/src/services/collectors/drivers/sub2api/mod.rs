@@ -971,6 +971,11 @@ async fn collect_published_status(
     } else if let Some((source_state, status)) = published_status_nonfatal_transport_outcome(
         execution.evidence.status_code,
         &execution.payload,
+        execution
+            .redacted
+            .get("failureKind")
+            .and_then(Value::as_str)
+            == Some("manual_authorization_required"),
     ) {
         let response_status = execution.evidence.status_code;
         let safe_error_kind = response_status
@@ -1030,13 +1035,14 @@ async fn collect_published_status(
 fn published_status_nonfatal_transport_outcome(
     status_code: Option<u16>,
     payload: &Value,
+    manual_authorization_required: bool,
 ) -> Option<(PublishedStatusSourceState, DriverOutputStatus)> {
     match status_code {
         Some(404) if published_status_unsupported_envelope(payload) => Some((
             PublishedStatusSourceState::Unsupported,
             DriverOutputStatus::Success,
         )),
-        Some(401 | 403) => Some((
+        Some(401 | 403) if manual_authorization_required => Some((
             PublishedStatusSourceState::AuthorizationRequired,
             DriverOutputStatus::ManualRequired,
         )),
@@ -4380,6 +4386,7 @@ mod tests {
             published_status_nonfatal_transport_outcome(
                 Some(404),
                 &json!({"code": "channel_monitors_not_supported"}),
+                false,
             ),
             Some((
                 PublishedStatusSourceState::Unsupported,
@@ -4390,31 +4397,62 @@ mod tests {
             published_status_nonfatal_transport_outcome(
                 Some(404),
                 &json!({"code": 404, "message": "route not found"}),
+                false,
             ),
             None
         );
         assert_eq!(
-            published_status_nonfatal_transport_outcome(Some(401), &Value::Null),
+            published_status_nonfatal_transport_outcome(Some(401), &Value::Null, true),
             Some((
                 PublishedStatusSourceState::AuthorizationRequired,
                 DriverOutputStatus::ManualRequired,
             ))
         );
         assert_eq!(
-            published_status_nonfatal_transport_outcome(Some(403), &Value::Null),
+            published_status_nonfatal_transport_outcome(Some(403), &Value::Null, true),
             Some((
                 PublishedStatusSourceState::AuthorizationRequired,
                 DriverOutputStatus::ManualRequired,
             ))
         );
         assert_eq!(
-            published_status_nonfatal_transport_outcome(Some(429), &Value::Null),
+            published_status_nonfatal_transport_outcome(Some(401), &Value::Null, false),
             None
         );
         assert_eq!(
-            published_status_nonfatal_transport_outcome(Some(500), &Value::Null),
+            published_status_nonfatal_transport_outcome(Some(403), &Value::Null, false),
             None
         );
+        assert_eq!(
+            published_status_nonfatal_transport_outcome(Some(429), &Value::Null, false),
+            None
+        );
+        assert_eq!(
+            published_status_nonfatal_transport_outcome(Some(500), &Value::Null, false),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn published_status_plain_forbidden_is_not_manual_authorization() {
+        let server = TestHttpServer::sequence(vec![Some(json_response(
+            403,
+            json!({"code": 403, "message": "forbidden"}),
+        ))]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor;
+        let context = test_context(&server.base_url, &secrets, &outbound);
+
+        let error = Sub2ApiCollectorDriver
+            .collect(&context, CollectorTaskKind::PublishedStatus)
+            .await
+            .expect_err("plain forbidden response must remain a typed collector failure");
+
+        assert_eq!(error.kind, DriverFailureKind::AuthRejected);
+        assert_eq!(error.auth_effect, AuthEffect::None);
+        let requests = server.finish();
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].starts_with("GET /api/v1/channel-monitors "));
     }
 
     #[tokio::test]
