@@ -12,11 +12,11 @@ export type RoutingCandidateDiagnosticsDisplay = {
   circuitState: string;
   circuitDetail: string;
   halfOpenLease: string;
-  scoreGate: string;
+  recoveryState: string;
 };
 
 export function buildRoutingCandidateDiagnosticsDisplay(
-  candidate: Pick<RoutingWorkspaceCandidate, "diagnostics">,
+  candidate: Pick<RoutingWorkspaceCandidate, "diagnostics" | "participationReason">,
 ): RoutingCandidateDiagnosticsDisplay | null {
   const diagnostics = candidate.diagnostics;
   if (!diagnostics) return null;
@@ -53,9 +53,9 @@ export function buildRoutingCandidateDiagnosticsDisplay(
     halfOpenLease: circuit.halfOpenLeaseInFlight
       ? `Half-Open lease 已占用${formatLeaseExpiry(circuit.halfOpenLeaseExpiresAtMs)}`
       : "Half-Open lease 空闲",
-    scoreGate: formatScoreGate(
-      circuit.scoreGateStatus,
-      circuit.bestClosedEffectiveScore,
+    recoveryState: formatRecoveryState(
+      candidate.participationReason,
+      circuit.recoverySuccesses,
     ),
   };
 }
@@ -156,16 +156,17 @@ function formatCircuitState(state: string, cooldownRemainingMs: number | null) {
   return "Closed";
 }
 
-function formatScoreGate(status: string, bestClosedScore: number | null) {
-  const baseline = bestClosedScore == null ? "无同层 Closed 基线" : `同层 Closed 最佳 ${formatScore(bestClosedScore)}`;
+function formatRecoveryState(reason: string, recoverySuccesses: number | null) {
+  const successes = recoverySuccesses ?? 0;
   const labels: Record<string, string> = {
-    not_applicable: "评分门不适用",
-    waiting_cooldown: "评分门等待冷却结束",
-    passed: "评分门通过",
-    denied: "评分门未通过",
-    unavailable: "评分门暂不可评估",
+    ready: "无需恢复",
+    circuit_open_cooldown: "等待冷却结束",
+    circuit_recovery_ready: "冷却已结束 · 已进入正常评分排序",
+    circuit_half_open_idle: `半开待下次探测 · 已成功 ${successes} 次`,
+    circuit_half_open_lease_occupied: `半开探测进行中 · 已成功 ${successes} 次`,
+    circuit_persistence_unavailable: "熔断状态不可用",
   };
-  return `${labels[status] ?? "评分门状态未知"} · ${baseline}`;
+  return labels[reason] ?? "恢复状态由当前参与原因决定";
 }
 
 function formatLeaseExpiry(expiresAtMs: number | null) {

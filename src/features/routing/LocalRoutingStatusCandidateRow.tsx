@@ -82,6 +82,7 @@ export function LocalRoutingStatusCandidateRow({
   const participation = buildParticipationDisplay(
     candidate.participationStatus,
     candidate.participationReason,
+    circuit?.recoverySuccesses ?? null,
   );
   const [scoreDialogOpen, setScoreDialogOpen] = useState(false);
 

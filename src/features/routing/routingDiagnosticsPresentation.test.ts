@@ -11,6 +11,7 @@ describe("routing diagnostics presentation", () => {
 
   it("renders unavailable sources and unknown idle state without inventing facts", () => {
     const candidate = {
+      participationReason: "circuit_open_cooldown",
       diagnostics: {
         effectiveScore: null,
         baseScore: null,
@@ -80,9 +81,6 @@ describe("routing diagnostics presentation", () => {
           halfOpenLeaseInFlight: false,
           halfOpenLeaseExpiresAtMs: null,
           recoverySuccesses: null,
-          scoreGateStatus: "waiting_cooldown",
-          scoreGateReason: "cooldown_active",
-          bestClosedEffectiveScore: null,
         },
       },
     } as RoutingWorkspaceCandidate;
@@ -97,7 +95,7 @@ describe("routing diagnostics presentation", () => {
       latencySummary: "响应延迟 2.5 秒 · 来源权重 实际 不参与 / 监控 不参与 · 近期 0/5 · mass 0.00 · 2.5 秒（乐观值） · 历史 0/15 · mass 0.00 · 2.5 秒（乐观值）",
       idleRealRoute: "真实流量闲置状态未知",
       circuitState: "Open · 冷却剩余 2 分钟",
-      scoreGate: "评分门等待冷却结束 · 无同层 Closed 基线",
+      recoveryState: "等待冷却结束",
     });
 
     candidate.diagnostics!.circuit.persistenceStatus = "unavailable";

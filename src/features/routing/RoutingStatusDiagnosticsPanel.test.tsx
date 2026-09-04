@@ -110,9 +110,6 @@ function snapshotFixture(): RoutingWorkspaceSnapshot {
             halfOpenLeaseInFlight: true,
             halfOpenLeaseExpiresAtMs: null,
             recoverySuccesses: 1,
-            scoreGateStatus: "passed",
-            scoreGateReason: "half_open_lease_in_flight",
-            bestClosedEffectiveScore: 8_800,
           },
         },
         group: null,
@@ -257,7 +254,8 @@ describe("routing Key circuit diagnostics", () => {
     expect(host.textContent).toContain("真实流量已闲置 24 小时以上");
     expect(host.textContent).toContain("Half-Open lease 已占用");
     expect(host.textContent).toContain("回退层级 2");
-    expect(host.textContent).toContain("评分门通过 · 同层 Closed 最佳 88.00");
+    expect(host.textContent).toContain("半开探测进行中 · 已成功 1 次");
+    expect(host.textContent).not.toContain("评分门");
     expect(host.textContent).not.toContain("故障域");
     expect(host.textContent).not.toContain("secret-domain-id");
     expect(host.textContent).not.toContain("容量域");

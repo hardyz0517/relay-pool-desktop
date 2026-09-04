@@ -58,6 +58,14 @@ describe("local routing status view model", () => {
       label: "半开探测进行中",
       tone: "warning",
     });
+    expect(buildParticipationDisplay("conditionally_eligible", "circuit_recovery_ready")).toEqual({
+      label: "半开待探测",
+      tone: "warning",
+    });
+    expect(buildParticipationDisplay("conditionally_eligible", "circuit_half_open_idle", 1)).toEqual({
+      label: "半开待下次探测 · 已成功 1 次",
+      tone: "warning",
+    });
     expect(buildParticipationDisplay("unavailable", "circuit_persistence_unavailable")).toEqual({
       label: "熔断状态不可用",
       tone: "disabled",
@@ -79,8 +87,8 @@ describe("local routing status view model", () => {
     });
     expect(buildCooldownDisplay("open", 301_000, 300_500).label).toBe("00:01");
     expect(buildCooldownDisplay("open", 301_000, 301_500)).toEqual({
-      active: true,
-      label: "00:00",
+      active: false,
+      label: "已结束",
       remainingSeconds: 0,
     });
   });

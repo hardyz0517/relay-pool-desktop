@@ -88,6 +88,10 @@ export function buildCooldownDisplay(
 
   const remainingSeconds = Math.max(0, Math.ceil((cooldownUntilMs - nowMs) / 1000));
 
+  if (remainingSeconds === 0) {
+    return { active: false, label: "已结束", remainingSeconds: 0 };
+  }
+
   return {
     active: true,
     label: formatDuration(remainingSeconds),
@@ -98,6 +102,7 @@ export function buildCooldownDisplay(
 export function buildParticipationDisplay(
   status: RoutingCandidateParticipationStatus | string,
   reason: RoutingCandidateParticipationReason | string,
+  recoverySuccesses: number | null = null,
 ): ParticipationDisplay {
   const byReason: Record<RoutingCandidateParticipationReason, ParticipationDisplay> = {
     ready: { label: "可参与", tone: "healthy" },
@@ -107,9 +112,13 @@ export function buildParticipationDisplay(
     candidate_limit_exceeded: { label: "候选上限外", tone: "warning" },
     circuit_persistence_unavailable: { label: "熔断状态不可用", tone: "disabled" },
     circuit_open_cooldown: { label: "熔断冷却中", tone: "warning" },
-    circuit_recovery_score_gate_passed: { label: "可恢复探测", tone: "warning" },
-    circuit_recovery_score_gate_denied: { label: "恢复评分门未通过", tone: "warning" },
-    circuit_half_open_idle: { label: "半开可探测", tone: "warning" },
+    circuit_recovery_ready: { label: "半开待探测", tone: "warning" },
+    circuit_half_open_idle: {
+      label: recoverySuccesses != null && recoverySuccesses > 0
+        ? `半开待下次探测 · 已成功 ${recoverySuccesses} 次`
+        : "半开待下次探测",
+      tone: "warning",
+    },
     circuit_half_open_lease_occupied: { label: "半开探测进行中", tone: "warning" },
   };
   if (Object.prototype.hasOwnProperty.call(byReason, reason)) {

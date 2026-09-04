@@ -186,7 +186,7 @@ export function RoutingStatusDiagnosticsPanel({
 
       <SectionCard
         title="密钥熔断诊断"
-        description="熔断器按每把站点密钥独立作用，恢复请求必须通过同层评分门。"
+        description="熔断器按每把站点密钥独立作用；冷却结束后进入正常评分排序，轮到时取得唯一恢复 lease。"
         contentClassName="grid min-w-0 gap-2"
       >
         {scopedCandidates.some((candidate) => candidate.diagnostics) ? (
@@ -330,7 +330,7 @@ function CircuitLine({ candidate }: { candidate: RoutingWorkspaceCandidate }) {
       </div>
       <div className="grid min-w-0 gap-1 text-muted-foreground">
         <span className="break-words">{diagnostics.halfOpenLease}</span>
-        <span className="break-words">{diagnostics.scoreGate}</span>
+        <span className="break-words">{diagnostics.recoveryState}</span>
       </div>
     </div>
   );

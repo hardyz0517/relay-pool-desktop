@@ -128,7 +128,7 @@ describe("LocalRoutingStatusCandidateRow concurrency", () => {
     );
     const recovery = renderToStaticMarkup(
       <LocalRoutingStatusCandidateRow
-        candidate={candidate({ participationStatus: "conditionally_eligible", participationReason: "circuit_recovery_score_gate_passed" })}
+        candidate={candidate({ participationStatus: "conditionally_eligible", participationReason: "circuit_recovery_ready" })}
         order={1}
         nowMs={0}
       />,
@@ -146,7 +146,7 @@ describe("LocalRoutingStatusCandidateRow concurrency", () => {
     );
 
     expect(paused).toContain("已暂停路由");
-    expect(recovery).toContain("可恢复探测");
+    expect(recovery).toContain("半开待探测");
     expect(unavailable).toContain("熔断状态不可用");
     expect(unavailable).toContain("不可用");
   });
@@ -161,7 +161,17 @@ describe("LocalRoutingStatusCandidateRow concurrency", () => {
     );
     const halfOpenMarkup = renderToStaticMarkup(
       <LocalRoutingStatusCandidateRow
-        candidate={candidate({ diagnostics: circuitDiagnostics("half_open", null) })}
+        candidate={candidate({
+          diagnostics: {
+            ...circuitDiagnostics("half_open", null),
+            circuit: {
+              ...circuitDiagnostics("half_open", null).circuit,
+              recoverySuccesses: 1,
+            },
+          },
+          participationStatus: "conditionally_eligible",
+          participationReason: "circuit_half_open_idle",
+        })}
         order={1}
         nowMs={0}
       />,
@@ -176,6 +186,7 @@ describe("LocalRoutingStatusCandidateRow concurrency", () => {
 
     expect(openMarkup).toContain("05:01");
     expect(halfOpenMarkup).toContain("半开");
+    expect(halfOpenMarkup).toContain("已成功 1 次");
     expect(new DOMParser().parseFromString(closedMarkup, "text/html").body.textContent).toContain("-");
   });
 
@@ -282,9 +293,6 @@ function circuitDiagnostics(
       halfOpenLeaseInFlight: false,
       halfOpenLeaseExpiresAtMs: null,
       recoverySuccesses: null,
-      scoreGateStatus: "not_applicable",
-      scoreGateReason: "test",
-      bestClosedEffectiveScore: null,
     },
     effectiveScore: null,
     baseScore: null,
