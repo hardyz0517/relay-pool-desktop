@@ -55,8 +55,8 @@ use crate::{
         },
         request_finalization::effect_planner::classified_attempt_failure_from_canonical,
         request_finalization::failure::{
-            failure_from_provider_signal, planning_failure, public_error_for_class,
-            CapabilityApplicabilitySet, FailureClass, FailureTarget, ProviderErrorSemanticSignal,
+            failure_from_provider_signal, planning_failure, CapabilityApplicabilitySet,
+            FailureClass, FailureTarget, ProviderErrorSemanticSignal,
             RetryDisposition as CanonicalRetryDisposition,
         },
         routing_engine::{
@@ -644,29 +644,6 @@ impl ExecutionEngine {
             execution_attempt_limit(attempt_budget, snapshot.candidates.len());
         // Per-request DecisionTraceProfileV1 record; in-memory ring only.
         let mut decision_trace = DecisionTraceBuilder::new(&request.request_id).ok();
-        let mut circuit_statuses = match await_request_deadline(
-            transport_policy.request_deadline,
-            precommit_started,
-            self.repository.load_station_key_circuit_statuses(),
-            |_error| circuit_persistence_unavailable_failure(),
-        )
-        .await
-        {
-            Ok(statuses) => statuses,
-            Err(failure) => {
-                if failure.code == ProxyFailureCode::RouteNoAvailableKey {
-                    record_trace_event(
-                        &mut decision_trace,
-                        DecisionTraceEventKind::FailClosed,
-                        "circuit_persistence_unavailable",
-                        0,
-                        None,
-                    );
-                    finish_decision_trace(decision_trace, &self.routing_runtime);
-                }
-                return Err(failure);
-            }
-        };
         // Keep the effective immutable profile visible in the bounded trace.
         // This is deliberately coarse and contains no request/provider data.
         let profile_trace_detail = attempt_budget_trace_detail(attempt_budget);
@@ -720,7 +697,6 @@ impl ExecutionEngine {
                 current_runtime_overlay_revision: self.routing_runtime.snapshot().runtime_revision,
                 now_ms: controller_now_ms(request_started_at_ms, precommit_started),
                 max_waiters_per_constraint: 0,
-                circuit_statuses: &circuit_statuses,
             };
             let decision = match controller.next(admission_input) {
                 Ok(decision) => decision,
@@ -728,7 +704,16 @@ impl ExecutionEngine {
                     break;
                 }
                 Err(failure) => {
-                    return Err(controller_failure(failure, &planning_snapshot));
+                    let failure = controller_failure(failure, &planning_snapshot);
+                    record_trace_event(
+                        &mut decision_trace,
+                        DecisionTraceEventKind::RequestTerminal,
+                        "request_failed",
+                        attempted_count.max(0) as u32,
+                        None,
+                    );
+                    finish_decision_trace(decision_trace, &self.routing_runtime);
+                    return Err(failure);
                 }
             };
             let selected = match decision {
@@ -770,7 +755,16 @@ impl ExecutionEngine {
                 other => match selected_route_or_failure(other) {
                     Ok(selected) => selected,
                     Err(failure) => {
-                        return Err(controller_failure(failure, &planning_snapshot));
+                        let failure = controller_failure(failure, &planning_snapshot);
+                        record_trace_event(
+                            &mut decision_trace,
+                            DecisionTraceEventKind::RequestTerminal,
+                            "request_failed",
+                            attempted_count.max(0) as u32,
+                            None,
+                        );
+                        finish_decision_trace(decision_trace, &self.routing_runtime);
+                        return Err(failure);
                     }
                 },
             };
@@ -799,7 +793,6 @@ impl ExecutionEngine {
                             .max(controller_now_ms(request_started_at_ms, precommit_started)),
                     )
                     .unwrap_or(0),
-                    selected.score_gate_passed,
                     durable_attempt_id.clone(),
                     request.request_id.clone(),
                     attempt_index as u16,
@@ -826,20 +819,6 @@ impl ExecutionEngine {
                         planning_context,
                     )
                     .await?;
-                circuit_statuses = match self.repository.load_station_key_circuit_statuses().await {
-                    Ok(statuses) => statuses,
-                    Err(_) => {
-                        record_trace_event(
-                            &mut decision_trace,
-                            DecisionTraceEventKind::FailClosed,
-                            "circuit_persistence_unavailable",
-                            attempt_index as u32,
-                            None,
-                        );
-                        finish_decision_trace(decision_trace, &self.routing_runtime);
-                        return Err(circuit_persistence_unavailable_failure());
-                    }
-                };
                 continue;
             }
             let circuit_lease_revision = match circuit_admission {
@@ -854,15 +833,35 @@ impl ExecutionEngine {
                 CircuitAdmissionResult::AllowedClosed { .. }
                     | CircuitAdmissionResult::AllowedHalfOpen { .. }
             ) {
-                if circuit_admission == CircuitAdmissionResult::DeniedPersistenceUnavailable {
-                    record_trace_event(
-                        &mut decision_trace,
+                let (rejection_kind, rejection_code) = match circuit_admission {
+                    CircuitAdmissionResult::DeniedOpenCooldown => (
+                        DecisionTraceEventKind::CanonicalFailure,
+                        "circuit_open_cooldown",
+                    ),
+                    CircuitAdmissionResult::DeniedHalfOpenLease => (
+                        DecisionTraceEventKind::CanonicalFailure,
+                        "circuit_half_open_lease_occupied",
+                    ),
+                    CircuitAdmissionResult::DeniedPersistenceUnavailable => (
                         DecisionTraceEventKind::FailClosed,
                         "circuit_persistence_unavailable",
-                        attempt_index as u32,
-                        None,
-                    );
-                }
+                    ),
+                    CircuitAdmissionResult::DeniedLateAfterFinalization => (
+                        DecisionTraceEventKind::FailClosed,
+                        "circuit_late_after_finalization",
+                    ),
+                    _ => (
+                        DecisionTraceEventKind::CanonicalFailure,
+                        "circuit_admission_rejected",
+                    ),
+                };
+                record_trace_event(
+                    &mut decision_trace,
+                    rejection_kind,
+                    rejection_code,
+                    attempt_index as u32,
+                    None,
+                );
                 if current_key_id.as_deref() == Some(candidate.station_key_id.as_str())
                     && current_key_had_outbound_attempt
                 {
@@ -1374,13 +1373,6 @@ impl ExecutionEngine {
         let attempt_budget = planning_snapshot.attempt_budget;
         let execution_attempt_limit =
             execution_attempt_limit(attempt_budget, snapshot.candidates.len());
-        let mut circuit_statuses = await_request_deadline(
-            transport_policy.request_deadline,
-            precommit_started,
-            self.repository.load_station_key_circuit_statuses(),
-            |_error| circuit_persistence_unavailable_failure(),
-        )
-        .await?;
         let mut controller = RouteAdmissionCoordinator::new(
             route_facts.clone(),
             AdmissionSettings {
@@ -1421,7 +1413,6 @@ impl ExecutionEngine {
                 current_runtime_overlay_revision: self.routing_runtime.snapshot().runtime_revision,
                 now_ms: controller_now_ms(request_started_at_ms, precommit_started),
                 max_waiters_per_constraint: 0,
-                circuit_statuses: &circuit_statuses,
             };
             let decision = match controller.next(admission_input) {
                 Ok(decision) => decision,
@@ -1494,7 +1485,6 @@ impl ExecutionEngine {
                             .max(controller_now_ms(request_started_at_ms, precommit_started)),
                     )
                     .unwrap_or(0),
-                    selected.score_gate_passed,
                     durable_attempt_id.clone(),
                     request.request_id.clone(),
                     attempt_index as u16,
@@ -1521,11 +1511,6 @@ impl ExecutionEngine {
                         planning_context,
                     )
                     .await?;
-                circuit_statuses = self
-                    .repository
-                    .load_station_key_circuit_statuses()
-                    .await
-                    .map_err(|_| circuit_persistence_unavailable_failure())?;
                 continue;
             }
             let circuit_lease_revision = match circuit_admission {
@@ -2831,13 +2816,6 @@ fn precommit_timeout_failure() -> ProxyFailure {
     ))
 }
 
-fn circuit_persistence_unavailable_failure() -> ProxyFailure {
-    let mut failure =
-        ProxyFailure::from_public_error(public_error_for_class(FailureClass::NoAvailableKey));
-    failure.internal_detail = Some("circuit_persistence_unavailable".to_string());
-    failure
-}
-
 fn routing_generation_transition_timeout_failure() -> ProxyFailure {
     let mut failure = precommit_timeout_failure();
     failure.internal_detail = Some("routing_generation_transition".to_string());
@@ -3671,6 +3649,7 @@ mod tests {
                 planning_snapshot::{CandidateSnapshot, PlanningSnapshot},
             },
             routing_execution_reader::RoutingExecutionReadError,
+            station_key_circuit::CircuitAdmissionResult,
         },
         models::{
             pricing::BalanceSnapshot,
@@ -4866,10 +4845,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn circuit_status_read_failure_returns_no_available_key_with_fail_closed_trace() {
+    async fn circuit_admission_persistence_failure_returns_no_available_key_before_outbound() {
         let repository = Arc::new(
             FakeRepository::with_candidates(vec![rich_candidate("circuit-store-key")])
-                .with_circuit_status_error(),
+                .with_circuit_persistence_unavailable(),
         );
         let attempts = Arc::new(FakeAttemptExecutor::responses(Vec::new()));
         let engine = test_engine(repository.clone(), attempts.clone());
@@ -4880,10 +4859,8 @@ mod tests {
             .expect_err("untrusted circuit state must fail closed");
 
         assert_eq!(failure.code, ProxyFailureCode::RouteNoAvailableKey);
-        assert_eq!(
-            failure.internal_detail.as_deref(),
-            Some("circuit_persistence_unavailable")
-        );
+        assert_eq!(failure.code.as_str(), "no_available_key");
+        assert_eq!(failure.internal_detail, None);
         assert!(attempts.seen_ids().is_empty());
         assert!(repository.attempt_admissions().is_empty());
         assert!(engine
@@ -4897,9 +4874,137 @@ mod tests {
             }));
     }
 
+    #[tokio::test]
+    async fn lower_scored_recovery_candidate_remains_available_after_leader_is_rejected() {
+        let mut higher_closed = rich_candidate("higher-closed");
+        higher_closed.priority = 0;
+        let mut lower_recovery = rich_candidate("lower-recovery");
+        lower_recovery.priority = 10_000;
+        let repository = Arc::new(
+            FakeRepository::with_candidates(vec![higher_closed, lower_recovery])
+                .with_circuit_admission_for_key(
+                    "higher-closed",
+                    CircuitAdmissionResult::DeniedOpenCooldown,
+                )
+                .with_circuit_admission_for_key(
+                    "lower-recovery",
+                    CircuitAdmissionResult::AllowedHalfOpen {
+                        state_revision: 8,
+                        lease_revision: 8,
+                    },
+                ),
+        );
+        let attempts = Arc::new(FakeAttemptExecutor::responses(vec![Ok(buffered_success(
+            b"{\"ok\":true}",
+        ))]));
+        let engine = test_engine(repository.clone(), attempts.clone());
+
+        let response = engine
+            .execute(canonical_chat_request().await)
+            .await
+            .expect("recovery candidate should remain a normal fallback");
+
+        assert_eq!(attempts.seen_ids(), ["lower-recovery"]);
+        assert_eq!(response.selected_station_key_id(), Some("lower-recovery"));
+        assert_eq!(
+            repository
+                .attempt_admissions()
+                .iter()
+                .map(|(station_key_id, ..)| station_key_id.as_str())
+                .collect::<Vec<_>>(),
+            ["lower-recovery"]
+        );
+        assert!(engine
+            .routing_runtime
+            .decision_trace_snapshot()
+            .iter()
+            .flat_map(|trace| &trace.events)
+            .any(|event| event.code == "circuit_open_cooldown"));
+    }
+
+    #[tokio::test]
+    async fn occupied_half_open_lease_skips_to_the_next_scored_candidate() {
+        let mut recovering = rich_candidate("higher-recovery");
+        recovering.priority = 0;
+        let mut fallback = rich_candidate("lower-closed");
+        fallback.priority = 10_000;
+        let repository = Arc::new(
+            FakeRepository::with_candidates(vec![recovering, fallback])
+                .with_circuit_admission_for_key(
+                    "higher-recovery",
+                    CircuitAdmissionResult::DeniedHalfOpenLease,
+                ),
+        );
+        let attempts = Arc::new(FakeAttemptExecutor::responses(vec![Ok(buffered_success(
+            b"{\"ok\":true}",
+        ))]));
+        let engine = test_engine(repository.clone(), attempts.clone());
+
+        let response = engine
+            .execute(canonical_chat_request().await)
+            .await
+            .expect("an occupied recovery lease must not block the next candidate");
+
+        assert_eq!(attempts.seen_ids(), ["lower-closed"]);
+        assert_eq!(response.selected_station_key_id(), Some("lower-closed"));
+        assert_eq!(
+            repository
+                .attempt_admissions()
+                .iter()
+                .map(|(station_key_id, ..)| station_key_id.as_str())
+                .collect::<Vec<_>>(),
+            ["lower-closed"]
+        );
+        assert!(engine
+            .routing_runtime
+            .decision_trace_snapshot()
+            .iter()
+            .flat_map(|trace| &trace.events)
+            .any(|event| event.code == "circuit_half_open_lease_occupied"));
+    }
+
+    #[tokio::test]
+    async fn successful_leader_does_not_force_a_lower_scored_recovery_attempt() {
+        let mut higher_closed = rich_candidate("higher-closed");
+        higher_closed.priority = 0;
+        let mut lower_recovery = rich_candidate("lower-recovery");
+        lower_recovery.priority = 10_000;
+        let repository = Arc::new(
+            FakeRepository::with_candidates(vec![higher_closed, lower_recovery])
+                .with_circuit_admission_for_key(
+                    "lower-recovery",
+                    CircuitAdmissionResult::AllowedHalfOpen {
+                        state_revision: 8,
+                        lease_revision: 8,
+                    },
+                ),
+        );
+        let attempts = Arc::new(FakeAttemptExecutor::responses(vec![Ok(buffered_success(
+            b"{\"ok\":true}",
+        ))]));
+        let engine = test_engine(repository.clone(), attempts.clone());
+
+        let response = engine
+            .execute(canonical_chat_request().await)
+            .await
+            .expect("the score leader should serve the request");
+
+        assert_eq!(attempts.seen_ids(), ["higher-closed"]);
+        assert_eq!(response.selected_station_key_id(), Some("higher-closed"));
+        assert_eq!(
+            repository
+                .attempt_admissions()
+                .iter()
+                .map(|(station_key_id, ..)| station_key_id.as_str())
+                .collect::<Vec<_>>(),
+            ["higher-closed"]
+        );
+    }
+
     struct FakeRepository {
         candidates: Vec<CanonicalRoutingCandidate>,
-        circuit_status_error: bool,
+        circuit_admission: CircuitAdmissionResult,
+        circuit_admission_by_key: BTreeMap<String, CircuitAdmissionResult>,
         planning_loads: AtomicUsize,
         planning_delay: Option<Duration>,
         planning_deadlines: Arc<Mutex<Vec<Instant>>>,
@@ -4911,7 +5016,8 @@ mod tests {
         fn with_candidates(candidates: Vec<CanonicalRoutingCandidate>) -> Self {
             Self {
                 candidates,
-                circuit_status_error: false,
+                circuit_admission: CircuitAdmissionResult::AllowedClosed { state_revision: 1 },
+                circuit_admission_by_key: BTreeMap::new(),
                 planning_loads: AtomicUsize::new(0),
                 planning_delay: None,
                 planning_deadlines: Arc::new(Mutex::new(Vec::new())),
@@ -4926,7 +5032,8 @@ mod tests {
         ) -> Self {
             Self {
                 candidates,
-                circuit_status_error: false,
+                circuit_admission: CircuitAdmissionResult::AllowedClosed { state_revision: 1 },
+                circuit_admission_by_key: BTreeMap::new(),
                 planning_loads: AtomicUsize::new(0),
                 planning_delay: Some(planning_delay),
                 planning_deadlines: Arc::new(Mutex::new(Vec::new())),
@@ -4939,8 +5046,18 @@ mod tests {
             self.planning_loads.load(Ordering::Acquire)
         }
 
-        fn with_circuit_status_error(mut self) -> Self {
-            self.circuit_status_error = true;
+        fn with_circuit_persistence_unavailable(mut self) -> Self {
+            self.circuit_admission = CircuitAdmissionResult::DeniedPersistenceUnavailable;
+            self
+        }
+
+        fn with_circuit_admission_for_key(
+            mut self,
+            station_key_id: &str,
+            admission: CircuitAdmissionResult,
+        ) -> Self {
+            self.circuit_admission_by_key
+                .insert(station_key_id.to_string(), admission);
             self
         }
 
@@ -4980,27 +5097,6 @@ mod tests {
             Box::pin(async { Ok(Vec::new()) })
         }
 
-        fn load_station_key_circuit_statuses(
-            &self,
-        ) -> BoxFuture<
-            'static,
-            Result<
-                Vec<crate::application::station_key_circuit::StationKeyCircuitStatus>,
-                RoutingExecutionReadError,
-            >,
-        > {
-            let circuit_status_error = self.circuit_status_error;
-            Box::pin(async move {
-                if circuit_status_error {
-                    Err(RoutingExecutionReadError::Unavailable(
-                        "fixture circuit store unavailable".to_string(),
-                    ))
-                } else {
-                    Ok(Vec::new())
-                }
-            })
-        }
-
         fn admit_station_key_circuit_with_attempt(
             &self,
             _expected_runtime_generation_id: Option<String>,
@@ -5010,7 +5106,6 @@ mod tests {
             _policy_revision: u64,
             _now_ms: u64,
             _deadline_at_ms: u64,
-            _score_gate_passed: bool,
             attempt_id: String,
             _correlation_id: String,
             attempt_index: u16,
@@ -5025,15 +5120,22 @@ mod tests {
                 RoutingExecutionReadError,
             >,
         > {
-            self.attempt_admissions
-                .lock()
-                .expect("attempt admission lock")
-                .push((station_key_id, attempt_id, attempt_index, capacity_lease_id));
-            Box::pin(async {
-                Ok(crate::application::station_key_circuit::CircuitAdmissionResult::AllowedClosed {
-                    state_revision: 1,
-                })
-            })
+            let result = self
+                .circuit_admission_by_key
+                .get(&station_key_id)
+                .copied()
+                .unwrap_or(self.circuit_admission);
+            if matches!(
+                result,
+                CircuitAdmissionResult::AllowedClosed { .. }
+                    | CircuitAdmissionResult::AllowedHalfOpen { .. }
+            ) {
+                self.attempt_admissions
+                    .lock()
+                    .expect("attempt admission lock")
+                    .push((station_key_id, attempt_id, attempt_index, capacity_lease_id));
+            }
+            Box::pin(async move { Ok(result) })
         }
 
         fn mark_station_key_attempt_boundary(

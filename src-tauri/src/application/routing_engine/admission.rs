@@ -12,8 +12,6 @@ use crate::application::routing_engine::{
     request::{RouteProgress, RouteRequestFacts},
 };
 use crate::application::routing_policy::AttemptBudgetProfileV1;
-use crate::application::station_key_circuit::StationKeyCircuitState;
-use crate::application::station_key_circuit::StationKeyCircuitStatus;
 use crate::models::model_mapping::FallbackTrigger;
 use crate::models::routing_generation::RoutingGenerationAdmissionGuard;
 
@@ -212,16 +210,6 @@ impl RouteAdmissionCoordinator {
                 }
             })
             .collect();
-        // Keep the score-gate baseline from the complete snapshot. Request
-        // exclusion is intentionally applied only to the candidate sequence;
-        // it must not make a previously failed Closed Key disappear from the
-        // `best_closed_score` comparison for a Half-Open candidate.
-        let score_gate_plan = plan_snapshot(
-            planning_snapshot,
-            input.root_seed,
-            self.progress.view().ordinal as u64 + 1,
-        )
-        .map_err(|error| self.intelligent_planner_failure(error))?;
         let mut working_snapshot = planning_snapshot.clone();
         working_snapshot.candidates.retain(|candidate| {
             !self
@@ -284,8 +272,6 @@ impl RouteAdmissionCoordinator {
             .into_iter()
             .filter(|planned| planned.target_rank == best_target_rank)
         {
-            let score_gate_passed =
-                half_open_score_gate(planned, &score_gate_plan, input.circuit_statuses);
             let candidate = if let Some(base) = input
                 .execution_candidates
                 .iter()
@@ -366,7 +352,6 @@ impl RouteAdmissionCoordinator {
                         candidate,
                         lease,
                         evidence: vec![AdmissionEvidence::new("selected", selected_station_key_id)],
-                        score_gate_passed,
                     }));
                 }
                 Err(failure) => {
@@ -611,52 +596,6 @@ fn candidate_population_failure(snapshot: &PlanningSnapshot) -> Option<&'static 
     }
 }
 
-/// Returns whether an Open/Half-Open candidate is allowed to enter the
-/// deterministic route sequence. The comparison is intentionally limited to
-/// the candidate's exact target rank and availability tier: scores from a
-/// lower-priority model rank or backup layer must never suppress recovery of a
-/// higher-priority layer. Missing state means the reducer will create Closed
-/// state on admission, so it is treated as Closed here as well.
-fn half_open_score_gate(
-    planned: &PlannedCandidate,
-    plan: &RoutePlan,
-    statuses: &[StationKeyCircuitStatus],
-) -> bool {
-    let current_is_closed = statuses
-        .iter()
-        .find(|status| {
-            status.station_key_id == planned.station_key_id
-                && status.lifecycle_revision
-                    == u64::try_from(planned.lifecycle_revision.max(1)).unwrap_or(1)
-        })
-        .map(|status| matches!(status.state, StationKeyCircuitState::Closed { .. }))
-        .unwrap_or(true);
-    if current_is_closed {
-        return true;
-    }
-
-    let best_closed_score = plan
-        .candidates
-        .iter()
-        .filter(|other| {
-            other.station_key_id != planned.station_key_id
-                && other.target_rank == planned.target_rank
-                && other.tier == planned.tier
-                && statuses
-                    .iter()
-                    .find(|status| {
-                        status.station_key_id == other.station_key_id
-                            && status.lifecycle_revision
-                                == u64::try_from(other.lifecycle_revision.max(1)).unwrap_or(1)
-                    })
-                    .map(|status| matches!(status.state, StationKeyCircuitState::Closed { .. }))
-                    .unwrap_or(true)
-        })
-        .map(|other| other.utility.value())
-        .max();
-    best_closed_score.is_none_or(|best| planned.utility.value() > best)
-}
-
 #[derive(Debug)]
 pub struct AdmissionPlanningInput<'a> {
     pub execution_candidates: &'a [RoutePlanCandidate],
@@ -669,7 +608,6 @@ pub struct AdmissionPlanningInput<'a> {
     pub current_runtime_overlay_revision: u64,
     pub now_ms: i64,
     pub max_waiters_per_constraint: u32,
-    pub circuit_statuses: &'a [StationKeyCircuitStatus],
 }
 
 #[derive(Debug)]
@@ -689,9 +627,6 @@ pub struct SelectedRoute {
     pub candidate: RoutePlanCandidate,
     pub lease: CapacityLease,
     pub evidence: Vec<AdmissionEvidence>,
-    /// Whether this candidate passed the Half-Open score gate in the same
-    /// immutable planning snapshot. Closed admission ignores this value.
-    pub score_gate_passed: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -808,10 +743,6 @@ fn tighten_model_fallback_rank_limit(current: Option<u16>, failed_rank: u16) -> 
 mod tests {
     use super::*;
     use crate::application::routing_engine::planning_snapshot::CandidateSnapshot;
-    use crate::application::routing_engine::{
-        fixed_point::{BasisPoints, FactorContribution, UtilityScore},
-        tiers::AvailabilityTier,
-    };
 
     fn candidate(domains: &[&str]) -> CandidateSnapshot {
         CandidateSnapshot {
@@ -972,119 +903,6 @@ mod tests {
         assert_eq!(tighten_model_fallback_rank_limit(None, 0), 0);
         assert_eq!(tighten_model_fallback_rank_limit(Some(1), 0), 0);
         assert_eq!(tighten_model_fallback_rank_limit(Some(0), 1), 0);
-    }
-
-    fn planned(
-        station_key_id: &str,
-        score: u16,
-        target_rank: u16,
-        tier: AvailabilityTier,
-    ) -> PlannedCandidate {
-        let score = BasisPoints::new(score).expect("score");
-        let zero = BasisPoints::ZERO;
-        PlannedCandidate {
-            station_key_id: station_key_id.to_string(),
-            lifecycle_revision: 1,
-            routing_identity: station_key_id.to_string(),
-            target_rank,
-            variant: None,
-            tier,
-            base_utility: UtilityScore::new(score),
-            utility: UtilityScore::new(score),
-            affinity_bonus: BasisPoints::ZERO,
-            affinity_applied: false,
-            contributions: [FactorContribution {
-                weight: zero,
-                score: zero,
-                contribution: zero,
-            }; 4],
-        }
-    }
-
-    fn status(station_key_id: &str, state: StationKeyCircuitState) -> StationKeyCircuitStatus {
-        StationKeyCircuitStatus {
-            station_key_id: station_key_id.to_string(),
-            lifecycle_revision: 1,
-            policy_revision: 1,
-            lease_policy: None,
-            state,
-        }
-    }
-
-    fn make_plan(candidates: Vec<PlannedCandidate>) -> RoutePlan {
-        let selected = candidates
-            .first()
-            .map(|candidate| candidate.routing_identity.clone())
-            .unwrap_or_default();
-        RoutePlan {
-            snapshot_id: "snapshot".to_string(),
-            selected_station_key_id: selected.clone(),
-            candidates,
-            dispatch: crate::application::routing_engine::dispatch::DispatchDecision {
-                selected_id: selected,
-                band_size: 1,
-                explored: false,
-                seed_commitment: "seed".to_string(),
-            },
-        }
-    }
-
-    #[test]
-    fn half_open_gate_rejects_when_same_layer_closed_score_is_higher() {
-        let current = planned("key-a", 7_000, 0, AvailabilityTier::Primary);
-        let other = planned("key-b", 8_000, 0, AvailabilityTier::Primary);
-        let plan = make_plan(vec![current.clone(), other]);
-        let statuses = vec![status(
-            "key-a",
-            StationKeyCircuitState::Open {
-                state_revision: 1,
-                opened_at_ms: 1,
-                cooldown_until_ms: 1,
-                consecutive_failures: 3,
-                reopen_level: 1,
-            },
-        )];
-        assert!(!half_open_score_gate(&current, &plan, &statuses));
-    }
-
-    #[test]
-    fn half_open_gate_does_not_compare_across_rank_or_tier() {
-        let current = planned("key-a", 7_000, 0, AvailabilityTier::Primary);
-        let lower_rank = planned("key-b", 9_000, 1, AvailabilityTier::Primary);
-        let backup = planned("key-c", 9_000, 0, AvailabilityTier::ConfiguredBackup);
-        let plan = make_plan(vec![current.clone(), lower_rank, backup]);
-        let statuses = vec![status(
-            "key-a",
-            StationKeyCircuitState::Open {
-                state_revision: 1,
-                opened_at_ms: 1,
-                cooldown_until_ms: 1,
-                consecutive_failures: 3,
-                reopen_level: 1,
-            },
-        )];
-        assert!(half_open_score_gate(&current, &plan, &statuses));
-    }
-
-    #[test]
-    fn half_open_gate_treats_missing_state_as_closed_and_allows_without_closed_baseline() {
-        let missing = planned("key-a", 1_000, 0, AvailabilityTier::Primary);
-        let plan = make_plan(vec![missing.clone()]);
-        assert!(half_open_score_gate(&missing, &plan, &[]));
-
-        let current = planned("key-a", 7_000, 0, AvailabilityTier::Primary);
-        let plan = make_plan(vec![current.clone()]);
-        let statuses = vec![status(
-            "key-a",
-            StationKeyCircuitState::Open {
-                state_revision: 1,
-                opened_at_ms: 1,
-                cooldown_until_ms: 1,
-                consecutive_failures: 3,
-                reopen_level: 1,
-            },
-        )];
-        assert!(half_open_score_gate(&current, &plan, &statuses));
     }
 
     #[test]

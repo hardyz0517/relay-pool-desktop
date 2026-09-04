@@ -9,7 +9,7 @@ use crate::{
             request::{PlanningRequestContext, RouteRequestFacts},
         },
         routing_execution_reader::{RoutingExecutionReadError, RoutingExecutionReadPort},
-        station_key_circuit::{CircuitAdmissionResult, StationKeyCircuitStatus},
+        station_key_circuit::CircuitAdmissionResult,
     },
     models::{pricing::BalanceSnapshot, routing::RuntimeRoutingSettings},
     services::outbound::resolve_routing_proxy_config,
@@ -94,7 +94,6 @@ pub(crate) trait RoutingRepository: Send + Sync {
         _policy_revision: u64,
         _now_ms: u64,
         _deadline_at_ms: u64,
-        _score_gate_passed: bool,
         _attempt_id: String,
         _correlation_id: String,
         _attempt_index: u16,
@@ -107,15 +106,6 @@ pub(crate) trait RoutingRepository: Send + Sync {
         Result<CircuitAdmissionResult, RoutingExecutionReadError>,
     > {
         Box::pin(async { Ok(CircuitAdmissionResult::AllowedClosed { state_revision: 1 }) })
-    }
-
-    fn load_station_key_circuit_statuses(
-        &self,
-    ) -> futures_util::future::BoxFuture<
-        'static,
-        Result<Vec<StationKeyCircuitStatus>, RoutingExecutionReadError>,
-    > {
-        Box::pin(async { Ok(Vec::new()) })
     }
 
     fn load_routing_generation_admission_guard(
@@ -284,7 +274,6 @@ impl RoutingRepository for RoutingExecutionRepository {
         policy_revision: u64,
         now_ms: u64,
         deadline_at_ms: u64,
-        score_gate_passed: bool,
         attempt_id: String,
         correlation_id: String,
         attempt_index: u16,
@@ -304,7 +293,6 @@ impl RoutingRepository for RoutingExecutionRepository {
             policy_revision,
             now_ms,
             deadline_at_ms,
-            score_gate_passed,
             attempt_id,
             correlation_id,
             attempt_index,
@@ -313,15 +301,6 @@ impl RoutingRepository for RoutingExecutionRepository {
             recovery_success_threshold,
             recovery_wait_ms,
         )
-    }
-
-    fn load_station_key_circuit_statuses(
-        &self,
-    ) -> futures_util::future::BoxFuture<
-        'static,
-        Result<Vec<StationKeyCircuitStatus>, RoutingExecutionReadError>,
-    > {
-        self.execution.load_station_key_circuit_statuses()
     }
 
     fn load_routing_generation_admission_guard(

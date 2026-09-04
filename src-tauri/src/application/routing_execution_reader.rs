@@ -7,7 +7,7 @@ use crate::{
         routing::RoutingService,
         routing_engine::planning_snapshot::{PlanningSnapshot, RuntimeOverlaySnapshot},
         routing_engine::request::{PlanningRequestContext, RouteRequestFacts},
-        station_key_circuit::{CircuitAdmissionResult, StationKeyCircuitStatus},
+        station_key_circuit::CircuitAdmissionResult,
     },
     models::{pricing::BalanceSnapshot, routing::RuntimeRoutingSettings},
 };
@@ -58,7 +58,6 @@ pub(crate) trait RoutingExecutionReadPort: Send + Sync {
         _policy_revision: u64,
         _now_ms: u64,
         _deadline_at_ms: u64,
-        _score_gate_passed: bool,
         _attempt_id: String,
         _correlation_id: String,
         _attempt_index: u16,
@@ -71,15 +70,6 @@ pub(crate) trait RoutingExecutionReadPort: Send + Sync {
         Result<CircuitAdmissionResult, RoutingExecutionReadError>,
     > {
         Box::pin(async { Ok(CircuitAdmissionResult::AllowedClosed { state_revision: 1 }) })
-    }
-
-    fn load_station_key_circuit_statuses(
-        &self,
-    ) -> futures_util::future::BoxFuture<
-        'static,
-        Result<Vec<StationKeyCircuitStatus>, RoutingExecutionReadError>,
-    > {
-        Box::pin(async { Ok(Vec::new()) })
     }
 
     fn load_routing_generation_admission_guard(
@@ -258,7 +248,6 @@ impl RoutingExecutionReadPort for RoutingExecutionReader {
         policy_revision: u64,
         now_ms: u64,
         deadline_at_ms: u64,
-        score_gate_passed: bool,
         attempt_id: String,
         correlation_id: String,
         attempt_index: u16,
@@ -281,7 +270,6 @@ impl RoutingExecutionReadPort for RoutingExecutionReader {
                     policy_revision,
                     now_ms,
                     deadline_at_ms,
-                    score_gate_passed,
                     attempt_id,
                     correlation_id,
                     attempt_index,
@@ -290,21 +278,6 @@ impl RoutingExecutionReadPort for RoutingExecutionReader {
                     recovery_success_threshold,
                     recovery_wait_ms,
                 )
-                .await
-                .map_err(RoutingExecutionReadError::from_application)
-        })
-    }
-
-    fn load_station_key_circuit_statuses(
-        &self,
-    ) -> futures_util::future::BoxFuture<
-        'static,
-        Result<Vec<StationKeyCircuitStatus>, RoutingExecutionReadError>,
-    > {
-        let routing = Arc::clone(&self.routing);
-        Box::pin(async move {
-            routing
-                .load_station_key_circuit_statuses()
                 .await
                 .map_err(RoutingExecutionReadError::from_application)
         })

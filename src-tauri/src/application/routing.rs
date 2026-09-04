@@ -277,7 +277,6 @@ impl RoutingService {
         policy_revision: u64,
         now_ms: u64,
         deadline_at_ms: u64,
-        score_gate_passed: bool,
         attempt_id: String,
         correlation_id: String,
         attempt_index: u16,
@@ -354,7 +353,6 @@ impl RoutingService {
                             policy_revision,
                             now_ms,
                             deadline_at_ms,
-                            score_gate_passed,
                             &attempt_id,
                             consecutive_failure_threshold,
                             recovery_success_threshold,
@@ -402,46 +400,6 @@ impl RoutingService {
                 Ok(CircuitAdmissionResult::DeniedPersistenceUnavailable)
             }
             Err(error) => Err(ApplicationError::from(error)),
-        }
-    }
-
-    pub(crate) async fn load_station_key_circuit_statuses(
-        &self,
-    ) -> Result<
-        Vec<crate::application::station_key_circuit::StationKeyCircuitStatus>,
-        ApplicationError,
-    > {
-        use crate::persistence::stores::station_key_circuit_store::{
-            StationKeyCircuitStore, SHARED_CIRCUIT_PERSISTENCE_GATE_KEY,
-            SHARED_CIRCUIT_PERSISTENCE_GATE_REVISION,
-        };
-
-        if self.circuit_persistence_gate.is_active(
-            SHARED_CIRCUIT_PERSISTENCE_GATE_KEY,
-            SHARED_CIRCUIT_PERSISTENCE_GATE_REVISION,
-        ) {
-            return Err(ApplicationError::Unavailable);
-        }
-        let result = async {
-            let mut read = self.runtime.begin_read().await?;
-            StationKeyCircuitStore
-                .list_statuses(read.connection())
-                .await
-                .map_err(ApplicationError::from)
-        }
-        .await;
-        match result {
-            Ok(statuses) => Ok(statuses),
-            Err(error) => {
-                self.circuit_persistence_gate.mark_global_unavailable();
-                self.persist_circuit_persistence_gate(
-                    SHARED_CIRCUIT_PERSISTENCE_GATE_KEY.to_string(),
-                    SHARED_CIRCUIT_PERSISTENCE_GATE_REVISION,
-                    chrono::Utc::now().timestamp_millis().max(0) as u64,
-                )
-                .await;
-                Err(error)
-            }
         }
     }
 
@@ -1191,8 +1149,6 @@ impl RoutingService {
                                     RoutingCandidatePlanDiagnostics {
                                         effective_score: candidate.utility.value().get(),
                                         base_score: candidate.base_utility.value().get(),
-                                        target_rank: candidate.target_rank,
-                                        tier: candidate.tier,
                                         lifecycle_revision: u64::try_from(
                                             candidate.lifecycle_revision.max(1),
                                         )

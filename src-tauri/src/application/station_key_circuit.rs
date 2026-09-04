@@ -72,6 +72,7 @@ impl CircuitPersistenceGate {
         state.revision = state.revision.saturating_add(1);
     }
 
+    #[cfg(test)]
     pub(crate) fn mark_global_unavailable(&self) {
         let mut state = self
             .state
@@ -196,7 +197,6 @@ pub(crate) enum CircuitAdmissionResult {
     },
     DeniedOpenCooldown,
     DeniedHalfOpenLease,
-    DeniedScoreGate,
     DeniedGenerationFence,
     DeniedStaleGeneration,
     DeniedLateAfterFinalization,
@@ -218,7 +218,6 @@ pub(crate) enum CircuitAdmission {
     AllowedHalfOpen,
     DeniedOpenCooldown,
     DeniedHalfOpenLease,
-    DeniedScoreGate,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -291,7 +290,6 @@ impl StationKeyCircuit {
         &mut self,
         now_ms: u64,
         deadline_at_ms: u64,
-        score_gate_passed: bool,
         lease_id: impl Into<String>,
     ) -> Result<CircuitAdmission, CircuitError> {
         if deadline_at_ms < now_ms {
@@ -357,9 +355,6 @@ impl StationKeyCircuit {
                 if cooldown_until_ms > now_ms {
                     return Ok(CircuitAdmission::DeniedOpenCooldown);
                 }
-                if !score_gate_passed {
-                    return Ok(CircuitAdmission::DeniedScoreGate);
-                }
                 let state_revision = match &self.state {
                     StationKeyCircuitState::Open { state_revision, .. } => *state_revision,
                     _ => unreachable!(),
@@ -391,25 +386,21 @@ impl StationKeyCircuit {
                 reopen_level,
                 ..
             } => {
-                if !score_gate_passed {
-                    Ok(CircuitAdmission::DeniedScoreGate)
-                } else {
-                    self.policy_revision = self.config.policy_revision;
-                    self.lease_policy = Some(StationKeyCircuitLeasePolicy {
-                        policy_revision: self.config.policy_revision,
-                        recovery_success_threshold: self.config.recovery_success_threshold,
-                        recovery_wait_ms: self.config.recovery_wait_ms,
-                    });
-                    self.state = StationKeyCircuitState::HalfOpen {
-                        state_revision: state_revision.saturating_add(1).max(1),
-                        lease_id: Some(lease_id),
-                        lease_revision: state_revision.saturating_add(1).max(1),
-                        lease_expires_at_ms: Some(deadline_at_ms),
-                        recovery_successes,
-                        reopen_level,
-                    };
-                    Ok(CircuitAdmission::AllowedHalfOpen)
-                }
+                self.policy_revision = self.config.policy_revision;
+                self.lease_policy = Some(StationKeyCircuitLeasePolicy {
+                    policy_revision: self.config.policy_revision,
+                    recovery_success_threshold: self.config.recovery_success_threshold,
+                    recovery_wait_ms: self.config.recovery_wait_ms,
+                });
+                self.state = StationKeyCircuitState::HalfOpen {
+                    state_revision: state_revision.saturating_add(1).max(1),
+                    lease_id: Some(lease_id),
+                    lease_revision: state_revision.saturating_add(1).max(1),
+                    lease_expires_at_ms: Some(deadline_at_ms),
+                    recovery_successes,
+                    reopen_level,
+                };
+                Ok(CircuitAdmission::AllowedHalfOpen)
             }
         }
     }
@@ -729,24 +720,41 @@ mod tests {
     }
 
     #[test]
+    fn cooldown_boundary_becomes_recovery_eligible() {
+        let mut circuit = circuit();
+        for index in 0..3 {
+            circuit.finish(index, None, false, true).unwrap();
+        }
+
+        assert_eq!(
+            circuit.admit(11, 100, "too-early").unwrap(),
+            CircuitAdmission::DeniedOpenCooldown
+        );
+        assert_eq!(
+            circuit.admit(12, 100, "recovery-lease").unwrap(),
+            CircuitAdmission::AllowedHalfOpen
+        );
+    }
+
+    #[test]
     fn half_open_has_one_lease_and_requires_two_successes() {
         let mut circuit = circuit();
         for index in 0..3 {
             circuit.finish(index, None, false, true).unwrap();
         }
         assert_eq!(
-            circuit.admit(12, 100, true, "lease-a").unwrap(),
+            circuit.admit(12, 100, "lease-a").unwrap(),
             CircuitAdmission::AllowedHalfOpen
         );
         assert_eq!(
-            circuit.admit(12, 100, true, "lease-b").unwrap(),
+            circuit.admit(12, 100, "lease-b").unwrap(),
             CircuitAdmission::DeniedHalfOpenLease
         );
         assert_eq!(
             circuit.finish(20, Some("lease-a"), true, true).unwrap(),
             CircuitTransition::RecoverySucceeded
         );
-        circuit.admit(20, 100, true, "lease-c").unwrap();
+        circuit.admit(20, 100, "lease-c").unwrap();
         assert_eq!(
             circuit.finish(21, Some("lease-c"), true, true).unwrap(),
             CircuitTransition::Closed
@@ -763,7 +771,7 @@ mod tests {
         for index in 0..3 {
             circuit.finish(index, None, false, true).unwrap();
         }
-        circuit.admit(12, 100, true, "lease-a").unwrap();
+        circuit.admit(12, 100, "lease-a").unwrap();
         circuit.finish(20, Some("lease-a"), false, true).unwrap();
         assert_eq!(
             circuit.finish(21, Some("lease-a"), true, true).unwrap(),
@@ -781,7 +789,7 @@ mod tests {
         for index in 0..3 {
             circuit.finish(index, None, false, true).unwrap();
         }
-        circuit.admit(12, 20, true, "lease-a").unwrap();
+        circuit.admit(12, 20, "lease-a").unwrap();
         assert!(circuit.reap_expired_lease(21, "lease-a").unwrap());
         assert!(!circuit.reap_expired_lease(22, "lease-a").unwrap());
     }
@@ -792,7 +800,7 @@ mod tests {
         for index in 0..3 {
             circuit.finish(index, None, false, true).unwrap();
         }
-        circuit.admit(12, 20, true, "lease-a").unwrap();
+        circuit.admit(12, 20, "lease-a").unwrap();
         assert!(circuit.reap_expired_lease(20, "lease-a").unwrap());
         assert!(!circuit.reap_expired_lease(20, "lease-a").unwrap());
     }
@@ -803,7 +811,7 @@ mod tests {
         for index in 0..3 {
             circuit.finish(index, None, false, true).unwrap();
         }
-        circuit.admit(12, 20, true, "lease-a").unwrap();
+        circuit.admit(12, 20, "lease-a").unwrap();
         assert_eq!(
             circuit.finish(20, Some("lease-a"), true, true).unwrap(),
             CircuitTransition::Reopened

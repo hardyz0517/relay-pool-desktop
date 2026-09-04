@@ -478,8 +478,9 @@ impl StationKeyCircuitStore {
         row.map(row_to_status).transpose()
     }
 
-    /// Atomically reserves a Closed or eligible Half-Open key.  The caller
-    /// supplies the score gate computed from the same planning snapshot.
+    /// Atomically reserves a Closed key or a recovery lease for a key whose
+    /// cooldown has elapsed. Candidate scoring is intentionally outside this
+    /// state transition and only determines when this method is called.
     pub(crate) async fn admit(
         &self,
         connection: &mut SqliteConnection,
@@ -488,7 +489,6 @@ impl StationKeyCircuitStore {
         policy_revision: u64,
         now_ms: u64,
         deadline_at_ms: u64,
-        score_gate_passed: bool,
         attempt_id: &str,
         consecutive_failure_threshold: u16,
         recovery_success_threshold: u16,
@@ -526,18 +526,11 @@ impl StationKeyCircuitStore {
         )
         .map_err(map_circuit_error)?;
         let admission = reducer
-            .admit(
-                logical_now_ms,
-                deadline_at_ms,
-                score_gate_passed,
-                attempt_id,
-            )
+            .admit(logical_now_ms, deadline_at_ms, attempt_id)
             .map_err(map_circuit_error)?;
         if matches!(
             admission,
-            CircuitAdmission::DeniedOpenCooldown
-                | CircuitAdmission::DeniedHalfOpenLease
-                | CircuitAdmission::DeniedScoreGate
+            CircuitAdmission::DeniedOpenCooldown | CircuitAdmission::DeniedHalfOpenLease
         ) {
             if reducer.state() != &original_state
                 || reducer.policy_revision() != original_policy_revision
@@ -560,7 +553,6 @@ impl StationKeyCircuitStore {
                 CircuitAdmission::DeniedHalfOpenLease => {
                     CircuitAdmissionResult::DeniedHalfOpenLease
                 }
-                CircuitAdmission::DeniedScoreGate => CircuitAdmissionResult::DeniedScoreGate,
                 _ => unreachable!(),
             });
         }
@@ -1447,7 +1439,6 @@ mod tests {
                     1,
                     5,
                     100,
-                    true,
                     "probe-0",
                     3,
                     2,
@@ -1466,7 +1457,6 @@ mod tests {
                     1,
                     13,
                     100,
-                    true,
                     "probe-0",
                     3,
                     2,
@@ -1485,7 +1475,6 @@ mod tests {
                     1,
                     13,
                     100,
-                    true,
                     "probe-1",
                     3,
                     2,
@@ -1516,7 +1505,6 @@ mod tests {
                     1,
                     14,
                     100,
-                    true,
                     "probe-1",
                     3,
                     2,
@@ -1576,7 +1564,6 @@ mod tests {
                 1,
                 20,
                 100,
-                true,
                 "probe-attempt",
                 3,
                 2,
@@ -1613,7 +1600,6 @@ mod tests {
                 1,
                 102,
                 110,
-                true,
                 "probe-attempt-2",
                 3,
                 2,
@@ -1688,7 +1674,6 @@ mod tests {
                 1,
                 20,
                 100,
-                true,
                 "probe-stale",
                 3,
                 2,
@@ -1782,7 +1767,6 @@ mod tests {
                     2,
                     3,
                     100,
-                    true,
                     "lowered-threshold",
                     2,
                     2,
@@ -1823,7 +1807,6 @@ mod tests {
                     2,
                     6,
                     100,
-                    true,
                     "raised-threshold",
                     5,
                     2,
@@ -1876,7 +1859,6 @@ mod tests {
                     2,
                     4,
                     100,
-                    true,
                     "new-policy",
                     3,
                     2,
@@ -1926,7 +1908,6 @@ mod tests {
                 1,
                 13,
                 100,
-                true,
                 "old-lease",
                 3,
                 2,
@@ -1966,7 +1947,6 @@ mod tests {
                 2,
                 14,
                 100,
-                true,
                 "new-lease",
                 3,
                 1,
@@ -2028,7 +2008,6 @@ mod tests {
                 1,
                 110,
                 200,
-                true,
                 "rollback-lease",
                 3,
                 2,
@@ -2104,7 +2083,6 @@ mod tests {
                 1,
                 13,
                 30,
-                true,
                 "reaper-lease",
                 3,
                 2,
