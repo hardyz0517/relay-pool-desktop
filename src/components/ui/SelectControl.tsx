@@ -75,10 +75,14 @@ export function SelectControl<T extends string>({
   const menuRef = useRef<HTMLDivElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const openRef = useRef(false);
+  const pointerDrivenRef = useRef(false);
+  const activeValueRef = useRef<T | null>(null);
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
   const [position, setPosition] = useState<MenuPosition | null>(null);
+  const [usingPointerHighlight, setUsingPointerHighlight] = useState(false);
 
   const filteredOptions = useMemo(() => {
     if (!searchable || !searchQuery.trim()) {
@@ -116,6 +120,16 @@ export function SelectControl<T extends string>({
 
   useEffect(() => {
     if (!open) {
+      openRef.current = false;
+      activeValueRef.current = null;
+      pointerDrivenRef.current = false;
+      setSearchQuery("");
+      setUsingPointerHighlight(false);
+      return;
+    }
+    const justOpened = !openRef.current;
+    openRef.current = true;
+    if (!justOpened) {
       return;
     }
     setSearchQuery("");
@@ -128,17 +142,19 @@ export function SelectControl<T extends string>({
     if (!open) {
       return;
     }
-    const selectedFilteredIndex = filteredOptions.findIndex((option) => option.value === value);
-    const initialIndex = selectedFilteredIndex >= 0 ? selectedFilteredIndex : firstEnabledIndex(filteredOptions);
-    setActiveIndex(initialIndex);
-  }, [filteredOptions, open, value]);
-
-  useEffect(() => {
-    if (!open) {
+    const preferredValue = activeValueRef.current;
+    const preferredIndex = preferredValue
+      ? filteredOptions.findIndex((option) => option.value === preferredValue)
+      : -1;
+    if (preferredIndex >= 0) {
+      setActiveIndex(preferredIndex);
       return;
     }
-    setActiveIndex((current) => Math.min(current, Math.max(0, filteredOptions.length - 1)));
-  }, [filteredOptions.length, open]);
+    const selectedFilteredIndex = filteredOptions.findIndex((option) => option.value === value);
+    const nextIndex = selectedFilteredIndex >= 0 ? selectedFilteredIndex : firstEnabledIndex(filteredOptions);
+    activeValueRef.current = filteredOptions[nextIndex]?.value ?? null;
+    setActiveIndex(nextIndex);
+  }, [filteredOptions, open, value]);
 
   useEffect(() => {
     if (!open) {
@@ -175,14 +191,16 @@ export function SelectControl<T extends string>({
     };
   }, [open]);
 
-  useEffect(() => {
-    if (!open) {
+  useLayoutEffect(() => {
+    if (!open || pointerDrivenRef.current) {
       return;
     }
+    const menu = menuRef.current;
     const activeOption = optionRefs.current[activeIndex];
-    if (activeOption && typeof activeOption.scrollIntoView === "function") {
-      activeOption.scrollIntoView({ block: "nearest" });
+    if (!menu || !activeOption) {
+      return;
     }
+    scrollOptionIntoMenu(menu, activeOption);
   }, [activeIndex, open]);
 
   function updatePosition() {
@@ -229,7 +247,13 @@ export function SelectControl<T extends string>({
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       setOpen(true);
-      setActiveIndex((current) => nextEnabledIndex(filteredOptions, current, event.key === "ArrowDown" ? 1 : -1));
+      pointerDrivenRef.current = false;
+      setUsingPointerHighlight(false);
+      setActiveIndex((current) => {
+        const next = nextEnabledIndex(filteredOptions, current, event.key === "ArrowDown" ? 1 : -1);
+        activeValueRef.current = filteredOptions[next]?.value ?? null;
+        return next;
+      });
       return;
     }
     if (event.key === "Enter" || event.key === " ") {
@@ -251,17 +275,35 @@ export function SelectControl<T extends string>({
     }
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
-      setActiveIndex((current) => nextEnabledIndex(filteredOptions, current, event.key === "ArrowDown" ? 1 : -1));
+      pointerDrivenRef.current = false;
+      setUsingPointerHighlight(false);
+      setActiveIndex((current) => {
+        const next = nextEnabledIndex(filteredOptions, current, event.key === "ArrowDown" ? 1 : -1);
+        activeValueRef.current = filteredOptions[next]?.value ?? null;
+        return next;
+      });
       return;
     }
     if (event.key === "Home") {
       event.preventDefault();
-      setActiveIndex(firstEnabledIndex(filteredOptions));
+      pointerDrivenRef.current = false;
+      setUsingPointerHighlight(false);
+      setActiveIndex(() => {
+        const next = firstEnabledIndex(filteredOptions);
+        activeValueRef.current = filteredOptions[next]?.value ?? null;
+        return next;
+      });
       return;
     }
     if (event.key === "End") {
       event.preventDefault();
-      setActiveIndex(lastEnabledIndex(filteredOptions));
+      pointerDrivenRef.current = false;
+      setUsingPointerHighlight(false);
+      setActiveIndex(() => {
+        const next = lastEnabledIndex(filteredOptions);
+        activeValueRef.current = filteredOptions[next]?.value ?? null;
+        return next;
+      });
       return;
     }
     if (event.key === "Enter" || event.key === " ") {
@@ -386,11 +428,26 @@ export function SelectControl<T extends string>({
                   role="option"
                   aria-selected={selected}
                   disabled={option.disabled}
-                  onMouseEnter={() => !option.disabled && setActiveIndex(index)}
+                  onPointerMove={(event) => {
+                    if (option.disabled || event.pointerType === "touch") {
+                      return;
+                    }
+                    pointerDrivenRef.current = true;
+                    if (!usingPointerHighlight) {
+                      setUsingPointerHighlight(true);
+                    }
+                    if (activeValueRef.current === option.value) {
+                      return;
+                    }
+                    activeValueRef.current = option.value;
+                    setActiveIndex(index);
+                  }}
                   onClick={() => chooseOption(option)}
                   className={cn(
-                    "flex min-h-8 w-full cursor-pointer items-center justify-between gap-3 rounded-[calc(var(--surface-radius)-3px)] px-2.5 py-1.5 text-left transition-colors duration-100 disabled:cursor-not-allowed disabled:opacity-45",
-                    active ? "bg-selected text-selected-foreground" : "hover:bg-hover",
+                    "flex min-h-8 w-full cursor-pointer items-center justify-between gap-3 rounded-[calc(var(--surface-radius)-3px)] px-2.5 py-1.5 text-left disabled:cursor-not-allowed disabled:opacity-45",
+                    usingPointerHighlight
+                      ? "hover:bg-selected hover:text-selected-foreground"
+                      : active && "bg-selected text-selected-foreground",
                     selected && "font-medium",
                   )}
                 >
@@ -429,6 +486,20 @@ export function SelectControl<T extends string>({
       )}
     </>
   );
+}
+
+function scrollOptionIntoMenu(menu: HTMLElement, option: HTMLElement) {
+  const menuRect = menu.getBoundingClientRect();
+  const optionRect = option.getBoundingClientRect();
+  const sticky = menu.firstElementChild instanceof HTMLElement && menu.firstElementChild.classList.contains("sticky")
+    ? menu.firstElementChild
+    : null;
+  const topLimit = sticky ? sticky.getBoundingClientRect().bottom : menuRect.top;
+  if (optionRect.bottom > menuRect.bottom) {
+    menu.scrollTop += optionRect.bottom - menuRect.bottom;
+  } else if (optionRect.top < topLimit) {
+    menu.scrollTop -= topLimit - optionRect.top;
+  }
 }
 
 function firstEnabledIndex(options: SelectOption[]) {

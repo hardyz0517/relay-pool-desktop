@@ -85,14 +85,16 @@ export function RoutingCandidateOrderPanel({
   const candidates = useMemo(
     () => candidateIds.flatMap((candidateId) => {
       const candidate = candidateById.get(candidateId);
-      return candidate ? [candidate] : [];
+      return candidate && candidate.enabled !== false ? [candidate] : [];
     }),
     [candidateById, candidateIds],
   );
   const syncLabel = syncLabels[syncState];
 
   function handleSortByScore() {
-    setCandidateIds((currentIds) => sortCandidateIdsByScore(currentIds, candidateById));
+    const visibleIds = candidates.map((candidate) => candidate.stationKeyId);
+    const sortedVisibleIds = sortCandidateIdsByScore(visibleIds, candidateById);
+    setCandidateIds((currentIds) => mergeVisibleCandidateOrder(currentIds, candidateById, sortedVisibleIds));
   }
 
   useEffect(() => {
@@ -113,14 +115,16 @@ export function RoutingCandidateOrderPanel({
     if (syncState === "saving") return;
     const { active, over } = event;
     if (!over || active.id === over.id) return;
-    const activeIndex = candidateIds.indexOf(String(active.id));
-    const overIndex = candidateIds.indexOf(String(over.id));
+    const visibleCandidateIds = candidates.map((candidate) => candidate.stationKeyId);
+    const activeIndex = visibleCandidateIds.indexOf(String(active.id));
+    const overIndex = visibleCandidateIds.indexOf(String(over.id));
     if (activeIndex === -1 || overIndex === -1) return;
 
     const previousCandidateIds = candidateIds;
-    const nextStationKeyIds = [...candidateIds];
-    const [moved] = nextStationKeyIds.splice(activeIndex, 1);
-    nextStationKeyIds.splice(overIndex, 0, moved);
+    const nextVisibleCandidateIds = [...visibleCandidateIds];
+    const [moved] = nextVisibleCandidateIds.splice(activeIndex, 1);
+    nextVisibleCandidateIds.splice(overIndex, 0, moved);
+    const nextStationKeyIds = mergeVisibleCandidateOrder(candidateIds, candidateById, nextVisibleCandidateIds);
     const operationId = saveOperationRef.current + 1;
     const keyPoolVersionAtStart = keyPoolVersionRef.current;
     saveOperationRef.current = operationId;
@@ -197,7 +201,7 @@ export function RoutingCandidateOrderPanel({
         <EmptyState title="暂无候选密钥" description="当前配置下没有可预览的路由密钥。" />
       ) : (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-          <SortableContext items={candidateIds} strategy={verticalListSortingStrategy}>
+          <SortableContext items={candidates.map((candidate) => candidate.stationKeyId)} strategy={verticalListSortingStrategy}>
             <div className="overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface">
               <LocalRoutingStatusCandidateHeader sortable />
               <div className="divide-y divide-border">
@@ -228,6 +232,21 @@ export function sortCandidateIdsByScore(
     if (leftScore == null) return 1;
     if (rightScore == null) return -1;
     return rightScore - leftScore;
+  });
+}
+
+function mergeVisibleCandidateOrder(
+  allCandidateIds: readonly string[],
+  candidateById: ReadonlyMap<string, RoutingCandidateView>,
+  visibleCandidateIds: readonly string[],
+) {
+  let visibleIndex = 0;
+  return allCandidateIds.map((candidateId) => {
+    const candidate = candidateById.get(candidateId);
+    if (candidate && candidate.enabled !== false) {
+      return visibleCandidateIds[visibleIndex++] ?? candidateId;
+    }
+    return candidateId;
   });
 }
 

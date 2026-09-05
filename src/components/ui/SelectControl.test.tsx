@@ -136,4 +136,83 @@ describe("SelectControl positioning", () => {
 
     await act(async () => root.unmount());
   });
+
+  it("keeps the active option when option objects are recreated", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const renderPicker = (options: Array<{ value: string; label: string }>) => (
+      <SelectControl
+        ariaLabel="选择模型"
+        searchable
+        value=""
+        options={options}
+        onChange={vi.fn()}
+      />
+    );
+
+    await act(async () => {
+      root.render(renderPicker([
+        { value: "gpt-4o", label: "gpt-4o" },
+        { value: "gpt-5.2", label: "gpt-5.2" },
+        { value: "claude-sonnet", label: "claude-sonnet" },
+      ]));
+    });
+
+    await act(async () => document.querySelector<HTMLButtonElement>('button[aria-label="选择模型"]')?.click());
+    const listbox = document.querySelector<HTMLElement>('[role="listbox"]')!;
+    await act(async () => {
+      listbox.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    });
+
+    const trigger = document.querySelector<HTMLButtonElement>('button[aria-label="选择模型"]')!;
+    expect(document.getElementById(trigger.getAttribute("aria-activedescendant") ?? "")?.textContent).toBe("gpt-5.2");
+
+    await act(async () => {
+      root.render(renderPicker([
+        { value: "gpt-4o", label: "gpt-4o" },
+        { value: "gpt-5.2", label: "gpt-5.2" },
+        { value: "claude-sonnet", label: "claude-sonnet" },
+      ]));
+    });
+
+    expect(document.getElementById(trigger.getAttribute("aria-activedescendant") ?? "")?.textContent).toBe("gpt-5.2");
+    await act(async () => root.unmount());
+  });
+
+  it("does not use scrollIntoView when moving the active option", async () => {
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      writable: true,
+      value: vi.fn(),
+    });
+    const spy = HTMLElement.prototype.scrollIntoView as unknown as ReturnType<typeof vi.fn>;
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(
+        <SelectControl
+          ariaLabel="选择模型"
+          searchable
+          value=""
+          options={Array.from({ length: 12 }, (_, index) => ({
+            value: `model-${index}`,
+            label: `model-${index}`,
+          }))}
+          onChange={vi.fn()}
+        />,
+      );
+    });
+
+    await act(async () => document.querySelector<HTMLButtonElement>('button[aria-label="选择模型"]')?.click());
+    const listbox = document.querySelector<HTMLElement>('[role="listbox"]')!;
+    await act(async () => {
+      listbox.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    });
+
+    expect(spy).not.toHaveBeenCalled();
+    await act(async () => root.unmount());
+  });
 });

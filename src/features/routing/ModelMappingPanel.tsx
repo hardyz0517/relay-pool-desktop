@@ -179,12 +179,15 @@ export function ModelMappingPanel() {
     if (!row.rule.matcher.model.trim() || !row.rule.action.target.upstreamModel.trim()) return;
     setSavingKind("rule");
     const nextRule = { ...row.rule, enabled: true };
+    const nextRules = draft.rules.map((item) => (
+      item.id === id ? nextRule : enableSimpleMappingRule(item)
+    ));
+    if (!draft.rules.some((item) => item.id === id)) {
+      nextRules.push(nextRule);
+    }
     const outcome = await persist({
       ...draft,
-      rules: [
-        ...draft.rules.filter((item) => item.id !== id).map(enableSimpleMappingRule),
-        nextRule,
-      ],
+      rules: nextRules,
     });
     if (outcome.kind === "success") {
       setRowDrafts((current) => {
@@ -411,6 +414,10 @@ function ModelPicker({
   placeholder?: string;
   onChange: (value: string) => void;
 }) {
+  const selectOptions = useMemo(
+    () => options.map((option) => ({ value: option, label: option })),
+    [options],
+  );
   return (
     <div className="flex min-w-0 items-center gap-2">
       <input
@@ -426,7 +433,7 @@ function ModelPicker({
         title="从当前密钥的模型中选择"
         className="!h-9 !w-9 !min-w-9 !px-0 justify-center [&>span:first-child]:hidden"
         value=""
-        options={options.map((option) => ({ value: option, label: option }))}
+        options={selectOptions}
         searchable
         searchPlaceholder="搜索模型..."
         emptyLabel="没有匹配的模型"

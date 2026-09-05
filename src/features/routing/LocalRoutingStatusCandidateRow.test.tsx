@@ -116,6 +116,35 @@ describe("ScoreBreakdown", () => {
 });
 
 describe("LocalRoutingStatusCandidateRow concurrency", () => {
+  it("labels the key provider without appending the endpoint kind", () => {
+    const markup = renderToStaticMarkup(
+      <LocalRoutingStatusCandidateRow
+        candidate={candidate({ stationName: "1For" })}
+        order={1}
+        nowMs={0}
+      />,
+    );
+
+    expect(markup).toContain("供应商：1For");
+    expect(markup).not.toContain("聊天补全");
+  });
+
+  it("uses square corners for participation status badges", () => {
+    const markup = renderToStaticMarkup(
+      <LocalRoutingStatusCandidateRow
+        candidate={candidate({ participationStatus: "eligible", participationReason: "ready" })}
+        order={1}
+        nowMs={0}
+      />,
+    );
+    const document = new DOMParser().parseFromString(markup, "text/html");
+    const badge = [...document.querySelectorAll("span")].find((element) => element.textContent === "可参与");
+
+    expect(badge).toBeDefined();
+    expect(badge?.className).toContain("rounded-[4px]");
+    expect(badge?.className).not.toContain("rounded-full");
+  });
+
   it("renders backend participation reasons for paused, recovery, and unavailable candidates", () => {
     const unavailableCircuit = circuitDiagnostics("closed", null);
     unavailableCircuit.circuit.persistenceStatus = "unavailable";

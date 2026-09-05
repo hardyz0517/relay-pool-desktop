@@ -84,6 +84,11 @@ export function LocalRoutingStatusCandidateRow({
     candidate.participationReason,
     circuit?.recoverySuccesses ?? null,
   );
+  const participationSecondaryLabel = candidate.participationReason === "circuit_half_open_idle"
+    && circuit?.recoverySuccesses != null
+    && circuit.recoverySuccesses > 0
+    ? `已成功 ${circuit.recoverySuccesses} 次`
+    : null;
   const [scoreDialogOpen, setScoreDialogOpen] = useState(false);
 
   return (
@@ -118,11 +123,20 @@ export function LocalRoutingStatusCandidateRow({
           </span>
         </div>
         <div className="mt-0.5 truncate text-xs text-muted-foreground">
-          {candidate.stationName} · 聊天补全
+          供应商：{candidate.stationName}
         </div>
       </div>
       <MetricCell label="参与状态">
-        <StatusBadge tone={participation.tone}>{participation.label}</StatusBadge>
+        <div className="flex min-w-0 flex-col items-center gap-0.5">
+          <StatusBadge tone={participation.tone} className="max-w-full whitespace-nowrap rounded-[4px] px-1.5 text-[11px]">
+            {participationSecondaryLabel ? "半开待下次探测" : participation.label}
+          </StatusBadge>
+          {participationSecondaryLabel ? (
+            <span className="self-end whitespace-nowrap text-[10px] font-medium leading-4 text-warning-foreground">
+              {participationSecondaryLabel}
+            </span>
+          ) : null}
+        </div>
         {scoreStatus !== "scored" && displayFacts.rejectReasonLabel ? (
           <div className="mt-1 text-xs text-warning-foreground">
             {displayFacts.rejectReasonLabel}
@@ -165,8 +179,12 @@ export function LocalRoutingStatusCandidateRow({
       />
       <MetricCell
         label="冷却"
-        value={<span className="whitespace-nowrap tabular-nums">{cooldown.label}</span>}
-        tone={cooldown.active ? "warning" : "neutral"}
+        value={
+          <span className="whitespace-nowrap tabular-nums">
+            {cooldown.remainingSeconds != null && cooldown.remainingSeconds > 0 ? cooldown.label : "-"}
+          </span>
+        }
+        tone={cooldown.remainingSeconds != null && cooldown.remainingSeconds > 0 ? "warning" : "neutral"}
       />
       <MetricCell label="当前并发">
         <StatusBadge

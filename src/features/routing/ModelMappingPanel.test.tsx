@@ -127,6 +127,47 @@ describe("ModelMappingPanel", () => {
     queryClient.clear();
   });
 
+  it("keeps existing mapping rows in place across consecutive saves", async () => {
+    const workspace = emptyWorkspace();
+    workspace.document.rules = [
+      simpleRule("rule-a", "gpt-5.2", "grok-4.6"),
+      simpleRule("rule-b", "gpt-5.6-luna", "grok-4.5"),
+    ];
+    mocks.workspace = workspace;
+    mocks.apply.mockImplementation(async (input: { document: ModelMappingWorkspaceDto["document"] }) => ({
+      ...workspace,
+      document: input.document,
+    }));
+    const { host, root, queryClient } = renderPanel();
+    const outside = document.createElement("button");
+    document.body.append(outside);
+
+    const firstRow = host.querySelector('[aria-label="模型映射行 rule-a"]') as HTMLElement;
+    setInput(firstRow, '[aria-label^="上游目标模型"]', "grok-4.6-updated");
+    await act(async () => {
+      firstRow.dispatchEvent(new FocusEvent("focusout", { bubbles: true, relatedTarget: outside }));
+    });
+
+    const secondRow = host.querySelector('[aria-label="模型映射行 rule-b"]') as HTMLElement;
+    setInput(secondRow, '[aria-label^="上游目标模型"]', "grok-4.5-updated");
+    await act(async () => {
+      secondRow.dispatchEvent(new FocusEvent("focusout", { bubbles: true, relatedTarget: outside }));
+    });
+
+    expect(mocks.apply).toHaveBeenCalledTimes(2);
+    expect(mocks.apply.mock.calls.map((call) => call[0].document.rules.map((rule: { id: string }) => rule.id))).toEqual([
+      ["rule-a", "rule-b"],
+      ["rule-a", "rule-b"],
+    ]);
+    expect(mocks.apply.mock.calls[1][0].document.rules).toEqual([
+      expect.objectContaining({ id: "rule-a", action: { kind: "map_fixed", target: { kind: "literal", upstreamModel: "grok-4.6-updated" } } }),
+      expect.objectContaining({ id: "rule-b", action: { kind: "map_fixed", target: { kind: "literal", upstreamModel: "grok-4.5-updated" } } }),
+    ]);
+
+    await act(async () => root.unmount());
+    queryClient.clear();
+  });
+
   it("keeps an incomplete new row quiet when focus leaves it", async () => {
     const workspace = emptyWorkspace();
     mocks.workspace = workspace;
@@ -304,6 +345,21 @@ function emptyWorkspace(): ModelMappingWorkspaceDto {
     legacyReviews: [],
     diagnostics: [],
     candidateCount: 0,
+  };
+}
+
+function simpleRule(id: string, requestedModel: string, upstreamModel: string) {
+  return {
+    id,
+    priority: 10,
+    enabled: true,
+    matcher: { kind: "exact" as const, model: requestedModel },
+    conditions: { endpointKinds: [], stream: "any" as const, tools: "any" as const, vision: "any" as const, reasoning: "any" as const },
+    action: { kind: "map_fixed" as const, target: { kind: "literal" as const, upstreamModel } },
+    note: null,
+    revision: 1,
+    createdAtMs: 1,
+    updatedAtMs: 1,
   };
 }
 

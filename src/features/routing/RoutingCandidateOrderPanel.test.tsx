@@ -53,6 +53,17 @@ afterEach(() => {
 });
 
 describe("RoutingCandidateOrderPanel", () => {
+  it("does not render disabled keys in the routing queue", () => {
+    const items = keyPoolItems();
+    items[1] = { ...items[1], enabled: false } as KeyPoolItem;
+    const { host, root, queryClient } = renderPanel(items);
+
+    expect(Array.from(host.querySelectorAll("[data-candidate-id]")).map((node) => node.getAttribute("data-candidate-id"))).toEqual(["key-2", "key-3"]);
+
+    act(() => root.unmount());
+    queryClient.clear();
+  });
+
   it("renders the overview order, sorts by score, and persists drag changes", async () => {
     mocks.reorder.mockResolvedValue(keyPoolItems());
     mocks.synchronize.mockResolvedValue({ refreshed: true, errors: [] });
@@ -99,7 +110,7 @@ describe("RoutingCandidateOrderPanel", () => {
   });
 });
 
-function renderPanel() {
+function renderPanel(items = keyPoolItems()) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const host = document.createElement("div");
   document.body.append(host);
@@ -108,7 +119,7 @@ function renderPanel() {
     root.render(
       <QueryClientProvider client={queryClient}>
         <ToastProvider>
-          <RoutingCandidateOrderPanel workspace={workspace()} keyPoolItems={keyPoolItems()} loading={false} nowMs={0} heading="候选基础资格" />
+          <RoutingCandidateOrderPanel workspace={workspace()} keyPoolItems={items} loading={false} nowMs={0} heading="路由队列" />
         </ToastProvider>
       </QueryClientProvider>,
     );

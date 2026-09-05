@@ -112,7 +112,7 @@ export function LocalRoutingStatusTab({
   const candidateStatusLabel = `${workspace.summary.participatingCandidateCount} / ${workspace.summary.nonParticipatingCandidateCount}`;
   const latestDecisionTimeLabel = formatRoutingDecisionTime(latestDecision.decidedAt);
   const candidateHeading =
-    workspace.settings.previewKind === "baseline_eligibility" ? "候选基础资格" : "候选资格";
+    workspace.settings.previewKind === "baseline_eligibility" ? "路由队列" : "候选资格";
 
   const selectedSimulationCandidate = simulation?.selectedStationKeyId ? simulation.candidates.find((candidate) => candidate.stationKeyId === simulation.selectedStationKeyId) ?? null : null;
   async function runSimulation() {
