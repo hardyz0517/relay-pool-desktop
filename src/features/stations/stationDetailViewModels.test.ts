@@ -45,6 +45,7 @@ function balance(overrides: Partial<BalanceSnapshot> = {}): BalanceSnapshot {
     stationId: "station-1",
     stationKeyId: null,
     scope: "station",
+    balanceKind: "account_balance",
     value: 8,
     currency: "USD",
     creditUnit: null,
@@ -68,6 +69,12 @@ function balance(overrides: Partial<BalanceSnapshot> = {}): BalanceSnapshot {
     source: "newapi_user_self",
     confidence: 0.95,
     collectedAt: "2026-08-01T01:00:00Z",
+    evidenceConfidence: "confirmed",
+    spendabilityAuthority: "authoritative",
+    observedAtMs: Date.parse("2026-08-01T01:00:00Z"),
+    validUntilMs: null,
+    evidenceProfileVersion: "test-v1",
+    spendabilityReasonCode: "test",
     createdAt: "2026-08-01T01:00:00Z",
     updatedAt: "2026-08-01T01:00:00Z",
     ...overrides,
@@ -79,7 +86,7 @@ describe("buildMetricCards", () => {
     const cards = buildMetricCards(station("sub2api"), [balance()]);
 
     expect(cards.map((card) => card.label)).toEqual([
-      "当前余额",
+      "账号余额",
       "今日消费",
       "并发限制",
       "今日请求",

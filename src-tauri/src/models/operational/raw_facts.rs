@@ -92,8 +92,15 @@ pub(crate) struct RawOperationalCandidateRow {
     pub(crate) model_blocklist_json: String,
     pub(crate) preferred_models_json: String,
     pub(crate) routing_tags_json: String,
+    pub(crate) balance_scope: Option<String>,
+    pub(crate) balance_kind: Option<String>,
     pub(crate) balance_status: Option<String>,
     pub(crate) balance_value: Option<f64>,
+    pub(crate) balance_currency: Option<String>,
+    pub(crate) balance_evidence_confidence: Option<String>,
+    pub(crate) balance_spendability_authority: Option<String>,
+    pub(crate) balance_observed_at_ms: Option<i64>,
+    pub(crate) balance_valid_until_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

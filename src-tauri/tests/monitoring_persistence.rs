@@ -548,10 +548,11 @@ async fn insert_station_balance(
         r#"
         INSERT INTO balance_snapshots (
             id, station_id, station_key_id, scope, value, currency,
+            balance_kind,
             status, source, confidence, created_at, updated_at,
             evidence_confidence, spendability_authority
         ) VALUES (?1, 'station-1', NULL, 'station', ?2, 'CNY',
-                  ?3, 'fixture', 1.0, ?4, ?4, 'confirmed', 'authoritative')
+                  'account_balance', ?3, 'fixture', 1.0, ?4, ?4, 'confirmed', 'authoritative')
         "#,
     )
     .bind(id)

@@ -68,11 +68,20 @@ export type ModelPriceSyncConfig = {
   excludedCommonModelKeys?: string[];
 };
 
+export type BalanceKind =
+  | "account_balance"
+  | "station_key_quota"
+  | "subscription_quota"
+  | "usage_summary"
+  | "legacy_derived_aggregate"
+  | "legacy_unknown";
+
 export type BalanceSnapshot = {
   id: string;
   stationId: string;
   stationKeyId: string | null;
-  scope: "station" | "station_key" | string;
+  scope: "station" | "station_key" | "subscription" | string;
+  balanceKind: BalanceKind | string;
   value: number | null;
   currency: string;
   creditUnit: string | null;
@@ -96,6 +105,12 @@ export type BalanceSnapshot = {
   source: string;
   confidence: number;
   collectedAt: string | null;
+  evidenceConfidence: "confirmed" | "probable" | "unknown" | "conflicting" | string;
+  spendabilityAuthority: "authoritative" | "advisory" | "unknown" | string;
+  observedAtMs: number | null;
+  validUntilMs: number | null;
+  evidenceProfileVersion: string | null;
+  spendabilityReasonCode: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -139,6 +154,12 @@ export type UpsertBalanceSnapshotInput = {
   source: string;
   confidence: number;
   collectedAt: string | null;
+  evidenceConfidence?: "confirmed" | "probable" | "unknown" | "conflicting" | string;
+  spendabilityAuthority?: "authoritative" | "advisory" | "unknown" | string;
+  observedAtMs?: number | null;
+  validUntilMs?: number | null;
+  evidenceProfileVersion?: string | null;
+  spendabilityReasonCode?: string | null;
 };
 
 export type UpsertModelBasePriceInput = {

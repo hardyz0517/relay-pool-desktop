@@ -62,6 +62,8 @@ function stationAssetRow(overrides: Partial<StationAssetRow> = {}): StationAsset
       updatedAt: null,
       collectedAt: null,
       sourceSnapshot: null,
+      state: "missing",
+      eligibleForRouting: false,
     },
     collectionSummary: {
       status: "healthy",

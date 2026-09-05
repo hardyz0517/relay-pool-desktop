@@ -23,6 +23,7 @@ pub(crate) struct CandidateSnapshot {
     /// Empty is retained for compatibility with old test fixtures and means
     /// the candidate has one implicit variant from `resolved_upstream_model`.
     pub(crate) model_variants: Vec<CandidateModelVariant>,
+    pub(crate) model_variant_pricing: Vec<(String, RoutePlanPricingSnapshot)>,
     pub(crate) credential_available: bool,
     pub(crate) hard_eligible: bool,
     pub(crate) backup_only: bool,

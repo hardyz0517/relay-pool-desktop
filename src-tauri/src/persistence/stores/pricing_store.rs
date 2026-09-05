@@ -121,17 +121,21 @@ impl PricingStore {
                            PARTITION BY b.station_id, b.scope
                            ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC
                        ) AS row_number
-                FROM balance_snapshots b INDEXED BY idx_balance_snapshots_latest_station_scope
+                FROM balance_snapshots b INDEXED BY idx_balance_snapshots_current_kind
                 WHERE b.scope = 'station'
+                  AND b.station_key_id IS NULL
+                  AND b.balance_kind = 'account_balance'
             )
-            SELECT id, station_id, station_key_id, scope, value, currency, credit_unit,
+            SELECT id, station_id, station_key_id, scope, balance_kind, value, currency, credit_unit,
                    used_value, total_value, today_request_count, total_request_count,
                    today_consumption, total_consumption, today_base_consumption,
                    total_base_consumption, today_token_count, total_token_count,
                    today_input_token_count, today_output_token_count,
                    total_input_token_count, total_output_token_count,
                    account_concurrency_limit, low_balance_threshold, status, source,
-                   confidence, collected_at, created_at, updated_at
+                   confidence, collected_at, evidence_confidence, spendability_authority,
+                   observed_at_ms, valid_until_ms, evidence_profile_version,
+                   spendability_reason_code, created_at, updated_at
             FROM ranked
             WHERE row_number = 1
             ORDER BY updated_at DESC, created_at DESC, id DESC
@@ -538,23 +542,26 @@ impl PricingStore {
         sqlx::query(
             r#"
             INSERT INTO balance_snapshots (
-                id, station_id, station_key_id, scope, value, currency, credit_unit,
+                id, station_id, station_key_id, scope, balance_kind, value, currency, credit_unit,
                 used_value, total_value, today_request_count, total_request_count,
                 today_consumption, total_consumption, today_base_consumption,
                 total_base_consumption, today_token_count, total_token_count,
                 today_input_token_count, today_output_token_count,
                 total_input_token_count, total_output_token_count,
                 account_concurrency_limit, low_balance_threshold, status, source,
-                confidence, collected_at, created_at, updated_at
+                confidence, collected_at, created_at, updated_at,
+                evidence_confidence, spendability_authority, observed_at_ms, valid_until_ms,
+                evidence_profile_version, spendability_reason_code
             ) VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-                ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25,
-                ?26, ?27, ?28, ?29
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+                ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26,
+                ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36
             )
             ON CONFLICT(id) DO UPDATE SET
                 station_id = excluded.station_id,
                 station_key_id = excluded.station_key_id,
                 scope = excluded.scope,
+                balance_kind = excluded.balance_kind,
                 value = excluded.value,
                 currency = excluded.currency,
                 credit_unit = excluded.credit_unit,
@@ -578,6 +585,12 @@ impl PricingStore {
                 source = excluded.source,
                 confidence = excluded.confidence,
                 collected_at = excluded.collected_at,
+                evidence_confidence = excluded.evidence_confidence,
+                spendability_authority = excluded.spendability_authority,
+                observed_at_ms = excluded.observed_at_ms,
+                valid_until_ms = excluded.valid_until_ms,
+                evidence_profile_version = excluded.evidence_profile_version,
+                spendability_reason_code = excluded.spendability_reason_code,
                 updated_at = excluded.updated_at
             "#,
         )
@@ -585,6 +598,7 @@ impl PricingStore {
         .bind(&row.input.station_id)
         .bind(normalize_optional(&row.input.station_key_id))
         .bind(row.input.scope.trim())
+        .bind(row.input.balance_kind.trim())
         .bind(row.input.value)
         .bind(row.input.currency.trim().to_uppercase())
         .bind(normalize_optional(&row.input.credit_unit))
@@ -610,6 +624,12 @@ impl PricingStore {
         .bind(normalize_optional(&row.input.collected_at))
         .bind(&row.now)
         .bind(&row.now)
+        .bind(row.input.evidence_confidence.trim())
+        .bind(row.input.spendability_authority.trim())
+        .bind(row.input.observed_at_ms)
+        .bind(row.input.valid_until_ms)
+        .bind(normalize_optional(&row.input.evidence_profile_version))
+        .bind(normalize_optional(&row.input.spendability_reason_code))
         .execute(write.connection())
         .await?;
         balance_snapshot_by_id(write.connection(), &row.id).await
@@ -912,14 +932,16 @@ async fn balance_snapshot_by_id(
 ) -> Result<BalanceSnapshot, PersistenceError> {
     let row = sqlx::query(
         r#"
-        SELECT id, station_id, station_key_id, scope, value, currency, credit_unit,
+        SELECT id, station_id, station_key_id, scope, balance_kind, value, currency, credit_unit,
                used_value, total_value, today_request_count, total_request_count,
                today_consumption, total_consumption, today_base_consumption,
                total_base_consumption, today_token_count, total_token_count,
                today_input_token_count, today_output_token_count,
                total_input_token_count, total_output_token_count,
                account_concurrency_limit, low_balance_threshold, status, source,
-               confidence, collected_at, created_at, updated_at
+               confidence, collected_at, evidence_confidence, spendability_authority,
+               observed_at_ms, valid_until_ms, evidence_profile_version,
+               spendability_reason_code, created_at, updated_at
         FROM balance_snapshots WHERE id = ?1
         "#,
     )
@@ -1006,11 +1028,51 @@ fn validate_balance_snapshot(input: &UpsertBalanceSnapshotInput) -> Result<(), P
         || input.currency.trim().is_empty()
         || input.status.trim().is_empty()
         || input.source.trim().is_empty()
+        || input.balance_kind.trim().is_empty()
         || !valid_confidence(input.confidence)
     {
         return Err(PersistenceError::ConstraintViolation);
     }
+    validate_balance_kind_scope(
+        input.balance_kind.trim(),
+        input.scope.trim(),
+        input.station_key_id.as_ref(),
+    )?;
+    if !matches!(
+        input.evidence_confidence.trim(),
+        "confirmed" | "probable" | "unknown" | "conflicting"
+    ) || !matches!(
+        input.spendability_authority.trim(),
+        "authoritative" | "advisory" | "unknown"
+    ) || input.valid_until_ms.is_some_and(|until| {
+        input
+            .observed_at_ms
+            .is_some_and(|observed| until < observed)
+    }) {
+        return Err(PersistenceError::ConstraintViolation);
+    }
     Ok(())
+}
+
+fn validate_balance_kind_scope(
+    balance_kind: &str,
+    scope: &str,
+    station_key_id: Option<&String>,
+) -> Result<(), PersistenceError> {
+    let valid = match balance_kind {
+        "account_balance" => {
+            station_key_id.is_none() && matches!(scope, "station" | "station_account")
+        }
+        "station_key_quota" => station_key_id.is_some() && scope == "station_key",
+        "subscription_quota" => station_key_id.is_none() && scope == "subscription",
+        "usage_summary" => station_key_id.is_none() && scope == "station",
+        _ => false,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(PersistenceError::ConstraintViolation)
+    }
 }
 
 fn valid_confidence(value: f64) -> bool {
@@ -1184,6 +1246,7 @@ fn row_to_balance_snapshot(row: sqlx::sqlite::SqliteRow) -> BalanceSnapshot {
         station_id: row.get("station_id"),
         station_key_id: row.get("station_key_id"),
         scope: row.get("scope"),
+        balance_kind: row.get("balance_kind"),
         value: row.get("value"),
         currency: row.get("currency"),
         credit_unit: row.get("credit_unit"),
@@ -1207,6 +1270,12 @@ fn row_to_balance_snapshot(row: sqlx::sqlite::SqliteRow) -> BalanceSnapshot {
         source: row.get("source"),
         confidence: row.get("confidence"),
         collected_at: row.get("collected_at"),
+        evidence_confidence: row.get("evidence_confidence"),
+        spendability_authority: row.get("spendability_authority"),
+        observed_at_ms: row.get("observed_at_ms"),
+        valid_until_ms: row.get("valid_until_ms"),
+        evidence_profile_version: row.get("evidence_profile_version"),
+        spendability_reason_code: row.get("spendability_reason_code"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     }

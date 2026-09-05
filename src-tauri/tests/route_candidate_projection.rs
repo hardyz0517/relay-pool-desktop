@@ -17,11 +17,16 @@ mod models {
         #[serde(rename_all = "camelCase")]
         pub(crate) struct RuntimeRoutingBalance {
             pub(crate) scope: String,
+            pub(crate) balance_kind: String,
             pub(crate) value: Option<f64>,
             pub(crate) currency: String,
             pub(crate) low_balance_threshold: Option<f64>,
             pub(crate) status: String,
             pub(crate) collected_at: Option<String>,
+            pub(crate) evidence_confidence: String,
+            pub(crate) spendability_authority: String,
+            pub(crate) observed_at_ms: Option<i64>,
+            pub(crate) valid_until_ms: Option<i64>,
         }
 
         impl RuntimeRoutingBalance {

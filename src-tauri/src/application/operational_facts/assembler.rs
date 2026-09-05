@@ -143,8 +143,15 @@ pub(crate) struct OperationalCandidateFact {
     model_blocklist: Vec<String>,
     preferred_models: Vec<String>,
     routing_tags: Vec<String>,
+    balance_scope: Option<String>,
+    balance_kind: Option<String>,
     balance_status: Option<String>,
     balance_value: Option<f64>,
+    balance_currency: Option<String>,
+    balance_evidence_confidence: Option<String>,
+    balance_spendability_authority: Option<String>,
+    balance_observed_at_ms: Option<i64>,
+    balance_valid_until_ms: Option<i64>,
 }
 
 impl OperationalCandidateFact {
@@ -240,6 +247,34 @@ impl OperationalCandidateFact {
         self.balance_value
     }
 
+    pub(crate) fn balance_scope(&self) -> Option<&str> {
+        self.balance_scope.as_deref()
+    }
+
+    pub(crate) fn balance_kind(&self) -> Option<&str> {
+        self.balance_kind.as_deref()
+    }
+
+    pub(crate) fn balance_currency(&self) -> Option<&str> {
+        self.balance_currency.as_deref()
+    }
+
+    pub(crate) fn balance_evidence_confidence(&self) -> Option<&str> {
+        self.balance_evidence_confidence.as_deref()
+    }
+
+    pub(crate) fn balance_spendability_authority(&self) -> Option<&str> {
+        self.balance_spendability_authority.as_deref()
+    }
+
+    pub(crate) fn balance_observed_at_ms(&self) -> Option<i64> {
+        self.balance_observed_at_ms
+    }
+
+    pub(crate) fn balance_valid_until_ms(&self) -> Option<i64> {
+        self.balance_valid_until_ms
+    }
+
     #[cfg(test)]
     pub(crate) fn for_planning_test(
         group_binding_id: Option<&str>,
@@ -287,8 +322,15 @@ impl OperationalCandidateFact {
             model_blocklist: Vec::new(),
             preferred_models: Vec::new(),
             routing_tags: Vec::new(),
+            balance_scope: Some("station_key".to_string()),
+            balance_kind: Some("station_key_quota".to_string()),
             balance_status: None,
             balance_value: Some(1.0),
+            balance_currency: Some("USD".to_string()),
+            balance_evidence_confidence: Some("confirmed".to_string()),
+            balance_spendability_authority: Some("authoritative".to_string()),
+            balance_observed_at_ms: Some(1),
+            balance_valid_until_ms: None,
         }
     }
 
@@ -310,6 +352,25 @@ impl OperationalCandidateFact {
     ) {
         self.balance_value = balance_value;
         self.balance_status = balance_status.map(ToString::to_string);
+        self.balance_scope = Some("station_key".to_string());
+        self.balance_kind = Some("station_key_quota".to_string());
+        self.balance_currency = Some("USD".to_string());
+        self.balance_evidence_confidence = Some("confirmed".to_string());
+        self.balance_spendability_authority = Some("authoritative".to_string());
+        self.balance_observed_at_ms = Some(1);
+        self.balance_valid_until_ms = None;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_balance_evidence_for_planning_test(
+        &mut self,
+        evidence_confidence: &str,
+        spendability_authority: &str,
+        valid_until_ms: Option<i64>,
+    ) {
+        self.balance_evidence_confidence = Some(evidence_confidence.to_string());
+        self.balance_spendability_authority = Some(spendability_authority.to_string());
+        self.balance_valid_until_ms = valid_until_ms;
     }
 
     #[cfg(test)]
@@ -320,6 +381,77 @@ impl OperationalCandidateFact {
     ) {
         self.supports_chat_completions = supports_chat_completions;
         self.supports_responses = supports_responses;
+    }
+}
+
+/// Returns the only balance conditions that may block an operational route.
+/// Scope and kind are checked together so a legacy aggregate, a subscription
+/// quota, or an untyped row can never become spendability evidence by shape.
+pub(crate) fn balance_fact_rejection_reason(
+    candidate: &OperationalCandidateFact,
+    evaluation_at_ms: i64,
+) -> Option<&'static str> {
+    let (Some(scope), Some(kind)) = (candidate.balance_scope(), candidate.balance_kind()) else {
+        return Some("balance_missing");
+    };
+    let kind_matches = match scope.trim().to_ascii_lowercase().as_str() {
+        "station_key" => kind.eq_ignore_ascii_case("station_key_quota"),
+        "station" | "station_account" => kind.eq_ignore_ascii_case("account_balance"),
+        _ => false,
+    };
+    if !kind_matches {
+        return Some("balance_kind_scope_mismatch");
+    }
+    if candidate
+        .balance_currency()
+        .is_none_or(|currency| currency.trim().is_empty())
+    {
+        return Some("balance_currency_missing");
+    }
+    if candidate
+        .balance_observed_at_ms()
+        .is_some_and(|observed_at| observed_at < 0)
+    {
+        return Some("balance_observed_at_invalid");
+    }
+    if !candidate
+        .balance_evidence_confidence()
+        .is_some_and(|value| value.eq_ignore_ascii_case("confirmed"))
+        || !candidate
+            .balance_spendability_authority()
+            .is_some_and(|value| value.eq_ignore_ascii_case("authoritative"))
+    {
+        return Some("balance_untrusted");
+    }
+    if candidate
+        .balance_valid_until_ms()
+        .is_some_and(|valid_until| valid_until < evaluation_at_ms)
+    {
+        return Some("balance_stale");
+    }
+    if candidate.balance_value().is_none()
+        && !matches!(
+            candidate.balance_status().map(str::trim).map(str::to_ascii_lowercase),
+            Some(status) if matches!(status.as_str(), "depleted" | "exhausted" | "empty")
+        )
+    {
+        return Some("balance_missing");
+    }
+    if balance_is_depleted(candidate.balance_value(), candidate.balance_status()) {
+        return Some("balance_depleted");
+    }
+    None
+}
+
+fn balance_is_depleted(value: Option<f64>, status: Option<&str>) -> bool {
+    match value.filter(|value| value.is_finite()) {
+        Some(value) => value <= 0.0,
+        None => status.is_some_and(|status| {
+            matches!(
+                status.trim().to_ascii_lowercase().as_str(),
+                "depleted" | "exhausted" | "empty"
+            )
+        }),
     }
 }
 
@@ -465,8 +597,15 @@ pub(crate) fn assemble_operational_fact_bundle(
                     "preferred_models_json",
                 )?,
                 routing_tags: parse_json_string_list(&row.routing_tags_json, "routing_tags_json")?,
+                balance_scope: row.balance_scope,
+                balance_kind: row.balance_kind,
                 balance_status: row.balance_status,
                 balance_value: row.balance_value.filter(|value| value.is_finite()),
+                balance_currency: row.balance_currency,
+                balance_evidence_confidence: row.balance_evidence_confidence,
+                balance_spendability_authority: row.balance_spendability_authority,
+                balance_observed_at_ms: row.balance_observed_at_ms,
+                balance_valid_until_ms: row.balance_valid_until_ms,
             })
         })
         .collect::<Result<Vec<_>, OperationalFactAssemblyError>>()?;

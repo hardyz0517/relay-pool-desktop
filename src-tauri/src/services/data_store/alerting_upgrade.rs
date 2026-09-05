@@ -787,6 +787,8 @@ async fn collect_current_facts(
          WHERE b.id = (
              SELECT latest.id FROM balance_snapshots latest
              WHERE latest.station_id = b.station_id
+               AND latest.scope IN ('station', 'station_account', 'station_key')
+               AND latest.source <> 'station_key_balance_aggregate'
                AND (latest.station_key_id = b.station_key_id OR (latest.station_key_id IS NULL AND b.station_key_id IS NULL))
              ORDER BY latest.updated_at DESC, latest.id DESC LIMIT 1
          )",

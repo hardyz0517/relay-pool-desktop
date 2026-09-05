@@ -131,30 +131,21 @@ pub struct RuntimeRoutingSecret {
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeRoutingBalance {
     pub scope: String,
+    pub balance_kind: String,
     pub value: Option<f64>,
     pub currency: String,
     pub low_balance_threshold: Option<f64>,
     pub status: String,
     pub collected_at: Option<String>,
+    pub evidence_confidence: String,
+    pub spendability_authority: String,
+    pub observed_at_ms: Option<i64>,
+    pub valid_until_ms: Option<i64>,
 }
 
 impl RuntimeRoutingBalance {
     pub fn is_depleted(&self) -> bool {
         balance_is_depleted(self.value, Some(self.status.as_str()))
-    }
-
-    pub(crate) fn has_explicit_status(&self) -> bool {
-        matches!(
-            self.status.trim().to_ascii_lowercase().as_str(),
-            "normal"
-                | "available"
-                | "usable"
-                | "low"
-                | "warning"
-                | "depleted"
-                | "exhausted"
-                | "empty"
-        )
     }
 }
 
@@ -328,11 +319,16 @@ mod automatic_scheduler_contract_tests {
     fn negative_runtime_balance_is_depleted_even_with_stale_normal_status() {
         let balance = RuntimeRoutingBalance {
             scope: "station".to_string(),
+            balance_kind: "account_balance".to_string(),
             value: Some(-0.05),
             currency: "USD".to_string(),
             low_balance_threshold: None,
             status: "normal".to_string(),
             collected_at: None,
+            evidence_confidence: "confirmed".to_string(),
+            spendability_authority: "authoritative".to_string(),
+            observed_at_ms: None,
+            valid_until_ms: None,
         };
 
         assert!(balance.is_depleted());
@@ -342,11 +338,16 @@ mod automatic_scheduler_contract_tests {
     fn positive_runtime_balance_with_low_status_remains_routeable() {
         let balance = RuntimeRoutingBalance {
             scope: "station".to_string(),
+            balance_kind: "account_balance".to_string(),
             value: Some(4.71),
             currency: "USD".to_string(),
             low_balance_threshold: Some(5.0),
             status: "low".to_string(),
             collected_at: None,
+            evidence_confidence: "confirmed".to_string(),
+            spendability_authority: "authoritative".to_string(),
+            observed_at_ms: None,
+            valid_until_ms: None,
         };
 
         assert!(!balance.is_depleted());

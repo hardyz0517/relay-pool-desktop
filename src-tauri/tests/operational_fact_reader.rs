@@ -217,10 +217,15 @@ async fn create_schema(pool: &SqlitePool) {
             station_id TEXT NOT NULL,
             station_key_id TEXT,
             scope TEXT NOT NULL,
+            balance_kind TEXT NOT NULL DEFAULT 'account_balance',
             value REAL,
             currency TEXT NOT NULL,
             low_balance_threshold REAL,
             status TEXT NOT NULL,
+            evidence_confidence TEXT NOT NULL DEFAULT 'unknown',
+            spendability_authority TEXT NOT NULL DEFAULT 'unknown',
+            observed_at_ms INTEGER,
+            valid_until_ms INTEGER,
             created_at TEXT NOT NULL DEFAULT '',
             updated_at TEXT NOT NULL
         );
@@ -322,22 +327,22 @@ async fn insert_candidate(pool: &SqlitePool, index: usize) {
 }
 
 #[tokio::test]
-async fn planner_prefers_explicit_station_balance_over_stale_key_balance() {
+async fn planner_prefers_explicit_key_quota_over_station_account_balance() {
     let pool = test_pool().await;
     insert_candidate(&pool, 1).await;
 
     sqlx::query(
         "INSERT INTO balance_snapshots
-         (id, station_id, station_key_id, scope, value, currency, status, created_at, updated_at)
-         VALUES ('key-depleted', 'station-1', 'key-1', 'station_key', 0, 'USD', 'depleted', '3', '3')",
+         (id, station_id, station_key_id, scope, balance_kind, value, currency, status, created_at, updated_at)
+         VALUES ('key-depleted', 'station-1', 'key-1', 'station_key', 'station_key_quota', 0, 'USD', 'depleted', '3', '3')",
     )
     .execute(&pool)
     .await
     .expect("key balance");
     sqlx::query(
         "INSERT INTO balance_snapshots
-         (id, station_id, station_key_id, scope, value, currency, status, created_at, updated_at)
-         VALUES ('station-available', 'station-1', NULL, 'station', 3.61, 'USD', 'normal', '2', '2')",
+         (id, station_id, station_key_id, scope, balance_kind, value, currency, status, created_at, updated_at)
+         VALUES ('station-available', 'station-1', NULL, 'station', 'account_balance', 3.61, 'USD', 'normal', '2', '2')",
     )
     .execute(&pool)
     .await
@@ -354,8 +359,11 @@ async fn planner_prefers_explicit_station_balance_over_stale_key_balance() {
         .expect("raw facts");
 
     assert_eq!(rows.candidates.len(), 1);
-    assert_eq!(rows.candidates[0].balance_status.as_deref(), Some("normal"));
-    assert_eq!(rows.candidates[0].balance_value, Some(3.61));
+    assert_eq!(
+        rows.candidates[0].balance_status.as_deref(),
+        Some("depleted")
+    );
+    assert_eq!(rows.candidates[0].balance_value, Some(0.0));
 }
 
 #[tokio::test]
@@ -365,16 +373,16 @@ async fn planner_prefers_explicit_key_balance_when_station_status_is_unknown() {
 
     sqlx::query(
         "INSERT INTO balance_snapshots
-         (id, station_id, station_key_id, scope, value, currency, status, created_at, updated_at)
-         VALUES ('key-available', 'station-1', 'key-1', 'station_key', 2.5, 'USD', 'normal', '2', '2')",
+         (id, station_id, station_key_id, scope, balance_kind, value, currency, status, created_at, updated_at)
+         VALUES ('key-available', 'station-1', 'key-1', 'station_key', 'station_key_quota', 2.5, 'USD', 'normal', '2', '2')",
     )
     .execute(&pool)
     .await
     .expect("key balance");
     sqlx::query(
         "INSERT INTO balance_snapshots
-         (id, station_id, station_key_id, scope, value, currency, status, created_at, updated_at)
-         VALUES ('station-unknown', 'station-1', NULL, 'station', 0, 'USD', 'unknown', '3', '3')",
+         (id, station_id, station_key_id, scope, balance_kind, value, currency, status, created_at, updated_at)
+         VALUES ('station-unknown', 'station-1', NULL, 'station', 'account_balance', 0, 'USD', 'unknown', '3', '3')",
     )
     .execute(&pool)
     .await
@@ -401,16 +409,16 @@ async fn planner_uses_latest_station_balance_instead_of_historical_depleted_stat
 
     sqlx::query(
         "INSERT INTO balance_snapshots
-         (id, station_id, station_key_id, scope, value, currency, status, created_at, updated_at)
-         VALUES ('station-old-depleted', 'station-1', NULL, 'station', 0, 'USD', 'depleted', '1', '1')",
+         (id, station_id, station_key_id, scope, balance_kind, value, currency, status, created_at, updated_at)
+         VALUES ('station-old-depleted', 'station-1', NULL, 'station', 'account_balance', 0, 'USD', 'depleted', '1', '1')",
     )
     .execute(&pool)
     .await
     .expect("historical station balance");
     sqlx::query(
         "INSERT INTO balance_snapshots
-         (id, station_id, station_key_id, scope, value, currency, status, created_at, updated_at)
-         VALUES ('station-current', 'station-1', NULL, 'station', 4.71, 'USD', 'low', '2', '2')",
+         (id, station_id, station_key_id, scope, balance_kind, value, currency, status, created_at, updated_at)
+         VALUES ('station-current', 'station-1', NULL, 'station', 'account_balance', 4.71, 'USD', 'low', '2', '2')",
     )
     .execute(&pool)
     .await

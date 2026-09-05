@@ -471,6 +471,13 @@ mod models {
 }
 
 mod services {
+    pub mod station_sessions {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/services/station_sessions.rs"
+        ));
+    }
+
     pub mod secrets {
         pub mod mask {
             use serde_json::Value;

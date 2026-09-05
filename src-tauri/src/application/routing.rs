@@ -671,39 +671,53 @@ impl RoutingService {
                     _ => ApplicationError::ConstraintViolation,
                 }
             })?;
-        if let Some(model) = request.requested_model() {
-            let ids = result
-                .snapshot
-                .candidates
-                .iter()
-                .map(|candidate| candidate.station_key_id.clone())
-                .collect::<Vec<_>>();
-            let pricing = PricingStore
-                .resolve_station_key_pricing_many(
-                    read,
-                    &ids,
-                    model,
-                    &request.admitted_at_ms().to_string(),
-                )
-                .await
-                .map_err(ApplicationError::from)?;
-            let resolved_pricing = result
-                .snapshot
-                .candidates
-                .iter()
-                .filter_map(|candidate| {
-                    pricing.get(&candidate.station_key_id).map(|resolution| {
-                        (
-                            candidate.station_key_id.clone(),
-                            pricing_context_from_resolution(
-                                &candidate.station_key_id,
-                                model,
-                                Some(resolution),
-                            ),
+        if request.requested_model().is_some() {
+            let at = request.admitted_at_ms().to_string();
+            let mut resolved_pricing = std::collections::BTreeMap::new();
+            for candidate in &mut result.snapshot.candidates {
+                let pricing_models = if candidate.model_variants.is_empty() {
+                    candidate
+                        .resolved_upstream_model
+                        .as_deref()
+                        .or_else(|| request.requested_model())
+                        .map(|model| vec![model.to_string()])
+                        .unwrap_or_default()
+                } else {
+                    candidate
+                        .model_variants
+                        .iter()
+                        .map(|variant| variant.upstream_model.clone())
+                        .collect()
+                };
+                for pricing_model in pricing_models {
+                    let resolution = PricingStore
+                        .resolve_station_key_pricing(
+                            read,
+                            &candidate.station_key_id,
+                            &pricing_model,
+                            &at,
                         )
-                    })
-                })
-                .collect::<std::collections::BTreeMap<_, _>>();
+                        .await
+                        .map_err(ApplicationError::from)?;
+                    let context = pricing_context_from_resolution(
+                        &candidate.station_key_id,
+                        &pricing_model,
+                        resolution.as_ref(),
+                    );
+                    let request_pricing = request_cost_comparison_context(
+                        PricingRouteKind::Inference,
+                        Some(&context),
+                    );
+                    candidate.model_variant_pricing.push((
+                        pricing_model.clone(),
+                        route_plan_pricing_snapshot(&context, request_pricing),
+                    ));
+                    if candidate.resolved_upstream_model.as_deref() == Some(pricing_model.as_str())
+                    {
+                        resolved_pricing.insert(candidate.station_key_id.clone(), context);
+                    }
+                }
+            }
             let cost_reference_multiplier =
                 crate::application::routing_engine::factors::multiplier_median(
                     resolved_pricing
@@ -730,18 +744,7 @@ impl RoutingService {
                                 )
                             })
                         });
-                    candidate.pricing = RoutePlanPricingSnapshot {
-                        basis: request_pricing.basis,
-                        rate_multiplier: resolved.effective_rate_multiplier,
-                        currency: request_pricing.currency,
-                        unit: request_pricing.unit,
-                        estimated_input_price: request_pricing.estimated_input_price,
-                        estimated_output_price: request_pricing.estimated_output_price,
-                        estimated_cache_creation_price: request_pricing
-                            .estimated_cache_creation_price,
-                        estimated_cache_read_price: request_pricing.estimated_cache_read_price,
-                        status_label: request_pricing.status_label,
-                    };
+                    candidate.pricing = route_plan_pricing_snapshot(resolved, request_pricing);
                 }
             }
         }
@@ -1480,6 +1483,23 @@ impl RoutingService {
             candidates: explanations,
             message,
         })
+    }
+}
+
+fn route_plan_pricing_snapshot(
+    resolved: &ResolvedPricingContext,
+    request_pricing: crate::application::operational_facts::pricing_projector::RequestCostComparisonContext,
+) -> RoutePlanPricingSnapshot {
+    RoutePlanPricingSnapshot {
+        basis: request_pricing.basis,
+        rate_multiplier: resolved.effective_rate_multiplier,
+        currency: request_pricing.currency,
+        unit: request_pricing.unit,
+        estimated_input_price: request_pricing.estimated_input_price,
+        estimated_output_price: request_pricing.estimated_output_price,
+        estimated_cache_creation_price: request_pricing.estimated_cache_creation_price,
+        estimated_cache_read_price: request_pricing.estimated_cache_read_price,
+        status_label: request_pricing.status_label,
     }
 }
 

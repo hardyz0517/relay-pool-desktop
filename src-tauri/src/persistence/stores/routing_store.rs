@@ -68,9 +68,6 @@ pub(crate) struct OperationalMonitoringTargetSnapshotRow {
 
 struct RankedRuntimeBalance {
     balance: RuntimeRoutingBalance,
-    updated_at: String,
-    created_at: String,
-    id: String,
 }
 
 const OPERATIONAL_EXECUTION_TARGET_REFS_QUERY_PREFIX: &str = r#"
@@ -93,6 +90,8 @@ const OPERATIONAL_EXECUTION_TARGET_REFS_QUERY_PREFIX: &str = r#"
                 FROM balance_snapshots b
                 WHERE b.station_id = s.id
                   AND b.station_key_id IS NULL
+                  AND b.scope IN ('station', 'station_account')
+                  AND b.balance_kind = 'account_balance'
                   AND b.account_concurrency_limit > 0
                 ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC
                 LIMIT 1
@@ -569,8 +568,10 @@ async fn load_latest_key_balances(
     let rows = sqlx::query(
         r#"
         WITH ranked AS (
-            SELECT b.station_key_id, b.scope, b.value, b.currency,
+            SELECT b.station_key_id, b.scope, b.balance_kind, b.value, b.currency,
                    b.low_balance_threshold, b.status, b.collected_at,
+                   b.evidence_confidence, b.spendability_authority,
+                   b.observed_at_ms, b.valid_until_ms,
                    b.updated_at, b.created_at, b.id,
                    ROW_NUMBER() OVER (
                        PARTITION BY b.station_key_id
@@ -581,10 +582,13 @@ async fn load_latest_key_balances(
             JOIN stations s ON s.id = k.station_id
             WHERE k.enabled = 1
               AND s.enabled = 1
+              AND b.scope = 'station_key'
+              AND b.balance_kind = 'station_key_quota'
               AND (TRIM(k.api_key) != '' OR k.api_key_secret_id IS NOT NULL)
         )
-        SELECT station_key_id, scope, value, currency, low_balance_threshold,
-               status, collected_at, updated_at, created_at, id
+        SELECT station_key_id, scope, balance_kind, value, currency, low_balance_threshold,
+               status, collected_at, evidence_confidence, spendability_authority,
+               observed_at_ms, valid_until_ms, updated_at, created_at, id
         FROM ranked
         WHERE row_number = 1
         "#,
@@ -610,8 +614,10 @@ async fn load_latest_station_balances(
               AND s.enabled = 1
               AND (TRIM(k.api_key) != '' OR k.api_key_secret_id IS NOT NULL)
         ), ranked AS (
-            SELECT b.station_id, b.scope, b.value, b.currency,
+            SELECT b.station_id, b.scope, b.balance_kind, b.value, b.currency,
                    b.low_balance_threshold, b.status, b.collected_at,
+                   b.evidence_confidence, b.spendability_authority,
+                   b.observed_at_ms, b.valid_until_ms,
                    b.updated_at, b.created_at, b.id,
                    ROW_NUMBER() OVER (
                        PARTITION BY b.station_id
@@ -621,9 +627,11 @@ async fn load_latest_station_balances(
             JOIN eligible_stations e ON e.station_id = b.station_id
             WHERE b.station_key_id IS NULL
               AND b.scope = 'station'
+              AND b.balance_kind = 'account_balance'
         )
-        SELECT station_id, scope, value, currency, low_balance_threshold,
-               status, collected_at, updated_at, created_at, id
+        SELECT station_id, scope, balance_kind, value, currency, low_balance_threshold,
+               status, collected_at, evidence_confidence, spendability_authority,
+               observed_at_ms, valid_until_ms, updated_at, created_at, id
         FROM ranked
         WHERE row_number = 1
         "#,
@@ -657,6 +665,9 @@ async fn load_latest_station_concurrency_limits(
             FROM balance_snapshots b
             JOIN eligible_stations e ON e.station_id = b.station_id
             WHERE b.account_concurrency_limit > 0
+              AND b.station_key_id IS NULL
+              AND b.scope IN ('station', 'station_account')
+              AND b.balance_kind = 'account_balance'
         )
         SELECT station_id, account_concurrency_limit
         FROM ranked
@@ -913,15 +924,17 @@ fn row_to_ranked_runtime_balance(
     RankedRuntimeBalance {
         balance: RuntimeRoutingBalance {
             scope: row.get(offset),
-            value: row.get(offset + 1),
-            currency: row.get(offset + 2),
-            low_balance_threshold: row.get(offset + 3),
-            status: row.get(offset + 4),
-            collected_at: row.get(offset + 5),
+            balance_kind: row.get(offset + 1),
+            value: row.get(offset + 2),
+            currency: row.get(offset + 3),
+            low_balance_threshold: row.get(offset + 4),
+            status: row.get(offset + 5),
+            collected_at: row.get(offset + 6),
+            evidence_confidence: row.get(offset + 7),
+            spendability_authority: row.get(offset + 8),
+            observed_at_ms: row.get(offset + 9),
+            valid_until_ms: row.get(offset + 10),
         },
-        updated_at: row.get(offset + 6),
-        created_at: row.get(offset + 7),
-        id: row.get(offset + 8),
     }
 }
 
@@ -930,55 +943,13 @@ fn newest_balance(
     station: Option<&RankedRuntimeBalance>,
 ) -> Option<RuntimeRoutingBalance> {
     match (key, station) {
-        // A finite positive amount is the strongest spendability fact. This
-        // prevents stale textual depleted/exhausted metadata from masking a
-        // usable balance at either scope.
-        (Some(key), Some(_station)) if balance_has_positive_value(&key.balance) => {
-            Some(key.balance)
-        }
-        (Some(_), Some(station)) if balance_has_positive_value(&station.balance) => {
-            Some(station.balance.clone())
-        }
-        // A numeric exhausted balance is authoritative over a text-only
-        // usable status. Without this, a key snapshot such as
-        // `{ value: null, status: "normal" }` can hide a negative station
-        // balance even though routing admission correctly treats it as
-        // depleted.
-        (Some(key), Some(_station)) if balance_has_finite_value(&key.balance) => Some(key.balance),
-        (Some(_), Some(station)) if balance_has_finite_value(&station.balance) => {
-            Some(station.balance.clone())
-        }
-        // When neither scope has a positive amount, key-scoped status remains
-        // the narrower fact and therefore wins over station-level status.
-        (Some(key), _) if balance_is_usable(&key.balance) => Some(key.balance),
-        (Some(_), Some(station)) if balance_is_usable(&station.balance) => {
-            Some(station.balance.clone())
-        }
-        (Some(key), Some(station)) if balance_rank_is_at_least(&key, station) => Some(key.balance),
-        (Some(_), Some(station)) => Some(station.balance.clone()),
-        (Some(key), None) => Some(key.balance),
+        // A key-scoped quota is the narrowest fact for this route target.
+        // Station account balance is only a fallback when no key quota was
+        // observed; amount/status must never decide which scope wins.
+        (Some(key), _) => Some(key.balance),
         (None, Some(station)) => Some(station.balance.clone()),
         (None, None) => None,
     }
-}
-
-fn balance_is_usable(balance: &RuntimeRoutingBalance) -> bool {
-    balance_has_positive_value(balance) || balance.has_explicit_status()
-}
-
-fn balance_has_positive_value(balance: &RuntimeRoutingBalance) -> bool {
-    balance
-        .value
-        .is_some_and(|value| value.is_finite() && value > 0.0)
-}
-
-fn balance_has_finite_value(balance: &RuntimeRoutingBalance) -> bool {
-    balance.value.is_some_and(f64::is_finite)
-}
-
-fn balance_rank_is_at_least(left: &RankedRuntimeBalance, right: &RankedRuntimeBalance) -> bool {
-    (&left.updated_at, &left.created_at, &left.id)
-        >= (&right.updated_at, &right.created_at, &right.id)
 }
 
 fn row_to_model_alias(row: sqlx::sqlite::SqliteRow) -> ModelAlias {
@@ -996,12 +967,14 @@ fn row_to_model_alias(row: sqlx::sqlite::SqliteRow) -> ModelAlias {
 fn balance_snapshot_select_sql(tail: &str) -> String {
     format!(
         r#"
-        SELECT id, station_id, station_key_id, scope, value, currency, credit_unit,
+        SELECT id, station_id, station_key_id, scope, balance_kind, value, currency, credit_unit,
                used_value, total_value, today_request_count, total_request_count,
                today_consumption, total_consumption, today_base_consumption, total_base_consumption,
                today_token_count, total_token_count, today_input_token_count, today_output_token_count,
                total_input_token_count, total_output_token_count, account_concurrency_limit,
-               low_balance_threshold, status, source, confidence, collected_at, created_at, updated_at
+               low_balance_threshold, status, source, confidence, collected_at,
+               evidence_confidence, spendability_authority, observed_at_ms, valid_until_ms,
+               evidence_profile_version, spendability_reason_code, created_at, updated_at
         FROM balance_snapshots
         {tail}
         "#
@@ -1014,6 +987,7 @@ fn row_to_balance_snapshot(row: sqlx::sqlite::SqliteRow) -> BalanceSnapshot {
         station_id: row.get("station_id"),
         station_key_id: row.get("station_key_id"),
         scope: row.get("scope"),
+        balance_kind: row.get("balance_kind"),
         value: row.get("value"),
         currency: row.get("currency"),
         credit_unit: row.get("credit_unit"),
@@ -1037,6 +1011,12 @@ fn row_to_balance_snapshot(row: sqlx::sqlite::SqliteRow) -> BalanceSnapshot {
         source: row.get("source"),
         confidence: row.get("confidence"),
         collected_at: row.get("collected_at"),
+        evidence_confidence: row.get("evidence_confidence"),
+        spendability_authority: row.get("spendability_authority"),
+        observed_at_ms: row.get("observed_at_ms"),
+        valid_until_ms: row.get("valid_until_ms"),
+        evidence_profile_version: row.get("evidence_profile_version"),
+        spendability_reason_code: row.get("spendability_reason_code"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     }
@@ -1088,31 +1068,33 @@ mod tests {
     };
     use crate::models::routing::RuntimeRoutingBalance;
 
-    fn ranked_balance(value: Option<f64>, status: &str, updated_at: &str) -> RankedRuntimeBalance {
+    fn ranked_balance(value: Option<f64>, status: &str, _updated_at: &str) -> RankedRuntimeBalance {
         RankedRuntimeBalance {
             balance: RuntimeRoutingBalance {
                 scope: "station".to_string(),
+                balance_kind: "account_balance".to_string(),
                 value,
                 currency: "USD".to_string(),
                 low_balance_threshold: Some(5.0),
                 status: status.to_string(),
                 collected_at: None,
+                evidence_confidence: "confirmed".to_string(),
+                spendability_authority: "authoritative".to_string(),
+                observed_at_ms: None,
+                valid_until_ms: None,
             },
-            updated_at: updated_at.to_string(),
-            created_at: updated_at.to_string(),
-            id: updated_at.to_string(),
         }
     }
 
     #[test]
-    fn explicit_station_status_overrides_stale_key_balance() {
+    fn key_quota_precedes_station_account_without_amount_comparison() {
         let key = ranked_balance(Some(0.0), "depleted", "3");
         let station = ranked_balance(Some(3.61), "normal", "2");
 
         let selected = newest_balance(Some(key), Some(&station)).expect("balance");
 
-        assert_eq!(selected.value, Some(3.61));
-        assert_eq!(selected.status, "normal");
+        assert_eq!(selected.value, Some(0.0));
+        assert_eq!(selected.status, "depleted");
     }
 
     #[test]
@@ -1127,15 +1109,15 @@ mod tests {
     }
 
     #[test]
-    fn low_station_status_remains_selected_as_routeable_advisory() {
+    fn depleted_key_quota_remains_the_narrow_route_fact() {
         let key = ranked_balance(Some(0.0), "depleted", "3");
         let station = ranked_balance(Some(4.71), "low", "2");
 
         let selected = newest_balance(Some(key), Some(&station)).expect("balance");
 
-        assert_eq!(selected.value, Some(4.71));
-        assert_eq!(selected.status, "low");
-        assert!(!selected.is_depleted());
+        assert_eq!(selected.value, Some(0.0));
+        assert_eq!(selected.status, "depleted");
+        assert!(selected.is_depleted());
     }
 
     #[test]
@@ -1150,14 +1132,14 @@ mod tests {
     }
 
     #[test]
-    fn numeric_station_depletion_wins_over_text_only_normal_key_status() {
+    fn key_quota_with_unknown_amount_remains_visible_for_fail_closed_projection() {
         let key = ranked_balance(None, "normal", "3");
         let station = ranked_balance(Some(-0.05), "normal", "2");
 
         let selected = newest_balance(Some(key), Some(&station)).expect("balance");
 
-        assert_eq!(selected.value, Some(-0.05));
-        assert!(selected.is_depleted());
+        assert_eq!(selected.value, None);
+        assert!(!selected.is_depleted());
     }
 
     #[tokio::test]
@@ -1170,7 +1152,7 @@ mod tests {
             "CREATE TABLE stations (id TEXT PRIMARY KEY, station_type TEXT, endpoint_revision INTEGER, api_base_url TEXT, upstream_api_format TEXT, collector_proxy_mode TEXT, collector_proxy_url TEXT, enabled INTEGER)",
             "CREATE TABLE domain_revisions (scope TEXT PRIMARY KEY, revision INTEGER)",
             "CREATE TABLE secrets (id TEXT PRIMARY KEY, scope TEXT, owner_id TEXT, kind TEXT)",
-            "CREATE TABLE balance_snapshots (station_id TEXT, station_key_id TEXT, account_concurrency_limit INTEGER, updated_at TEXT, created_at TEXT, id TEXT)",
+            "CREATE TABLE balance_snapshots (station_id TEXT, station_key_id TEXT, scope TEXT, balance_kind TEXT NOT NULL DEFAULT 'account_balance', account_concurrency_limit INTEGER, updated_at TEXT, created_at TEXT, id TEXT)",
         ] {
             sqlx::query(statement)
                 .execute(&mut connection)

@@ -240,27 +240,40 @@ impl MonitoringStatusQueryRepository {
                             SELECT 1 FROM latest_balance_spendability b
                             WHERE b.station_id = m.station_id AND b.station_key_id IS NULL
                               AND b.scope IN ('station', 'station_account')
+                              AND b.balance_kind = 'account_balance'
                               AND b.status IN ('depleted', 'exhausted', 'empty')
                               AND b.evidence_confidence = 'confirmed'
                               AND b.spendability_authority = 'authoritative'
                               AND (b.valid_until_ms IS NULL OR b.valid_until_ms >= CAST(strftime('%s','now') AS INTEGER) * 1000)
                         ))
-                        OR (m.target_type = 'station_key' AND NOT EXISTS (
-                            SELECT 1 FROM latest_balance_spendability b
-                            WHERE b.station_id = m.station_id AND b.station_key_id IS NULL
-                              AND b.scope IN ('station', 'station_account')
-                              AND b.status IN ('normal', 'available', 'usable', 'low', 'warning')
-                              AND b.evidence_confidence = 'confirmed'
-                              AND b.spendability_authority = 'authoritative'
-                              AND (b.valid_until_ms IS NULL OR b.valid_until_ms >= CAST(strftime('%s','now') AS INTEGER) * 1000)
-                        ) AND EXISTS (
-                            SELECT 1 FROM latest_balance_spendability b
-                            WHERE ((b.station_id = m.station_id AND b.station_key_id IS NULL AND b.scope IN ('station', 'station_account'))
-                               OR (b.station_key_id = m.station_key_id AND b.scope = 'station_key'))
-                              AND b.status IN ('depleted', 'exhausted', 'empty')
-                              AND b.evidence_confidence = 'confirmed'
-                              AND b.spendability_authority = 'authoritative'
-                              AND (b.valid_until_ms IS NULL OR b.valid_until_ms >= CAST(strftime('%s','now') AS INTEGER) * 1000)
+                        OR (m.target_type = 'station_key' AND (
+                            EXISTS (
+                                SELECT 1 FROM latest_balance_spendability b
+                                WHERE b.station_id = m.station_id
+                                  AND b.station_key_id = m.station_key_id
+                                  AND b.scope = 'station_key'
+                                  AND b.balance_kind = 'station_key_quota'
+                                  AND b.status IN ('depleted', 'exhausted', 'empty')
+                                  AND b.evidence_confidence = 'confirmed'
+                                  AND b.spendability_authority = 'authoritative'
+                                  AND (b.valid_until_ms IS NULL OR b.valid_until_ms >= CAST(strftime('%s','now') AS INTEGER) * 1000)
+                            )
+                            OR (NOT EXISTS (
+                                SELECT 1 FROM latest_balance_spendability key_fact
+                                WHERE key_fact.station_id = m.station_id
+                                  AND key_fact.station_key_id = m.station_key_id
+                                  AND key_fact.scope = 'station_key'
+                            ) AND EXISTS (
+                                SELECT 1 FROM latest_balance_spendability b
+                                WHERE b.station_id = m.station_id
+                                  AND b.station_key_id IS NULL
+                                  AND b.scope IN ('station', 'station_account')
+                                  AND b.balance_kind = 'account_balance'
+                                  AND b.status IN ('depleted', 'exhausted', 'empty')
+                                  AND b.evidence_confidence = 'confirmed'
+                                  AND b.spendability_authority = 'authoritative'
+                                  AND (b.valid_until_ms IS NULL OR b.valid_until_ms >= CAST(strftime('%s','now') AS INTEGER) * 1000)
+                            ))
                         ))
                     ) THEN 1 ELSE 0
                 END AS balance_paused,

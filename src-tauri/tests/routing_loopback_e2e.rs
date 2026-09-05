@@ -3,6 +3,57 @@ mod support;
 use support::routing_loopback::{LoopbackUpstream, RoutingLoopbackHarness, ScriptedResponse};
 
 #[tokio::test]
+async fn mapped_model_is_persisted_and_billed_with_the_upstream_model_price() {
+    let upstream = LoopbackUpstream::script(vec![ScriptedResponse::Json(
+        br#"{"id":"chatcmpl-mapped-price","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}"#
+            .to_vec(),
+    )]);
+    let harness = RoutingLoopbackHarness::new().await;
+    harness
+        .seed_candidate(&upstream.base_url, "mapped-model-pricing", 0)
+        .await;
+    harness
+        .upsert_model_alias("client-billing-model", "native-billing-model")
+        .await;
+    harness
+        .seed_model_base_price("native-billing-model", 2.0, 7.0)
+        .await;
+
+    let proxy = harness.start_proxy().await;
+    let response = proxy
+        .post_json(
+            "/v1/chat/completions",
+            serde_json::json!({
+                "model": "client-billing-model",
+                "messages": [{"role": "user", "content": "price this"}]
+            }),
+        )
+        .await;
+    assert_eq!(
+        response.status,
+        reqwest::StatusCode::OK,
+        "{}",
+        response.body_text()
+    );
+
+    upstream.wait_for_requests(1);
+    let captured = upstream.captured_requests();
+    let upstream_body: serde_json::Value =
+        serde_json::from_slice(&captured[0].body).expect("upstream request body");
+    assert_eq!(upstream_body["model"], "native-billing-model");
+
+    let log = wait_for_latest_log(&harness, "success").await;
+    assert_eq!(log.model.as_deref(), Some("client-billing-model"));
+    assert_eq!(
+        log.resolved_upstream_model.as_deref(),
+        Some("native-billing-model")
+    );
+    assert_eq!(log.cost_status.as_deref(), Some("complete_single_currency"));
+    assert!((log.estimated_total_cost.expect("mapped model cost") - 0.00002).abs() < f64::EPSILON);
+    harness.stop_proxy().await;
+}
+
+#[tokio::test]
 async fn model_mapping_rewrites_chat_responses_and_embeddings_upstream_bodies() {
     let upstream = LoopbackUpstream::script(vec![
         ScriptedResponse::Json(

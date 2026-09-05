@@ -1,4 +1,8 @@
 import { BALANCE_CURRENCY } from "@/lib/balanceCurrency";
+import {
+  balanceSnapshotState,
+  latestStationBalanceSnapshotsByStation,
+} from "@/lib/projections/balanceFacts";
 import type { BalanceSnapshot } from "@/lib/types/economics";
 import type { Station } from "@/lib/types/stations";
 
@@ -6,6 +10,8 @@ export type DashboardBalanceSummary = {
   latestStationBalances: BalanceSnapshot[];
   totalBalance: number;
   lowBalanceStations: number;
+  unknownBalanceStations: number;
+  staleBalanceStations: number;
   primaryBalanceCurrency: string | undefined;
   stationUsage: DashboardStationUsageSummary;
 };
@@ -29,30 +35,26 @@ export function summarizeDashboardBalances(
   balances: BalanceSnapshot[],
   stations: Array<Pick<Station, "id" | "creditPerCny">> = [],
 ): DashboardBalanceSummary {
-  const latestByStation = new Map<string, BalanceSnapshot>();
   const creditPerCnyByStation = new Map(
     stations.map((station) => [station.id, safeCreditPerCny(station.creditPerCny)]),
   );
 
-  for (const balance of balances) {
-    if (balance.scope !== "station") {
-      continue;
-    }
-    const current = latestByStation.get(balance.stationId);
-    if (!current || toTime(balance.updatedAt) > toTime(current.updatedAt)) {
-      latestByStation.set(balance.stationId, balance);
-    }
-  }
-
-  const latestStationBalances = Array.from(latestByStation.values());
+  const latestStationBalances = Array.from(latestStationBalanceSnapshotsByStation(balances).values());
+  const states = latestStationBalances.map((snapshot) => balanceSnapshotState(snapshot));
+  const currentBalances = latestStationBalances.filter((snapshot) => {
+    const state = balanceSnapshotState(snapshot);
+    return state === "available" || state === "depleted";
+  });
   return {
     latestStationBalances,
-    totalBalance: latestStationBalances.reduce((sum, snapshot) => sum + (snapshot.value ?? 0), 0),
-    lowBalanceStations: latestStationBalances.filter(
+    totalBalance: currentBalances.reduce((sum, snapshot) => sum + (snapshot.value ?? 0), 0),
+    lowBalanceStations: currentBalances.filter(
       (snapshot) => snapshot.status === "low" || snapshot.status === "depleted",
     ).length,
+    unknownBalanceStations: states.filter((state) => state === "untrusted" || state === "missing").length,
+    staleBalanceStations: states.filter((state) => state === "stale").length,
     primaryBalanceCurrency: BALANCE_CURRENCY,
-    stationUsage: summarizeStationUsage(latestStationBalances, creditPerCnyByStation),
+    stationUsage: summarizeStationUsage(currentBalances, creditPerCnyByStation),
   };
 }
 
@@ -124,13 +126,4 @@ function sumNumbers(values: Array<number | null | undefined>): number {
 
 function safeCreditPerCny(value: number) {
   return Number.isFinite(value) && value > 0 ? value : 1;
-}
-
-function toTime(value: string | null) {
-  if (!value) {
-    return 0;
-  }
-  const numeric = Number(value);
-  const date = Number.isFinite(numeric) && numeric > 1000000000000 ? new Date(numeric) : new Date(value);
-  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
 }

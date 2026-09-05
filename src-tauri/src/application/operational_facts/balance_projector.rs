@@ -187,8 +187,15 @@ pub(crate) fn project_runtime_balance(
         low_balance_threshold: balance
             .low_balance_threshold
             .and_then(|value| BalanceAmount::new(value, balance.currency.clone())),
-        authoritative: true,
-        fresh: true,
+        authoritative: balance
+            .evidence_confidence
+            .eq_ignore_ascii_case("confirmed")
+            && balance
+                .spendability_authority
+                .eq_ignore_ascii_case("authoritative"),
+        fresh: balance
+            .valid_until_ms
+            .is_none_or(|valid_until| valid_until >= resolved_at.get()),
         // Runtime candidates do not carry a durable record revision. The
         // projection trace therefore records no revision and remains clearly
         // distinct from the durable operational-facts path.
@@ -196,8 +203,19 @@ pub(crate) fn project_runtime_balance(
     };
 
     match observation.scope {
-        BalanceScope::StationKey => project_balance(Some(observation), None, resolved_at),
-        BalanceScope::StationAccount => project_balance(None, Some(observation), resolved_at),
+        BalanceScope::StationKey if balance.balance_kind == "station_key_quota" => {
+            project_balance(Some(observation), None, resolved_at)
+        }
+        BalanceScope::StationAccount if balance.balance_kind == "account_balance" => {
+            project_balance(None, Some(observation), resolved_at)
+        }
+        BalanceScope::StationKey | BalanceScope::StationAccount => balance_projection(
+            resolved_at,
+            BalanceProjectionStatus::Missing,
+            None,
+            "balance_kind_scope_mismatch",
+            Vec::new(),
+        ),
         BalanceScope::Unknown => balance_projection(
             resolved_at,
             BalanceProjectionStatus::Missing,
@@ -273,11 +291,16 @@ mod tests {
     fn positive_numeric_balance_wins_over_depleted_text_status() {
         let balance = RuntimeRoutingBalance {
             scope: "station_key".to_string(),
+            balance_kind: "station_key_quota".to_string(),
             value: Some(4.71),
             currency: "USD".to_string(),
             low_balance_threshold: Some(15.0),
             status: "depleted".to_string(),
             collected_at: None,
+            evidence_confidence: "confirmed".to_string(),
+            spendability_authority: "authoritative".to_string(),
+            observed_at_ms: None,
+            valid_until_ms: None,
         };
 
         let projection =
@@ -292,11 +315,16 @@ mod tests {
         for value in [Some(0.0), Some(-1.0)] {
             let balance = RuntimeRoutingBalance {
                 scope: "station_key".to_string(),
+                balance_kind: "station_key_quota".to_string(),
                 value,
                 currency: "USD".to_string(),
                 low_balance_threshold: None,
                 status: "normal".to_string(),
                 collected_at: None,
+                evidence_confidence: "confirmed".to_string(),
+                spendability_authority: "authoritative".to_string(),
+                observed_at_ms: None,
+                valid_until_ms: None,
             };
 
             let projection =

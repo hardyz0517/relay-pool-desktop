@@ -756,6 +756,7 @@ mod tests {
             resolved_upstream_model: Some("test-model".to_string()),
             model_alias_revision: 1,
             model_variants: Vec::new(),
+            model_variant_pricing: Vec::new(),
             credential_available: true,
             hard_eligible: true,
             backup_only: false,

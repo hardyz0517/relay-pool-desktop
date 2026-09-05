@@ -101,7 +101,8 @@ const balanceSourceLabels: Record<string, string> = {
   station_config: "站点配置",
   station_balance: "站点余额接口",
   station_key_balance: "站点密钥余额",
-  station_key_balance_aggregate: "站点密钥余额汇总",
+  sub2api_account_profile: "Sub2API 账号资料",
+  newapi_user_self: "NewAPI 账号接口",
   collector_snapshot: "采集快照",
 };
 
@@ -200,9 +201,9 @@ export function buildMetricCards(station: Station, balances: BalanceSnapshot[]):
 
   return [
     {
-      label: "当前余额",
+      label: "账号余额",
       value: formatMoney(currentValue, currency),
-      helper: currentBalance.source !== "missing" ? `来源：${formatBalanceSourceLabel(currentBalance.sourceLabel)}` : "尚未采集余额",
+      helper: currentBalance.source !== "missing" ? `来源：${formatBalanceSourceLabel(currentBalance.sourceLabel)}` : "尚未采集账号余额",
       tone: balanceTone,
     },
     {

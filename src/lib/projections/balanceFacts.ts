@@ -17,6 +17,8 @@ export type StationBalanceCurrentFact = {
   updatedAt: string | null;
   collectedAt: string | null;
   sourceSnapshot: BalanceSnapshot | null;
+  state: "available" | "depleted" | "stale" | "untrusted" | "missing";
+  eligibleForRouting: boolean;
 };
 
 export function buildCurrentStationBalanceFacts(input: {
@@ -42,10 +44,57 @@ export function currentStationBalanceFor(input: {
   );
 }
 
-function latestStationBalanceSnapshotsByStation(balances: BalanceSnapshot[]) {
+export function balanceSnapshotState(
+  snapshot: BalanceSnapshot,
+  evaluationAtMs = Date.now(),
+): StationBalanceCurrentFact["state"] {
+  const validScopeAndKind =
+    snapshot.stationKeyId === null &&
+    (snapshot.scope === "station" || snapshot.scope === "station_account") &&
+    snapshot.balanceKind === "account_balance";
+  if (!validScopeAndKind || !snapshot.currency.trim()) {
+    return "untrusted";
+  }
+  if (
+    snapshot.evidenceConfidence !== "confirmed" ||
+    snapshot.spendabilityAuthority !== "authoritative"
+  ) {
+    return "untrusted";
+  }
+  if (snapshot.validUntilMs !== null && snapshot.validUntilMs < evaluationAtMs) {
+    return "stale";
+  }
+  if (snapshot.value === null) {
+    return /^(depleted|exhausted|empty)$/i.test(snapshot.status.trim())
+      ? "depleted"
+      : "missing";
+  }
+  if (typeof snapshot.value !== "number" || !Number.isFinite(snapshot.value)) {
+    return "missing";
+  }
+  if (
+    snapshot.value <= 0
+  ) {
+    return "depleted";
+  }
+  return "available";
+}
+
+export function isBalanceSnapshotEligibleForRouting(
+  snapshot: BalanceSnapshot,
+  evaluationAtMs = Date.now(),
+) {
+  return balanceSnapshotState(snapshot, evaluationAtMs) === "available";
+}
+
+export function latestStationBalanceSnapshotsByStation(balances: BalanceSnapshot[]) {
   const latest = new Map<string, BalanceSnapshot>();
   for (const balance of balances) {
-    if (balance.scope !== "station") {
+    if (
+      !["station", "station_account"].includes(balance.scope) ||
+      balance.stationKeyId !== null ||
+      balance.balanceKind !== "account_balance"
+    ) {
       continue;
     }
     const current = latest.get(balance.stationId);
@@ -75,6 +124,7 @@ function factForStation(
   snapshot: BalanceSnapshot | null,
 ): StationBalanceCurrentFact {
   if (snapshot) {
+    const state = balanceSnapshotState(snapshot);
     return {
       stationId: station.id,
       snapshotId: snapshot.id,
@@ -87,6 +137,8 @@ function factForStation(
       updatedAt: snapshot.updatedAt,
       collectedAt: snapshot.collectedAt,
       sourceSnapshot: snapshot,
+      state,
+      eligibleForRouting: state === "available",
     };
   }
 
@@ -102,6 +154,8 @@ function factForStation(
     updatedAt: null,
     collectedAt: null,
     sourceSnapshot: null,
+    state: "missing",
+    eligibleForRouting: false,
   };
 }
 

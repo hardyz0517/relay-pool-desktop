@@ -15,6 +15,7 @@ import {
   Wallet,
 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
+import { ModelMappingDisplay } from "@/components/status/ModelMappingDisplay";
 import {
   Button,
   IconButton,
@@ -243,7 +244,14 @@ export function DashboardPage({
     () => summarizeDashboardBalances(balanceSnapshots, stations),
     [balanceSnapshots, stations],
   );
-  const { lowBalanceStations, primaryBalanceCurrency, stationUsage, totalBalance } = balanceSummary;
+  const {
+    lowBalanceStations,
+    primaryBalanceCurrency,
+    stationUsage,
+    totalBalance,
+    unknownBalanceStations,
+    staleBalanceStations,
+  } = balanceSummary;
   const activeRiskEvents = useMemo(
     () =>
       alertingIncidents.filter(
@@ -361,7 +369,7 @@ export function DashboardPage({
             {
               label: "总余额",
               value: formatBalance(totalBalance, primaryBalanceCurrency),
-              detail: `${lowBalanceStations} 个余额告警`,
+              detail: `${lowBalanceStations} 个余额告警，${unknownBalanceStations + staleBalanceStations} 个待确认`,
               icon: Wallet,
               tone: lowBalanceStations > 0 ? "warning" : "good",
               valueClassName: "text-success-foreground",
@@ -632,9 +640,12 @@ export function DashboardPage({
                   <FlaskConical className="h-4 w-4" />
                 </div>
                 <div className="min-w-0">
-                  <div className="truncate text-sm font-medium text-foreground">
-                    {request.model ?? request.path}
-                  </div>
+                  <ModelMappingDisplay
+                    requestedModel={request.model}
+                    resolvedModel={request.resolvedUpstreamModel}
+                    fallback={request.path}
+                    className="text-sm"
+                  />
                   <div className="mt-0.5 truncate text-xs text-muted-foreground">
                     {formatDateTime(request.startedAt)}
                   </div>

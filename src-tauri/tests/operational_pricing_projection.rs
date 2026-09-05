@@ -116,6 +116,7 @@ fn pricing_mutation_inputs_keep_stable_camel_case_contract() {
         station_id: "station-1".to_string(),
         station_key_id: Some("key-1".to_string()),
         scope: "station_key".to_string(),
+        balance_kind: "station_key_quota".to_string(),
         value: Some(10.0),
         currency: "USD".to_string(),
         credit_unit: Some("credit".to_string()),
@@ -139,6 +140,12 @@ fn pricing_mutation_inputs_keep_stable_camel_case_contract() {
         source: "collector".to_string(),
         confidence: 0.9,
         collected_at: Some("100".to_string()),
+        evidence_confidence: "confirmed".to_string(),
+        spendability_authority: "authoritative".to_string(),
+        observed_at_ms: Some(100),
+        valid_until_ms: Some(1_800_100),
+        evidence_profile_version: Some("fixture-v1".to_string()),
+        spendability_reason_code: Some("balance_usable".to_string()),
     };
 
     let json = serde_json::json!({

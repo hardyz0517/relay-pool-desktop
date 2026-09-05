@@ -64,8 +64,15 @@ impl OperationalFactStore {
                 COALESCE(c.model_blocklist_json, '[]') AS model_blocklist_json,
                 COALESCE(c.preferred_models_json, '[]') AS preferred_models_json,
                 COALESCE(c.routing_tags_json, '[]') AS routing_tags_json,
+                b.scope AS balance_scope,
+                b.balance_kind AS balance_kind,
                 b.status AS balance_status,
                 b.value AS balance_value,
+                b.currency AS balance_currency,
+                b.evidence_confidence AS balance_evidence_confidence,
+                b.spendability_authority AS balance_spendability_authority,
+                b.observed_at_ms AS balance_observed_at_ms,
+                b.valid_until_ms AS balance_valid_until_ms,
                 key_revision.revision AS key_record_revision,
                 station_revision.revision AS station_record_revision,
                 account_revision.revision AS account_record_revision,
@@ -77,26 +84,32 @@ impl OperationalFactStore {
             LEFT JOIN balance_snapshots b ON b.id = (
                 SELECT selected.id
                 FROM (
-                    SELECT latest.id, latest.value, latest.status,
-                           latest.updated_at, latest.created_at, 0 AS scope_rank
+                    SELECT latest.id, latest.scope, latest.balance_kind,
+                           latest.value, latest.currency, latest.status,
+                           latest.evidence_confidence, latest.spendability_authority,
+                           latest.observed_at_ms, latest.valid_until_ms,
+                           latest.updated_at, latest.created_at, 1 AS scope_rank
                     FROM balance_snapshots latest
                     WHERE latest.station_key_id IS NULL
                       AND latest.station_id = k.station_id
-                      AND latest.scope = 'station'
+                      AND latest.scope IN ('station', 'station_account')
                       AND latest.id = (
                           SELECT station_latest.id
                           FROM balance_snapshots station_latest
                           WHERE station_latest.station_key_id IS NULL
                             AND station_latest.station_id = k.station_id
-                            AND station_latest.scope = 'station'
+                            AND station_latest.scope IN ('station', 'station_account')
                           ORDER BY station_latest.updated_at DESC,
                                    station_latest.created_at DESC,
                                    station_latest.id DESC
                           LIMIT 1
                       )
                     UNION ALL
-                    SELECT latest.id, latest.value, latest.status,
-                           latest.updated_at, latest.created_at, 1 AS scope_rank
+                    SELECT latest.id, latest.scope, latest.balance_kind,
+                           latest.value, latest.currency, latest.status,
+                           latest.evidence_confidence, latest.spendability_authority,
+                           latest.observed_at_ms, latest.valid_until_ms,
+                           latest.updated_at, latest.created_at, 0 AS scope_rank
                     FROM balance_snapshots latest
                     WHERE latest.station_key_id = k.id
                       AND latest.scope = 'station_key'
@@ -111,17 +124,12 @@ impl OperationalFactStore {
                           LIMIT 1
                       )
                 ) selected
-                WHERE (
-                          selected.scope_rank = 0
-                          AND selected.value > 0
-                      )
-                   OR (
-                          selected.scope_rank = 1
-                          AND selected.value IS NOT NULL
-                      )
-                   OR LOWER(TRIM(selected.status)) IN (
-                          'normal', 'available', 'usable', 'low', 'warning',
-                          'depleted', 'exhausted', 'empty'
+                WHERE selected.scope_rank = 0
+                   OR NOT EXISTS (
+                          SELECT 1
+                          FROM balance_snapshots key_current
+                          WHERE key_current.station_key_id = k.id
+                            AND key_current.scope = 'station_key'
                       )
                 ORDER BY selected.scope_rank,
                          selected.updated_at DESC,
@@ -232,8 +240,15 @@ impl OperationalFactStore {
                     model_blocklist_json: row.get("model_blocklist_json"),
                     preferred_models_json: row.get("preferred_models_json"),
                     routing_tags_json: row.get("routing_tags_json"),
+                    balance_scope: row.get("balance_scope"),
+                    balance_kind: row.get("balance_kind"),
                     balance_status: row.get("balance_status"),
                     balance_value: row.get("balance_value"),
+                    balance_currency: row.get("balance_currency"),
+                    balance_evidence_confidence: row.get("balance_evidence_confidence"),
+                    balance_spendability_authority: row.get("balance_spendability_authority"),
+                    balance_observed_at_ms: row.get("balance_observed_at_ms"),
+                    balance_valid_until_ms: row.get("balance_valid_until_ms"),
                     key_record_revision: required_revision(
                         row.get("key_record_revision"),
                         format!("station_key:{}", row.get::<String, _>("station_key_id")),

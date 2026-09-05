@@ -1055,19 +1055,22 @@ async fn routing_service_loads_v2_runtime_candidates_and_workflow_queries() {
     sqlx::query(
         r#"
         INSERT INTO balance_snapshots (
-            id, station_id, station_key_id, scope, value, currency, credit_unit,
+            id, station_id, station_key_id, scope, balance_kind, value, currency, credit_unit,
             used_value, total_value, today_request_count, total_request_count,
             today_consumption, total_consumption, today_base_consumption,
             total_base_consumption, today_token_count, total_token_count,
             today_input_token_count, today_output_token_count,
             total_input_token_count, total_output_token_count,
             account_concurrency_limit, low_balance_threshold, status, source,
-            confidence, collected_at, created_at, updated_at
+            confidence, collected_at, evidence_confidence, spendability_authority,
+            observed_at_ms, valid_until_ms, evidence_profile_version,
+            spendability_reason_code, created_at, updated_at
         ) VALUES (
             'balance-routing',
             ?1,
-            'routing-key',
+            NULL,
             'station',
+            'account_balance',
             12.5,
             'CNY',
             'credit',
@@ -1091,6 +1094,12 @@ async fn routing_service_loads_v2_runtime_candidates_and_workflow_queries() {
             'collector',
             0.85,
             '555',
+            'confirmed',
+            'authoritative',
+            555,
+            NULL,
+            'fixture-v1',
+            'balance_usable',
             '1',
             '2'
         )
@@ -1477,6 +1486,25 @@ impl V2Fixture {
             .execute(&mut connection)
             .await
             .expect("planning capabilities");
+        sqlx::query(
+            r#"
+            INSERT INTO balance_snapshots (
+                id, station_id, station_key_id, scope, balance_kind, value, currency,
+                status, source, confidence, collected_at, evidence_confidence,
+                spendability_authority, observed_at_ms, valid_until_ms,
+                evidence_profile_version, spendability_reason_code, created_at, updated_at
+            ) VALUES (
+                ?1, ?2, NULL, 'station', 'account_balance', 100.0, 'USD',
+                'normal', 'fixture', 1.0, '1', 'confirmed', 'authoritative', 1, NULL,
+                'fixture-v1', 'balance_usable', '1', '1'
+            )
+            "#,
+        )
+        .bind(format!("balance-{station_id}"))
+        .bind(station_id)
+        .execute(&mut connection)
+        .await
+        .expect("planning balance");
         sqlx::query("INSERT OR IGNORE INTO model_aliases (id, client_model, upstream_model, enabled, created_at, updated_at) VALUES ('alias-planning', 'gpt-test', ?1, 1, '1', '1')")
             .bind(upstream_model)
             .execute(&mut connection)

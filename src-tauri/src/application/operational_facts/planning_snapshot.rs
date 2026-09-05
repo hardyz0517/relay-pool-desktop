@@ -330,6 +330,7 @@ impl PlanningSnapshotBuilder {
                     .map(|(_, revision)| *revision)
                     .unwrap_or(1),
                 model_variants: candidate_variants.clone(),
+                model_variant_pricing: Vec::new(),
                 credential_available: candidate.credential().available(),
                 hard_eligible,
                 backup_only: candidate.backup_only(),
@@ -793,7 +794,8 @@ fn candidate_hard_rejection_reason(
             .any(|candidate_tag| candidate_tag.eq_ignore_ascii_case(tag))
     });
     let group_ok = candidate_matches_group_scope(candidate, request);
-    let depleted = candidate_is_depleted(candidate);
+    let balance_rejection =
+        super::assembler::balance_fact_rejection_reason(candidate, request.admitted_at_ms());
     if !group_ok {
         return Some("group_mismatch");
     }
@@ -815,8 +817,10 @@ fn candidate_hard_rejection_reason(
     if !tags_ok {
         return Some("tag_mismatch");
     }
-    if depleted && !policy.allow_depleted_fallback {
-        return Some("balance_depleted");
+    if let Some(reason) = balance_rejection {
+        if reason != "balance_depleted" || !policy.allow_depleted_fallback {
+            return Some(reason);
+        }
     }
     None
 }
@@ -1032,6 +1036,38 @@ mod tests {
                 Some("gpt-4.1"),
             ),
             Some("balance_depleted"),
+        );
+    }
+
+    #[test]
+    fn stale_balance_is_rejected_even_when_amount_is_positive() {
+        let mut candidate = test_candidate(None, None, None);
+        candidate.set_balance_evidence_for_planning_test("confirmed", "authoritative", Some(0));
+
+        assert_eq!(
+            candidate_hard_rejection_reason(
+                &candidate,
+                &test_request(GroupFilterMode::Any, None),
+                &RoutingPolicyConfigV2::default(),
+                Some("gpt-4.1"),
+            ),
+            Some("balance_stale"),
+        );
+    }
+
+    #[test]
+    fn untrusted_balance_is_rejected_even_when_amount_is_positive() {
+        let mut candidate = test_candidate(None, None, None);
+        candidate.set_balance_evidence_for_planning_test("probable", "advisory", None);
+
+        assert_eq!(
+            candidate_hard_rejection_reason(
+                &candidate,
+                &test_request(GroupFilterMode::Any, None),
+                &RoutingPolicyConfigV2::default(),
+                Some("gpt-4.1"),
+            ),
+            Some("balance_untrusted"),
         );
     }
 

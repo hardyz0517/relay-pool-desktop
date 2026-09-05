@@ -29,7 +29,7 @@ use crate::{
             ModelMappingPolicy, ModelMappingRule, ModelOfferingBinding, ModelProfile,
             ModelProfileStatus, TargetRef,
         },
-        pricing::UpsertBalanceSnapshotInput,
+        pricing::{UpsertBalanceSnapshotInput, UpsertModelBasePriceInput},
         proxy::RequestLog,
         routing::UpdateStationKeyCapabilitiesInput,
         settings::UpdateSettingsInput,
@@ -256,6 +256,11 @@ impl RoutingLoopbackHarness {
             })
             .await
             .expect("update capabilities");
+        // Routing requires an explicit, authoritative balance fact. Seed a
+        // reusable positive station-account fact so tests can focus on their
+        // targeted routing behavior; scenarios that exercise balance gates
+        // can overwrite this row with a specific observation.
+        self.seed_balance(&station.id, 100.0).await;
         SeededCandidate {
             station_id: station.id,
             station_key_id: key.id,
@@ -761,6 +766,7 @@ impl RoutingLoopbackHarness {
                 station_id: station_id.to_string(),
                 station_key_id: None,
                 scope: "station".to_string(),
+                balance_kind: "account_balance".to_string(),
                 value: Some(value),
                 currency: "CNY".to_string(),
                 credit_unit: None,
@@ -784,9 +790,49 @@ impl RoutingLoopbackHarness {
                 source: "routing_loopback".to_string(),
                 confidence: 1.0,
                 collected_at: Some("2026-07-31T00:00:00Z".to_string()),
+                evidence_confidence: "confirmed".to_string(),
+                spendability_authority: "authoritative".to_string(),
+                observed_at_ms: None,
+                valid_until_ms: None,
+                evidence_profile_version: Some("test-fixture-v1".to_string()),
+                spendability_reason_code: Some("balance_usable".to_string()),
             })
             .await
             .expect("balance snapshot");
+    }
+
+    pub async fn seed_model_base_price(&self, model: &str, input_price: f64, output_price: f64) {
+        self.services
+            .pricing
+            .upsert_model_base_price(UpsertModelBasePriceInput {
+                id: Some(format!("loopback-price-{model}")),
+                provider: "loopback".to_string(),
+                model: model.to_string(),
+                input_price: Some(input_price),
+                output_price: Some(output_price),
+                input_price_priority: None,
+                output_price_priority: None,
+                cache_creation_price: None,
+                cache_creation_price_priority: None,
+                cache_creation_price_above_1hr: None,
+                cache_read_price: None,
+                cache_read_price_priority: None,
+                long_context_input_token_threshold: None,
+                long_context_input_cost_multiplier: None,
+                long_context_output_cost_multiplier: None,
+                supports_service_tier: false,
+                supports_prompt_caching: false,
+                currency: "USD".to_string(),
+                unit: "per_1m_tokens".to_string(),
+                source_url: "https://loopback.invalid/pricing".to_string(),
+                source_label: "loopback fixture".to_string(),
+                source_checked_at: Some("1".to_string()),
+                enabled: true,
+                built_in: false,
+                note: None,
+            })
+            .await
+            .expect("model base price");
     }
 
     pub async fn seed_station_account_concurrency(&self, station_id: &str, limit: i64) {
@@ -797,6 +843,7 @@ impl RoutingLoopbackHarness {
                 station_id: station_id.to_string(),
                 station_key_id: None,
                 scope: "station".to_string(),
+                balance_kind: "account_balance".to_string(),
                 value: Some(100.0),
                 currency: "CNY".to_string(),
                 credit_unit: None,
@@ -820,6 +867,12 @@ impl RoutingLoopbackHarness {
                 source: "routing_loopback".to_string(),
                 confidence: 1.0,
                 collected_at: Some("2026-07-31T00:00:00Z".to_string()),
+                evidence_confidence: "confirmed".to_string(),
+                spendability_authority: "authoritative".to_string(),
+                observed_at_ms: None,
+                valid_until_ms: None,
+                evidence_profile_version: Some("test-fixture-v1".to_string()),
+                spendability_reason_code: Some("balance_usable".to_string()),
             })
             .await
             .expect("station account concurrency snapshot");
@@ -1160,9 +1213,11 @@ impl LoopbackHttpResponse {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RequestLogSummary {
     pub id: String,
+    pub model: Option<String>,
+    pub resolved_upstream_model: Option<String>,
     pub status: String,
     pub http_status: Option<i64>,
     pub lifecycle_status: Option<String>,
@@ -1173,12 +1228,16 @@ pub struct RequestLogSummary {
     pub failure_source: Option<String>,
     pub route_policy: Option<String>,
     pub error_message: Option<String>,
+    pub estimated_total_cost: Option<f64>,
+    pub cost_status: Option<String>,
 }
 
 impl From<RequestLog> for RequestLogSummary {
     fn from(value: RequestLog) -> Self {
         Self {
             id: value.id,
+            model: value.model,
+            resolved_upstream_model: value.resolved_upstream_model,
             status: value.status,
             http_status: value.http_status,
             lifecycle_status: value.lifecycle_status,
@@ -1189,6 +1248,8 @@ impl From<RequestLog> for RequestLogSummary {
             failure_source: value.failure_source,
             route_policy: value.route_policy,
             error_message: value.error_message,
+            estimated_total_cost: value.estimated_total_cost,
+            cost_status: value.cost_status,
         }
     }
 }
