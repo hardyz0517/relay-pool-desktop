@@ -453,7 +453,9 @@ pub(crate) struct PreparedNewApiDriverCollection {
     auth_context: Option<contract::ProviderAuthContext>,
     secret_accessor: StaticSecretAccessor,
     password_login: Option<PreparedNewApiPasswordLogin>,
+    session_cookie: Option<String>,
     user_agent: Option<String>,
+    credit_per_cny: f64,
 }
 
 struct PreparedNewApiPasswordLogin {
@@ -798,7 +800,21 @@ fn prepare_newapi_collection_v2(
         .then(|| source.get_station_credentials(station_id.clone()))
         .transpose()
         .map_err(|_| ApplicationError::Internal)?;
-    let (auth_context, secret_purpose, secret, password_login) = if needs_auth {
+    let saved_password_login = if needs_auth {
+        let password = source
+            .get_station_login_password(station_id.clone())
+            .map_err(|_| ApplicationError::Internal)?;
+        credentials.as_ref().and_then(|credentials| {
+            prepare_newapi_password_login(
+                credentials.login_username.clone(),
+                credentials.password_present,
+                password,
+            )
+        })
+    } else {
+        None
+    };
+    let (auth_context, secret_purpose, secret, password_login, session_cookie) = if needs_auth {
         match drivers::newapi::auth::prepare_collector_auth_context(
             source,
             &station.id,
@@ -817,27 +833,22 @@ fn prepare_newapi_collection_v2(
                     Some(contract::ProviderAuthContext::NewApi {
                         user_id: auth.user_id,
                         secret_purpose,
+                        credit_per_cny: station.credit_per_cny,
                     }),
                     secret_purpose,
                     auth.secret,
-                    None,
+                    saved_password_login,
+                    auth.cookie,
                 )
             }
             Err(error) => {
-                let credentials = credentials.as_ref().ok_or(ApplicationError::Internal)?;
-                let password = source
-                    .get_station_login_password(station_id.clone())
-                    .map_err(|_| ApplicationError::Internal)?;
-                if let Some(password_login) = prepare_newapi_password_login(
-                    credentials.login_username.clone(),
-                    credentials.password_present,
-                    password,
-                ) {
+                if saved_password_login.is_some() {
                     (
                         None,
                         contract::CredentialSecretPurpose::SessionCookie,
                         String::new(),
-                        Some(password_login),
+                        saved_password_login,
+                        None,
                     )
                 } else {
                     let message = crate::services::secrets::mask::redact_text(&error);
@@ -867,6 +878,7 @@ fn prepare_newapi_collection_v2(
             None,
             contract::CredentialSecretPurpose::AuthorizationHeader,
             String::new(),
+            None,
             None,
         )
     };
@@ -906,7 +918,9 @@ fn prepare_newapi_collection_v2(
                 secret,
             },
             password_login,
+            session_cookie,
             user_agent: credentials.and_then(|credentials| credentials.session_user_agent),
+            credit_per_cny: station.credit_per_cny,
         },
     ))
 }
@@ -1039,71 +1053,36 @@ pub(crate) async fn finish_newapi_collection_v2(
     match prepared {
         PreparedNewApiCollection::Immediate(prepared) => Ok(prepared),
         PreparedNewApiCollection::Driver(mut prepared) => {
-            if let Some(login) = prepared.password_login.take() {
-                let attempt = login_probe::probe_login(
-                    outbound,
-                    "newapi",
-                    &prepared.website_url,
-                    &login.username,
-                    &login.password,
-                    prepared.proxy.clone(),
-                    cancellation_token.clone(),
-                    correlation_id.clone(),
-                )
-                .await;
-                let session = match attempt {
-                    Ok(attempt) => attempt.newapi_session,
-                    Err(error) => {
-                        return Ok(newapi_manual_required_collection(
-                            prepared,
-                            &crate::services::secrets::mask::redact_text(&error),
-                        ));
-                    }
-                };
-                let Some(session) = session else {
+            let password_login = prepared.password_login.take();
+            if prepared.auth_context.is_none() {
+                let Some(login) = password_login.as_ref() else {
                     return Ok(newapi_manual_required_collection(
                         prepared,
                         "NewAPI password login requires manual authorization",
                     ));
                 };
-                source
-                    .persist_station_session(
-                        PersistStationSessionInput {
-                            station_id: prepared.station_id.clone(),
-                            access_token: None,
-                            refresh_token: None,
-                            cookie: Some(session.cookie.clone()),
-                            newapi_user_id: Some(session.user_id.clone()),
-                            token_expires_at: None,
-                            session_expires_at: None,
-                            session_source: "password_login".to_string(),
-                            session_user_agent: None,
-                        },
-                        prepared.endpoint_revision,
-                    )
-                    .await
-                    .map_err(|_| ApplicationError::Internal)?;
-                prepared.credential_revision = authorization
-                    .station_authorization_revision(&prepared.station_id)
-                    .await
-                    .map_err(|_| ApplicationError::Internal)?;
-                prepared.intent_sequence = authorization
-                    .allocate_station_collection_intent(
-                        &prepared.station_id,
-                        prepared.endpoint_revision,
-                        prepared.credential_revision,
-                    )
-                    .await
-                    .map_err(|_| ApplicationError::Internal)?;
-                prepared.credential_handle.credential_revision = prepared.credential_revision;
-                prepared.secret_accessor.expected.credential_revision =
-                    prepared.credential_revision;
-                prepared.auth_context = Some(contract::ProviderAuthContext::NewApi {
-                    user_id: session.user_id,
-                    secret_purpose: contract::CredentialSecretPurpose::SessionCookie,
-                });
-                prepared.secret_accessor.purpose = contract::CredentialSecretPurpose::SessionCookie;
-                prepared.secret_accessor.secret = session.cookie;
+                match login_newapi_password_session(
+                    outbound,
+                    &prepared,
+                    login,
+                    cancellation_token.clone(),
+                    correlation_id.clone(),
+                )
+                .await
+                {
+                    Ok(session) => {
+                        persist_and_apply_newapi_password_session(
+                            source,
+                            authorization,
+                            &mut prepared,
+                            session,
+                        )
+                        .await?;
+                    }
+                    Err(message) => {
+                        return Ok(newapi_manual_required_collection(prepared, &message));
+                    }
+                }
             }
             let driver = registry
                 .collector(contract::ProviderKind::NewApi)
@@ -1119,39 +1098,45 @@ pub(crate) async fn finish_newapi_collection_v2(
                 })
                 .collect::<Result<Vec<_>, ApplicationError>>()?;
             let mut adapter_outputs = Vec::with_capacity(outputs.len());
+            let mut recovery_attempted = false;
             for (child_task, driver_task) in outputs {
-                let context = contract::CollectorContext {
-                    station: contract::StationIdentity {
-                        station_id: prepared.station_id.clone(),
-                        endpoint_revision: prepared.endpoint_revision,
-                        provider: contract::ProviderKind::NewApi,
-                    },
-                    endpoints: contract::ProviderEndpoints {
-                        api_base_url: None,
-                        website_url: Some(prepared.website_url.clone()),
-                    },
-                    credential: prepared.credential_handle.clone(),
-                    auth: prepared.auth_context.clone(),
-                    user_agent: prepared.user_agent.clone(),
-                    secrets: &prepared.secret_accessor,
+                let mut output = execute_prepared_newapi_driver_task(
+                    driver,
+                    &prepared,
                     outbound,
-                    proxy: prepared.proxy.clone(),
-                    budget: RequestBudget::from_now(prepared.timeout),
-                    cancellation: cancellation_token.clone(),
-                    correlation_id: correlation_id
-                        .clone()
-                        .unwrap_or_else(|| "station-collection".to_string()),
-                };
-                let started_at_ms = epoch_millis();
-                let started = Instant::now();
-                let output = driver
-                    .collect(&context, driver_task)
-                    .await
-                    .map(|output| driver_output_to_adapter_output("newapi", child_task, output))
-                    .unwrap_or_else(|failure| {
-                        driver_failure_to_adapter_output("newapi", child_task, failure)
-                    })
-                    .with_execution_timing(started_at_ms, elapsed_millis(started));
+                    child_task,
+                    driver_task,
+                    cancellation_token.clone(),
+                    correlation_id.clone(),
+                )
+                .await;
+                if !recovery_attempted
+                    && adapter_output_needs_newapi_auth_recovery(&output)
+                    && recover_newapi_driver_auth(
+                        source,
+                        authorization,
+                        outbound,
+                        &mut prepared,
+                        password_login.as_ref(),
+                        cancellation_token.clone(),
+                        correlation_id.clone(),
+                    )
+                    .await?
+                {
+                    recovery_attempted = true;
+                    output = execute_prepared_newapi_driver_task(
+                        driver,
+                        &prepared,
+                        outbound,
+                        child_task,
+                        driver_task,
+                        cancellation_token.clone(),
+                        correlation_id.clone(),
+                    )
+                    .await;
+                } else if adapter_output_needs_newapi_auth_recovery(&output) {
+                    recovery_attempted = true;
+                }
                 adapter_outputs.push(output);
             }
             Ok(PreparedStationCollection {
@@ -1166,6 +1151,215 @@ pub(crate) async fn finish_newapi_collection_v2(
             })
         }
     }
+}
+
+async fn login_newapi_password_session(
+    outbound: &AsyncOutboundClient,
+    prepared: &PreparedNewApiDriverCollection,
+    login: &PreparedNewApiPasswordLogin,
+    cancellation_token: CancellationToken,
+    correlation_id: Option<String>,
+) -> Result<login_probe::NewApiPasswordSession, String> {
+    let attempt = login_probe::probe_login(
+        outbound,
+        "newapi",
+        &prepared.website_url,
+        &login.username,
+        &login.password,
+        prepared.proxy.clone(),
+        cancellation_token,
+        correlation_id,
+    )
+    .await
+    .map_err(|error| crate::services::secrets::mask::redact_text(&error))?;
+    attempt.newapi_session.ok_or_else(|| {
+        attempt
+            .login_message
+            .or(attempt.manual_required)
+            .unwrap_or_else(|| "NewAPI password login requires manual authorization".to_string())
+    })
+}
+
+async fn recover_newapi_driver_auth(
+    source: &dyn CollectorSourcePort,
+    authorization: &dyn CollectorAuthorizationPort,
+    outbound: &AsyncOutboundClient,
+    prepared: &mut PreparedNewApiDriverCollection,
+    password_login: Option<&PreparedNewApiPasswordLogin>,
+    cancellation_token: CancellationToken,
+    correlation_id: Option<String>,
+) -> Result<bool, ApplicationError> {
+    let fallback_user_id = prepared.auth_context.as_ref().and_then(|auth| match auth {
+        contract::ProviderAuthContext::NewApi { user_id, .. } => Some(user_id.as_str()),
+        contract::ProviderAuthContext::Sub2Api { .. } => None,
+    });
+    if let Some(cookie) = prepared
+        .session_cookie
+        .as_deref()
+        .filter(|cookie| crate::services::station_sessions::newapi_cookie_can_refresh(cookie))
+    {
+        if let Ok(Some(session)) = login_probe::probe_newapi_refresh(
+            outbound,
+            &prepared.website_url,
+            cookie,
+            fallback_user_id,
+            prepared.proxy.clone(),
+            cancellation_token.clone(),
+            correlation_id.clone(),
+        )
+        .await
+        {
+            persist_and_apply_newapi_password_session(source, authorization, prepared, session)
+                .await?;
+            return Ok(true);
+        }
+    }
+    let Some(login) = password_login else {
+        return Ok(false);
+    };
+    match login_newapi_password_session(
+        outbound,
+        prepared,
+        login,
+        cancellation_token,
+        correlation_id,
+    )
+    .await
+    {
+        Ok(session) => {
+            persist_and_apply_newapi_password_session(source, authorization, prepared, session)
+                .await?;
+            Ok(true)
+        }
+        Err(_) => Ok(false),
+    }
+}
+
+async fn persist_and_apply_newapi_password_session(
+    source: &dyn CollectorSourcePort,
+    authorization: &dyn CollectorAuthorizationPort,
+    prepared: &mut PreparedNewApiDriverCollection,
+    session: login_probe::NewApiPasswordSession,
+) -> Result<(), ApplicationError> {
+    source
+        .persist_station_session(
+            persist_input_from_newapi_password_session(prepared.station_id.clone(), &session),
+            prepared.endpoint_revision,
+        )
+        .await
+        .map_err(|_| ApplicationError::Internal)?;
+    prepared.credential_revision = authorization
+        .station_authorization_revision(&prepared.station_id)
+        .await
+        .map_err(|_| ApplicationError::Internal)?;
+    prepared.intent_sequence = authorization
+        .allocate_station_collection_intent(
+            &prepared.station_id,
+            prepared.endpoint_revision,
+            prepared.credential_revision,
+        )
+        .await
+        .map_err(|_| ApplicationError::Internal)?;
+    prepared.credential_handle.credential_revision = prepared.credential_revision;
+    prepared.secret_accessor.expected.credential_revision = prepared.credential_revision;
+    apply_newapi_password_session_to_prepared(prepared, session);
+    Ok(())
+}
+
+fn persist_input_from_newapi_password_session(
+    station_id: String,
+    session: &login_probe::NewApiPasswordSession,
+) -> PersistStationSessionInput {
+    PersistStationSessionInput {
+        station_id,
+        access_token: session.access_token.clone(),
+        refresh_token: None,
+        cookie: session.cookie.clone(),
+        newapi_user_id: Some(session.user_id.clone()),
+        token_expires_at: session.token_expires_at.clone(),
+        session_expires_at: None,
+        session_source: "password_login".to_string(),
+        session_user_agent: None,
+    }
+}
+
+fn apply_newapi_password_session_to_prepared(
+    prepared: &mut PreparedNewApiDriverCollection,
+    session: login_probe::NewApiPasswordSession,
+) {
+    prepared.session_cookie = session.cookie.clone();
+    if let Some(access_token) = session
+        .access_token
+        .filter(|value| !value.trim().is_empty())
+    {
+        prepared.auth_context = Some(contract::ProviderAuthContext::NewApi {
+            user_id: session.user_id,
+            secret_purpose: contract::CredentialSecretPurpose::AuthorizationHeader,
+            credit_per_cny: prepared.credit_per_cny,
+        });
+        prepared.secret_accessor.purpose = contract::CredentialSecretPurpose::AuthorizationHeader;
+        prepared.secret_accessor.secret = access_token;
+        return;
+    }
+    if let Some(cookie) = session
+        .cookie
+        .filter(|value| crate::services::station_sessions::newapi_cookie_can_authenticate(value))
+    {
+        prepared.auth_context = Some(contract::ProviderAuthContext::NewApi {
+            user_id: session.user_id,
+            secret_purpose: contract::CredentialSecretPurpose::SessionCookie,
+            credit_per_cny: prepared.credit_per_cny,
+        });
+        prepared.secret_accessor.purpose = contract::CredentialSecretPurpose::SessionCookie;
+        prepared.secret_accessor.secret = cookie;
+        return;
+    }
+    prepared.auth_context = None;
+}
+
+fn adapter_output_needs_newapi_auth_recovery(output: &AdapterOutput) -> bool {
+    output.status == "manual_required"
+        || output.error_code.as_deref() == Some(manual_authorization::ERROR_CODE)
+        || output.error_code.as_deref() == Some("auth_rejected")
+}
+
+async fn execute_prepared_newapi_driver_task(
+    driver: &dyn contract::CollectorDriver,
+    prepared: &PreparedNewApiDriverCollection,
+    outbound: &AsyncOutboundClient,
+    child_task: CollectorTask,
+    driver_task: contract::CollectorTaskKind,
+    cancellation_token: CancellationToken,
+    correlation_id: Option<String>,
+) -> AdapterOutput {
+    let context = contract::CollectorContext {
+        station: contract::StationIdentity {
+            station_id: prepared.station_id.clone(),
+            endpoint_revision: prepared.endpoint_revision,
+            provider: contract::ProviderKind::NewApi,
+        },
+        endpoints: contract::ProviderEndpoints {
+            api_base_url: None,
+            website_url: Some(prepared.website_url.clone()),
+        },
+        credential: prepared.credential_handle.clone(),
+        auth: prepared.auth_context.clone(),
+        user_agent: prepared.user_agent.clone(),
+        secrets: &prepared.secret_accessor,
+        outbound,
+        proxy: prepared.proxy.clone(),
+        budget: RequestBudget::from_now(prepared.timeout),
+        cancellation: cancellation_token,
+        correlation_id: correlation_id.unwrap_or_else(|| "station-collection".to_string()),
+    };
+    let started_at_ms = epoch_millis();
+    let started = Instant::now();
+    driver
+        .collect(&context, driver_task)
+        .await
+        .map(|output| driver_output_to_adapter_output("newapi", child_task, output))
+        .unwrap_or_else(|failure| driver_failure_to_adapter_output("newapi", child_task, failure))
+        .with_execution_timing(started_at_ms, elapsed_millis(started))
 }
 
 fn newapi_manual_required_collection(
@@ -1454,17 +1648,7 @@ pub(crate) async fn finish_station_login_probe_v2(
     if let Some(session) = attempt.newapi_session.clone() {
         source
             .persist_station_session(
-                PersistStationSessionInput {
-                    station_id: prepared.station.id.clone(),
-                    access_token: None,
-                    refresh_token: None,
-                    cookie: Some(session.cookie),
-                    newapi_user_id: Some(session.user_id),
-                    token_expires_at: None,
-                    session_expires_at: None,
-                    session_source: "password_login".to_string(),
-                    session_user_agent: None,
-                },
+                persist_input_from_newapi_password_session(prepared.station.id.clone(), &session),
                 prepared.station.endpoint_revision,
             )
             .await
@@ -2192,7 +2376,12 @@ fn has_login_credentials(username: &Option<String>, password_present: bool) -> b
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::credentials::SessionResolveStatus;
+    use crate::{
+        models::credentials::SessionResolveStatus,
+        outbound::AsyncOutboundClientConfig,
+        services::collectors::drivers::newapi::test_support::{json_response, TestHttpServer},
+    };
+    use std::sync::Mutex;
 
     #[test]
     fn browser_session_uses_provider_specific_identity_requirements() {
@@ -2232,6 +2421,7 @@ mod tests {
                         station_id: "station-1".to_string(),
                         station_key_id: None,
                         scope: "station".to_string(),
+                        balance_kind: "account_balance".to_string(),
                         value: Some(12.0),
                         used_value: None,
                         total_value: None,
@@ -2254,6 +2444,8 @@ mod tests {
                         source: "test".to_string(),
                         confidence: 1.0,
                         collected_at: None,
+                        evidence_confidence: "confirmed".to_string(),
+                        spendability_authority: "authoritative".to_string(),
                     }],
                     ..facts::CollectorFacts::default()
                 },
@@ -2429,6 +2621,336 @@ mod tests {
             Some("saved-password".to_string()),
         )
         .is_none());
+    }
+
+    #[tokio::test]
+    async fn newapi_password_login_auth_bundle_can_collect_groups() {
+        let server = TestHttpServer::sequence(vec![
+            Some(json_response_with_cookies(
+                json!({
+                    "success": true,
+                    "data": {
+                        "access_token": "fixture-access",
+                        "token_type": "Bearer",
+                        "access_expires_at": 1_700_000_000,
+                        "user": {"id": 42}
+                    }
+                }),
+                &[
+                    "new_api_refresh=fixture-refresh; Path=/api/user/auth; HttpOnly",
+                    "new_api_has_session=1; Path=/",
+                ],
+            )),
+            Some(json_response(
+                200,
+                json!({"success": true, "data": {"default": {"ratio": 1}}}),
+            )),
+        ]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let source = RecordingCollectorSource::default();
+        let authorization = StaticAuthorizationPort;
+        let registry = test_provider_registry();
+        let prepared = prepared_newapi_driver(
+            &server.base_url,
+            None,
+            None,
+            Some(PreparedNewApiPasswordLogin {
+                username: "user@example.invalid".to_string(),
+                password: "saved-password".to_string(),
+            }),
+        );
+
+        let collection = finish_newapi_collection_v2(
+            &source,
+            &authorization,
+            &registry,
+            &outbound,
+            PreparedNewApiCollection::Driver(prepared),
+            CancellationToken::new(),
+            Some("newapi-auth-bundle-collect".to_string()),
+        )
+        .await
+        .expect("collection");
+        let requests = server.finish();
+        let persisted = source.persisted.lock().expect("persist lock");
+
+        assert_eq!(collection.outputs[0].status, "success");
+        assert_eq!(persisted[0].access_token.as_deref(), Some("fixture-access"));
+        assert_eq!(persisted[0].newapi_user_id.as_deref(), Some("42"));
+        assert!(requests[0].starts_with("POST /api/user/login "));
+        assert!(requests[1].starts_with("GET /api/user/self/groups "));
+        assert!(requests[1]
+            .to_ascii_lowercase()
+            .contains("authorization: bearer fixture-access"));
+    }
+
+    #[tokio::test]
+    async fn newapi_stale_cookie_falls_back_to_password_login_then_collects() {
+        let server = TestHttpServer::sequence(vec![
+            Some(json_response(
+                401,
+                json!({"success": false, "message": "未登录"}),
+            )),
+            Some(json_response_with_cookies(
+                json!({
+                    "success": true,
+                    "data": {
+                        "access_token": "fixture-access",
+                        "user": {"id": 42}
+                    }
+                }),
+                &["new_api_refresh=fixture-refresh; Path=/api/user/auth; HttpOnly"],
+            )),
+            Some(json_response(
+                200,
+                json!({"success": true, "data": {"default": {"ratio": 1}}}),
+            )),
+        ]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let source = RecordingCollectorSource::default();
+        let authorization = StaticAuthorizationPort;
+        let registry = test_provider_registry();
+        let prepared = prepared_newapi_driver(
+            &server.base_url,
+            Some(contract::ProviderAuthContext::NewApi {
+                user_id: "42".to_string(),
+                secret_purpose: contract::CredentialSecretPurpose::SessionCookie,
+                credit_per_cny: 1.0,
+            }),
+            Some("session=stale"),
+            Some(PreparedNewApiPasswordLogin {
+                username: "user@example.invalid".to_string(),
+                password: "saved-password".to_string(),
+            }),
+        );
+
+        let collection = finish_newapi_collection_v2(
+            &source,
+            &authorization,
+            &registry,
+            &outbound,
+            PreparedNewApiCollection::Driver(prepared),
+            CancellationToken::new(),
+            Some("newapi-stale-cookie-collect".to_string()),
+        )
+        .await
+        .expect("collection");
+        let requests = server.finish();
+
+        assert_eq!(collection.outputs[0].status, "success");
+        assert!(requests[0].starts_with("GET /api/user/self/groups "));
+        assert!(requests[1].starts_with("POST /api/user/login "));
+        assert!(requests[2].starts_with("GET /api/user/self/groups "));
+        assert!(requests[2]
+            .to_ascii_lowercase()
+            .contains("authorization: bearer fixture-access"));
+    }
+
+    #[tokio::test]
+    async fn newapi_password_captcha_still_requires_manual_authorization() {
+        let server = TestHttpServer::sequence(vec![Some(json_response(
+            200,
+            json!({"success": false, "message": "Turnstile verification failed"}),
+        ))]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let source = RecordingCollectorSource::default();
+        let authorization = StaticAuthorizationPort;
+        let registry = test_provider_registry();
+        let prepared = prepared_newapi_driver(
+            &server.base_url,
+            None,
+            None,
+            Some(PreparedNewApiPasswordLogin {
+                username: "user@example.invalid".to_string(),
+                password: "saved-password".to_string(),
+            }),
+        );
+
+        let collection = finish_newapi_collection_v2(
+            &source,
+            &authorization,
+            &registry,
+            &outbound,
+            PreparedNewApiCollection::Driver(prepared),
+            CancellationToken::new(),
+            Some("newapi-captcha-collect".to_string()),
+        )
+        .await
+        .expect("collection");
+
+        assert_eq!(collection.outputs[0].status, "manual_required");
+        assert_eq!(
+            collection.outputs[0].error_message.as_deref(),
+            Some("Turnstile verification failed")
+        );
+        assert_eq!(server.finish().len(), 1);
+    }
+
+    fn test_provider_registry() -> orchestration::ProviderRegistry {
+        orchestration::ProviderRegistry::new(
+            crate::services::collectors::drivers::static_provider_entries(),
+            crate::services::collectors::drivers::REQUIRED_PROVIDER_KINDS,
+        )
+        .expect("provider registry")
+    }
+
+    fn prepared_newapi_driver(
+        website_url: &str,
+        auth_context: Option<contract::ProviderAuthContext>,
+        secret: Option<&str>,
+        password_login: Option<PreparedNewApiPasswordLogin>,
+    ) -> PreparedNewApiDriverCollection {
+        let credential_handle = contract::OpaqueCredentialHandle {
+            station_id: "station-1".to_string(),
+            credential_revision: 1,
+            scope: contract::CredentialScope::LoginSession,
+        };
+        let purpose = match &auth_context {
+            Some(contract::ProviderAuthContext::NewApi { secret_purpose, .. }) => *secret_purpose,
+            _ => contract::CredentialSecretPurpose::SessionCookie,
+        };
+        PreparedNewApiDriverCollection {
+            station_id: "station-1".to_string(),
+            endpoint_revision: 1,
+            credential_revision: 1,
+            intent_sequence: 1,
+            task: CollectorTask::Groups,
+            driver_tasks: vec![CollectorTask::Groups],
+            enabled_key_count: 0,
+            website_url: website_url.to_string(),
+            proxy: ProxyPolicy::Direct,
+            timeout: Duration::from_secs(5),
+            credential_handle: credential_handle.clone(),
+            auth_context,
+            secret_accessor: StaticSecretAccessor {
+                expected: credential_handle,
+                purpose,
+                secret: secret.unwrap_or_default().to_string(),
+            },
+            password_login,
+            session_cookie: secret.map(ToString::to_string),
+            user_agent: None,
+            credit_per_cny: 1.0,
+        }
+    }
+
+    fn json_response_with_cookies(body: Value, cookies: &[&str]) -> String {
+        let body = body.to_string();
+        let mut response = String::from("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n");
+        for cookie in cookies {
+            response.push_str("Set-Cookie: ");
+            response.push_str(cookie);
+            response.push_str("\r\n");
+        }
+        response.push_str(&format!(
+            "Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len(),
+        ));
+        response
+    }
+
+    struct RecordingCollectorSource {
+        persisted: Mutex<Vec<PersistStationSessionInput>>,
+        credentials: StationCredentials,
+    }
+
+    impl Default for RecordingCollectorSource {
+        fn default() -> Self {
+            Self {
+                persisted: Mutex::new(Vec::new()),
+                credentials: StationCredentials {
+                    station_id: "station-1".to_string(),
+                    login_username: Some("user@example.invalid".to_string()),
+                    password_present: true,
+                    access_token_present: false,
+                    refresh_token_present: false,
+                    cookie_present: false,
+                    remember_password: true,
+                    login_status: "unknown".to_string(),
+                    login_error: None,
+                    last_login_at: None,
+                    session_status: "unknown".to_string(),
+                    session_expires_at: None,
+                    newapi_user_id: None,
+                    token_expires_at: None,
+                    token_refreshed_at: None,
+                    session_source: "none".to_string(),
+                    session_user_agent: None,
+                    updated_at: None,
+                },
+            }
+        }
+    }
+
+    impl CollectorSourcePort for RecordingCollectorSource {
+        fn station_for_collector(&self, _station_id: &str) -> Result<Station, String> {
+            Err("unused".to_string())
+        }
+        fn get_settings(&self) -> Result<AppSettings, String> {
+            Err("unused".to_string())
+        }
+        fn list_station_keys(&self, _station_id: String) -> Result<Vec<StationKey>, String> {
+            Ok(Vec::new())
+        }
+        fn resolve_station_key_secret(&self, _station_key_id: &str) -> Result<String, String> {
+            Err("unused".to_string())
+        }
+        fn get_station_credentials(
+            &self,
+            _station_id: String,
+        ) -> Result<StationCredentials, String> {
+            Ok(self.credentials.clone())
+        }
+        fn get_station_login_password(
+            &self,
+            _station_id: String,
+        ) -> Result<Option<String>, String> {
+            Ok(Some("saved-password".to_string()))
+        }
+        fn resolve_station_session(
+            &self,
+            _station_id: String,
+            _now_ms: i64,
+        ) -> Result<ResolvedSession, String> {
+            Err("unused".to_string())
+        }
+        fn persist_station_session<'a>(
+            &'a self,
+            input: PersistStationSessionInput,
+            _expected_revision: i64,
+        ) -> BoxFuture<'a, Result<StationCredentials, String>> {
+            async move {
+                self.persisted.lock().expect("persist lock").push(input);
+                Ok(self.credentials.clone())
+            }
+            .boxed()
+        }
+        fn list_station_group_bindings(
+            &self,
+            _station_id: String,
+        ) -> Result<Vec<StationGroupBinding>, String> {
+            Ok(Vec::new())
+        }
+    }
+
+    struct StaticAuthorizationPort;
+
+    impl CollectorAuthorizationPort for StaticAuthorizationPort {
+        fn station_authorization_revision<'a>(
+            &'a self,
+            _station_id: &'a str,
+        ) -> BoxFuture<'a, Result<i64, String>> {
+            async { Ok(2) }.boxed()
+        }
+
+        fn allocate_station_collection_intent<'a>(
+            &'a self,
+            _station_id: &'a str,
+            _endpoint_revision: i64,
+            _credential_revision: i64,
+        ) -> BoxFuture<'a, Result<i64, String>> {
+            async { Ok(3) }.boxed()
+        }
     }
 
     #[test]

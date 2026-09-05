@@ -388,6 +388,7 @@ async fn collect_balance(context: &CollectorContext<'_>) -> Result<DriverOutput,
             &context.station.station_id,
             &balance_data,
             status.quota_per_unit,
+            newapi_credit_per_cny(context),
         )],
         ..CollectorFacts::default()
     };
@@ -1341,6 +1342,7 @@ async fn build_json_request(
             ProviderAuthContext::NewApi {
                 user_id,
                 secret_purpose,
+                ..
             } => (user_id, secret_purpose),
             ProviderAuthContext::Sub2Api { .. } => {
                 return Err(invalid_request(
@@ -1415,6 +1417,13 @@ fn newapi_auth(context: &CollectorContext<'_>) -> Result<ProviderAuthContext, Dr
         .auth
         .clone()
         .ok_or_else(|| invalid_request("NewAPI auth context is missing"))
+}
+
+fn newapi_credit_per_cny(context: &CollectorContext<'_>) -> f64 {
+    match context.auth.as_ref() {
+        Some(ProviderAuthContext::NewApi { credit_per_cny, .. }) => *credit_per_cny,
+        _ => 1.0,
+    }
 }
 
 fn newapi_expected_user_id(context: &CollectorContext<'_>) -> Result<String, DriverFailure> {
@@ -1629,6 +1638,7 @@ mod tests {
             auth: Some(ProviderAuthContext::NewApi {
                 user_id: "42".to_string(),
                 secret_purpose: CredentialSecretPurpose::AuthorizationHeader,
+                credit_per_cny: 1.0,
             }),
             user_agent: None,
             secrets,
@@ -1670,9 +1680,23 @@ mod tests {
     }
 
     async fn collect_balance_from_test_server(server: &TestHttpServer) -> DriverOutput {
+        collect_balance_from_test_server_with_credit(server, 1.0).await
+    }
+
+    async fn collect_balance_from_test_server_with_credit(
+        server: &TestHttpServer,
+        credit_per_cny: f64,
+    ) -> DriverOutput {
         let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
         let secrets = TestSecretAccessor("newapi-access-token");
-        let context = test_context(&server.base_url, &secrets, &outbound);
+        let mut context = test_context(&server.base_url, &secrets, &outbound);
+        if let Some(ProviderAuthContext::NewApi {
+            credit_per_cny: existing,
+            ..
+        }) = context.auth.as_mut()
+        {
+            *existing = credit_per_cny;
+        }
 
         NewApiCollectorDriver
             .collect(&context, CollectorTaskKind::Balance)
@@ -2292,12 +2316,58 @@ mod tests {
         assert!(requests
             .iter()
             .all(|request| !request.contains("/api/log/self")));
+        assert_eq!(balance.value, Some(2.0));
+        assert_eq!(balance.used_value, Some(18.5));
         assert_eq!(balance.today_request_count, Some(2));
         assert_eq!(balance.today_consumption, Some(0.75));
         assert_eq!(balance.today_token_count, Some(49567));
         assert_eq!(balance.total_request_count, Some(1200));
         assert_eq!(balance.total_consumption, Some(18.5));
         assert_eq!(balance.total_token_count, None);
+    }
+
+    #[tokio::test]
+    async fn newapi_balance_divides_quota_units_by_station_credit_per_cny() {
+        let server = TestHttpServer::sequence(vec![
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "quota_per_unit": 500000 }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "quota": 1000000,
+                        "used_quota": 9250000,
+                        "request_count": 1200
+                    }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": [
+                        { "count": 2, "quota": 375000, "token_used": 49567 }
+                    ]
+                }),
+            )),
+        ]);
+
+        let output = collect_balance_from_test_server_with_credit(&server, 10.0).await;
+        server.finish();
+        let balance = output.facts.balances.first().expect("balance fact");
+
+        assert_eq!(output.status, DriverOutputStatus::Success);
+        assert_eq!(balance.value, Some(2.0 / 10.0));
+        assert_eq!(balance.used_value, Some(18.5 / 10.0));
+        assert_eq!(balance.total_value, Some(20.5 / 10.0));
+        assert_eq!(balance.today_consumption, Some(0.75));
+        assert_eq!(balance.total_consumption, Some(18.5));
     }
 
     #[tokio::test]

@@ -92,6 +92,7 @@ pub(crate) struct BalanceWrite {
     pub station_id: String,
     pub station_key_id: Option<String>,
     pub scope: String,
+    pub balance_kind: String,
     pub value: Option<f64>,
     pub used_value: Option<f64>,
     pub total_value: Option<f64>,
@@ -1467,9 +1468,10 @@ impl CollectorStore {
         session: &mut WriteSession,
         balance: &BalanceWrite,
     ) -> Result<(), PersistenceError> {
+        validate_balance_kind_scope(balance)?;
         sqlx::query(
             "INSERT INTO balance_snapshots (
-                id, station_id, station_key_id, scope, value, currency, credit_unit,
+                id, station_id, station_key_id, scope, balance_kind, value, currency, credit_unit,
                 used_value, total_value, today_request_count, total_request_count,
                 today_consumption, total_consumption, today_base_consumption,
                 total_base_consumption, today_token_count, total_token_count,
@@ -1478,14 +1480,15 @@ impl CollectorStore {
                 status, source, confidence, collected_at, created_at, updated_at,
                 evidence_confidence, spendability_authority, observed_at_ms, valid_until_ms,
                 evidence_profile_version, spendability_reason_code
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-                       ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, NULL, ?23, ?24,
-                       ?25, ?26, ?27, ?27, ?28, ?29, ?30, ?31, ?32, ?33)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+                       ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, NULL, ?24, ?25,
+                       ?26, ?27, ?28, ?28, ?29, ?30, ?31, ?32, ?33, ?34)",
         )
         .bind(&balance.id)
         .bind(&balance.station_id)
         .bind(&balance.station_key_id)
         .bind(&balance.scope)
+        .bind(&balance.balance_kind)
         .bind(balance.value)
         .bind(&balance.currency)
         .bind(&balance.credit_unit)
@@ -2206,4 +2209,33 @@ fn row_to_group_state(row: &sqlx::sqlite::SqliteRow) -> GroupState {
 
 fn invalid_json(error: serde_json::Error) -> PersistenceError {
     PersistenceError::InvariantViolation(format!("collector JSON serialization failed: {error}"))
+}
+
+fn validate_balance_kind_scope(balance: &BalanceWrite) -> Result<(), PersistenceError> {
+    let valid = match balance.balance_kind.as_str() {
+        "account_balance" => {
+            balance.station_key_id.is_none()
+                && matches!(balance.scope.as_str(), "station" | "station_account")
+        }
+        "station_key_quota" => balance.station_key_id.is_some() && balance.scope == "station_key",
+        "subscription_quota" => balance.station_key_id.is_none() && balance.scope == "subscription",
+        "usage_summary" => balance.station_key_id.is_none() && balance.scope == "station",
+        // Legacy kinds are migration-only and must never be emitted by a
+        // collector after the typed contract is active.
+        "legacy_derived_aggregate" | "legacy_unknown" => false,
+        _ => false,
+    };
+    let evidence_valid = matches!(
+        balance.evidence_confidence.as_str(),
+        "confirmed" | "probable" | "unknown" | "conflicting"
+    );
+    let authority_valid = matches!(
+        balance.spendability_authority.as_str(),
+        "authoritative" | "advisory" | "unknown"
+    );
+    if valid && evidence_valid && authority_valid {
+        Ok(())
+    } else {
+        Err(PersistenceError::ConstraintViolation)
+    }
 }

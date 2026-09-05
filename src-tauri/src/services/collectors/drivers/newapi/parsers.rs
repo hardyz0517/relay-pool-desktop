@@ -52,24 +52,33 @@ pub(crate) fn parse_balance_fact(
     station_id: &str,
     data: &Value,
     quota_per_unit: Option<f64>,
+    credit_per_cny: f64,
 ) -> CollectedBalanceFact {
-    let remaining = quota_per_unit
+    let remaining_units = quota_per_unit
         .zip(parse_optional_f64(data.get("quota")))
         .map(|(quota_per_unit, value)| value / quota_per_unit);
-    let used = quota_per_unit
+    let used_units = quota_per_unit
         .zip(parse_optional_f64(data.get("used_quota")))
         .map(|(quota_per_unit, value)| value / quota_per_unit);
+    let remaining = apply_credit_per_cny(remaining_units, credit_per_cny);
+    let used = apply_credit_per_cny(used_units, credit_per_cny);
     CollectedBalanceFact {
         station_id: station_id.to_string(),
         station_key_id: None,
         scope: "station".to_string(),
+        balance_kind: "account_balance".to_string(),
         value: remaining,
         used_value: used,
-        total_value: remaining.zip(used).map(|(left, right)| left + right),
+        total_value: apply_credit_per_cny(
+            remaining_units
+                .zip(used_units)
+                .map(|(left, right)| left + right),
+            credit_per_cny,
+        ),
         today_request_count: parse_i64_field(data, &["today_request_count"]),
         total_request_count: parse_i64_field(data, &["request_count"]),
         today_consumption: parse_f64_field(data, &["today_consumption"]),
-        total_consumption: used,
+        total_consumption: used_units,
         today_base_consumption: parse_f64_field(data, &["today_base_consumption"]),
         total_base_consumption: parse_f64_field(data, &["total_base_consumption"]),
         today_token_count: parse_i64_field(data, &["today_token_count"]),
@@ -105,6 +114,18 @@ pub(crate) fn parse_balance_fact(
         source: "newapi_user_self".to_string(),
         confidence: if quota_per_unit.is_some() { 0.95 } else { 0.9 },
         collected_at: None,
+        evidence_confidence: if remaining.is_some() {
+            "confirmed"
+        } else {
+            "unknown"
+        }
+        .to_string(),
+        spendability_authority: if remaining.is_some() {
+            "authoritative"
+        } else {
+            "unknown"
+        }
+        .to_string(),
     }
 }
 
@@ -146,6 +167,17 @@ pub(crate) fn parse_group_facts(station_id: &str, data: &Value) -> CollectorFact
     }
 
     facts
+}
+
+fn apply_credit_per_cny(value: Option<f64>, credit_per_cny: f64) -> Option<f64> {
+    value.map(|value| {
+        let divisor = if credit_per_cny.is_finite() && credit_per_cny > 0.0 {
+            credit_per_cny
+        } else {
+            1.0
+        };
+        value / divisor
+    })
 }
 
 fn parse_optional_f64(value: Option<&Value>) -> Option<f64> {
@@ -231,6 +263,7 @@ mod tests {
             "station-1",
             &json!({"quota": 750000, "used_quota": 250000}),
             Some(250000.0),
+            1.0,
         );
         assert_eq!(fact.value, Some(3.0));
         assert_eq!(fact.used_value, Some(1.0));
@@ -244,6 +277,7 @@ mod tests {
             "station-1",
             &json!({"quota": -1.0, "used_quota": 2.0}),
             Some(1.0),
+            1.0,
         );
 
         assert_eq!(fact.value, Some(-1.0));
@@ -260,6 +294,7 @@ mod tests {
                 "group": "default"
             }),
             Some(500000.0),
+            1.0,
         );
 
         assert_eq!(fact.value, Some(2.0));
@@ -267,6 +302,35 @@ mod tests {
         assert_eq!(fact.total_value, Some(3.0));
         assert_eq!(fact.currency, "USD");
         assert_eq!(fact.source, "newapi_user_self");
+    }
+
+    #[test]
+    fn balance_divides_quota_units_by_credit_per_cny() {
+        let fact = parse_balance_fact(
+            "station-1",
+            &json!({"quota": 1000000.0, "used_quota": 500000.0}),
+            Some(500000.0),
+            10.0,
+        );
+
+        assert_eq!(fact.value, Some(2.0 / 10.0));
+        assert_eq!(fact.used_value, Some(1.0 / 10.0));
+        assert_eq!(fact.total_value, Some(3.0 / 10.0));
+        assert_eq!(fact.total_consumption, Some(1.0));
+    }
+
+    #[test]
+    fn invalid_credit_per_cny_keeps_quota_unit_balance() {
+        let fact = parse_balance_fact(
+            "station-1",
+            &json!({"quota": 1000000.0, "used_quota": 500000.0}),
+            Some(500000.0),
+            0.0,
+        );
+
+        assert_eq!(fact.value, Some(2.0));
+        assert_eq!(fact.used_value, Some(1.0));
+        assert_eq!(fact.total_value, Some(3.0));
     }
 
     #[test]
@@ -281,6 +345,7 @@ mod tests {
                 "request_count": 12
             }),
             status.quota_per_unit,
+            10.0,
         );
         assert_eq!(fact.value, None);
         assert_eq!(fact.used_value, None);
@@ -304,7 +369,12 @@ mod tests {
 
     #[test]
     fn balance_rejects_fractional_request_count() {
-        let fact = parse_balance_fact("station-1", &json!({"request_count": 1.4}), Some(500000.0));
+        let fact = parse_balance_fact(
+            "station-1",
+            &json!({"request_count": 1.4}),
+            Some(500000.0),
+            1.0,
+        );
 
         assert_eq!(fact.total_request_count, None);
     }
@@ -325,6 +395,7 @@ mod tests {
                 "today_token_count": 43210
             }),
             Some(250000.0),
+            1.0,
         );
 
         assert_eq!(fact.today_request_count, Some(34));
@@ -344,6 +415,7 @@ mod tests {
             "station-1",
             &json!({"quota": 750000, "concurrency_limit": 8}),
             Some(250000.0),
+            1.0,
         );
 
         assert_eq!(fact.account_concurrency_limit, Some(8));

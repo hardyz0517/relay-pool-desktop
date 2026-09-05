@@ -148,6 +148,7 @@ pub(crate) struct CanonicalBalanceFact {
     pub station_id: String,
     pub station_key_id: Option<String>,
     pub scope: String,
+    pub balance_kind: String,
     pub value: Option<f64>,
     pub used_value: Option<f64>,
     pub total_value: Option<f64>,
@@ -170,6 +171,8 @@ pub(crate) struct CanonicalBalanceFact {
     pub source: String,
     pub confidence: f64,
     pub collected_at: Option<String>,
+    pub evidence_confidence: String,
+    pub spendability_authority: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1027,6 +1030,7 @@ impl CollectorService {
                         station_id: balance.station_id.clone(),
                         station_key_id: balance.station_key_id.clone(),
                         scope: balance.scope.clone(),
+                        balance_kind: balance.balance_kind.clone(),
                         value: balance.value,
                         used_value: balance.used_value,
                         total_value: balance.total_value,
@@ -1049,11 +1053,8 @@ impl CollectorService {
                         source: balance.source.clone(),
                         confidence: balance.confidence,
                         collected_at: balance.collected_at.clone(),
-                        evidence_confidence: collector_balance_evidence_confidence(&balance.status),
-                        spendability_authority: collector_balance_authority(
-                            &balance.status,
-                            &balance.source,
-                        ),
+                        evidence_confidence: balance.evidence_confidence.clone(),
+                        spendability_authority: balance.spendability_authority.clone(),
                         observed_at_ms: collector_balance_observed_at_ms(
                             balance.collected_at.as_deref().unwrap_or(&now),
                         ),
@@ -2334,24 +2335,6 @@ fn request_confirms_authorization_recovery(
     affected_task_type: &str,
 ) -> bool {
     request.task_type == affected_task_type || request.task_type == "full"
-}
-
-fn collector_balance_evidence_confidence(status: &str) -> String {
-    match status.trim().to_ascii_lowercase().as_str() {
-        "normal" | "available" | "usable" | "low" | "warning" | "depleted" | "exhausted"
-        | "empty" => "confirmed".to_string(),
-        _ => "unknown".to_string(),
-    }
-}
-
-fn collector_balance_authority(status: &str, source: &str) -> String {
-    if source == "station_key_balance_aggregate" {
-        return "advisory".to_string();
-    }
-    match collector_balance_evidence_confidence(status).as_str() {
-        "confirmed" => "authoritative".to_string(),
-        _ => "unknown".to_string(),
-    }
 }
 
 fn collector_balance_reason(status: &str) -> Option<String> {
@@ -3957,6 +3940,63 @@ mod tests {
                 .due_stations_for_task("balance", 3, limit)
                 .await
                 .expect("three minute schedule")
+                .into_iter()
+                .map(|station| station.id)
+                .collect::<Vec<_>>(),
+            vec![station.id.clone()]
+        );
+
+        // A stale queued claim must not suppress a later due check even if a
+        // credential update raced with the worker before it could terminalize
+        // the old operation. The scheduler compares the complete fence and
+        // treats this row as historical rather than active work.
+        let station_id_for_stale_operation = station.id.clone();
+        runtime
+            .write(|write| {
+                Box::pin(async move {
+                    sqlx::query(
+                        "UPDATE domain_revisions
+                         SET revision = 2
+                         WHERE scope = 'station_account:' || ?1",
+                    )
+                    .bind(&station_id_for_stale_operation)
+                    .execute(write.connection())
+                    .await?;
+                    sqlx::query(
+                        "UPDATE domain_revisions
+                         SET revision = 3
+                         WHERE scope = 'station_collection_intent:' || ?1",
+                    )
+                    .bind(&station_id_for_stale_operation)
+                    .execute(write.connection())
+                    .await?;
+                    sqlx::query(
+                        "INSERT INTO collector_operations (
+                            operation_id, operation_key, station_id,
+                            endpoint_revision, credential_revision, intent_sequence,
+                            plan_version, task_type, trigger_kind, status,
+                            started_at_ms, finished_at_ms, reason_code, reason_detail,
+                            created_at_ms, updated_at_ms
+                         ) VALUES (
+                            'stale-schedule-operation', 'stale-schedule-operation', ?1,
+                            ?2, 1, 2, 'collector-plan-v1', 'unspecified',
+                            'unspecified', 'queued', NULL, NULL, NULL, NULL, 1, 1
+                         )",
+                    )
+                    .bind(&station_id_for_stale_operation)
+                    .bind(station.endpoint_revision)
+                    .execute(write.connection())
+                    .await?;
+                    Ok(())
+                })
+            })
+            .await
+            .expect("seed stale queued operation");
+        assert_eq!(
+            collectors
+                .due_stations_for_task("balance", 3, PageLimit::new(10).expect("limit"))
+                .await
+                .expect("stale operation is ignored")
                 .into_iter()
                 .map(|station| station.id)
                 .collect::<Vec<_>>(),
@@ -5684,6 +5724,7 @@ mod tests {
             station_id: station.id.clone(),
             station_key_id: Some("missing-station-key".to_string()),
             scope: "account".to_string(),
+            balance_kind: "legacy_unknown".to_string(),
             value: Some(1.0),
             used_value: None,
             total_value: None,
@@ -5706,6 +5747,8 @@ mod tests {
             source: "test".to_string(),
             confidence: 1.0,
             collected_at: Some("1700000000000".to_string()),
+            evidence_confidence: "unknown".to_string(),
+            spendability_authority: "advisory".to_string(),
         });
         let error = collectors
             .apply_full_result(parent, vec![bad_child])

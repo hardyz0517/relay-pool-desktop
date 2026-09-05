@@ -2293,6 +2293,27 @@ async fn reconcile_authorization_after_credential_mutation(
         ));
     }
 
+    // A credential replacement invalidates every ordinary collection intent
+    // fenced to the previous account revision. Close those claims in this
+    // transaction so an auth refresh cannot leave a queued operation blocking
+    // the scheduler until the next process restart.
+    sqlx::query(
+        "UPDATE collector_operations
+         SET status = 'superseded', finished_at_ms = ?1,
+             reason_code = 'credential_revision_changed', reason_detail = NULL,
+             updated_at_ms = ?1
+         WHERE station_id = ?2
+           AND credential_revision <> ?3
+           AND task_type IN ('unspecified', 'detect', 'balance', 'groups',
+                             'published_status', 'full')
+           AND status IN ('queued', 'running')",
+    )
+    .bind(now_ms)
+    .bind(station_id)
+    .bind(revision)
+    .execute(&mut *connection)
+    .await?;
+
     // Any outstanding post-auth collection was created for an older credential
     // revision. Preserve it as terminal history and prevent stale completion.
     sqlx::query(
@@ -4122,5 +4143,59 @@ mod tests {
         assert_eq!(row.get::<String, _>("operation_id"), "new-operation");
         drop(read);
         runtime.close().await.expect("close runtime");
+    }
+
+    #[tokio::test]
+    async fn credential_revision_change_supersedes_queued_collection_intent() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let runtime = PersistenceRuntime::initialize_new(
+            &root.path().join("credential-collection-fence.sqlite3"),
+        )
+        .await
+        .expect("initialize runtime");
+        let handle = runtime.handle();
+        let station_id = "credential-collection-fence";
+        seed_post_authorization_station(&handle, station_id, 1).await;
+
+        let collection_intent = {
+            let mut write = handle.begin_write().await.expect("begin collection intent");
+            let intent = crate::persistence::stores::collector_store::CollectorStore
+                .allocate_station_collection_intent(&mut write, station_id, 1, 1, 100)
+                .await
+                .expect("allocate collection intent");
+            write.commit().await.expect("commit collection intent");
+            intent
+        };
+
+        let mut write = handle
+            .begin_write()
+            .await
+            .expect("begin session replacement");
+        CredentialStore
+            .update_station_session(
+                &mut write,
+                post_authorization_session_patch(station_id, "200", "replacement-secret"),
+            )
+            .await
+            .expect("replace session");
+        write.commit().await.expect("commit session replacement");
+
+        let mut read = handle
+            .begin_read()
+            .await
+            .expect("read collection operation");
+        let (status, reason_code): (String, Option<String>) = sqlx::query_as(
+            "SELECT status, reason_code FROM collector_operations
+             WHERE station_id = ?1 AND intent_sequence = ?2",
+        )
+        .bind(station_id)
+        .bind(collection_intent)
+        .fetch_one(read.connection())
+        .await
+        .expect("load superseded collection operation");
+        assert_eq!(status, "superseded");
+        assert_eq!(reason_code.as_deref(), Some("credential_revision_changed"));
+        drop(read);
+        runtime.close().await.expect("close persistence runtime");
     }
 }

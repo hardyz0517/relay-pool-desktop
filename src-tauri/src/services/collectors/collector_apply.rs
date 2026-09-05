@@ -8,10 +8,7 @@ use crate::{
         error::ApplicationError,
     },
     observability::correlation,
-    services::collectors::{
-        facts::{CollectedBalanceFact, NORMALIZED_BALANCE_CURRENCY},
-        output::AdapterOutput,
-    },
+    services::collectors::output::AdapterOutput,
 };
 
 pub(crate) trait CollectorApplyPort: Send + Sync {
@@ -125,7 +122,6 @@ pub(crate) fn collector_apply_request_from_output(
 ) -> Result<CollectorApplyRequest, ApplicationError> {
     let mut facts = output.facts;
     let published_status = facts.published_status.take();
-    append_station_balance_aggregates(&mut facts.balances);
     let endpoint_counts = endpoint_counts_from_summary(&output.summary_json);
     Ok(CollectorApplyRequest {
         run_key,
@@ -146,6 +142,7 @@ pub(crate) fn collector_apply_request_from_output(
                     station_id: fact.station_id,
                     station_key_id: fact.station_key_id,
                     scope: fact.scope,
+                    balance_kind: fact.balance_kind,
                     value: fact.value,
                     used_value: fact.used_value,
                     total_value: fact.total_value,
@@ -168,6 +165,8 @@ pub(crate) fn collector_apply_request_from_output(
                     source: fact.source,
                     confidence: fact.confidence,
                     collected_at: fact.collected_at,
+                    evidence_confidence: fact.evidence_confidence,
+                    spendability_authority: fact.spendability_authority,
                 })
                 .collect(),
             groups: facts
@@ -245,154 +244,6 @@ fn endpoint_counts_from_summary(summary: &serde_json::Value) -> (i64, i64, i64) 
     )
 }
 
-fn append_station_balance_aggregates(balances: &mut Vec<CollectedBalanceFact>) {
-    let mut station_ids = Vec::new();
-    for balance in balances.iter() {
-        if balance.scope != "station_key" || balance.station_key_id.is_none() {
-            continue;
-        }
-        if !station_ids.contains(&balance.station_id) {
-            station_ids.push(balance.station_id.clone());
-        }
-    }
-
-    for station_id in station_ids {
-        if balances
-            .iter()
-            .any(|balance| balance.station_id == station_id && balance.scope == "station")
-        {
-            continue;
-        }
-        let key_balances = balances
-            .iter()
-            .filter(|balance| balance.station_id == station_id && balance.scope == "station_key")
-            .collect::<Vec<_>>();
-        let Some(value) = sum_present_values(key_balances.iter().map(|balance| balance.value))
-        else {
-            continue;
-        };
-        let currency =
-            shared_text_value(key_balances.iter().map(|balance| balance.currency.as_str()))
-                .unwrap_or(NORMALIZED_BALANCE_CURRENCY)
-                .to_string();
-        let credit_unit = shared_optional_text_value(
-            key_balances
-                .iter()
-                .map(|balance| balance.credit_unit.as_deref()),
-        )
-        .map(ToString::to_string);
-        let aggregate = CollectedBalanceFact {
-            station_id,
-            station_key_id: None,
-            scope: "station".to_string(),
-            value: Some(value),
-            used_value: sum_present_values(key_balances.iter().map(|balance| balance.used_value)),
-            total_value: sum_present_values(key_balances.iter().map(|balance| balance.total_value)),
-            today_request_count: sum_present_i64_values(
-                key_balances
-                    .iter()
-                    .map(|balance| balance.today_request_count),
-            ),
-            total_request_count: sum_present_i64_values(
-                key_balances
-                    .iter()
-                    .map(|balance| balance.total_request_count),
-            ),
-            today_consumption: sum_present_values(
-                key_balances.iter().map(|balance| balance.today_consumption),
-            ),
-            total_consumption: sum_present_values(
-                key_balances.iter().map(|balance| balance.total_consumption),
-            ),
-            today_base_consumption: sum_present_values(
-                key_balances
-                    .iter()
-                    .map(|balance| balance.today_base_consumption),
-            ),
-            total_base_consumption: sum_present_values(
-                key_balances
-                    .iter()
-                    .map(|balance| balance.total_base_consumption),
-            ),
-            today_token_count: sum_present_i64_values(
-                key_balances.iter().map(|balance| balance.today_token_count),
-            ),
-            total_token_count: sum_present_i64_values(
-                key_balances.iter().map(|balance| balance.total_token_count),
-            ),
-            today_input_token_count: sum_present_i64_values(
-                key_balances
-                    .iter()
-                    .map(|balance| balance.today_input_token_count),
-            ),
-            today_output_token_count: sum_present_i64_values(
-                key_balances
-                    .iter()
-                    .map(|balance| balance.today_output_token_count),
-            ),
-            total_input_token_count: sum_present_i64_values(
-                key_balances
-                    .iter()
-                    .map(|balance| balance.total_input_token_count),
-            ),
-            total_output_token_count: sum_present_i64_values(
-                key_balances
-                    .iter()
-                    .map(|balance| balance.total_output_token_count),
-            ),
-            account_concurrency_limit: key_balances
-                .iter()
-                .find_map(|balance| balance.account_concurrency_limit),
-            currency,
-            credit_unit,
-            status: if value <= 0.0 { "depleted" } else { "normal" }.to_string(),
-            source: "station_key_balance_aggregate".to_string(),
-            confidence: key_balances
-                .iter()
-                .map(|balance| balance.confidence)
-                .fold(1.0_f64, f64::min),
-            collected_at: key_balances
-                .iter()
-                .filter_map(|balance| balance.collected_at.as_ref())
-                .max()
-                .cloned(),
-        };
-        balances.push(aggregate);
-    }
-}
-
-fn sum_present_values(values: impl Iterator<Item = Option<f64>>) -> Option<f64> {
-    let mut total = 0.0;
-    let mut has_value = false;
-    for value in values.flatten() {
-        total += value;
-        has_value = true;
-    }
-    has_value.then_some(total)
-}
-
-fn sum_present_i64_values(values: impl Iterator<Item = Option<i64>>) -> Option<i64> {
-    let mut total = 0_i64;
-    let mut has_value = false;
-    for value in values.flatten() {
-        total += value;
-        has_value = true;
-    }
-    has_value.then_some(total)
-}
-
-fn shared_text_value<'a>(mut values: impl Iterator<Item = &'a str>) -> Option<&'a str> {
-    let first = values.next()?;
-    values.all(|value| value == first).then_some(first)
-}
-
-fn shared_optional_text_value<'a>(
-    mut values: impl Iterator<Item = Option<&'a str>>,
-) -> Option<&'a str> {
-    let first = values.next()??;
-    values.all(|value| value == Some(first)).then_some(first)
-}
-
 pub(crate) fn run_key_for_current_intent(
     station_id: &str,
     endpoint_revision: i64,
@@ -429,7 +280,10 @@ pub(crate) fn run_key_for_current_intent_for_full(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::collectors::{facts::CollectorFacts, output::CollectorTask};
+    use crate::services::collectors::{
+        facts::{CollectedBalanceFact, CollectorFacts},
+        output::CollectorTask,
+    };
 
     fn output(task: CollectorTask) -> AdapterOutput {
         AdapterOutput {
@@ -502,5 +356,70 @@ mod tests {
         assert_ne!(first, other_revision);
         assert_ne!(first, other_task);
         assert_ne!(first, next_click);
+    }
+
+    #[test]
+    fn collector_apply_preserves_key_balances_without_creating_station_sum() {
+        let key_balance = |key_id: &str| CollectedBalanceFact {
+            station_id: "station-1".to_string(),
+            station_key_id: Some(key_id.to_string()),
+            scope: "station_key".to_string(),
+            balance_kind: "station_key_quota".to_string(),
+            value: Some(2.8),
+            used_value: None,
+            total_value: None,
+            today_request_count: None,
+            total_request_count: None,
+            today_consumption: None,
+            total_consumption: None,
+            today_base_consumption: None,
+            total_base_consumption: None,
+            today_token_count: None,
+            total_token_count: None,
+            today_input_token_count: None,
+            today_output_token_count: None,
+            total_input_token_count: None,
+            total_output_token_count: None,
+            account_concurrency_limit: None,
+            currency: "USD".to_string(),
+            credit_unit: None,
+            status: "normal".to_string(),
+            source: "sub2api_usage".to_string(),
+            confidence: 1.0,
+            collected_at: Some("100".to_string()),
+            evidence_confidence: "confirmed".to_string(),
+            spendability_authority: "authoritative".to_string(),
+        };
+        let mut facts = CollectorFacts::default();
+        facts.balances = vec![key_balance("key-a"), key_balance("key-b")];
+        let mut collected = output(CollectorTask::Balance);
+        collected.facts = facts;
+
+        let request = collector_apply_request_from_output(
+            "run-1".to_string(),
+            "station-1".to_string(),
+            1,
+            1,
+            1,
+            None,
+            collected,
+        )
+        .expect("collector request");
+
+        assert_eq!(request.facts.balances.len(), 2);
+        assert!(request
+            .facts
+            .balances
+            .iter()
+            .all(|balance| balance.scope == "station_key"));
+        assert_eq!(
+            request
+                .facts
+                .balances
+                .iter()
+                .filter_map(|balance| balance.value)
+                .sum::<f64>(),
+            5.6
+        );
     }
 }

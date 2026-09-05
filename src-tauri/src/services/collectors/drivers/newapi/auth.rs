@@ -1,3 +1,5 @@
+use crate::services::station_sessions::newapi_cookie_can_authenticate;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PreparedNewApiAuthKind {
     AccessToken,
@@ -9,6 +11,7 @@ pub(crate) struct PreparedNewApiAuthContext {
     pub kind: PreparedNewApiAuthKind,
     pub secret: String,
     pub user_id: String,
+    pub cookie: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -38,6 +41,10 @@ pub(crate) fn prepare_collector_auth_context<S: NewApiAuthSessionSource + ?Sized
         .clone()
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| "NewAPI session is missing user id".to_string())?;
+    let cookie = session
+        .cookie
+        .clone()
+        .filter(|value| !value.trim().is_empty());
     if let Some(access_token) = session
         .access_token
         .clone()
@@ -47,17 +54,18 @@ pub(crate) fn prepare_collector_auth_context<S: NewApiAuthSessionSource + ?Sized
             kind: PreparedNewApiAuthKind::AccessToken,
             secret: access_token,
             user_id,
+            cookie,
         });
     }
-    if let Some(cookie) = session
-        .cookie
+    if let Some(cookie_header) = cookie
         .clone()
-        .filter(|value| !value.trim().is_empty())
+        .filter(|value| newapi_cookie_can_authenticate(value))
     {
         return Ok(PreparedNewApiAuthContext {
             kind: PreparedNewApiAuthKind::Cookie,
-            secret: cookie,
+            secret: cookie_header,
             user_id,
+            cookie,
         });
     }
     Err(session
@@ -99,6 +107,7 @@ mod tests {
         assert_eq!(context.kind, PreparedNewApiAuthKind::AccessToken);
         assert_eq!(context.secret, "token");
         assert_eq!(context.user_id, "42");
+        assert_eq!(context.cookie.as_deref(), Some("session=abc"));
     }
 
     #[test]
@@ -116,6 +125,23 @@ mod tests {
 
         assert_eq!(context.kind, PreparedNewApiAuthKind::Cookie);
         assert_eq!(context.secret, "session=abc");
+    }
+
+    #[test]
+    fn auth_context_ignores_newapi_hint_cookies() {
+        let source = StubSessionSource {
+            session: NewApiResolvedSession {
+                access_token: None,
+                cookie: Some("new_api_has_session=1; new_api_refresh=fixture-refresh".to_string()),
+                newapi_user_id: Some("42".to_string()),
+                message: Some("session refresh or login is required".to_string()),
+            },
+        };
+
+        assert_eq!(
+            prepare_collector_auth_context(&source, "station-1", 123).unwrap_err(),
+            "session refresh or login is required"
+        );
     }
 
     #[test]

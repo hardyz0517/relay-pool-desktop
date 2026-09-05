@@ -691,6 +691,7 @@ impl CaptureCommandFacade {
             ProviderKind::NewApi => ProviderAuthContext::NewApi {
                 user_id: expected_user_id.clone(),
                 secret_purpose: CredentialSecretPurpose::SessionCookie,
+                credit_per_cny: station.credit_per_cny,
             },
             ProviderKind::Sub2Api => ProviderAuthContext::Sub2Api {
                 station_keys: Vec::new(),

@@ -90,6 +90,17 @@ impl StationCatalogStore {
                    WHERE active_operation.station_id = stations.id
                      AND (active_operation.task_type = ?1
                           OR active_operation.task_type = 'unspecified')
+                     -- An operation fenced to an older credential or intent
+                     -- is stale history and must not suppress new scheduling.
+                     AND active_operation.endpoint_revision = stations.endpoint_revision
+                     AND active_operation.credential_revision = COALESCE((
+                         SELECT revision FROM domain_revisions
+                         WHERE scope = 'station_account:' || stations.id
+                     ), -1)
+                     AND active_operation.intent_sequence = COALESCE((
+                         SELECT revision FROM domain_revisions
+                         WHERE scope = 'station_collection_intent:' || stations.id
+                     ), -1)
                      AND active_operation.status IN ('queued', 'running')
               )
               AND (

@@ -13,7 +13,10 @@ use crate::{
     services::{
         secrets::mask::redact_text,
         station_endpoints::build_management_url,
-        station_sessions::{merge_set_cookie_headers, token_expires_at_from_payload},
+        station_sessions::{
+            merge_set_cookie_headers, newapi_cookie_can_authenticate, newapi_cookie_can_refresh,
+            token_expires_at_from_payload,
+        },
     },
 };
 
@@ -45,7 +48,9 @@ pub(crate) struct LoginProbeSession {
 #[derive(Debug, Clone)]
 pub(crate) struct NewApiPasswordSession {
     pub user_id: String,
-    pub cookie: String,
+    pub cookie: Option<String>,
+    pub access_token: Option<String>,
+    pub token_expires_at: Option<String>,
 }
 
 pub(crate) async fn test_station_login_input(
@@ -165,12 +170,77 @@ async fn probe_newapi_login(
             "username": login_username,
             "password": login_password,
         }),
+        None,
         proxy.clone(),
         cancellation.clone(),
         correlation_id.clone(),
         LOGIN_TIMEOUT,
     )
     .await?;
+    complete_newapi_auth_response(
+        outbound,
+        website_url,
+        response,
+        None,
+        true,
+        deadline,
+        proxy,
+        cancellation,
+        correlation_id,
+    )
+    .await
+}
+
+pub(crate) async fn probe_newapi_refresh(
+    outbound: &AsyncOutboundClient,
+    website_url: &str,
+    cookie: &str,
+    fallback_user_id: Option<&str>,
+    proxy: ProxyPolicy,
+    cancellation: CancellationToken,
+    correlation_id: Option<String>,
+) -> Result<Option<NewApiPasswordSession>, String> {
+    if !newapi_cookie_can_refresh(cookie) {
+        return Ok(None);
+    }
+    let url = build_management_url(website_url, "/api/user/auth/refresh")?;
+    let response = execute_login_request(
+        outbound,
+        url,
+        json!({}),
+        Some(cookie),
+        proxy.clone(),
+        cancellation.clone(),
+        correlation_id.clone(),
+        LOGIN_TIMEOUT,
+    )
+    .await?;
+    let attempt = complete_newapi_auth_response(
+        outbound,
+        website_url,
+        response,
+        fallback_user_id,
+        false,
+        tokio::time::Instant::now() + LOGIN_TIMEOUT,
+        proxy,
+        cancellation,
+        correlation_id,
+    )
+    .await?;
+    Ok(attempt.newapi_session)
+}
+
+async fn complete_newapi_auth_response(
+    outbound: &AsyncOutboundClient,
+    website_url: &str,
+    response: crate::outbound::OutboundResponse,
+    fallback_user_id: Option<&str>,
+    verify_missing_user_id: bool,
+    deadline: tokio::time::Instant,
+    proxy: ProxyPolicy,
+    cancellation: CancellationToken,
+    correlation_id: Option<String>,
+) -> Result<LoginProbeAttempt, String> {
     let status = response.status.as_u16();
     let set_cookies = response
         .headers
@@ -206,15 +276,19 @@ async fn probe_newapi_login(
             "NewAPI login was not accepted; complete browser authorization",
         ));
     }
-    let Some(mut cookie) = merge_set_cookie_headers(None, &set_cookies) else {
-        return Ok(newapi_manual_login_attempt(
-            "NewAPI login did not return a session cookie",
-            "NewAPI login returned no reusable browser session",
-        ));
-    };
-    let user_id = if let Some(user_id) = newapi_user_id(&body) {
-        user_id
-    } else {
+    let mut cookie = merge_set_cookie_headers(None, &set_cookies);
+    let mut access_token = extract_token(&body);
+    let token_expires_at = token_expires_at_from_payload(&body);
+    let mut user_id = newapi_user_id(&body).or_else(|| {
+        fallback_user_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+    });
+    if user_id.is_none()
+        && verify_missing_user_id
+        && (access_token.is_some() || cookie_can_authenticate(cookie.as_deref()))
+    {
         let Some(remaining) = deadline.checked_duration_since(tokio::time::Instant::now()) else {
             return Ok(newapi_manual_login_attempt(
                 "NewAPI login session verification timed out",
@@ -225,7 +299,8 @@ async fn probe_newapi_login(
         let self_response = execute_newapi_self_request(
             outbound,
             self_url,
-            &cookie,
+            cookie.as_deref(),
+            access_token.as_deref(),
             proxy,
             cancellation,
             correlation_id,
@@ -253,31 +328,56 @@ async fn probe_newapi_login(
                 "NewAPI login cookie could not be verified; complete browser authorization",
             ));
         }
-        let Some(user_id) = newapi_user_id(&self_body) else {
+        let Some(verified_user_id) = newapi_user_id(&self_body) else {
             return Ok(newapi_manual_login_attempt(
                 format!("NewAPI user self response is missing user id (HTTP {self_status})"),
                 "NewAPI login cookie did not produce a verifiable user identity",
             ));
         };
-        if let Some(merged_cookie) = merge_set_cookie_headers(Some(&cookie), &self_set_cookies) {
-            cookie = merged_cookie;
+        if let Some(merged_cookie) = merge_set_cookie_headers(cookie.as_deref(), &self_set_cookies)
+        {
+            cookie = Some(merged_cookie);
         }
-        user_id
+        if access_token.is_none() {
+            access_token = extract_token(&self_body);
+        }
+        user_id = Some(verified_user_id);
+    }
+    let Some(user_id) = user_id else {
+        return Ok(newapi_manual_login_attempt(
+            "NewAPI login did not return a reusable user identity",
+            "NewAPI login did not produce a verifiable user identity",
+        ));
     };
+    if access_token.is_none() && !cookie_can_authenticate(cookie.as_deref()) {
+        return Ok(newapi_manual_login_attempt(
+            "NewAPI login did not return a reusable session",
+            "NewAPI login returned no reusable access token or browser session",
+        ));
+    }
     let session = LoginProbeSession {
-        access_token: None,
+        access_token: access_token.clone(),
         refresh_token: None,
-        cookie: Some(cookie.clone()),
+        cookie: cookie.clone(),
         newapi_user_id: Some(user_id.clone()),
-        token_expires_at: None,
+        token_expires_at: token_expires_at.clone(),
     };
     Ok(LoginProbeAttempt {
         credential_present: true,
         login_message: Some("NewAPI login succeeded".to_string()),
         manual_required: None,
-        newapi_session: Some(NewApiPasswordSession { user_id, cookie }),
+        newapi_session: Some(NewApiPasswordSession {
+            user_id,
+            cookie,
+            access_token,
+            token_expires_at,
+        }),
         session: Some(session),
     })
+}
+
+fn cookie_can_authenticate(cookie: Option<&str>) -> bool {
+    cookie.is_some_and(newapi_cookie_can_authenticate)
 }
 
 fn newapi_manual_login_attempt(
@@ -331,6 +431,7 @@ async fn probe_sub2api_login(
                 outbound,
                 url,
                 json!({ field: login_username, "password": login_password }),
+                None,
                 proxy.clone(),
                 cancellation.clone(),
                 correlation_id.clone(),
@@ -418,6 +519,7 @@ async fn execute_login_request(
     outbound: &AsyncOutboundClient,
     url: String,
     payload: Value,
+    cookie: Option<&str>,
     proxy: ProxyPolicy,
     cancellation: CancellationToken,
     correlation_id: Option<String>,
@@ -439,6 +541,15 @@ async fn execute_login_request(
             &policy,
         )
         .map_err(|error| error.to_string())?;
+    if let Some(cookie) = cookie.map(str::trim).filter(|value| !value.is_empty()) {
+        headers
+            .insert_sensitive(
+                header::COOKIE,
+                SecretHeaderValue::new(cookie.to_string()),
+                &policy,
+            )
+            .map_err(|error| error.to_string())?;
+    }
     let request = OutboundRequest {
         method: Method::POST,
         url,
@@ -458,7 +569,8 @@ async fn execute_login_request(
 async fn execute_newapi_self_request(
     outbound: &AsyncOutboundClient,
     url: String,
-    cookie: &str,
+    cookie: Option<&str>,
+    access_token: Option<&str>,
     proxy: ProxyPolicy,
     cancellation: CancellationToken,
     correlation_id: Option<String>,
@@ -473,13 +585,27 @@ async fn execute_newapi_self_request(
             &policy,
         )
         .map_err(|error| error.to_string())?;
-    headers
-        .insert_sensitive(
-            header::COOKIE,
-            SecretHeaderValue::new(cookie.to_string()),
-            &policy,
-        )
-        .map_err(|error| error.to_string())?;
+    if let Some(access_token) = access_token
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        headers
+            .insert_sensitive(
+                header::AUTHORIZATION,
+                SecretHeaderValue::new(format!("Bearer {access_token}")),
+                &policy,
+            )
+            .map_err(|error| error.to_string())?;
+    }
+    if let Some(cookie) = cookie.map(str::trim).filter(|value| !value.is_empty()) {
+        headers
+            .insert_sensitive(
+                header::COOKIE,
+                SecretHeaderValue::new(cookie.to_string()),
+                &policy,
+            )
+            .map_err(|error| error.to_string())?;
+    }
     let request = OutboundRequest {
         method: Method::GET,
         url,
@@ -512,10 +638,7 @@ fn extract_refresh_token(value: &Value) -> Option<String> {
 }
 
 fn newapi_user_id(value: &Value) -> Option<String> {
-    value
-        .pointer("/data/id")
-        .or_else(|| value.get("id"))
-        .and_then(string_or_i64)
+    extract_user_id(value)
 }
 
 fn extract_user_id(value: &Value) -> Option<String> {
@@ -544,6 +667,8 @@ fn extract_token(value: &Value) -> Option<String> {
         .get("access_token")
         .or_else(|| value.get("token"))
         .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
         .map(ToString::to_string)
         .or_else(|| value.get("data").and_then(extract_token))
 }
@@ -602,12 +727,23 @@ mod tests {
         services::collectors::drivers::newapi::test_support::{json_response, TestHttpServer},
     };
 
-    fn json_response_with_cookie(body: Value, cookie: &str) -> String {
+    fn json_response_with_cookies(body: Value, cookies: &[&str]) -> String {
         let body = body.to_string();
-        format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nSet-Cookie: {cookie}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        let mut response = String::from("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n");
+        for cookie in cookies {
+            response.push_str("Set-Cookie: ");
+            response.push_str(cookie);
+            response.push_str("\r\n");
+        }
+        response.push_str(&format!(
+            "Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
             body.len(),
-        )
+        ));
+        response
+    }
+
+    fn json_response_with_cookie(body: Value, cookie: &str) -> String {
+        json_response_with_cookies(body, &[cookie])
     }
 
     #[test]
@@ -623,6 +759,14 @@ mod tests {
         );
         assert_eq!(
             newapi_user_id(&json!({"success": true, "data": {"id": 42}})).as_deref(),
+            Some("42")
+        );
+        assert_eq!(
+            newapi_user_id(&json!({
+                "success": true,
+                "data": {"user": {"id": 42}, "access_token": "fixture-access"}
+            }))
+            .as_deref(),
             Some("42")
         );
         assert_eq!(
@@ -678,13 +822,159 @@ mod tests {
 
         let session = attempt.newapi_session.expect("verified NewAPI session");
         assert_eq!(session.user_id, "42");
-        assert_eq!(session.cookie, "session=rotated");
+        assert_eq!(session.cookie.as_deref(), Some("session=rotated"));
+        assert!(session.access_token.is_none());
         let requests = server.finish();
         assert!(requests[0].starts_with("POST /api/user/login "));
         assert!(requests[1].starts_with("GET /api/user/self "));
         assert!(requests[1]
             .to_ascii_lowercase()
             .contains("cookie: session=login"));
+    }
+
+    #[tokio::test]
+    async fn newapi_auth_bundle_login_accepts_access_token_without_gin_session() {
+        let server = TestHttpServer::sequence(vec![Some(json_response_with_cookies(
+            json!({
+                "success": true,
+                "data": {
+                    "access_token": "fixture-access",
+                    "token_type": "Bearer",
+                    "access_expires_at": 1_700_000_000,
+                    "user": {"id": 42},
+                    "session": {"sid": "fixture-sid"}
+                }
+            }),
+            &[
+                "new_api_refresh=fixture-refresh; Path=/api/user/auth; HttpOnly",
+                "new_api_has_session=1; Path=/",
+            ],
+        ))]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+
+        let attempt = probe_newapi_login(
+            &outbound,
+            &server.base_url,
+            "user@example.invalid",
+            "saved-password",
+            ProxyPolicy::Direct,
+            CancellationToken::new(),
+            Some("newapi-auth-bundle-test".to_string()),
+        )
+        .await
+        .expect("login probe");
+
+        let session = attempt.newapi_session.expect("AuthBundle session");
+        assert_eq!(session.user_id, "42");
+        assert_eq!(session.access_token.as_deref(), Some("fixture-access"));
+        assert_eq!(session.token_expires_at.as_deref(), Some("1700000000000"));
+        assert_eq!(
+            session.cookie.as_deref(),
+            Some("new_api_refresh=fixture-refresh; new_api_has_session=1")
+        );
+        assert_eq!(server.finish().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn newapi_auth_bundle_self_probe_sends_bearer_when_user_id_is_missing() {
+        let server = TestHttpServer::sequence(vec![
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {"access_token": "fixture-access"}
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({"success": true, "data": {"id": 42}}),
+            )),
+        ]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+
+        let attempt = probe_newapi_login(
+            &outbound,
+            &server.base_url,
+            "user@example.invalid",
+            "saved-password",
+            ProxyPolicy::Direct,
+            CancellationToken::new(),
+            Some("newapi-bearer-self-test".to_string()),
+        )
+        .await
+        .expect("login probe");
+
+        let session = attempt.newapi_session.expect("verified AuthBundle session");
+        assert_eq!(session.user_id, "42");
+        assert_eq!(session.access_token.as_deref(), Some("fixture-access"));
+        assert!(session.cookie.is_none());
+        let requests = server.finish();
+        assert!(requests[1].starts_with("GET /api/user/self "));
+        assert!(requests[1]
+            .to_ascii_lowercase()
+            .contains("authorization: bearer fixture-access"));
+    }
+
+    #[tokio::test]
+    async fn newapi_hint_cookie_without_token_is_not_a_session() {
+        let server = TestHttpServer::sequence(vec![Some(json_response_with_cookie(
+            json!({"success": true, "data": {}}),
+            "new_api_has_session=1; Path=/",
+        ))]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+
+        let attempt = probe_newapi_login(
+            &outbound,
+            &server.base_url,
+            "user@example.invalid",
+            "saved-password",
+            ProxyPolicy::Direct,
+            CancellationToken::new(),
+            Some("newapi-hint-cookie-test".to_string()),
+        )
+        .await
+        .expect("login probe");
+
+        assert!(attempt.newapi_session.is_none());
+        assert!(attempt.manual_required.is_some());
+        assert_eq!(server.finish().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn newapi_refresh_rotates_access_token_from_refresh_cookie() {
+        let server = TestHttpServer::sequence(vec![Some(json_response_with_cookie(
+            json!({
+                "success": true,
+                "data": {
+                    "access_token": "rotated-access",
+                    "access_expires_at": 1_700_000_100,
+                    "user": {"id": 42}
+                }
+            }),
+            "new_api_refresh=rotated-refresh; Path=/api/user/auth; HttpOnly",
+        ))]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+
+        let session = probe_newapi_refresh(
+            &outbound,
+            &server.base_url,
+            "new_api_refresh=fixture-refresh; new_api_has_session=1",
+            Some("42"),
+            ProxyPolicy::Direct,
+            CancellationToken::new(),
+            Some("newapi-refresh-test".to_string()),
+        )
+        .await
+        .expect("refresh probe")
+        .expect("rotated session");
+
+        assert_eq!(session.access_token.as_deref(), Some("rotated-access"));
+        assert_eq!(session.user_id, "42");
+        let requests = server.finish();
+        assert!(requests[0].starts_with("POST /api/user/auth/refresh "));
+        assert!(requests[0]
+            .to_ascii_lowercase()
+            .contains("cookie: new_api_refresh=fixture-refresh"));
     }
 
     #[tokio::test]

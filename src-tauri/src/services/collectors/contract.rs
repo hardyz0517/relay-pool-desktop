@@ -138,6 +138,7 @@ pub enum ProviderAuthContext {
     NewApi {
         user_id: String,
         secret_purpose: CredentialSecretPurpose,
+        credit_per_cny: f64,
     },
     Sub2Api {
         station_keys: Vec<Sub2ApiStationKeyCredential>,

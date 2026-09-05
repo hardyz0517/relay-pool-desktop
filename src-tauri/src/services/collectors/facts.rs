@@ -9,6 +9,7 @@ pub struct CollectedBalanceFact {
     pub station_id: String,
     pub station_key_id: Option<String>,
     pub scope: String,
+    pub balance_kind: String,
     pub value: Option<f64>,
     pub used_value: Option<f64>,
     pub total_value: Option<f64>,
@@ -31,6 +32,8 @@ pub struct CollectedBalanceFact {
     pub source: String,
     pub confidence: f64,
     pub collected_at: Option<String>,
+    pub evidence_confidence: String,
+    pub spendability_authority: String,
 }
 
 #[derive(Debug, Clone)]

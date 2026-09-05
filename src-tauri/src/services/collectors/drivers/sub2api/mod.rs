@@ -4717,7 +4717,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn balance_collection_adds_subscription_quota_to_station_balance() {
+    async fn balance_collection_keeps_subscription_quota_separate_from_station_balance() {
         let server = TestHttpServer::sequence(vec![
             Some(json_response(
                 200,
@@ -4747,16 +4747,26 @@ mod tests {
             .facts
             .balances
             .iter()
-            .find(|balance| balance.scope == "station")
+            .find(|balance| balance.scope == "station" && balance.balance_kind == "account_balance")
             .expect("station balance");
 
         assert_eq!(
             station_balance.value,
-            Some(5.0),
+            Some(0.0),
             "unexpected balances: {:?}; requests: {:?}",
             output.facts.balances,
             requests
         );
+        let subscription = output
+            .facts
+            .balances
+            .iter()
+            .find(|balance| {
+                balance.scope == "subscription" && balance.balance_kind == "subscription_quota"
+            })
+            .expect("subscription quota");
+        assert_eq!(subscription.value, Some(5.0));
+        assert_eq!(subscription.total_value, Some(5.0));
         assert_eq!(requests.len(), 4);
         assert!(
             requests[0].starts_with("GET /v1/usage "),

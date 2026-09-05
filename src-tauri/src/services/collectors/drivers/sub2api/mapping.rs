@@ -77,6 +77,7 @@ pub fn parse_usage_balance(
         station_id: station_id.to_string(),
         station_key_id,
         scope: "station_key".to_string(),
+        balance_kind: "station_key_quota".to_string(),
         value: normalize_point_balance_to_usd(remaining, credit_per_cny),
         used_value: normalize_point_balance_to_usd(used, credit_per_cny),
         total_value: normalize_point_balance_to_usd(total, credit_per_cny),
@@ -202,6 +203,18 @@ pub fn parse_usage_balance(
         source: "sub2api_usage".to_string(),
         confidence: if remaining.is_some() { 0.9 } else { 0.4 },
         collected_at: None,
+        evidence_confidence: if remaining.is_some() {
+            "confirmed"
+        } else {
+            "unknown"
+        }
+        .to_string(),
+        spendability_authority: if remaining.is_some() {
+            "authoritative"
+        } else {
+            "unknown"
+        }
+        .to_string(),
     }
 }
 
@@ -764,27 +777,31 @@ pub(crate) fn merge_account_profile_balance(
     balances: &mut Vec<CollectedBalanceFact>,
     profile_balance: CollectedBalanceFact,
 ) {
-    let Some(limit) = profile_balance.account_concurrency_limit else {
-        return;
-    };
     if let Some(station_balance) = balances.iter_mut().find(|balance| {
-        balance.station_id == profile_balance.station_id && balance.scope == "station"
+        balance.station_id == profile_balance.station_id
+            && balance.station_key_id.is_none()
+            && balance.scope == "station"
+            && balance.balance_kind == "account_balance"
     }) {
-        station_balance.account_concurrency_limit = Some(limit);
+        if profile_balance.value.is_some() {
+            station_balance.value = profile_balance.value;
+            station_balance.used_value = profile_balance.used_value;
+            station_balance.total_value = profile_balance.total_value;
+            station_balance.status = profile_balance.status.clone();
+            station_balance.source = profile_balance.source.clone();
+            station_balance.confidence = profile_balance.confidence;
+            station_balance.collected_at = profile_balance.collected_at.clone();
+        }
+        station_balance.account_concurrency_limit = profile_balance
+            .account_concurrency_limit
+            .or(station_balance.account_concurrency_limit);
         return;
     }
 
-    let mut merged_into_key_balance = false;
-    for key_balance in balances.iter_mut().filter(|balance| {
-        balance.station_id == profile_balance.station_id && balance.scope == "station_key"
-    }) {
-        key_balance.account_concurrency_limit = Some(limit);
-        merged_into_key_balance = true;
-    }
-
-    if !merged_into_key_balance {
-        balances.push(profile_balance);
-    }
+    // Always retain the profile fact. A profile that only contains the
+    // account concurrency limit is still valuable and must not be discarded
+    // merely because per-key usage facts were collected first.
+    balances.push(profile_balance);
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -952,57 +969,34 @@ pub(crate) fn merge_dashboard_usage_stats(
     if !stats.has_any() {
         return;
     }
-    if let Some(station_balance) = balances
-        .iter_mut()
-        .find(|balance| balance.station_id == station_id && balance.scope == "station")
-    {
+    if let Some(station_balance) = balances.iter_mut().find(|balance| {
+        balance.station_id == station_id
+            && balance.station_key_id.is_none()
+            && balance.scope == "station"
+            && balance.balance_kind == "account_balance"
+    }) {
         stats.apply_to(station_balance);
         return;
     }
 
-    let key_balances = balances
-        .iter()
-        .filter(|balance| balance.station_id == station_id && balance.scope == "station_key")
-        .collect::<Vec<_>>();
-    let Some(value) = sum_present_f64_values(key_balances.iter().map(|balance| balance.value))
-    else {
+    if let Some(usage_summary) = balances.iter_mut().find(|balance| {
+        balance.station_id == station_id
+            && balance.station_key_id.is_none()
+            && balance.scope == "station"
+            && balance.balance_kind == "usage_summary"
+    }) {
+        stats.apply_to(usage_summary);
         return;
-    };
-    let used_value = sum_present_f64_values(key_balances.iter().map(|balance| balance.used_value));
-    let total_value =
-        sum_present_f64_values(key_balances.iter().map(|balance| balance.total_value));
-    let currency = shared_balance_text_value(
-        key_balances
-            .iter()
-            .map(|balance| Some(balance.currency.as_str())),
-    )
-    .unwrap_or(NORMALIZED_BALANCE_CURRENCY)
-    .to_string();
-    let credit_unit = shared_balance_text_value(
-        key_balances
-            .iter()
-            .map(|balance| balance.credit_unit.as_deref()),
-    )
-    .map(ToString::to_string);
-    let account_concurrency_limit = key_balances
-        .iter()
-        .find_map(|balance| balance.account_concurrency_limit);
-    let confidence = key_balances
-        .iter()
-        .map(|balance| balance.confidence)
-        .fold(1.0_f64, f64::min);
-    let collected_at = key_balances
-        .iter()
-        .filter_map(|balance| balance.collected_at.as_ref())
-        .max()
-        .cloned();
-    let mut station_balance = CollectedBalanceFact {
+    }
+
+    let mut usage_summary = CollectedBalanceFact {
         station_id: station_id.to_string(),
         station_key_id: None,
         scope: "station".to_string(),
-        value: Some(value),
-        used_value,
-        total_value,
+        balance_kind: "usage_summary".to_string(),
+        value: None,
+        used_value: None,
+        total_value: None,
         today_request_count: None,
         total_request_count: None,
         today_consumption: None,
@@ -1015,16 +1009,18 @@ pub(crate) fn merge_dashboard_usage_stats(
         today_output_token_count: None,
         total_input_token_count: None,
         total_output_token_count: None,
-        account_concurrency_limit,
-        currency,
-        credit_unit,
-        status: if value <= 0.0 { "depleted" } else { "normal" }.to_string(),
-        source: "station_key_balance_aggregate".to_string(),
-        confidence,
-        collected_at,
+        account_concurrency_limit: None,
+        currency: NORMALIZED_BALANCE_CURRENCY.to_string(),
+        credit_unit: None,
+        status: "unknown".to_string(),
+        source: "sub2api_dashboard_usage".to_string(),
+        confidence: 0.9,
+        collected_at: None,
+        evidence_confidence: "confirmed".to_string(),
+        spendability_authority: "advisory".to_string(),
     };
-    stats.apply_to(&mut station_balance);
-    balances.push(station_balance);
+    stats.apply_to(&mut usage_summary);
+    balances.push(usage_summary);
 }
 
 pub(crate) fn parse_active_subscription_quota(
@@ -1103,69 +1099,16 @@ pub(crate) fn merge_subscription_quota(
     station_id: &str,
     quota: SubscriptionQuotaSummary,
 ) {
-    if let Some(station_balance) = balances
-        .iter_mut()
-        .find(|balance| balance.station_id == station_id && balance.scope == "station")
-    {
-        station_balance.value = add_balance_values(station_balance.value, quota.remaining);
-        station_balance.used_value = add_balance_values(station_balance.used_value, quota.used);
-        station_balance.total_value = add_balance_values(station_balance.total_value, quota.total);
-        station_balance.status = if station_balance.value.is_some_and(|value| value <= 0.0) {
-            "depleted"
-        } else {
-            "normal"
-        }
-        .to_string();
-        station_balance.source = "sub2api_account_profile_with_subscription".to_string();
-        return;
-    }
-
-    let key_balances = balances
-        .iter()
-        .filter(|balance| balance.station_id == station_id && balance.scope == "station_key")
-        .collect::<Vec<_>>();
-    let key_value = sum_present_f64_values(key_balances.iter().map(|balance| balance.value));
-    let key_used_value =
-        sum_present_f64_values(key_balances.iter().map(|balance| balance.used_value));
-    let key_total_value =
-        sum_present_f64_values(key_balances.iter().map(|balance| balance.total_value));
-    let currency = shared_balance_text_value(
-        key_balances
-            .iter()
-            .map(|balance| Some(balance.currency.as_str())),
-    )
-    .unwrap_or(NORMALIZED_BALANCE_CURRENCY)
-    .to_string();
-    let credit_unit = shared_balance_text_value(
-        key_balances
-            .iter()
-            .map(|balance| balance.credit_unit.as_deref()),
-    )
-    .map(ToString::to_string);
-    let account_concurrency_limit = key_balances
-        .iter()
-        .find_map(|balance| balance.account_concurrency_limit);
-    let confidence = key_balances
-        .iter()
-        .map(|balance| balance.confidence)
-        .fold(0.9_f64, f64::min);
-    let collected_at = key_balances
-        .iter()
-        .filter_map(|balance| balance.collected_at.as_ref())
-        .max()
-        .cloned();
-    let value = key_value.unwrap_or(0.0) + quota.remaining;
+    // Subscription quotas are a separate funding dimension. They are not an
+    // account balance and must never be added to profile or key amounts.
     balances.push(CollectedBalanceFact {
         station_id: station_id.to_string(),
         station_key_id: None,
-        scope: "station".to_string(),
-        value: Some(value),
-        used_value: key_used_value
-            .map(|value| value + quota.used)
-            .or(Some(quota.used)),
-        total_value: key_total_value
-            .map(|value| value + quota.total)
-            .or(Some(quota.total)),
+        scope: "subscription".to_string(),
+        balance_kind: "subscription_quota".to_string(),
+        value: Some(quota.remaining),
+        used_value: Some(quota.used),
+        total_value: Some(quota.total),
         today_request_count: None,
         total_request_count: None,
         today_consumption: None,
@@ -1178,18 +1121,21 @@ pub(crate) fn merge_subscription_quota(
         today_output_token_count: None,
         total_input_token_count: None,
         total_output_token_count: None,
-        account_concurrency_limit,
-        currency,
-        credit_unit,
-        status: if value <= 0.0 { "depleted" } else { "normal" }.to_string(),
-        source: "sub2api_balance_with_subscription".to_string(),
-        confidence,
-        collected_at,
+        account_concurrency_limit: None,
+        currency: NORMALIZED_BALANCE_CURRENCY.to_string(),
+        credit_unit: Some("sub2api_subscription_quota".to_string()),
+        status: if quota.remaining <= 0.0 {
+            "depleted"
+        } else {
+            "normal"
+        }
+        .to_string(),
+        source: "sub2api_subscription_quota".to_string(),
+        confidence: 0.9,
+        collected_at: None,
+        evidence_confidence: "confirmed".to_string(),
+        spendability_authority: "advisory".to_string(),
     });
-}
-
-fn add_balance_values(value: Option<f64>, extra: f64) -> Option<f64> {
-    value.map(|value| value + extra).or(Some(extra))
 }
 
 fn platform_quota_items(payload: &Value) -> Vec<&Value> {
@@ -1277,26 +1223,6 @@ fn subscription_quota_window(usage: &Value, limits: &Value) -> Option<(f64, f64,
         .min_by(|left, right| left.0.total_cmp(&right.0))
 }
 
-fn sum_present_f64_values(values: impl Iterator<Item = Option<f64>>) -> Option<f64> {
-    let mut total = 0.0_f64;
-    let mut has_value = false;
-    for value in values.flatten() {
-        total += value;
-        has_value = true;
-    }
-    has_value.then_some(total)
-}
-
-fn shared_balance_text_value<'a>(
-    mut values: impl Iterator<Item = Option<&'a str>>,
-) -> Option<&'a str> {
-    let first = values.find_map(|value| value)?;
-    values
-        .flatten()
-        .all(|value| value == first)
-        .then_some(first)
-}
-
 pub(crate) fn parse_account_balance(
     station_id: &str,
     payload: &Value,
@@ -1313,6 +1239,7 @@ pub(crate) fn parse_account_balance(
         station_id: station_id.to_string(),
         station_key_id: None,
         scope: "station".to_string(),
+        balance_kind: "account_balance".to_string(),
         value: normalize_point_balance_to_usd(value, credit_per_cny),
         used_value: normalize_point_balance_to_usd(used, credit_per_cny),
         total_value: normalize_point_balance_to_usd(total, credit_per_cny),
@@ -1441,6 +1368,18 @@ pub(crate) fn parse_account_balance(
         source: "sub2api_account_profile".to_string(),
         confidence: 0.85,
         collected_at: None,
+        evidence_confidence: if value.is_some() {
+            "confirmed"
+        } else {
+            "unknown"
+        }
+        .to_string(),
+        spendability_authority: if value.is_some() {
+            "authoritative"
+        } else {
+            "unknown"
+        }
+        .to_string(),
     })
 }
 
@@ -1655,7 +1594,7 @@ mod tests {
     }
 
     #[test]
-    fn subscription_points_are_added_after_point_balance_conversion() {
+    fn subscription_quota_is_kept_separate_from_account_balance() {
         let mut balances =
             vec![
                 parse_account_balance("station-1", &json!({"data": {"balance": 720.0}}), 27.0)
@@ -1676,16 +1615,18 @@ mod tests {
 
         merge_subscription_quota(&mut balances, "station-1", quota);
 
-        assert!((balances[0].value.expect("merged balance") - (720.0 / 27.0 + 5.0)).abs() < 1e-12);
-        assert_eq!(balances[0].total_value, Some(5.0));
-        assert_eq!(
-            balances[0].source,
-            "sub2api_account_profile_with_subscription"
-        );
+        assert!((balances[0].value.expect("account balance") - (720.0 / 27.0)).abs() < 1e-12);
+        let subscription = balances
+            .iter()
+            .find(|balance| balance.scope == "subscription")
+            .expect("subscription quota");
+        assert_eq!(subscription.value, Some(5.0));
+        assert_eq!(subscription.total_value, Some(5.0));
+        assert_eq!(subscription.source, "sub2api_subscription_quota");
     }
 
     #[test]
-    fn account_profile_and_dashboard_stats_merge_into_balance() {
+    fn account_profile_and_dashboard_stats_remain_separate_facts() {
         let mut balances = vec![parse_usage_balance(
             "station-1",
             Some("key-1".to_string()),
@@ -1707,13 +1648,53 @@ mod tests {
         merge_dashboard_usage_stats(&mut balances, "station-1", stats);
 
         assert_eq!(balances.len(), 2);
-        assert_eq!(balances[0].account_concurrency_limit, Some(8));
         let station_balance = balances
             .iter()
-            .find(|balance| balance.scope == "station")
-            .expect("station aggregate");
+            .find(|balance| balance.scope == "station" && balance.balance_kind == "account_balance")
+            .expect("account balance fact");
+        assert_eq!(station_balance.value, None);
+        assert_eq!(station_balance.account_concurrency_limit, Some(8));
         assert_eq!(station_balance.today_request_count, Some(4));
         assert_eq!(station_balance.total_request_count, Some(40));
         assert_eq!(station_balance.today_consumption, Some(0.25));
+    }
+
+    #[test]
+    fn dashboard_stats_never_create_account_balance_from_multiple_keys() {
+        let mut balances = vec![
+            parse_usage_balance(
+                "station-1",
+                Some("key-1".to_string()),
+                &json!({"quota": {"remaining": 2.8}}),
+                1.0,
+            ),
+            parse_usage_balance(
+                "station-1",
+                Some("key-2".to_string()),
+                &json!({"quota": {"remaining": 2.8}}),
+                1.0,
+            ),
+        ];
+        let stats = parse_dashboard_usage_stats(&json!({
+            "data": {"today_request_count": 4}
+        }))
+        .expect("dashboard stats");
+
+        merge_dashboard_usage_stats(&mut balances, "station-1", stats);
+
+        assert_eq!(balances.len(), 3);
+        assert_eq!(
+            balances
+                .iter()
+                .filter(|balance| balance.balance_kind == "station_key_quota")
+                .count(),
+            2
+        );
+        let usage_summary = balances
+            .iter()
+            .find(|balance| balance.balance_kind == "usage_summary")
+            .expect("usage summary fact");
+        assert_eq!(usage_summary.value, None);
+        assert_eq!(usage_summary.today_request_count, Some(4));
     }
 }

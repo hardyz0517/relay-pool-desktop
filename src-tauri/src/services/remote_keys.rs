@@ -302,6 +302,7 @@ pub(crate) fn prepare_newapi_remote_key_driver_context_v2(
         auth_context: ProviderAuthContext::NewApi {
             user_id,
             secret_purpose,
+            credit_per_cny: station.credit_per_cny,
         },
         secret_accessor: RemoteKeySecretAccessor {
             records: vec![RemoteKeySecretRecord {
