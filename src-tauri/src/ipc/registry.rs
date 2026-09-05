@@ -18,7 +18,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "bd8218525550994bb99b3dc8b131984c9b44e1f02cb0d57e527a7f74dc963fba";
+    "bea280d6bd1e1fcd9bec06c6222587917affd0a38b66817a479d475b51eeb0fe";
 
 #[cfg_attr(
     not(test),

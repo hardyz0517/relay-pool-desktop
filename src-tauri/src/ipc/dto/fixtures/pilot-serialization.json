@@ -1262,6 +1262,7 @@
           "reasoningEffort": null,
           "rejectedCandidatesJson": "[]",
           "requestId": "request-1",
+          "resolvedUpstreamModel": "fixture-upstream-model",
           "routePolicy": "automatic_balanced",
           "routeReason": null,
           "routeWaitMs": 1,
@@ -1287,15 +1288,21 @@
       "output": [
         {
           "accountConcurrencyLimit": null,
+          "balanceKind": "account_balance",
           "collectedAt": "1700000000000",
           "confidence": 0.9,
           "createdAt": "1700000000000",
           "creditUnit": null,
           "currency": "CNY",
+          "evidenceConfidence": "confirmed",
+          "evidenceProfileVersion": "collector-balance-v1",
           "id": "balance-1",
           "lowBalanceThreshold": 5.0,
+          "observedAtMs": 1700000000000,
           "scope": "station",
           "source": "fixture",
+          "spendabilityAuthority": "authoritative",
+          "spendabilityReasonCode": "balance_usable",
           "stationId": "station-1",
           "stationKeyId": null,
           "status": "normal",
@@ -1314,6 +1321,7 @@
           "totalValue": null,
           "updatedAt": "1700000000000",
           "usedValue": null,
+          "validUntilMs": 1700001800000,
           "value": 12.5
         }
       ]
@@ -1324,15 +1332,21 @@
       "output": [
         {
           "accountConcurrencyLimit": null,
+          "balanceKind": "account_balance",
           "collectedAt": "1700000000000",
           "confidence": 0.9,
           "createdAt": "1700000000000",
           "creditUnit": null,
           "currency": "CNY",
+          "evidenceConfidence": "confirmed",
+          "evidenceProfileVersion": "collector-balance-v1",
           "id": "balance-1",
           "lowBalanceThreshold": 5.0,
+          "observedAtMs": 1700000000000,
           "scope": "station",
           "source": "fixture",
+          "spendabilityAuthority": "authoritative",
+          "spendabilityReasonCode": "balance_usable",
           "stationId": "station-1",
           "stationKeyId": null,
           "status": "normal",
@@ -1351,6 +1365,7 @@
           "totalValue": null,
           "updatedAt": "1700000000000",
           "usedValue": null,
+          "validUntilMs": 1700001800000,
           "value": 12.5
         }
       ]
@@ -1363,15 +1378,21 @@
       "output": [
         {
           "accountConcurrencyLimit": null,
+          "balanceKind": "account_balance",
           "collectedAt": "1700000000000",
           "confidence": 0.9,
           "createdAt": "1700000000000",
           "creditUnit": null,
           "currency": "CNY",
+          "evidenceConfidence": "confirmed",
+          "evidenceProfileVersion": "collector-balance-v1",
           "id": "balance-1",
           "lowBalanceThreshold": 5.0,
+          "observedAtMs": 1700000000000,
           "scope": "station",
           "source": "fixture",
+          "spendabilityAuthority": "authoritative",
+          "spendabilityReasonCode": "balance_usable",
           "stationId": "station-1",
           "stationKeyId": null,
           "status": "normal",
@@ -1390,6 +1411,7 @@
           "totalValue": null,
           "updatedAt": "1700000000000",
           "usedValue": null,
+          "validUntilMs": 1700001800000,
           "value": 12.5
         }
       ]
@@ -1398,14 +1420,20 @@
       "command": "upsert_balance_snapshot",
       "input": {
         "accountConcurrencyLimit": null,
+        "balanceKind": null,
         "collectedAt": "1700000000000",
         "confidence": 0.9,
         "creditUnit": null,
         "currency": "CNY",
+        "evidenceConfidence": null,
+        "evidenceProfileVersion": null,
         "id": null,
         "lowBalanceThreshold": 5.0,
+        "observedAtMs": null,
         "scope": "station",
         "source": "fixture",
+        "spendabilityAuthority": null,
+        "spendabilityReasonCode": null,
         "stationId": "station-1",
         "stationKeyId": null,
         "status": "normal",
@@ -1423,19 +1451,26 @@
         "totalTokenCount": null,
         "totalValue": null,
         "usedValue": null,
+        "validUntilMs": null,
         "value": 12.5
       },
       "output": {
         "accountConcurrencyLimit": null,
+        "balanceKind": "account_balance",
         "collectedAt": "1700000000000",
         "confidence": 0.9,
         "createdAt": "1700000000000",
         "creditUnit": null,
         "currency": "CNY",
+        "evidenceConfidence": "confirmed",
+        "evidenceProfileVersion": "collector-balance-v1",
         "id": "balance-1",
         "lowBalanceThreshold": 5.0,
+        "observedAtMs": 1700000000000,
         "scope": "station",
         "source": "fixture",
+        "spendabilityAuthority": "authoritative",
+        "spendabilityReasonCode": "balance_usable",
         "stationId": "station-1",
         "stationKeyId": null,
         "status": "normal",
@@ -1454,6 +1489,7 @@
         "totalValue": null,
         "updatedAt": "1700000000000",
         "usedValue": null,
+        "validUntilMs": 1700001800000,
         "value": 12.5
       }
     },

@@ -98,6 +98,16 @@ It owns:
 
 `Balance Snapshot` is normalized balance or quota state with explicit units.
 
+余额快照必须同时声明 `scope`、`balance_kind`、`evidence_confidence`、`spendability_authority`、`observed_at` 和可选 `valid_until`。这些字段共同决定 current projection 的资格；不能由 `source` 文本、数值相等或查询顺序推断。
+
+- `account_balance` + `station`/`station_account`：一个 Station 账户的直接余额，每个账户在 Dashboard 总额中最多计一次。
+- `station_key_quota` + `station_key`：单个 Station Key 的额度，只用于该 Key 的路由/诊断，不得自动汇总为账户余额。
+- `subscription_quota`：订阅窗口或重置额度，独立展示和策略处理，不并入账户余额。
+- `usage_summary`：请求、消费和 token 汇总，不是可花费余额。
+- `legacy_derived_aggregate` / `legacy_unknown`：历史或无法证明语义的证据，只能用于审计和有限历史展示，永不进入 current decision。
+
+禁止任何 generic Key-to-Station sum、max、min、平均或“相同值去重”来猜测账户余额。没有 confirmed + authoritative 且仍在有效期内的直接账户事实时，current projection 必须返回 `missing`、`untrusted` 或 `stale`；不得回退到 `stations.balance_cny` 等 compatibility cache。
+
 It owns:
 
 - station
@@ -110,6 +120,9 @@ It owns:
 - source
 - confidence
 - collected time
+- evidence confidence and spendability authority
+- observed/valid-until timestamps
+- typed reason code and evidence profile version
 
 ## Request Cost
 

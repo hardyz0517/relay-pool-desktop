@@ -107,6 +107,8 @@ pub struct UpsertBalanceSnapshotInputDto {
     pub station_id: String,
     pub station_key_id: Option<String>,
     pub scope: BalanceScopeDto,
+    #[serde(default)]
+    pub balance_kind: Option<String>,
     pub value: Option<f64>,
     pub currency: String,
     pub credit_unit: Option<String>,
@@ -130,6 +132,18 @@ pub struct UpsertBalanceSnapshotInputDto {
     pub source: String,
     pub confidence: f64,
     pub collected_at: Option<String>,
+    #[serde(default)]
+    pub evidence_confidence: Option<String>,
+    #[serde(default)]
+    pub spendability_authority: Option<String>,
+    #[serde(default)]
+    pub observed_at_ms: Option<i64>,
+    #[serde(default)]
+    pub valid_until_ms: Option<i64>,
+    #[serde(default)]
+    pub evidence_profile_version: Option<String>,
+    #[serde(default)]
+    pub spendability_reason_code: Option<String>,
 }
 
 impl UpsertBalanceSnapshotInputDto {
@@ -168,15 +182,57 @@ impl UpsertBalanceSnapshotInputDto {
         validate_text("source", &input.source, MAX_TEXT_BYTES, false)?;
         validate_probability("confidence", input.confidence)?;
         validate_optional_text("collectedAt", input.collected_at.as_deref(), MAX_TEXT_BYTES)?;
+        if let Some(kind) = input.balance_kind.as_deref() {
+            validate_text("balanceKind", kind, 64, false)?;
+        }
+        for (field, value) in [
+            ("evidenceConfidence", input.evidence_confidence.as_deref()),
+            (
+                "spendabilityAuthority",
+                input.spendability_authority.as_deref(),
+            ),
+            (
+                "evidenceProfileVersion",
+                input.evidence_profile_version.as_deref(),
+            ),
+            (
+                "spendabilityReasonCode",
+                input.spendability_reason_code.as_deref(),
+            ),
+        ] {
+            validate_optional_text(field, value, MAX_TEXT_BYTES)?;
+        }
+        if input.observed_at_ms.is_some_and(|value| value < 0)
+            || input.valid_until_ms.is_some_and(|value| value < 0)
+            || input.valid_until_ms.is_some_and(|until| {
+                input
+                    .observed_at_ms
+                    .is_some_and(|observed| until < observed)
+            })
+        {
+            return Err(invalid_input(
+                "validUntilMs",
+                "invalid_range",
+                "Balance validity must not precede observation.",
+            ));
+        }
         Ok(input)
     }
 
     pub fn into_domain(self) -> UpsertBalanceSnapshotInput {
+        let balance_kind = self.balance_kind.unwrap_or_else(|| {
+            if self.station_key_id.is_some() {
+                "station_key_quota".to_string()
+            } else {
+                "account_balance".to_string()
+            }
+        });
         UpsertBalanceSnapshotInput {
             id: self.id,
             station_id: self.station_id,
             station_key_id: self.station_key_id,
             scope: self.scope.into_string(),
+            balance_kind,
             value: self.value,
             currency: self.currency,
             credit_unit: self.credit_unit,
@@ -200,6 +256,16 @@ impl UpsertBalanceSnapshotInputDto {
             source: self.source,
             confidence: self.confidence,
             collected_at: self.collected_at,
+            evidence_confidence: self
+                .evidence_confidence
+                .unwrap_or_else(|| "unknown".to_string()),
+            spendability_authority: self
+                .spendability_authority
+                .unwrap_or_else(|| "advisory".to_string()),
+            observed_at_ms: self.observed_at_ms,
+            valid_until_ms: self.valid_until_ms,
+            evidence_profile_version: self.evidence_profile_version,
+            spendability_reason_code: self.spendability_reason_code,
         }
     }
 }
@@ -538,6 +604,7 @@ fn fixture_balance_snapshot() -> BalanceSnapshot {
         station_id: "station-1".into(),
         station_key_id: None,
         scope: "station".into(),
+        balance_kind: "account_balance".into(),
         value: Some(12.5),
         currency: "CNY".into(),
         credit_unit: None,
@@ -561,6 +628,12 @@ fn fixture_balance_snapshot() -> BalanceSnapshot {
         source: "fixture".into(),
         confidence: 0.9,
         collected_at: Some("1700000000000".into()),
+        evidence_confidence: "confirmed".into(),
+        spendability_authority: "authoritative".into(),
+        observed_at_ms: Some(1_700_000_000_000),
+        valid_until_ms: Some(1_700_001_800_000),
+        evidence_profile_version: Some("collector-balance-v1".into()),
+        spendability_reason_code: Some("balance_usable".into()),
         created_at: "1700000000000".into(),
         updated_at: "1700000000000".into(),
     }

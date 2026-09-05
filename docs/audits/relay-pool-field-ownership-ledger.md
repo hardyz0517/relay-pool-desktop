@@ -51,9 +51,13 @@
 | `station_keys.rate_multiplier` | `station_keys` | `compatibility cache` | legacy key workflow | 旧展示/preview fallback | 不参与权威倍率决策 | Stage 0 field ownership scan | `compatibility` | 不能作为当前倍率来源 |
 | `station_group_bindings.effective_rate_multiplier` | `station_group_bindings` | `current projection` | collector/database service | 价格、详情、runtime route | 倍率 fallback 第 2 位 | Stage 0 pricing tests | `active` | 页面不得随意写 |
 | `group_rate_records.effective_rate_multiplier` | `group_rate_records` | `evidence/history` | collector service | projection/旧消费者 | 倍率 fallback 第 4 位 | Stage 0 pricing tests | `active` | 不能复活 missing/disabled binding |
-| `balance_snapshots.scope` | `balance_snapshots` | `evidence/history` | balance collector/API response | dashboard、station assets、projection | station-scope 优先 | Stage 0 balance summary tests | `active` | station-key 快照不能覆盖 station-scope 当前余额 |
-| `stations.balance_raw` | `stations` | `compatibility cache` | legacy station balance update | 旧展示/fallback | 无 station-scope snapshot 时 fallback | Stage 0 field ownership scan | `compatibility` | 不作为首选余额来源 |
-| `stations.balance_cny` | `stations` | `compatibility cache` | legacy station balance update | 旧展示/fallback | 无 station-scope snapshot 时 fallback | Stage 0 field ownership scan | `compatibility` | 不作为首选余额来源 |
+| `balance_snapshots.scope` | `balance_snapshots` | `evidence/history` | balance collector/API response | backend current selector、dashboard、station assets、routing | key quota 优先；无对应 Key quota 时才回退 account balance | balance scope authority tests | `active` | 必须与 `balance_kind` 成对校验，不能单靠 scope |
+| `balance_snapshots.balance_kind` | `balance_snapshots` | `canonical fact` | typed collector adapter / migration classifier | backend current selector、dashboard、routing、monitoring | `account_balance`、`station_key_quota`、`subscription_quota`、`usage_summary` 分离；legacy kind 仅历史 | migration and balance scope gates | `active` | 禁止 generic Key-to-Station 聚合 |
+| `balance_snapshots.evidence_confidence` | `balance_snapshots` | `evidence/history` | collector adapter | current eligibility and diagnostics | only `confirmed` can qualify | balance projector tests | `active` | probable/unknown/conflicting fail closed |
+| `balance_snapshots.spendability_authority` | `balance_snapshots` | `evidence/history` | collector adapter / legacy migration | routing and monitoring eligibility | only `authoritative` can qualify | balance projector tests | `active` | advisory/unknown never becomes spendable |
+| `balance_snapshots.observed_at_ms` / `valid_until_ms` | `balance_snapshots` | `evidence/history` | collector adapter | current selector and stale state | explicit evaluation time; expired facts are stale | stale selector tests | `active` | no implicit wall-clock fallback in reducer |
+| `stations.balance_raw` | `stations` | `compatibility cache` | legacy station balance update | legacy import/diagnostics only | never a current balance fallback | balance scope authority gate | `compatibility` | 不作为 current 余额来源 |
+| `stations.balance_cny` | `stations` | `compatibility cache` | legacy station balance update | legacy import/diagnostics only | never a current balance fallback | balance scope authority gate | `compatibility` | 不作为 current 余额来源 |
 | `stations.last_pricing_fetched_at` | `stations` | `compatibility cache` | collector summary update | 旧展示/粗粒度诊断 | 不作为分组新鲜度唯一依据 | Stage 0 field ownership scan | `compatibility` | 不能替代 group rate checked time |
 
 ## 新字段接入规则
@@ -87,8 +91,8 @@
 | `station_keys.rate_multiplier` | `compatibility cache`，继续用于旧数据库、preview fallback 和未迁移诊断展示 | 不批准删除；current rate 由 projection 提供 |
 | `station_keys.rate_source` | `compatibility cache`，继续用于旧数据库、preview fallback 和诊断来源展示 | 不批准删除；current source 由 projection 提供 |
 | `station_keys.rate_collected_at` | `compatibility cache`，继续用于旧数据库、preview fallback 和粗粒度诊断 | 不批准删除；不能作为 current group freshness 唯一依据 |
-| `stations.balance_raw` | `compatibility cache`，无 station-scope balance snapshot 时继续作为余额 fallback | 不批准删除；station-scope snapshot 优先 |
-| `stations.balance_cny` | `compatibility cache`，无 station-scope balance snapshot 时继续作为余额 fallback | 不批准删除；station-scope snapshot 优先 |
+| `stations.balance_raw` | `compatibility cache`，仅供 legacy import/diagnostics | 不批准删除；不得接回 current fallback |
+| `stations.balance_cny` | `compatibility cache`，仅供 legacy import/diagnostics | 不批准删除；不得接回 current fallback |
 | `stations.last_pricing_fetched_at` | `compatibility cache`，继续作为粗粒度采集诊断和旧页面 fallback | 不批准删除；不能替代 group rate checked time |
 
 Stage 8 仅完成复查和保护网，不删除字段、不改 schema、不合并字段语义。Runtime snapshot 不消费 UI view model，也不携带明文 secret；后续如需 Rust proxy 注入真实 secret，必须保持 secret manager 边界并新增专门测试。

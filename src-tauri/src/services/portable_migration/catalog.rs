@@ -568,6 +568,7 @@ const BALANCE_SNAPSHOTS_COLUMNS: &[&str] = &[
     "station_id",
     "station_key_id",
     "scope",
+    "balance_kind",
     "value",
     "currency",
     "credit_unit",
@@ -611,6 +612,7 @@ const REQUEST_LOGS_COLUMNS: &[&str] = &[
     "path",
     "endpoint",
     "model",
+    "resolved_upstream_model",
     "stream",
     "status",
     "lifecycle_status",
@@ -675,6 +677,7 @@ const REQUEST_ATTEMPTS_COLUMNS: &[&str] = &[
     "sanitized_detail",
     "output_committed",
     "terminal_at_ms",
+    "resolved_upstream_model",
 ];
 const REQUEST_LOG_URL_SANITIZER_PROGRESS_COLUMNS: &[&str] = &[
     "id",

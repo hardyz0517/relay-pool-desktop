@@ -8,6 +8,7 @@ export type StationGroupCategoryDto = "gpt" | "claude" | "gemini" | "grok" | "im
 
 export type UpsertBalanceSnapshotInputDto = {
   id: string | null; stationId: string; stationKeyId: string | null; scope: BalanceScopeDto;
+  balanceKind?: string;
   value: number | null; currency: string; creditUnit: string | null; usedValue: number | null;
   totalValue: number | null; todayRequestCount: number | null; totalRequestCount: number | null;
   todayConsumption: number | null; totalConsumption: number | null; todayBaseConsumption: number | null;
@@ -16,10 +17,18 @@ export type UpsertBalanceSnapshotInputDto = {
   totalInputTokenCount: number | null; totalOutputTokenCount: number | null;
   accountConcurrencyLimit: number | null; lowBalanceThreshold: number | null;
   status: BalanceStatusDto; source: string; confidence: number; collectedAt: string | null;
+  evidenceConfidence?: "confirmed" | "probable" | "unknown" | "conflicting" | string;
+  spendabilityAuthority?: "authoritative" | "advisory" | "unknown" | string;
+  observedAtMs?: number | null; validUntilMs?: number | null;
+  evidenceProfileVersion?: string | null; spendabilityReasonCode?: string | null;
 };
 
 export type BalanceSnapshotDto = Omit<UpsertBalanceSnapshotInputDto, "id" | "scope" | "status"> & {
-  id: string; scope: string; status: string; createdAt: string; updatedAt: string;
+  id: string; scope: string; balanceKind: string; status: string; createdAt: string; updatedAt: string;
+  evidenceConfidence: "confirmed" | "probable" | "unknown" | "conflicting" | string;
+  spendabilityAuthority: "authoritative" | "advisory" | "unknown" | string;
+  observedAtMs: number | null; validUntilMs: number | null;
+  evidenceProfileVersion: string | null; spendabilityReasonCode: string | null;
 };
 
 export type UpsertStationGroupBindingInputDto = {

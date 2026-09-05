@@ -3700,11 +3700,6 @@
         },
         {
             "from": "application::routing_engine::admission",
-            "to": "application::station_key_circuit",
-            "temporary": false
-        },
-        {
-            "from": "application::routing_engine::admission",
             "to": "application::routing_engine::capacity",
             "temporary": false
         },
@@ -5565,6 +5560,16 @@
         },
         {
             "from": "services::collectors::login_probe",
+            "to": "services::station_sessions",
+            "temporary": false
+        },
+        {
+            "from": "services::collectors",
+            "to": "services::station_sessions",
+            "temporary": false
+        },
+        {
+            "from": "services::collectors::drivers::newapi::auth",
             "to": "services::station_sessions",
             "temporary": false
         },

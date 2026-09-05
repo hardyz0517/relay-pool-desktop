@@ -34,6 +34,7 @@ const TRUSTED_INDEXES_V1: &[&str] = &[
     "idx_balance_snapshots_latest_key_scope",
     "idx_balance_snapshots_latest_station_scope",
     "idx_balance_snapshots_station_scope_updated",
+    "idx_balance_snapshots_current_kind",
     "idx_alert_policies_enabled_scope_priority",
     "idx_change_event_occurrences_incident_episode_observed",
     "idx_change_event_occurrences_type_observed",
@@ -282,6 +283,8 @@ const TRUSTED_TRIGGERS_V1: &[&str] = &[
     "station_detail_revision_incidents_insert",
     "station_detail_revision_incidents_update",
     "station_detail_revision_incidents_delete",
+    "balance_snapshots_kind_scope_insert_guard",
+    "balance_snapshots_kind_scope_update_guard",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -685,7 +688,7 @@ mod tests {
 
         assert_eq!(fingerprint.sha256, fixture);
         assert_eq!(fingerprint.table_count, EXPECTED_USER_TABLE_COUNT_V1);
-        assert_eq!(fingerprint.index_count, 107);
+        assert_eq!(fingerprint.index_count, 108);
     }
 
     #[tokio::test]

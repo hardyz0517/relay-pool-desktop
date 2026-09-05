@@ -65,7 +65,7 @@ async fn schema_71_upgrade_preserves_history_without_promoting_legacy_station_st
         .await
         .expect("upgrade schema 71 to latest");
 
-    assert_schema_version(&mut connection, 74).await;
+    assert_schema_version(&mut connection, 76).await;
     let stations: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
         "SELECT id, status, last_checked_at, last_pricing_fetched_at
          FROM stations ORDER BY id",
@@ -214,9 +214,9 @@ async fn schema_73_failure_rolls_back_and_retry_is_idempotent() {
     MIGRATOR
         .run(&mut connection)
         .await
-        .expect("retry migrations through schema 74");
+        .expect("retry migrations through schema 76");
 
-    assert_schema_version(&mut connection, 74).await;
+    assert_schema_version(&mut connection, 76).await;
     let migrated: (i64, i64, i64, String, i64, i64, String, String, i64, i64) = sqlx::query_as(
         "SELECT endpoint_revision, credential_revision, max_attempts, state,
                     attempt_count, next_attempt_at_ms, last_error_code,
