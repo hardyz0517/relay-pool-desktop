@@ -3289,7 +3289,11 @@ fn local_usage_body(snapshots: Vec<BalanceSnapshot>) -> Result<Bytes, ProxyFailu
             .get(&snapshot.station_id)
             .map(|current| balance_snapshot_rank(&snapshot) > balance_snapshot_rank(current))
             .unwrap_or(true);
-        if snapshot.scope == "station" && should_replace {
+        if snapshot.scope == "station"
+            && snapshot.station_key_id.is_none()
+            && snapshot.balance_kind == "account_balance"
+            && should_replace
+        {
             latest_by_station.insert(snapshot.station_id.clone(), snapshot);
         }
     }
@@ -5187,6 +5191,7 @@ mod tests {
                     resolved_upstream_model: Some("gpt-test".to_string()),
                     model_alias_revision: 1,
                     model_variants: Vec::new(),
+                    model_variant_pricing: Vec::new(),
                     credential_available: candidate.api_key.is_some()
                         || candidate.api_key_secret.is_some(),
                     hard_eligible: candidate.schedulable,

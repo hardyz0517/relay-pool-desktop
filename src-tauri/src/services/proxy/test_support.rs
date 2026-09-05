@@ -208,13 +208,14 @@ impl V2ProxyTestFixture {
         let station_id = station.id.clone();
         let station_key_id = key.id.clone();
         let upstream_api_format = upstream_api_format.to_string();
+        let station_id_for_write = station_id.clone();
         self.runtime
             .handle()
             .write(|write| {
                 Box::pin(async move {
                     sqlx::query("UPDATE stations SET upstream_api_format = ?1 WHERE id = ?2")
                         .bind(upstream_api_format)
-                        .bind(station_id)
+                        .bind(station_id_for_write)
                         .execute(write.connection())
                         .await?;
                     sqlx::query(
@@ -248,6 +249,12 @@ impl V2ProxyTestFixture {
             })
             .await
             .expect("capabilities");
+        // Routing now requires an explicit, authoritative balance fact. Keep
+        // this reusable fixture valid without weakening production rules;
+        // individual tests may overwrite the row with targeted observations.
+        let balance_id = format!("balance-{station_id}");
+        self.seed_balance(&station_id, &balance_id, 100.0, "normal", "0")
+            .await;
         SeededV2Candidate {
             station_id: station.id,
             station_key_id: key.id,
@@ -269,6 +276,7 @@ impl V2ProxyTestFixture {
                 station_id: station_id.to_string(),
                 station_key_id: None,
                 scope: "station".to_string(),
+                balance_kind: "account_balance".to_string(),
                 value: Some(value),
                 currency: "CNY".to_string(),
                 credit_unit: None,
@@ -292,6 +300,12 @@ impl V2ProxyTestFixture {
                 source: "test".to_string(),
                 confidence: 1.0,
                 collected_at: Some(collected_at.to_string()),
+                evidence_confidence: "confirmed".to_string(),
+                spendability_authority: "authoritative".to_string(),
+                observed_at_ms: None,
+                valid_until_ms: None,
+                evidence_profile_version: Some("test-fixture-v1".to_string()),
+                spendability_reason_code: Some("balance_usable".to_string()),
             })
             .await
             .expect("balance snapshot");

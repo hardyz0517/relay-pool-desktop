@@ -235,6 +235,16 @@ impl RoutingRepository for RoutingExecutionRepository {
                             .collect::<Vec<_>>()
                     };
                     variants.into_iter().map(move |variant| {
+                        let pricing = variant
+                            .as_ref()
+                            .and_then(|variant| {
+                                candidate
+                                    .model_variant_pricing
+                                    .iter()
+                                    .find(|(model, _)| model == &variant.upstream_model)
+                                    .map(|(_, pricing)| pricing.clone())
+                            })
+                            .unwrap_or_else(|| candidate.pricing.clone());
                         RoutePlanCandidate {
                         station_key_id: candidate.station_key_id.clone(),
                         station_id: candidate.station_id.clone(),
@@ -251,7 +261,7 @@ impl RoutingRepository for RoutingExecutionRepository {
                         model_variant: variant,
                         priority: 0,
                         tier: crate::application::routing_engine::candidate_plan::AvailabilityTier::Primary,
-                        pricing: candidate.pricing.clone(),
+                        pricing,
                         evidence: vec![],
                         }
                     })
