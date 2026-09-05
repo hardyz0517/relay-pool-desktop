@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { RefreshCw, Route, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
+import { ModelMappingDisplay } from "@/components/status/ModelMappingDisplay";
 import {
   Button,
   ConfirmDialog,
@@ -224,7 +225,15 @@ export function LogsPage({ deepLink, onOpenRoutingDeepLink }: LogsPageProps = {}
                 <PropertyList className="overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface">
                   <PropertyRow label="请求时间" value={formatLogTime(selected.startedAt)} />
                   <PropertyRow label="接口" value={`${selected.method} ${selected.path}`} />
-                  <PropertyRow label="模型" value={selected.model ?? "未识别"} />
+                  <PropertyRow
+                    label="模型"
+                    value={(
+                      <ModelMappingDisplay
+                        requestedModel={selected.model}
+                        resolvedModel={selected.resolvedUpstreamModel}
+                      />
+                    )}
+                  />
                   <PropertyRow label="推理强度" value={selected.reasoningEffort ?? "未记录"} />
                   <PropertyRow label="流式" value={selected.stream ? "是" : "否"} />
                   <PropertyRow label="密钥" value={formatKeyName(selected, keyById)} />

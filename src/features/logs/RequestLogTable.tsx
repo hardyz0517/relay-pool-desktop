@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { ArrowDown, ArrowUp, Database } from "lucide-react";
 import { DataTableLite, Pagination, type DataTableColumn } from "@/components/ui";
+import { ModelMappingDisplay } from "@/components/status/ModelMappingDisplay";
 import type { RequestLog } from "@/lib/types/proxy";
 import type { KeyPoolItem } from "@/lib/types/stationKeys";
 import type { Station } from "@/lib/types/stations";
@@ -18,6 +19,7 @@ import {
   latencyBreakdown,
   reasoningEffortLabel,
   requestLatencyTone,
+  requestInputTokenCount,
   type RequestLatencyTone,
 } from "./requestLogViewModels";
 
@@ -53,7 +55,16 @@ export function RequestLogTable({
   const columns = useMemo<DataTableColumn<RequestLog>[]>(() => {
     const allColumns: DataTableColumn<RequestLog>[] = [
       { key: "key", header: "密钥", render: (row) => formatKeyName(row, keyById) },
-      { key: "model", header: "模型", render: (row) => row.model ?? "未识别" },
+      {
+        key: "model",
+        header: "模型",
+        render: (row) => (
+          <ModelMappingDisplay
+            requestedModel={row.model}
+            resolvedModel={row.resolvedUpstreamModel}
+          />
+        ),
+      },
       { key: "reasoning", header: "推理强度", render: (row) => reasoningEffortLabel(row.reasoningEffort) },
       { key: "endpoint", header: "端点", render: (row) => formatEndpoint(row.path) },
       {
@@ -196,13 +207,14 @@ function LogMetaTag({ value }: { value: string }) {
 
 function TokenUsageCell({ log }: { log: RequestLog }) {
   const hasCache = (log.cacheReadTokens ?? 0) > 0 || (log.cacheCreationTokens ?? 0) > 0;
+  const inputTokens = requestInputTokenCount(log);
 
   return (
     <div className="grid min-h-[36px] content-center gap-1 text-xs leading-4">
       <div className="flex items-center gap-2.5 whitespace-nowrap">
         <span className="flex items-center gap-0.5 font-medium text-foreground" title="输入 Token">
           <ArrowDown className="h-3.5 w-3.5 text-success-foreground" aria-hidden="true" />
-          {formatRequestTokenCount(log, log.promptTokens)}
+          {formatRequestTokenCount(log, inputTokens)}
         </span>
         <span className="flex items-center gap-0.5 font-medium text-foreground" title="输出 Token">
           <ArrowUp className="h-3.5 w-3.5 text-platform-image-foreground" aria-hidden="true" />

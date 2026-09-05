@@ -26,6 +26,7 @@ export type RequestLog = {
   method: string;
   path: string;
   model: string | null;
+  resolvedUpstreamModel: string | null;
   stream: boolean;
   status: "success" | "fallback" | "failed" | string;
   httpStatus: number | null;

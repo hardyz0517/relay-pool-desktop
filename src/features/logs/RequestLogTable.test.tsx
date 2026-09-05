@@ -60,6 +60,55 @@ describe("RequestLogTable", () => {
     expect(markup).toContain("w-[176px] min-w-[176px] tabular-nums");
     expect(markup).toContain("2026/08/11 12:34:56");
   });
+
+  it("shows the requested model and the actual mapped model", () => {
+    const markup = renderToStaticMarkup(
+      <RequestLogTable
+        rows={[{
+          id: "log-1",
+          path: "/v1/responses",
+          startedAt: "2026-08-11T12:34:56",
+          model: "gpt-5.2",
+          resolvedUpstreamModel: "grok-4.6",
+        } as RequestLog]}
+        keyById={new Map()}
+        stationById={new Map()}
+        selectedId="log-1"
+        onSelect={() => undefined}
+      />,
+    );
+
+    expect(markup).toContain("gpt-5.2");
+    expect(markup).toContain("grok-4.6");
+    expect(markup).toContain("gpt-5.2 -&gt; grok-4.6");
+  });
+
+  it("shows input tokens excluding cache reads while keeping the cache breakdown", () => {
+    const markup = renderToStaticMarkup(
+      <RequestLogTable
+        rows={[{
+          id: "log-1",
+          path: "/v1/responses",
+          startedAt: "2026-08-11T12:34:56",
+          status: "success",
+          promptTokens: 156_879,
+          completionTokens: 197,
+          totalTokens: 157_076,
+          cacheReadTokens: 156_672,
+          cacheCreationTokens: null,
+        } as RequestLog]}
+        keyById={new Map()}
+        stationById={new Map()}
+        selectedId="log-1"
+        onSelect={() => undefined}
+      />,
+    );
+
+    expect(markup).toContain('title="输入 Token"');
+    expect(markup).toContain(">207</span>");
+    expect(markup).toContain('title="缓存读取 Token"');
+    expect(markup).toContain(">156.7K</span>");
+  });
 });
 
 describe("RequestStatusCode", () => {

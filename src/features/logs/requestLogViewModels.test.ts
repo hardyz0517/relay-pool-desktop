@@ -7,6 +7,7 @@ import {
   formatKeyName,
   formatKeyRate,
   formatRequestCost,
+  requestInputTokenCount,
   pricingStatusLabel,
 } from "./requestLogViewModels";
 
@@ -77,6 +78,44 @@ describe("formatRequestCost", () => {
     expect(
       formatRequestCost({ totalTokens: 0, estimatedTotalCost: null, costStatus: null } as RequestLog),
     ).toBe("$0.000000");
+  });
+});
+
+describe("requestInputTokenCount", () => {
+  it("removes cache reads when the provider reports input tokens including the cache", () => {
+    expect(
+      requestInputTokenCount({
+        promptTokens: 156_879,
+        completionTokens: 197,
+        totalTokens: 157_076,
+        cacheReadTokens: 156_672,
+        cacheCreationTokens: null,
+      } as RequestLog),
+    ).toBe(207);
+  });
+
+  it("keeps providers that report uncached input separately from the total", () => {
+    expect(
+      requestInputTokenCount({
+        promptTokens: 207,
+        completionTokens: 197,
+        totalTokens: 157_076,
+        cacheReadTokens: 156_672,
+        cacheCreationTokens: null,
+      } as RequestLog),
+    ).toBe(207);
+  });
+
+  it("falls back to subtracting cache tokens when total usage is unavailable", () => {
+    expect(
+      requestInputTokenCount({
+        promptTokens: 1_000,
+        completionTokens: 100,
+        totalTokens: null,
+        cacheReadTokens: 250,
+        cacheCreationTokens: 50,
+      } as RequestLog),
+    ).toBe(700);
   });
 });
 

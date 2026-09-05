@@ -52,7 +52,9 @@ impl RequestLogStore {
             r#"
             SELECT id AS "id!", request_id AS "request_id?", started_at,
                    finished_at AS "finished_at?", duration_ms AS "duration_ms?",
-                   method, path, model AS "model?", stream AS "stream!: bool", status,
+                   method, path, model AS "model?",
+                   resolved_upstream_model AS "resolved_upstream_model?",
+                   stream AS "stream!: bool", status,
                    http_status AS "http_status?",
                    lifecycle_status AS "lifecycle_status?",
                    station_key_id AS "station_key_id?", station_id AS "station_id?",
@@ -244,8 +246,9 @@ impl RequestLogStore {
                 request_id, ordinal, station_id, station_key_id, endpoint_revision,
                 started_at_ms, terminal_kind, failure_kind, failure_blame,
                 retry_disposition, health_effect, health_cooldown_until_ms,
-                public_code, sanitized_detail, output_committed, terminal_at_ms
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                public_code, sanitized_detail, output_committed, terminal_at_ms,
+                resolved_upstream_model
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&record.request_id)
         .bind(i64::from(record.ordinal))
@@ -263,6 +266,7 @@ impl RequestLogStore {
         .bind(&record.sanitized_detail)
         .bind(i64::from(record.output_committed as u8))
         .bind(record.terminal_at_ms)
+        .bind(record.resolved_upstream_model.as_deref())
         .execute(session.connection())
         .await?;
 
@@ -551,7 +555,11 @@ async fn update_request_terminal(
             cache_creation_tokens = ?, cache_read_tokens = ?, reasoning_effort = ?,
             first_token_ms = ?, billing_mode = ?, finished_at = ?, duration_ms = ?, status = ?,
             lifecycle_status = ?, terminal_kind = ?, terminal_code = ?, terminal_detail = ?,
-            usage_status = ?,
+            usage_status = ?, resolved_upstream_model = (
+                SELECT resolved_upstream_model
+                FROM request_attempts
+                WHERE request_id = ? AND ordinal = ?
+            ),
             protocol_completed = ?, delivery_terminal = ?, selected_attempt_ordinal = ?,
             attempt_count = ?, fallback_count = ?, terminal_at_ms = ?
          WHERE request_id = ? AND terminal_at_ms IS NULL",
@@ -587,6 +595,8 @@ async fn update_request_terminal(
     .bind(record.terminal_code.as_deref())
     .bind(record.terminal_detail.as_deref())
     .bind(&record.usage_status)
+    .bind(&record.request_id)
+    .bind(selected_attempt_ordinal)
     .bind(protocol_completed)
     .bind(&record.delivery_terminal)
     .bind(selected_attempt_ordinal)
@@ -756,6 +766,7 @@ struct AttemptRow {
     sanitized_detail: Option<String>,
     output_committed: i64,
     terminal_at_ms: i64,
+    resolved_upstream_model: Option<String>,
 }
 
 impl AttemptRow {
@@ -776,6 +787,7 @@ impl AttemptRow {
             && self.sanitized_detail == record.sanitized_detail
             && self.output_committed == i64::from(record.output_committed as u8)
             && self.terminal_at_ms == record.terminal_at_ms
+            && self.resolved_upstream_model == record.resolved_upstream_model
     }
 }
 
@@ -788,7 +800,8 @@ async fn request_attempt_by_request_and_ordinal(
         "SELECT request_id, ordinal, station_id, station_key_id, endpoint_revision,
                     started_at_ms, terminal_kind, failure_kind, failure_blame,
                     retry_disposition, health_effect, health_cooldown_until_ms,
-                    public_code, sanitized_detail, output_committed, terminal_at_ms
+                    public_code, sanitized_detail, output_committed, terminal_at_ms,
+                    resolved_upstream_model
              FROM request_attempts WHERE request_id = ? AND ordinal = ?",
     )
     .bind(request_id)
@@ -812,6 +825,7 @@ async fn request_attempt_by_request_and_ordinal(
         sanitized_detail: row.get(13),
         output_committed: row.get(14),
         terminal_at_ms: row.get(15),
+        resolved_upstream_model: row.get(16),
     }))
 }
 
@@ -1282,6 +1296,14 @@ mod v2_tests {
             .expect("start");
         start.commit().await.expect("commit");
         let final_record = terminal_record("req-terminal");
+        let mut attempt = attempt_record("req-terminal");
+        attempt.resolved_upstream_model = Some("grok-4.6".to_string());
+        let mut attempt_write = runtime.begin_write().await.expect("attempt write");
+        store
+            .finish_attempt(&mut attempt_write, &attempt)
+            .await
+            .expect("finish attempt");
+        attempt_write.commit().await.expect("attempt commit");
         let mut first = runtime.begin_write().await.expect("write");
         assert!(
             store
@@ -1324,7 +1346,7 @@ mod v2_tests {
         assert_eq!(outcome.send_phase, "response_started");
         assert_eq!(outcome.attempt_count, 1);
         let row = sqlx::query(
-            "SELECT model, stream, station_key_id, station_id, upstream_base_url,
+            "SELECT model, resolved_upstream_model, stream, station_key_id, station_id, upstream_base_url,
                     route_policy, route_reason, rejected_candidates_json, body_bytes,
                     route_wait_ms, upstream_headers_ms, failure_source, attempts_json,
                     completion_source, prompt_tokens, completion_tokens, total_tokens,
@@ -1340,66 +1362,67 @@ mod v2_tests {
         .await
         .expect("terminal row");
         assert_eq!(row.get::<Option<String>, _>(0).as_deref(), Some("gpt-test"));
-        assert_eq!(row.get::<i64, _>(1), 1);
-        assert_eq!(row.get::<Option<String>, _>(2).as_deref(), Some("key-1"));
+        assert_eq!(row.get::<Option<String>, _>(1).as_deref(), Some("grok-4.6"));
+        assert_eq!(row.get::<i64, _>(2), 1);
+        assert_eq!(row.get::<Option<String>, _>(3).as_deref(), Some("key-1"));
         assert_eq!(
-            row.get::<Option<String>, _>(3).as_deref(),
+            row.get::<Option<String>, _>(4).as_deref(),
             Some("station-1")
         );
-        assert_eq!(row.get::<Option<String>, _>(4), None);
+        assert_eq!(row.get::<Option<String>, _>(5), None);
         assert_eq!(
-            row.get::<Option<String>, _>(5).as_deref(),
+            row.get::<Option<String>, _>(6).as_deref(),
             Some("stable_first")
         );
         assert_eq!(
-            row.get::<Option<String>, _>(6).as_deref(),
+            row.get::<Option<String>, _>(7).as_deref(),
             Some("healthy key")
         );
-        assert_eq!(row.get::<Option<String>, _>(7).as_deref(), Some("[]"));
-        assert_eq!(row.get::<Option<i64>, _>(8), Some(128));
-        assert_eq!(row.get::<Option<i64>, _>(9), Some(3));
-        assert_eq!(row.get::<Option<i64>, _>(10), Some(7));
+        assert_eq!(row.get::<Option<String>, _>(8).as_deref(), Some("[]"));
+        assert_eq!(row.get::<Option<i64>, _>(9), Some(128));
+        assert_eq!(row.get::<Option<i64>, _>(10), Some(3));
+        assert_eq!(row.get::<Option<i64>, _>(11), Some(7));
         assert_eq!(
-            row.get::<Option<String>, _>(11).as_deref(),
+            row.get::<Option<String>, _>(12).as_deref(),
             Some("upstream")
         );
-        assert_eq!(row.get::<Option<String>, _>(12).as_deref(), Some("[]"));
+        assert_eq!(row.get::<Option<String>, _>(13).as_deref(), Some("[]"));
         assert_eq!(
-            row.get::<Option<String>, _>(13).as_deref(),
+            row.get::<Option<String>, _>(14).as_deref(),
             Some("chat.completion")
         );
-        assert_eq!(row.get::<Option<i64>, _>(14), Some(11));
-        assert_eq!(row.get::<Option<i64>, _>(15), Some(13));
-        assert_eq!(row.get::<Option<i64>, _>(16), Some(24));
-        assert_eq!(row.get::<Option<i64>, _>(17), Some(2));
-        assert_eq!(row.get::<Option<i64>, _>(18), Some(5));
-        assert_eq!(row.get::<Option<String>, _>(19).as_deref(), Some("high"));
-        assert_eq!(row.get::<Option<i64>, _>(20), Some(17));
-        assert_eq!(row.get::<Option<String>, _>(21).as_deref(), Some("1100"));
-        assert_eq!(row.get::<Option<i64>, _>(22), Some(100));
-        assert_eq!(row.get::<String, _>(23), "success");
-        assert_eq!(
-            row.get::<Option<String>, _>(24).as_deref(),
-            Some("completed")
-        );
+        assert_eq!(row.get::<Option<i64>, _>(15), Some(11));
+        assert_eq!(row.get::<Option<i64>, _>(16), Some(13));
+        assert_eq!(row.get::<Option<i64>, _>(17), Some(24));
+        assert_eq!(row.get::<Option<i64>, _>(18), Some(2));
+        assert_eq!(row.get::<Option<i64>, _>(19), Some(5));
+        assert_eq!(row.get::<Option<String>, _>(20).as_deref(), Some("high"));
+        assert_eq!(row.get::<Option<i64>, _>(21), Some(17));
+        assert_eq!(row.get::<Option<String>, _>(22).as_deref(), Some("1100"));
+        assert_eq!(row.get::<Option<i64>, _>(23), Some(100));
+        assert_eq!(row.get::<String, _>(24), "success");
         assert_eq!(
             row.get::<Option<String>, _>(25).as_deref(),
             Some("completed")
         );
         assert_eq!(
             row.get::<Option<String>, _>(26).as_deref(),
+            Some("completed")
+        );
+        assert_eq!(
+            row.get::<Option<String>, _>(27).as_deref(),
             Some("request_completed")
         );
-        assert_eq!(row.get::<Option<i64>, _>(27), Some(1));
+        assert_eq!(row.get::<Option<i64>, _>(28), Some(1));
         assert_eq!(
-            row.get::<Option<String>, _>(28).as_deref(),
+            row.get::<Option<String>, _>(29).as_deref(),
             Some("BodyCompleted")
         );
-        assert_eq!(row.get::<Option<i64>, _>(29), Some(0));
-        assert_eq!(row.get::<Option<i64>, _>(30), Some(1));
-        assert_eq!(row.get::<i64, _>(31), 0);
-        assert_eq!(row.get::<Option<i64>, _>(32), Some(1100));
-        assert_eq!(row.get::<Option<i64>, _>(33), Some(200));
-        assert_eq!(row.get::<Option<String>, _>(34).as_deref(), Some("token"));
+        assert_eq!(row.get::<Option<i64>, _>(30), Some(0));
+        assert_eq!(row.get::<Option<i64>, _>(31), Some(1));
+        assert_eq!(row.get::<i64, _>(32), 0);
+        assert_eq!(row.get::<Option<i64>, _>(33), Some(1100));
+        assert_eq!(row.get::<Option<i64>, _>(34), Some(200));
+        assert_eq!(row.get::<Option<String>, _>(35).as_deref(), Some("token"));
     }
 }

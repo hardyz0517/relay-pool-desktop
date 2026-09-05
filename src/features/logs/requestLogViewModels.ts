@@ -181,6 +181,24 @@ export function formatRequestTokenCount(log: RequestLog, value: number | null) {
   return formatCompactTokenCount(value);
 }
 
+/**
+ * Returns the non-cached portion of the input usage for the request-log view.
+ * Providers differ on whether prompt/input tokens already include cache hits;
+ * the reported total lets us normalize both shapes without changing raw usage
+ * or pricing inputs persisted by the backend.
+ */
+export function requestInputTokenCount(log: RequestLog) {
+  if (log.promptTokens == null) return null;
+  const cacheTokens = Math.max(log.cacheReadTokens ?? 0, 0) + Math.max(log.cacheCreationTokens ?? 0, 0);
+  if (cacheTokens === 0) return log.promptTokens;
+
+  if (log.totalTokens != null && log.completionTokens != null) {
+    return Math.max(0, log.totalTokens - Math.max(log.completionTokens, 0) - cacheTokens);
+  }
+
+  return Math.max(0, log.promptTokens - cacheTokens);
+}
+
 export function paginateRequestLogs(logs: RequestLog[], page: number, pageSize: number) {
   const safePageSize = Math.max(1, pageSize);
   const totalPages = Math.max(1, Math.ceil(logs.length / safePageSize));

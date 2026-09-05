@@ -17,10 +17,10 @@ assert(
 );
 
 assert(
-  /\{request\.model \?\? request\.path\}[\s\S]*?\{formatDateTime\(request\.startedAt\)\}[\s\S]*?\{requestStationName\} · \{requestKeyName\}/.test(
+  /<ModelMappingDisplay[\s\S]*?requestedModel=\{request\.model\}[\s\S]*?resolvedModel=\{request\.resolvedUpstreamModel\}[\s\S]*?fallback=\{request\.path\}[\s\S]*?\{formatDateTime\(request\.startedAt\)\}[\s\S]*?\{requestStationName\} · \{requestKeyName\}/.test(
     dashboardSource,
   ),
-  "dashboard recent usage rows should show station and key names below the usage time",
+  "dashboard recent usage rows should show requested and upstream models above the usage time, station, and key names",
 );
 
 assert(

@@ -57,6 +57,7 @@ pub struct RequestLog {
     pub method: String,
     pub path: String,
     pub model: Option<String>,
+    pub resolved_upstream_model: Option<String>,
     pub stream: bool,
     pub status: String,
     pub http_status: Option<i64>,

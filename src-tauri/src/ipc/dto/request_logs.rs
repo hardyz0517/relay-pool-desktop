@@ -46,6 +46,7 @@ fn fixture_request_log() -> RequestLog {
         method: "POST".into(),
         path: "/v1/chat/completions".into(),
         model: Some("fixture-model".into()),
+        resolved_upstream_model: Some("fixture-upstream-model".into()),
         stream: false,
         status: "success".into(),
         http_status: Some(200),
