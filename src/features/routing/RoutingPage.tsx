@@ -31,10 +31,12 @@ type LocalRoutingTab = "status" | "edit";
 export function RoutingPage({
   deepLink,
   onOpenRequestLog,
+  onOpenStation,
   onViewPreparationPort,
 }: {
   deepLink?: VersionedRoutingDeepLink | null;
   onOpenRequestLog?: (requestLogId: string) => void;
+  onOpenStation?: (stationId: string) => void;
   onViewPreparationPort?: (port: RoutingViewPreparationPort | null) => void;
 }) {
   const toast = useToast();
@@ -246,6 +248,7 @@ export function RoutingPage({
               importingCCSwitch={importingCCSwitch}
               onImportToCCSwitch={() => void handleImportToCCSwitch()}
               deepLink={deepLink}
+              onOpenStation={onOpenStation}
             />
             <RoutingStatusDiagnosticsPanel
               snapshot={routingSnapshotQuery.data ?? null}

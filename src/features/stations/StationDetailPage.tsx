@@ -33,6 +33,7 @@ type StationDetailPageProps = {
   stationId: string | null;
   initialStation?: Station | null;
   onBack: () => void;
+  backLabel?: string;
   onEditProvider: (stationId: string) => void;
   onOpenRoutingDeepLink?: (link: StationDetailRoutingDeepLink) => void;
 };
@@ -69,6 +70,7 @@ export function StationDetailPage({
   stationId,
   initialStation = null,
   onBack,
+  backLabel = "返回中转站资产",
   onEditProvider,
   onOpenRoutingDeepLink,
 }: StationDetailPageProps) {
@@ -248,6 +250,7 @@ export function StationDetailPage({
         loadingAction={loadingAction}
         sectionError={sectionError}
         onBack={onBack}
+        backLabel={backLabel}
         onEdit={() => onEditProvider(viewModel.station.id)}
         onOpenWebsite={() => void openStationWebsite(viewModel.station.websiteUrl)}
         onOpenRechargeCenter={() => setRechargeCenterOpen(true)}

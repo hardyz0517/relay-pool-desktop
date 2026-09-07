@@ -53,6 +53,7 @@ type RoutingCandidateOrderPanelProps = {
   loading: boolean;
   nowMs: number;
   heading: string;
+  onOpenStation?: (stationId: string) => void;
 };
 
 export function RoutingCandidateOrderPanel({
@@ -61,6 +62,7 @@ export function RoutingCandidateOrderPanel({
   loading,
   nowMs,
   heading,
+  onOpenStation,
 }: RoutingCandidateOrderPanelProps) {
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -217,6 +219,7 @@ export function RoutingCandidateOrderPanel({
                     attemptOrder={attemptOrderById.get(candidate.stationKeyId) ?? null}
                     nowMs={nowMs}
                     disabled={syncState === "saving"}
+                    onOpenStation={onOpenStation}
                   />
                 ))}
               </div>
@@ -302,12 +305,32 @@ function compareRoutingAttemptCandidates(
   return 0;
 }
 
-function SortableStatusCandidateRow({ candidate, attemptOrder, nowMs, disabled }: { candidate: RoutingCandidateView; attemptOrder: number | null; nowMs: number; disabled: boolean }) {
+function SortableStatusCandidateRow({
+  candidate,
+  attemptOrder,
+  nowMs,
+  disabled,
+  onOpenStation,
+}: {
+  candidate: RoutingCandidateView;
+  attemptOrder: number | null;
+  nowMs: number;
+  disabled: boolean;
+  onOpenStation?: (stationId: string) => void;
+}) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: candidate.stationKeyId, disabled });
   const style: CSSProperties = { transform: CSS.Transform.toString(transform), transition };
   return (
     <div ref={setNodeRef} style={style} className={cn("will-change-transform", isDragging && "opacity-60")}>
-      <LocalRoutingStatusCandidateRow candidate={candidate} attemptOrder={attemptOrder} nowMs={nowMs} dragDisabled={disabled} dragAttributes={attributes} dragListeners={listeners} />
+      <LocalRoutingStatusCandidateRow
+        candidate={candidate}
+        attemptOrder={attemptOrder}
+        nowMs={nowMs}
+        dragDisabled={disabled}
+        dragAttributes={attributes}
+        dragListeners={listeners}
+        onOpenStation={onOpenStation}
+      />
     </div>
   );
 }

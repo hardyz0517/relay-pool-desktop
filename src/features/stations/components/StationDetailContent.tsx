@@ -35,6 +35,7 @@ export type StationDetailContentProps = {
   loadingAction: StationDetailLoadingAction | null;
   sectionError: string | null;
   onBack: () => void;
+  backLabel?: string;
   onEdit: () => void;
   onOpenWebsite?: () => void;
   onOpenRechargeCenter: () => void;
@@ -98,6 +99,7 @@ export function StationDetailContent({
   loadingAction,
   sectionError,
   onBack,
+  backLabel = "返回中转站资产",
   onEdit,
   onOpenWebsite,
   onOpenRechargeCenter,
@@ -114,7 +116,7 @@ export function StationDetailContent({
       title="中转站详情"
       stickyHeader
       backAction={
-        <IconButton label="返回中转站资产" onClick={onBack}>
+        <IconButton label={backLabel} onClick={onBack}>
           <ArrowLeft className="h-4 w-4" />
         </IconButton>
       }

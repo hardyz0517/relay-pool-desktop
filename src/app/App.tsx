@@ -19,6 +19,7 @@ import {
   type ChangeCenterView,
 } from "@/features/changes";
 import type { RequestLogDeepLink, VersionedRequestLogDeepLink } from "@/lib/types/requestLogDeepLinks";
+import type { RequestLogCostGapFilter } from "@/lib/types/proxy";
 import type { RoutingDeepLink, VersionedRoutingDeepLink } from "@/lib/types/routingDeepLinks";
 import { AddProviderPage, StationDetailPage } from "@/features/stations";
 import type { AppPageId, AppRouteId, TransientPageId } from "@/lib/types/navigation";
@@ -66,6 +67,7 @@ export function App({ runtimeMode = "desktop" }: { runtimeMode?: "desktop" | "de
   const [editingKeyId, setEditingKeyId] = useState<string | null>(null);
   const [routingDeepLink, setRoutingDeepLink] = useState<VersionedRoutingDeepLink | null>(null);
   const [requestLogDeepLink, setRequestLogDeepLink] = useState<VersionedRequestLogDeepLink | null>(null);
+  const [requestLogCostGapFilter, setRequestLogCostGapFilter] = useState<RequestLogCostGapFilter | null>(null);
   const [changeCenterView, setChangeCenterView] = useState<ChangeCenterView>(CHANGE_CENTER_DEFAULT_VIEW);
   const routingDeepLinkSequenceRef = useRef(0);
   const requestLogDeepLinkSequenceRef = useRef(0);
@@ -138,7 +140,7 @@ export function App({ runtimeMode = "desktop" }: { runtimeMode?: "desktop" | "de
     developerModeRef.current = developerModeEnabled;
   }, [developerModeEnabled]);
 
-  const navigateTo = useCallback((routeId: AppPageId) => {
+  const navigateTo = useCallback((routeId: AppPageId, options?: { preserveRequestLogFilter?: boolean }) => {
     if (isShellPage(activeRouteIdRef.current) && !isShellPage(routeId)) {
       const recordedTarget = lastShellFocusTargetRef.current;
       const activeElement = document.activeElement;
@@ -149,6 +151,9 @@ export function App({ runtimeMode = "desktop" }: { runtimeMode?: "desktop" | "de
           : null;
     }
 
+    if (routeId === "logs" && !options?.preserveRequestLogFilter) {
+      setRequestLogCostGapFilter(null);
+    }
     navigate(routeId);
   }, [navigate]);
 
@@ -378,6 +383,18 @@ export function App({ runtimeMode = "desktop" }: { runtimeMode?: "desktop" | "de
     navigateTo("stationDetail");
   }, [navigateTo]);
 
+  const openStationDetailById = useCallback((stationId: string) => {
+    setDetailStationId(stationId);
+    setDetailStationPreview(null);
+    navigateTo("stationDetail");
+  }, [navigateTo]);
+
+  const closeStationDetail = useCallback(() => {
+    setDetailStationId(null);
+    setDetailStationPreview(null);
+    navigateTo(activeShellRouteId);
+  }, [activeShellRouteId, navigateTo]);
+
   const openAddKey = useCallback((stationId: string | null) => {
     setInitialKeyStationId(stationId);
     setEditingKeyId(null);
@@ -402,9 +419,14 @@ export function App({ runtimeMode = "desktop" }: { runtimeMode?: "desktop" | "de
     navigateTo("routing");
   }, [navigateTo]);
 
-  const openRequestLogs = useCallback(() => {
-    navigateTo("logs");
+  const openRequestLogs = useCallback((filter?: RequestLogCostGapFilter) => {
+    setRequestLogCostGapFilter(filter ?? null);
+    navigateTo("logs", { preserveRequestLogFilter: true });
   }, [navigateTo]);
+
+  const clearRequestLogCostGapFilter = useCallback(() => {
+    setRequestLogCostGapFilter(null);
+  }, []);
 
   const openChangeCenterSettings = useCallback(() => {
     navigateTo("changeSettings");
@@ -427,6 +449,7 @@ export function App({ runtimeMode = "desktop" }: { runtimeMode?: "desktop" | "de
   const openRequestLogDeepLink = useCallback((link: RequestLogDeepLink) => {
     requestLogDeepLinkSequenceRef.current += 1;
     setRequestLogDeepLink({ ...link, sequence: requestLogDeepLinkSequenceRef.current });
+    setRequestLogCostGapFilter(null);
     navigateTo("logs");
   }, [navigateTo]);
 
@@ -435,6 +458,7 @@ export function App({ runtimeMode = "desktop" }: { runtimeMode?: "desktop" | "de
       addProvider: openAddProvider,
       editProvider: openEditProvider,
       openStation: openStationDetail,
+      openStationById: openStationDetailById,
       addKey: openAddKey,
       editKey: openEditKey,
       openKeyPool,
@@ -451,11 +475,14 @@ export function App({ runtimeMode = "desktop" }: { runtimeMode?: "desktop" | "de
       registerChannelViewPreparation,
       openRequestLogDeepLink,
       requestLogDeepLink,
+      requestLogCostGapFilter,
+      clearRequestLogCostGapFilter,
     }),
     [
       openAddProvider,
       openEditProvider,
       openStationDetail,
+      openStationDetailById,
       openAddKey,
       openEditKey,
       openKeyPool,
@@ -471,6 +498,8 @@ export function App({ runtimeMode = "desktop" }: { runtimeMode?: "desktop" | "de
       registerChannelViewPreparation,
       openRequestLogDeepLink,
       requestLogDeepLink,
+      requestLogCostGapFilter,
+      clearRequestLogCostGapFilter,
     ],
   );
 
@@ -504,7 +533,8 @@ export function App({ runtimeMode = "desktop" }: { runtimeMode?: "desktop" | "de
             <StationDetailPage
               stationId={detailStationId}
               initialStation={detailStationPreview}
-              onBack={returnToStations}
+              onBack={closeStationDetail}
+              backLabel={`返回${activeShellRouteLabel}`}
               onEditProvider={openEditProvider}
               onOpenRoutingDeepLink={developerModeEnabled ? openRoutingDeepLink : undefined}
             />

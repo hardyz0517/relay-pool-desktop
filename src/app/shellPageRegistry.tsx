@@ -6,6 +6,7 @@ import { CollectorsPage } from "@/features/collectors";
 import { DashboardPage } from "@/features/dashboard";
 import { KeyPoolPage } from "@/features/key-pool";
 import { LogsPage } from "@/features/logs";
+import type { RequestLogCostGapFilter } from "@/lib/types/proxy";
 import { PricingPage } from "@/features/pricing";
 import { RoutingPage } from "@/features/routing";
 import type { RoutingViewPreparationPort } from "@/features/routing/routingViewPreparation";
@@ -23,11 +24,12 @@ export type ShellPageActions = {
   addProvider: () => void;
   editProvider: (stationId: string) => void;
   openStation: (station: Station) => void;
+  openStationById: (stationId: string) => void;
   addKey: (stationId: string | null) => void;
   editKey: (stationKeyId: string) => void;
   openKeyPool: () => void;
   openLocalRouting: () => void;
-  openRequestLogs: () => void;
+  openRequestLogs: (filter?: RequestLogCostGapFilter) => void;
   openModelBasePrices: () => void;
   openChangeCenterSettings: () => void;
   openTourCenter: () => void;
@@ -39,6 +41,8 @@ export type ShellPageActions = {
   registerChannelViewPreparation: (port: ChannelViewPreparationPort | null) => void;
   openRequestLogDeepLink: (link: RequestLogDeepLink) => void;
   requestLogDeepLink: VersionedRequestLogDeepLink | null;
+  requestLogCostGapFilter: RequestLogCostGapFilter | null;
+  clearRequestLogCostGapFilter: () => void;
 };
 
 export const ShellPageContent = memo(function ShellPageContent({
@@ -101,6 +105,7 @@ export const ShellPageContent = memo(function ShellPageContent({
         <RoutingPage
           deepLink={actions.routingDeepLink}
           onViewPreparationPort={actions.registerRoutingViewPreparation}
+          onOpenStation={actions.openStationById}
           onOpenRequestLog={(requestLogId) =>
             actions.openRequestLogDeepLink({
               kind: "request-log",
@@ -114,6 +119,8 @@ export const ShellPageContent = memo(function ShellPageContent({
       return (
         <LogsPage
           deepLink={actions.requestLogDeepLink}
+          costGapFilter={actions.requestLogCostGapFilter}
+          onClearCostGapFilter={actions.clearRequestLogCostGapFilter}
           onOpenRoutingDeepLink={routingDeepLinkHandler}
         />
       );

@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RoutingWorkspaceCandidate } from "@/lib/types/routing";
 import type { RoutingCandidateView } from "@/lib/types/routingWorkspace";
 import {
@@ -196,8 +196,36 @@ describe("LocalRoutingStatusCandidateRow concurrency", () => {
       />,
     );
 
-    expect(markup).toContain("供应商：1For");
+    expect(markup).toContain("供应商：");
+    expect(markup).toContain("1For");
     expect(markup).not.toContain("聊天补全");
+  });
+
+  it("opens station detail from the provider name", () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const onOpenStation = vi.fn();
+
+    act(() => {
+      root.render(
+        <LocalRoutingStatusCandidateRow
+          candidate={candidate({ stationId: "station-1", stationName: "1For" })}
+          order={1}
+          nowMs={0}
+          onOpenStation={onOpenStation}
+        />,
+      );
+    });
+
+    const button = [...host.querySelectorAll("button")].find((element) =>
+      element.getAttribute("aria-label") === "打开 1For 详情",
+    );
+    if (!(button instanceof HTMLButtonElement)) {
+      throw new Error("missing station detail button");
+    }
+    act(() => button.click());
+    expect(onOpenStation).toHaveBeenCalledWith("station-1");
   });
 
   it("uses square corners for participation status badges", () => {

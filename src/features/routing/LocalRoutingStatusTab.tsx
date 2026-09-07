@@ -30,6 +30,7 @@ type LocalRoutingStatusTabProps = {
   importingCCSwitch: boolean;
   onImportToCCSwitch: () => void;
   deepLink?: VersionedRoutingDeepLink | null;
+  onOpenStation?: (stationId: string) => void;
 };
 
 const routeMetricValueClassName = "text-[20px] leading-6 text-foreground";
@@ -45,6 +46,7 @@ export function LocalRoutingStatusTab({
   importingCCSwitch,
   onImportToCCSwitch,
   deepLink,
+  onOpenStation,
 }: LocalRoutingStatusTabProps) {
   const [decisionDetailsOpen, setDecisionDetailsOpen] = useState(false);
   const latestDecisionId = workspace?.latestDecision?.id ?? null;
@@ -242,6 +244,7 @@ export function LocalRoutingStatusTab({
         loading={loading}
         nowMs={nowMs}
         heading={candidateHeading}
+        onOpenStation={onOpenStation}
       />
       <Dialog open={decisionDetailsOpen} title="最近决策原因" description={latestDecisionId ?? "暂无最近决策"} onClose={() => setDecisionDetailsOpen(false)}>
         <div className="grid gap-3 p-4 text-sm">

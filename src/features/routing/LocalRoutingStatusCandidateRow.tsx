@@ -46,6 +46,7 @@ type LocalRoutingStatusCandidateRowProps = {
   dragDisabled?: boolean;
   dragAttributes?: DraggableAttributes;
   dragListeners?: DraggableSyntheticListeners;
+  onOpenStation?: (stationId: string) => void;
 };
 
 export function LocalRoutingStatusCandidateHeader({ sortable = false }: { sortable?: boolean }) {
@@ -75,6 +76,7 @@ export function LocalRoutingStatusCandidateRow({
   dragDisabled = false,
   dragAttributes,
   dragListeners,
+  onOpenStation,
 }: LocalRoutingStatusCandidateRowProps) {
   const displayedAttemptOrder = attemptOrder === undefined ? order ?? null : attemptOrder;
   const isSortable = Boolean(dragAttributes || dragListeners);
@@ -155,8 +157,26 @@ export function LocalRoutingStatusCandidateRow({
             {candidate.keyName}
           </span>
         </div>
-        <div className="mt-0.5 truncate text-xs text-muted-foreground">
-          供应商：{candidate.stationName}
+        <div className="mt-0.5 flex min-w-0 items-baseline gap-0 text-xs text-muted-foreground">
+          <span className="shrink-0">供应商：</span>
+          {onOpenStation ? (
+            <button
+              type="button"
+              className="min-w-0 truncate text-left text-xs text-muted-foreground underline-offset-2 transition-colors hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+              aria-label={`打开 ${candidate.stationName} 详情`}
+              title={`打开 ${candidate.stationName} 详情`}
+              onPointerDown={(event) => event.stopPropagation()}
+              onPointerUp={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpenStation(candidate.stationId);
+              }}
+            >
+              {candidate.stationName}
+            </button>
+          ) : (
+            <span className="truncate">{candidate.stationName}</span>
+          )}
         </div>
       </div>
       <MetricCell label="状态">
