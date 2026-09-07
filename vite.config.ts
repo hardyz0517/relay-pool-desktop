@@ -19,6 +19,11 @@ export default defineConfig({
     watch: {
       ignored: [
         "**/src-tauri/target*/**",
+        // Keep ad-hoc Cargo target directories (for example
+        // `target-login-fix`) out of Vite's watcher as well. They can be
+        // written by a parallel Rust check and otherwise surface transient
+        // EBUSY watcher failures that terminate `tauri dev`.
+        "**/target*/**",
         "**/output/**",
         "**/.worktrees/**",
         "**/dist/**",
