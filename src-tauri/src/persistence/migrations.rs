@@ -1064,36 +1064,33 @@ mod tests {
     use super::*;
     use crate::persistence::runtime::PersistenceRuntime;
 
-    #[test]
-    fn model_mapping_foundation_checksum_is_frozen() {
+    fn frozen_sql_checksum(bytes: &[u8]) -> String {
+        let normalized: Vec<u8> = bytes.iter().copied().filter(|byte| *byte != b'\r').collect();
         let mut hasher = Sha384::new();
-        hasher.update(include_bytes!(
-            "migrations/0043_model_mapping_foundation.sql"
-        ));
-        let checksum = hasher
+        hasher.update(normalized);
+        hasher
             .finalize()
             .iter()
             .map(|byte| format!("{byte:02X}"))
-            .collect::<String>();
+            .collect()
+    }
+
+    #[test]
+    fn model_mapping_foundation_checksum_is_frozen() {
         assert_eq!(
-            checksum,
+            frozen_sql_checksum(include_bytes!(
+                "migrations/0043_model_mapping_foundation.sql"
+            )),
             "3D6D2CFC7A8708FB1FBF7F5053EBBB7A151C01AD6A23C9CDE7AF95A8C64589DF6D061CDD60BFDEF7F4FBE75E2A5080BF"
         );
     }
 
     #[test]
     fn station_collection_reliability_checksum_is_frozen() {
-        let mut hasher = Sha384::new();
-        hasher.update(include_bytes!(
-            "migrations/0072_station_collection_reliability.sql"
-        ));
-        let checksum = hasher
-            .finalize()
-            .iter()
-            .map(|byte| format!("{byte:02X}"))
-            .collect::<String>();
         assert_eq!(
-            checksum,
+            frozen_sql_checksum(include_bytes!(
+                "migrations/0072_station_collection_reliability.sql"
+            )),
             "2B2FB98A57424B048E19F42E362DFF1F853598AD3A12FC3234D3672ADD308C1AC3F04B780147814D6535FA742EB658F7"
         );
     }

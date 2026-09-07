@@ -2314,6 +2314,21 @@
             "temporary": false
         },
         {
+            "from": "services::collectors::drivers::newapi",
+            "to": "models",
+            "temporary": false
+        },
+        {
+            "from": "services::collectors::drivers::newapi",
+            "to": "models::station_published_status",
+            "temporary": false
+        },
+        {
+            "from": "services::collectors::drivers::newapi::parsers",
+            "to": "models::station_published_status",
+            "temporary": false
+        },
+        {
             "from": "services::collectors::drivers::sub2api",
             "to": "outbound",
             "temporary": false
@@ -3620,6 +3635,11 @@
         },
         {
             "from": "persistence::stores::request_outcome_store",
+            "to": "persistence::stores::dashboard_metrics_rollup",
+            "temporary": false
+        },
+        {
+            "from": "persistence::stores::request_lifecycle_reconciliation",
             "to": "persistence::stores::dashboard_metrics_rollup",
             "temporary": false
         },
@@ -4944,6 +4964,11 @@
             "temporary": false
         },
         {
+            "from": "application::collectors",
+            "to": "services::collectors::facts",
+            "temporary": false
+        },
+        {
             "from": "application::queries::station_published_status",
             "to": "models::station_published_status",
             "temporary": false
@@ -5061,6 +5086,36 @@
         {
             "from": "services::collectors::drivers::sub2api::published_status",
             "to": "models::station_published_status",
+            "temporary": false
+        },
+        {
+            "from": "services::collectors::contract",
+            "to": "services::collectors::facts",
+            "temporary": false
+        },
+        {
+            "from": "services::collectors::drivers::newapi",
+            "to": "services::collectors::facts",
+            "temporary": false
+        },
+        {
+            "from": "services::collectors::drivers::newapi::parsers",
+            "to": "services::collectors::facts",
+            "temporary": false
+        },
+        {
+            "from": "services::collectors::drivers::sub2api",
+            "to": "services::collectors::facts",
+            "temporary": false
+        },
+        {
+            "from": "services::collectors::drivers::sub2api::mapping",
+            "to": "services::collectors::facts",
+            "temporary": false
+        },
+        {
+            "from": "services::collectors::output",
+            "to": "services::collectors::facts",
             "temporary": false
         },
         {
