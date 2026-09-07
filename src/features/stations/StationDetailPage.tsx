@@ -266,6 +266,7 @@ export function StationDetailPage({
         publishedStatusSection={
           <StationPublishedStatusSection
             stationName={viewModel.station.name}
+            stationType={viewModel.station.stationType}
             workspace={publishedStatus.workspace}
             isLoading={publishedStatus.isLoading}
             isError={publishedStatus.isError}

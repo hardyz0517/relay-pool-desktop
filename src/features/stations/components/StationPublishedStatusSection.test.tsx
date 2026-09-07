@@ -122,10 +122,130 @@ describe("StationPublishedStatusSection", () => {
     expect(host.textContent).toContain("最新官方状态读取失败；正在显示上次读取的结果。");
     expect(host.textContent).toContain("Synthetic official monitor");
   });
+
+  it("uses one expandable component for NewAPI model and group projections", async () => {
+    const first = createRow({
+      rowKey: "newapi-model-group-a",
+      provider: "newapi",
+      name: "gpt-5.5 · default",
+      groupName: "default",
+      primaryModel: "gpt-5.5",
+      recentAvailabilityPercent: 100,
+      currentLatencyMs: 22_688.13,
+      currentTtftMs: 10_490,
+      currentTps: 31.7,
+    });
+    const second = createRow({
+      rowKey: "newapi-model-group-b",
+      provider: "newapi",
+      name: "gpt-5.5 · cheap",
+      groupName: "cheap",
+      primaryModel: "gpt-5.5",
+      currentOutcome: "degraded",
+      recentAvailabilityPercent: 83,
+      currentLatencyMs: 587,
+      currentTtftMs: null,
+      currentTps: 1.08,
+    });
+    await render({ stationType: "newapi", workspace: createWorkspace("available", { rows: [first, second] }) });
+
+    expect(host.querySelector("h2")?.textContent).toBe("官方渠道状态");
+    expect(host.textContent).toContain("按模型");
+    expect(host.textContent).toContain("按分组");
+    const segmented = host.querySelector('[role="radiogroup"][aria-label="NewAPI 状态视图"]');
+    const refreshButton = Array.from(host.querySelectorAll("button")).find((button) => button.textContent?.includes("重新采集"));
+    expect(segmented).not.toBeNull();
+    expect(refreshButton).toBeDefined();
+    expect(segmented?.parentElement).toBe(refreshButton?.parentElement);
+    expect(Boolean(segmented && refreshButton && (segmented.compareDocumentPosition(refreshButton) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
+    expect(host.textContent).toContain("gpt-5.5");
+    expect(host.textContent).toContain("2 个分组");
+    expect(host.textContent).toContain("1 正常 · 1 欠佳");
+    expect(host.textContent).toContain("91.50%");
+    expect(host.textContent).toContain("10.5 s");
+    expect(host.textContent).toContain("16.4");
+    expect(host.textContent).not.toContain("NewAPI 请求性能");
+    expect(Array.from(host.querySelectorAll("thead th")).map((cell) => cell.textContent)).toEqual([
+      "模型", "状态概览", "最近可用性", "首响 / TPS", "最近 60 次",
+    ]);
+    const modelTrend = host.querySelector('[aria-label="gpt-5.5 最近 60 个性能 bucket"]');
+    expect(modelTrend?.className).toContain("grid w-full");
+    expect(host.textContent).not.toContain("gpt-5.5 · default");
+    const modelRow = Array.from(host.querySelectorAll("tr[aria-expanded]"))
+      .find((row) => row.textContent?.includes("gpt-5.5") && row.textContent?.includes("2 个分组"));
+    expect(modelRow).toBeDefined();
+    const modelCells = modelRow!.querySelectorAll("td");
+    expect(modelCells).toHaveLength(5);
+    expect(modelCells[3]?.textContent).toContain("10.5 s");
+    expect(modelCells[3]?.textContent).toContain("TPS 16.4");
+    await act(async () => modelRow!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(host.textContent).toContain("default");
+    expect(host.textContent).not.toContain("22.7 s");
+    expect(host.textContent).not.toContain("587 ms");
+    expect(host.textContent).toContain("1.08");
+    expect(host.querySelectorAll("tbody tr")).toHaveLength(3);
+    const childMetricCells = Array.from(host.querySelectorAll("tbody tr:not([aria-expanded])"))
+      .map((row) => row.querySelectorAll("td")[3]);
+    expect(childMetricCells.some((cell) => cell?.textContent?.includes("TPS 1.08"))).toBe(true);
+    expect(childMetricCells.some((cell) => cell?.textContent?.includes("10.5 s") && cell.textContent.includes("TPS 31.7"))).toBe(true);
+    const groupTab = Array.from(host.querySelectorAll("button")).find((button) => button.textContent === "按分组");
+    await act(async () => groupTab!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(Array.from(host.querySelectorAll("thead th")).map((cell) => cell.textContent)?.[0]).toBe("分组");
+    expect(host.textContent).toContain("default");
+    expect(host.textContent).toContain("cheap");
+  });
+
+  it("keeps long NewAPI child names bounded and formats missing performance metrics", async () => {
+    const longGroupName = "某某专线/开发者专用/全模型高倍率渠道/名称很长但不应挤压指标列";
+    await render({
+      stationType: "newapi",
+      workspace: createWorkspace("available", {
+        rows: [createRow({
+          rowKey: "newapi-long-group",
+          provider: "newapi",
+          name: `gpt-6-astra · ${longGroupName}`,
+          groupName: longGroupName,
+          primaryModel: "gpt-6-astra",
+          currentOutcome: "unavailable",
+          recentAvailabilityPercent: 0,
+          currentLatencyMs: 2_000,
+          currentTtftMs: null,
+          currentTps: null,
+        })],
+      }),
+    });
+
+    const parentRow = host.querySelector("tbody tr[aria-expanded]");
+    await act(async () => parentRow!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    const childRow = host.querySelectorAll("tbody tr")[1];
+    expect(childRow?.textContent).toContain("0.00%");
+    expect(childRow?.textContent).not.toContain("2.0 s");
+    expect(childRow?.textContent?.match(/—/g)).toHaveLength(2);
+    expect(childRow?.querySelector(`[title="${longGroupName}"]`)).not.toBeNull();
+    expect(childRow?.querySelector(".truncate")).not.toBeNull();
+  });
+
+  it("keeps the existing Sub2API table structure and hides the NewAPI projection control", async () => {
+    await render({
+      workspace: createWorkspace("available", {
+        rows: [createRow({ currentLatencyMs: 1_160, currentPingLatencyMs: 6 })],
+      }),
+    });
+
+    expect(host.querySelector('[aria-label="NewAPI 状态视图"]')).toBeNull();
+    expect(Array.from(host.querySelectorAll("thead th")).map((cell) => cell.textContent)).toEqual([
+      "监控 / 分组", "模型", "当前状态", "最近可用性", "首响 / Ping", "最近 60 次",
+    ]);
+    const metricCell = host.querySelectorAll("tbody td")[4];
+    expect(metricCell?.textContent).toContain("1.2 s");
+    expect(metricCell?.textContent).toContain("Ping 6 ms");
+    expect(host.textContent).not.toContain("延迟 / Ping");
+  });
 });
 
 async function render({
   workspace,
+  stationType = "sub2api",
   isLoading = false,
   isError = false,
   isRefreshing = false,
@@ -134,6 +254,7 @@ async function render({
   onRetryWorkspace = vi.fn().mockResolvedValue(undefined),
 }: {
   workspace?: StationPublishedStatusWorkspace;
+  stationType?: string;
   isLoading?: boolean;
   isError?: boolean;
   isRefreshing?: boolean;
@@ -145,6 +266,7 @@ async function render({
     root.render(
       <StationPublishedStatusSection
         stationName="Fixture Station"
+        stationType={stationType}
         workspace={workspace}
         isLoading={isLoading}
         isError={isError}

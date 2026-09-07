@@ -272,62 +272,58 @@ export function StationDetailContent({
                 {viewModel.groupEmptyMessage}
               </div>
               <p className="mt-1 max-w-md text-xs leading-5 text-muted-foreground">
-                点击采集分组倍率或重新采集后，这里会显示站点分组、默认倍率与用户倍率。
+                点击采集分组倍率或重新采集后，这里会显示站点分组、当前倍率与倍率来源。
               </p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-[680px] w-full border-separate border-spacing-0 text-left text-xs">
-                <thead>
-                  <tr className="text-muted-foreground">
-                    <TableHead className="pl-0">分组</TableHead>
-                    <TableHead>
-                      <RateHead title="生效倍率" helper="实际采用" />
-                    </TableHead>
-                    <TableHead>
-                      <RateHead title="默认倍率" helper="站点采集" />
-                    </TableHead>
-                    <TableHead>
-                      <RateHead title="用户倍率" helper="手动覆盖" />
-                    </TableHead>
-                    <TableHead>绑定状态</TableHead>
-                    <TableHead className="pr-0">最近检查</TableHead>
-                  </tr>
-                </thead>
-                <tbody>
-                  {viewModel.groupRows.map((row) => (
-                    <tr key={row.id} className="border-t border-border transition-colors hover:bg-surface-subtle">
-                      <TableCell className="max-w-[220px] pl-0">
+            <div className="relative">
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-y-0 left-1/2 z-10 hidden w-px -translate-x-1/2 bg-border/80 md:block"
+              />
+              <div className="grid grid-cols-1 md:grid-cols-2" role="list">
+                {viewModel.groupRows.map((row) => (
+                  <div
+                    key={row.id}
+                    className="min-w-0 border-b border-border/80 px-0 py-2 md:px-4 md:[&:nth-child(odd)]:pl-0 md:[&:nth-child(even)]:pr-0"
+                    role="listitem"
+                  >
+                    <div className="flex min-w-0 items-center justify-between gap-3">
+                      <div className="min-w-0 flex-1">
                         <StationGroupNameBadge
                           groupName={row.groupName}
                           rawJsonRedacted={row.rawJsonRedacted}
                           effectiveGroupCategory={row.effectiveGroupCategory}
                         />
-                        {row.warning && (
-                          <div className="mt-1 inline-flex items-center gap-1 text-warning-foreground">
-                            <AlertTriangle className="h-3.5 w-3.5" />
-                            {row.warning}
-                          </div>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <StationGroupRateBadge
-                          groupName={row.groupName}
-                          rawJsonRedacted={row.rawJsonRedacted}
-                          effectiveGroupCategory={row.effectiveGroupCategory}
-                          label={row.effectiveRate}
-                        />
-                      </TableCell>
-                      <TableCell>{row.defaultRate}</TableCell>
-                      <TableCell>{row.userRate}</TableCell>
-                      <TableCell>
-                        <StatusBadge tone={statusToneByDetailTone[row.tone]}>{row.bindingStatus}</StatusBadge>
-                      </TableCell>
-                      <TableCell className="pr-0">{row.lastChecked}</TableCell>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                      </div>
+                      <StationGroupRateBadge
+                        groupName={row.groupName}
+                        rawJsonRedacted={row.rawJsonRedacted}
+                        effectiveGroupCategory={row.effectiveGroupCategory}
+                        label={row.effectiveRate}
+                      />
+                    </div>
+                    <div className="mt-0.5 flex min-w-0 items-center justify-between gap-3 text-[11px] leading-4">
+                      <span
+                        className="min-w-0 flex-1 truncate text-muted-foreground"
+                        title={row.description ?? undefined}
+                      >
+                        {row.description ?? ""}
+                      </span>
+                      <div className="flex min-w-0 shrink-0 items-center justify-end gap-1 text-right text-muted-foreground">
+                        <span className="truncate">
+                          {row.rateSource} · {row.lastChecked}
+                        </span>
+                        {row.warning ? (
+                          <span className="shrink-0 text-warning-foreground" title={row.warning}>
+                            <AlertTriangle className="h-3.5 w-3.5" aria-label={row.warning} />
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -364,43 +360,6 @@ function usageCardVisualFor(label: string) {
     return usageCardVisualMeta.totalToken;
   }
   return usageCardVisualMeta.request;
-}
-
-function TableHead({
-  className,
-  children,
-}: {
-  className?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <th className={cn("border-b border-border px-3 pb-2 font-medium", className)}>
-      {children}
-    </th>
-  );
-}
-
-function TableCell({
-  className,
-  children,
-}: {
-  className?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <td className={cn("border-b border-border px-3 py-2.5 align-top text-foreground", className)}>
-      {children}
-    </td>
-  );
-}
-
-function RateHead({ title, helper }: { title: string; helper: string }) {
-  return (
-    <span className="block leading-tight">
-      <span className="block text-muted-foreground">{title}</span>
-      <span className="mt-0.5 block text-[11px] font-normal text-muted-foreground">{helper}</span>
-    </span>
-  );
 }
 
 function DiagnosticSection({

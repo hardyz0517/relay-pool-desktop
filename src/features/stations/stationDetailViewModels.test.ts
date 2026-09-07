@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { BalanceSnapshot } from "@/lib/types/economics";
 import type { CollectorRun } from "@/lib/types/collectorRuns";
+import type { StationGroupBinding } from "@/lib/types/groupFacts";
 import type { Station } from "@/lib/types/stations";
-import { buildMetricCards, buildStationDetailViewModel } from "./stationDetailViewModels";
+import { buildGroupRows, buildMetricCards, buildStationDetailViewModel } from "./stationDetailViewModels";
 
 function station(stationType: Station["stationType"]): Station {
   return {
@@ -113,6 +114,51 @@ describe("buildMetricCards", () => {
   });
 });
 
+describe("buildGroupRows", () => {
+  it("labels a collected default multiplier as station collection", () => {
+    const [row] = buildGroupRows([groupBinding({ description: "Default models" })], []);
+
+    expect(row).toMatchObject({
+      effectiveRate: "0.85x",
+      rateSource: "站点采集",
+      description: "Default models",
+    });
+  });
+
+  it("labels a user multiplier as a manual override", () => {
+    const [row] = buildGroupRows(
+      [
+        groupBinding({
+          defaultRateMultiplier: 0.85,
+          userRateMultiplier: 0.4,
+          effectiveRateMultiplier: 0.4,
+        }),
+      ],
+      [],
+    );
+
+    expect(row).toMatchObject({
+      effectiveRate: "0.4x",
+      rateSource: "手动覆盖",
+    });
+  });
+
+  it("keeps the source explicit when no current multiplier was collected", () => {
+    const [row] = buildGroupRows(
+      [
+        groupBinding({
+          defaultRateMultiplier: null,
+          userRateMultiplier: null,
+          effectiveRateMultiplier: null,
+        }),
+      ],
+      [],
+    );
+
+    expect(row?.rateSource).toBe("未采集");
+  });
+});
+
 describe("buildStationDetailViewModel", () => {
   it("keeps the revision-fenced station status independent from the latest task", () => {
     const currentStation = station("sub2api");
@@ -196,6 +242,35 @@ function collectorRun(overrides: Partial<CollectorRun> = {}): CollectorRun {
     errorMessage: null,
     snapshotId: "snapshot-1",
     createdAt: "2026-08-01T01:00:00Z",
+    ...overrides,
+  };
+}
+
+function groupBinding(overrides: Partial<StationGroupBinding> = {}): StationGroupBinding {
+  return {
+    id: "binding-1",
+    stationId: "station-1",
+    stationKeyId: null,
+    bindingKind: "station_group",
+    parentGroupBindingId: null,
+    groupKeyHash: "group-hash",
+    groupIdHash: "group-id-hash",
+    groupName: "default",
+    description: null,
+    bindingStatus: "available",
+    defaultRateMultiplier: 0.85,
+    userRateMultiplier: null,
+    effectiveRateMultiplier: 0.85,
+    inferredGroupCategory: null,
+    groupCategoryOverride: null,
+    rateSource: "remote_scan",
+    confidence: 1,
+    lastSeenAt: "2026-08-01T01:00:00Z",
+    lastCheckedAt: "2026-08-01T01:00:00Z",
+    lastRateChangedAt: null,
+    rawJsonRedacted: null,
+    createdAt: "2026-08-01T01:00:00Z",
+    updatedAt: "2026-08-01T01:00:00Z",
     ...overrides,
   };
 }

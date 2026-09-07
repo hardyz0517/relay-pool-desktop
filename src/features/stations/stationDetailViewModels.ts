@@ -29,14 +29,12 @@ export type StationDetailBalanceCard = {
 export type StationDetailGroupRow = {
   id: string;
   groupName: string;
+  description: string | null;
   rawJsonRedacted: Record<string, unknown> | null;
   effectiveGroupCategory: StationGroupCategory;
   effectiveRate: string;
-  defaultRate: string;
-  userRate: string;
-  bindingStatus: string;
+  rateSource: string;
   lastChecked: string;
-  tone: DetailTone;
   warning: string | null;
 };
 
@@ -78,14 +76,6 @@ const stationTypeLabels: Record<string, string> = {
   newapi: "NewAPI",
   "openai-compatible": "自定义接口",
   custom: "自定义接口",
-};
-
-const bindingStatusLabels: Record<string, string> = {
-  available: "可用",
-  bound: "已绑定",
-  missing: "缺失",
-  disabled: "禁用",
-  manual_legacy: "手动维护",
 };
 
 const collectorStatusLabels: Record<string, string> = {
@@ -138,10 +128,6 @@ export function statusTone(station: Station): DetailTone {
   }
   if (status) return "neutral";
   return "neutral";
-}
-
-export function formatBindingStatusLabel(status: string) {
-  return bindingStatusLabels[status] ?? status;
 }
 
 export function formatDetailDate(value: string | null | undefined) {
@@ -269,29 +255,52 @@ function groupRowFromCurrentFact(
   fact: StationGroupCurrentFact,
   creditPerCny: number,
 ): StationDetailGroupRow {
-  const defaultRate = effectiveRateMultiplierForCredit(
-    fact.sourceRate?.defaultRateMultiplier ?? fact.sourceBinding?.defaultRateMultiplier ?? null,
-    creditPerCny,
-  );
-  const userRate = effectiveRateMultiplierForCredit(
-    fact.sourceRate?.userRateMultiplier ?? fact.sourceBinding?.userRateMultiplier ?? null,
-    creditPerCny,
-  );
   const effectiveRate = effectiveRateMultiplierForCredit(fact.rateMultiplier, creditPerCny);
   const warning = groupWarningForFact(fact);
   return {
     id: fact.groupBindingId ?? fact.identityKey,
     groupName: fact.groupName || "未命名分组",
+    description: fact.description,
     rawJsonRedacted: fact.sourceRate?.rawJsonRedacted ?? fact.sourceBinding?.rawJsonRedacted ?? null,
     effectiveGroupCategory: fact.effectiveGroupCategory,
     effectiveRate: formatRate(effectiveRate, "未确定"),
-    defaultRate: formatRate(defaultRate),
-    userRate: formatRate(userRate, "未覆盖"),
-    bindingStatus: formatBindingStatusLabel(fact.bindingStatus),
+    rateSource: formatGroupRateSource(fact),
     lastChecked: formatDetailDate(fact.rateCheckedAt ?? fact.sourceBinding?.updatedAt ?? null),
-    tone: warning ? "warning" : "good",
     warning,
   };
+}
+
+function formatGroupRateSource(fact: StationGroupCurrentFact) {
+  const bindingUserRate = fact.sourceBinding?.userRateMultiplier ?? null;
+  if (isFiniteRate(bindingUserRate)) {
+    return "手动覆盖";
+  }
+
+  const bindingDefaultRate = fact.sourceBinding?.defaultRateMultiplier ?? null;
+  if (isFiniteRate(bindingDefaultRate)) {
+    return "站点采集";
+  }
+
+  const rateUserRate = fact.sourceRate?.userRateMultiplier ?? null;
+  if (isFiniteRate(rateUserRate)) {
+    return "手动覆盖";
+  }
+
+  const rateDefaultRate = fact.sourceRate?.defaultRateMultiplier ?? null;
+  const normalizedSource = fact.rateSource?.trim().toLowerCase() ?? "";
+  if (normalizedSource === "manual" || normalizedSource.includes("manual")) {
+    return "手动覆盖";
+  }
+
+  if (isFiniteRate(rateDefaultRate) || isFiniteRate(fact.rateMultiplier)) {
+    return "站点采集";
+  }
+
+  return "未采集";
+}
+
+function isFiniteRate(value: number | null | undefined): value is number {
+  return typeof value === "number" && Number.isFinite(value);
 }
 
 export function buildStationDetailViewModel({
