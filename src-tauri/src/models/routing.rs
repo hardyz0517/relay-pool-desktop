@@ -100,22 +100,6 @@ pub struct ModelAlias {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[cfg(test)]
-pub struct StationKeyHealth {
-    pub station_key_id: String,
-    pub last_success_at: Option<String>,
-    pub last_failure_at: Option<String>,
-    pub consecutive_failures: i64,
-    pub success_count: i64,
-    pub failure_count: i64,
-    pub avg_latency_ms: Option<i64>,
-    pub last_error_summary: Option<String>,
-    pub cooldown_until: Option<String>,
-    pub updated_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct RuntimeRoutingSecret {
     pub id: String,
     pub scope: String,
@@ -211,8 +195,6 @@ pub struct CanonicalRoutingCandidate {
     pub station_name: String,
     pub key_name: String,
     pub capabilities: StationKeyCapabilities,
-    #[cfg(test)]
-    pub health: Option<StationKeyHealth>,
     pub balance_snapshot: Option<RuntimeRoutingBalance>,
     pub economic_snapshot: Option<RuntimeRoutingEconomicSnapshot>,
     pub api_key: Option<String>,

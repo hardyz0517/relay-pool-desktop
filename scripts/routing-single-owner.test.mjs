@@ -23,7 +23,16 @@ const files = {
   routingPolicyControlPlane: read(
     "src-tauri/src/application/routing_policy_control_plane.rs",
   ),
+  monitoringRunner: read("src-tauri/src/services/monitoring/runner.rs"),
   routingCommandFacade: read("src-tauri/src/application/command_facades/routing.rs"),
+  stationKeyConnectivityFacade: read(
+    "src-tauri/src/application/command_facades/station_key_connectivity.rs",
+  ),
+  routingEndpointPorts: read(
+    "src-tauri/src/application/routing_endpoint_ports.rs",
+  ),
+  routingReadPorts: read("src-tauri/src/application/routing_read_ports.rs"),
+  endpointPing: read("src-tauri/src/services/endpoint_ping.rs"),
   modelMappingService: read("src-tauri/src/application/model_mapping_service.rs"),
   operationalFactsQuery: read(
     "src-tauri/src/persistence/stores/operational_facts/queries.rs",
@@ -75,6 +84,7 @@ checkFrontendDoesNotOwnRoutingTruth();
 checkPolicyMutationControlPlane();
 checkExecutionBridgeBoundary();
 checkModelMappingOwner();
+checkEndpointOwnershipBoundary();
 checkRetiredProtectionAndCapacityDomainStayOutOfProductionRouting();
 
 if (failures.length > 0) {
@@ -504,6 +514,57 @@ function checkModelMappingOwner() {
     "src-tauri/src/application/model_mapping_service.rs",
     /persist_document|persist_document_at_revision|reconcile_model_mapping_document_sync/u,
     "model-mapping persistence and document reconciliation must have one application owner",
+  );
+}
+
+function checkEndpointOwnershipBoundary() {
+  reject(
+    files.routingCommandFacade,
+    "src-tauri/src/application/command_facades/routing.rs",
+    /\bRoutingService\b/u,
+    "routing command facade must depend on explicit capability ports, not the broad RoutingService",
+  );
+  reject(
+    files.monitoringRunner,
+    "src-tauri/src/services/monitoring/runner.rs",
+    /\bRoutingService\b/u,
+    "monitoring runner must not depend on the broad RoutingService owner",
+  );
+  require(
+    files.monitoringRunner,
+    "src-tauri/src/services/monitoring/runner.rs",
+    /RoutingMonitoringTargetReadPort[\s\S]*RoutingEndpointHealthWritePort/u,
+    "monitoring runner must use narrow target-read and endpoint-health-write ports",
+  );
+  require(
+    files.routingCommandFacade,
+    "src-tauri/src/application/command_facades/routing.rs",
+    /workspace_read:\s*Arc<dyn\s+RoutingWorkspaceReadPort>[\s\S]*runtime_overlay_read:\s*Arc<dyn\s+RoutingRuntimeOverlayReadPort>[\s\S]*protection_read:\s*Arc<dyn\s+RoutingProtectionReadPort>[\s\S]*circuit_status_read:\s*Arc<dyn\s+RoutingCircuitStatusReadPort>[\s\S]*simulation_read:\s*Arc<dyn\s+RoutingSimulationReadPort>[\s\S]*endpoint_targets:\s*Arc<dyn\s+RoutingEndpointTargetReadPort>[\s\S]*endpoint_health:\s*Arc<dyn\s+RoutingEndpointHealthWritePort>/u,
+    "routing command facade must inject narrow read and endpoint ports instead of owning those responsibilities",
+  );
+  require(
+    files.stationKeyConnectivityFacade,
+    "src-tauri/src/application/command_facades/station_key_connectivity.rs",
+    /endpoint_health:\s*Arc<dyn\s+RoutingEndpointHealthWritePort>/u,
+    "station-key connectivity must use the endpoint health write port",
+  );
+  require(
+    files.routingEndpointPorts,
+    "src-tauri/src/application/routing_endpoint_ports.rs",
+    /expected_endpoint_revision[\s\S]*RoutingEndpointHealthWritePort/u,
+    "endpoint write port must expose an explicit revision-fenced contract",
+  );
+  require(
+    files.routingReadPorts,
+    "src-tauri/src/application/routing_read_ports.rs",
+    /trait\s+RoutingWorkspaceReadPort[\s\S]*trait\s+RoutingRuntimeOverlayReadPort/u,
+    "workspace and runtime overlay reads must use explicit narrow ports",
+  );
+  require(
+    files.endpointPing,
+    "src-tauri/src/services/endpoint_ping.rs",
+    /let deadline\s*=\s*started_at\s*\+\s*timeout[\s\S]*RequestBudget::from_deadline\(deadline\)/u,
+    "endpoint HEAD/GET fallback must share one absolute caller deadline",
   );
 }
 

@@ -55,8 +55,7 @@ use crate::{
         },
         queries::{
             routing_protection::{
-                project_routing_protection_status_from_circuit, CapacityProtectionFact,
-                RoutingProtectionStatus,
+                project_routing_protection_status_from_circuit, RoutingProtectionStatus,
             },
             routing_runtime::{
                 monitoring_target_snapshots_from_facts, runtime_overlay_from_candidates,
@@ -71,7 +70,15 @@ use crate::{
             },
             station_key_circuit_read::StationKeyCircuitReadSnapshot,
         },
+        routing_endpoint_ports::{
+            RoutingEndpointHealthWrite, RoutingEndpointHealthWritePort, RoutingEndpointProbeTarget,
+            RoutingEndpointTargetReadPort, RoutingMonitoringTargetReadPort,
+        },
         routing_policy::RoutingPolicyAggregate,
+        routing_read_ports::{
+            RoutingCircuitStatusReadPort, RoutingProtectionReadPort, RoutingRuntimeOverlayReadPort,
+            RoutingSimulationReadPort, RoutingWorkspaceReadPort,
+        },
         station_key_circuit::CircuitPersistenceGate,
     },
     models::{
@@ -251,16 +258,14 @@ impl RoutingService {
     pub(crate) async fn get_routing_protection_status(
         &self,
         generated_at_ms: i64,
-        capacity: &[CapacityProtectionFact],
-        runtime_capacity_available: bool,
     ) -> Result<RoutingProtectionStatus, ApplicationError> {
         let circuit = self
             .load_station_key_circuit_read_snapshot(generated_at_ms)
             .await?;
         Ok(project_routing_protection_status_from_circuit(
             &circuit,
-            capacity,
-            runtime_capacity_available,
+            &[],
+            true,
         ))
     }
 
@@ -1008,22 +1013,6 @@ impl RoutingService {
         let circuit_read_snapshot = self.load_station_key_circuit_read_snapshot(now_ms).await?;
         // Use the immutable planner snapshot as the score source so this
         // read model stays aligned with the actual routing policy semantics.
-        let multiplier_by_key = candidates
-            .iter()
-            .filter_map(|(candidate, pricing)| {
-                let multiplier = pricing
-                    .as_ref()
-                    .and_then(|context| context.effective_rate_multiplier)
-                    .or_else(|| {
-                        let economics = candidate.economic_snapshot.as_ref()?;
-                        crate::application::operational_facts::pricing_projector::effective_rate_multiplier(
-                            economics.rate_multiplier,
-                            economics.credit_per_cny.unwrap_or(1.0),
-                        )
-                    })?;
-                Some((candidate.station_key_id.clone(), multiplier))
-            })
-            .collect::<BTreeMap<_, _>>();
         let mut score_statuses = BTreeMap::new();
         let mut planner_exclusion_codes = BTreeMap::new();
         let mut assessment_provenance = BTreeMap::new();
@@ -1034,8 +1023,26 @@ impl RoutingService {
             planner_evaluation_code,
             workspace_revisions,
             cost_reference_multiplier,
+            planner_multiplier_by_key,
         ) = planning_result
             .map(|result| {
+                // Keep the workspace read model on the exact same pricing
+                // facts that the planner used. Runtime candidate economics
+                // may also contain a key-level override for compatibility;
+                // that value must not silently replace the group multiplier
+                // used by the routing cost factor.
+                let planner_multiplier_by_key = result
+                    .snapshot
+                    .candidates
+                    .iter()
+                    .filter_map(|candidate| {
+                        candidate
+                            .pricing
+                            .rate_multiplier
+                            .filter(|value| value.is_finite() && *value > 0.0)
+                            .map(|value| (candidate.station_key_id.clone(), value))
+                    })
+                    .collect::<BTreeMap<_, _>>();
                 let workspace_revisions = RoutingWorkspaceRevisionSnapshot {
                     runtime_generation_id: result
                         .snapshot
@@ -1082,13 +1089,12 @@ impl RoutingService {
                         Some("planner_assessment_source_mismatch".to_string()),
                         workspace_revisions,
                         None,
+                        BTreeMap::new(),
                     );
                 }
                 let cost_reference_multiplier =
                     crate::application::routing_engine::factors::multiplier_median(
-                        result.snapshot.candidates.iter().filter_map(|candidate| {
-                            multiplier_by_key.get(&candidate.station_key_id).copied()
-                        }),
+                        planner_multiplier_by_key.values().copied(),
                     );
                 for assessment in &result.assessments {
                     let status = match (assessment.eligibility, assessment.candidate_set) {
@@ -1126,7 +1132,7 @@ impl RoutingService {
                         {
                             return None;
                         }
-                        let multiplier_cost_basis = multiplier_by_key
+                        let multiplier_cost_basis = planner_multiplier_by_key
                             .get(&candidate.station_key_id)
                             .copied()
                             .and_then(|multiplier| {
@@ -1169,6 +1175,7 @@ impl RoutingService {
                     None,
                     workspace_revisions,
                     cost_reference_multiplier,
+                    planner_multiplier_by_key,
                 )
             })
             .unwrap_or_else(|| {
@@ -1183,6 +1190,7 @@ impl RoutingService {
                     ),
                     RoutingWorkspaceRevisionSnapshot::default(),
                     None,
+                    BTreeMap::new(),
                 )
             });
         Ok(workspace_snapshot_from_canonical_candidates(
@@ -1205,6 +1213,7 @@ impl RoutingService {
             input,
             now_ms,
             cost_reference_multiplier,
+            &planner_multiplier_by_key,
         ))
     }
 
@@ -1483,6 +1492,116 @@ impl RoutingService {
             candidates: explanations,
             message,
         })
+    }
+}
+
+impl RoutingEndpointTargetReadPort for RoutingService {
+    fn read_endpoint_probe_target(
+        &self,
+        station_id: &str,
+    ) -> futures_util::future::BoxFuture<'_, Result<RoutingEndpointProbeTarget, ApplicationError>>
+    {
+        let station_id = station_id.to_string();
+        Box::pin(async move {
+            let target = RoutingService::station_endpoint_probe_target(self, &station_id).await?;
+            // Station records are normally normalized by the station command
+            // path.  Re-validate at this application boundary so malformed
+            // imported data cannot become an outbound probe target.
+            let api_base_url =
+                crate::models::station_endpoints::normalize_api_base_url(&target.api_base_url)
+                    .map_err(|_| ApplicationError::ConstraintViolation)?;
+            if target.endpoint_revision < 1 {
+                return Err(ApplicationError::ConstraintViolation);
+            }
+            Ok(RoutingEndpointProbeTarget {
+                station_id: target.station_id,
+                api_base_url,
+                endpoint_revision: target.endpoint_revision,
+            })
+        })
+    }
+}
+
+impl RoutingMonitoringTargetReadPort for RoutingService {
+    fn read_monitoring_target_snapshots(
+        &self,
+    ) -> futures_util::future::BoxFuture<
+        '_,
+        Result<Vec<RoutingMonitoringTargetSnapshot>, ApplicationError>,
+    > {
+        Box::pin(async move { self.load_monitoring_target_snapshots().await })
+    }
+}
+
+impl RoutingEndpointHealthWritePort for RoutingService {
+    fn write_endpoint_health(
+        &self,
+        write: RoutingEndpointHealthWrite,
+    ) -> futures_util::future::BoxFuture<'_, Result<StationEndpointHealth, ApplicationError>> {
+        Box::pin(async move {
+            write.validate()?;
+            RoutingService::record_station_endpoint_health(
+                self,
+                write.station_id,
+                write.expected_endpoint_revision,
+                write.status.as_str().to_string(),
+                write.latency_ms,
+                write.checked_at,
+                write.error_summary,
+            )
+            .await
+        })
+    }
+}
+
+impl RoutingWorkspaceReadPort for RoutingService {
+    fn read_workspace_snapshot(
+        &self,
+        input: RoutingWorkspaceSnapshotInput,
+    ) -> futures_util::future::BoxFuture<'_, Result<RoutingWorkspaceSnapshot, ApplicationError>>
+    {
+        Box::pin(async move { self.load_routing_workspace_snapshot(input).await })
+    }
+}
+
+impl RoutingRuntimeOverlayReadPort for RoutingService {
+    fn read_runtime_overlay(
+        &self,
+        activity: Arc<dyn RoutingRuntimeActivity>,
+    ) -> futures_util::future::BoxFuture<'_, Result<RoutingRuntimeOverlay, ApplicationError>> {
+        Box::pin(async move { self.load_routing_runtime_overlay(activity).await })
+    }
+}
+
+impl RoutingProtectionReadPort for RoutingService {
+    fn read_protection_status(
+        &self,
+        generated_at_ms: i64,
+    ) -> futures_util::future::BoxFuture<'_, Result<RoutingProtectionStatus, ApplicationError>>
+    {
+        Box::pin(async move { self.get_routing_protection_status(generated_at_ms).await })
+    }
+}
+
+impl RoutingCircuitStatusReadPort for RoutingService {
+    fn read_circuit_status(
+        &self,
+        generated_at_ms: i64,
+    ) -> futures_util::future::BoxFuture<'_, Result<StationKeyCircuitReadSnapshot, ApplicationError>>
+    {
+        Box::pin(async move {
+            self.load_station_key_circuit_read_snapshot(generated_at_ms)
+                .await
+        })
+    }
+}
+
+impl RoutingSimulationReadPort for RoutingService {
+    fn read_simulation(
+        &self,
+        input: RouteSimulationInput,
+    ) -> futures_util::future::BoxFuture<'_, Result<RouteSimulationResult, ApplicationError>> {
+        Box::pin(async move { self.simulate_route(input).await })
     }
 }
 
@@ -2261,7 +2380,6 @@ mod tests {
                 routing_tags: Vec::new(),
                 updated_at: "2026-07-31T00:00:00Z".to_string(),
             },
-            health: None,
             balance_snapshot: None,
             economic_snapshot: None,
             api_key: api_key.map(ToString::to_string),

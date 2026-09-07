@@ -41,31 +41,40 @@ pub async fn ping_station_endpoint_with_proxy(
 ) -> EndpointPingProbeResult {
     let url = endpoint_ping_url(base_url);
     let started_at = Instant::now();
+    let deadline = started_at + timeout;
 
     let response = match execute_ping_request(
         outbound,
         Method::HEAD,
         &url,
-        timeout,
+        RequestBudget::from_deadline(deadline),
         proxy.clone(),
         cancellation_token.clone(),
     )
     .await
     {
         Ok(response) => Ok(response),
-        Err(_) => {
-            match execute_ping_request(
-                outbound,
-                Method::GET,
-                &url,
-                timeout,
-                proxy,
-                cancellation_token,
-            )
-            .await
-            {
-                Ok(response) => Ok(response),
-                Err(error) => Err(error),
+        Err(head_error) => {
+            // HEAD -> GET is a protocol fallback, not a second retry budget.
+            // Reuse the absolute deadline so a slow/blocked HEAD cannot make
+            // one probe exceed its caller-level timeout.
+            let budget = RequestBudget::from_deadline(deadline);
+            if budget.remaining().is_none() {
+                Err(head_error)
+            } else {
+                match execute_ping_request(
+                    outbound,
+                    Method::GET,
+                    &url,
+                    budget,
+                    proxy,
+                    cancellation_token,
+                )
+                .await
+                {
+                    Ok(response) => Ok(response),
+                    Err(error) => Err(error),
+                }
             }
         }
     };
@@ -85,7 +94,7 @@ async fn execute_ping_request(
     outbound: &AsyncOutboundClient,
     method: Method,
     url: &str,
-    timeout: Duration,
+    budget: RequestBudget,
     proxy: ProxyPolicy,
     cancellation_token: CancellationToken,
 ) -> Result<crate::outbound::OutboundResponse, crate::outbound::OutboundFailure> {
@@ -101,7 +110,7 @@ async fn execute_ping_request(
                 headers,
                 body: Vec::new(),
                 proxy,
-                budget: RequestBudget::from_now(timeout),
+                budget,
                 retry_policy: OutboundRetryPolicy::Never,
             },
             cancellation_token,

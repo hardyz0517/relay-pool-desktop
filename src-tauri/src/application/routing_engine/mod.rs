@@ -10,7 +10,5 @@ pub(crate) mod intelligent_planner;
 pub(crate) mod planning_snapshot;
 pub(crate) mod request;
 pub(crate) mod routing_failure;
-#[cfg(test)]
-pub(crate) mod routing_health;
 pub(crate) mod runtime_metrics;
 pub(crate) mod tiers;

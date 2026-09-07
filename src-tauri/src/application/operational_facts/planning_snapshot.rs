@@ -344,7 +344,13 @@ impl PlanningSnapshotBuilder {
                 )
                 .get(),
                 cost_basis_points: None,
-                pricing: RoutePlanPricingSnapshot::unpriced("pricing_context_missing"),
+                // A model-less workspace request still has a valid routing
+                // cost signal: the candidate's normalized station/group
+                // multiplier.  Model base prices are only needed for request
+                // cost estimation; the routing cost factor uses the relative
+                // multiplier proxy and must therefore be present before the
+                // planner computes its snapshot median.
+                pricing: pricing_snapshot_for_candidate(candidate),
                 preference_basis_points: preference_score(candidate, request),
                 failure_domains: vec![
                     format!("station:{}", candidate.station_id().as_str()),
@@ -873,6 +879,35 @@ fn preference_score(
     10_000_u16.saturating_sub(priority)
 }
 
+/// Build the planner's initial pricing fact from the canonical station/group
+/// multiplier.  This is intentionally model-independent: a concrete model is
+/// required for exact request-price estimation, but not for the relative
+/// multiplier cost factor used to order routing candidates.
+fn pricing_snapshot_for_candidate(
+    candidate: &super::assembler::OperationalCandidateFact,
+) -> RoutePlanPricingSnapshot {
+    let rate_multiplier =
+        crate::application::operational_facts::pricing_projector::effective_rate_multiplier(
+            candidate.station_native_multiplier(),
+            candidate.credit_per_cny().unwrap_or(1.0),
+        );
+    let Some(rate_multiplier) = rate_multiplier else {
+        return RoutePlanPricingSnapshot::unpriced("pricing_context_missing");
+    };
+
+    RoutePlanPricingSnapshot {
+        basis: crate::application::operational_facts::pricing_projector::RoutingCostBasis::MultiplierProxy,
+        rate_multiplier: Some(rate_multiplier),
+        currency: None,
+        unit: Some("rate_multiplier".to_string()),
+        estimated_input_price: None,
+        estimated_output_price: None,
+        estimated_cache_creation_price: None,
+        estimated_cache_read_price: None,
+        status_label: "group_rate_only".to_string(),
+    }
+}
+
 // Keep the source bound visible at the composition boundary. This prevents a
 // future caller from silently replacing the transactional fact source with a
 // page-specific query facade.
@@ -986,6 +1021,36 @@ mod tests {
             candidate_hard_rejection_reason(&candidate, &rejected, &policy, Some("gpt-4.1")),
             Some("multiplier_ceiling"),
         );
+    }
+
+    #[test]
+    fn model_less_snapshot_keeps_normalized_group_multiplier_for_cost_scoring() {
+        let mut candidate = test_candidate(Some("binding-a"), None, Some("gpt"));
+        candidate.set_multiplier_for_planning_test(Some(2.0), Some(27.0));
+
+        let pricing = pricing_snapshot_for_candidate(&candidate);
+
+        assert_eq!(
+            pricing.basis,
+            crate::application::operational_facts::pricing_projector::RoutingCostBasis::MultiplierProxy
+        );
+        assert_eq!(pricing.rate_multiplier, Some(2.0 / 27.0));
+        assert_eq!(pricing.unit.as_deref(), Some("rate_multiplier"));
+        assert_eq!(pricing.status_label, "group_rate_only");
+    }
+
+    #[test]
+    fn missing_group_multiplier_keeps_cost_factor_unpriced() {
+        let mut candidate = test_candidate(None, None, None);
+        candidate.set_multiplier_for_planning_test(None, Some(1.0));
+
+        let pricing = pricing_snapshot_for_candidate(&candidate);
+
+        assert_eq!(
+            pricing.basis,
+            crate::application::operational_facts::pricing_projector::RoutingCostBasis::Unpriced
+        );
+        assert_eq!(pricing.rate_multiplier, None);
     }
 
     #[test]

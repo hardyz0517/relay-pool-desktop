@@ -5,6 +5,7 @@ use crate::{
     application::{
         operational_facts::pricing_projector::{
             effective_rate_multiplier, request_cost_comparison_context, PricingRouteKind,
+            RequestCostComparisonContext, RoutingCostBasis,
         },
         quality_projection::QualitySummary,
         queries::station_key_circuit_read::{
@@ -842,6 +843,7 @@ pub(crate) fn workspace_snapshot_from_canonical_candidates(
     input: RoutingWorkspaceSnapshotInput,
     generated_at_ms: i64,
     cost_reference_multiplier: Option<f64>,
+    planner_multiplier_by_key: &BTreeMap<String, f64>,
 ) -> RoutingWorkspaceSnapshot {
     let limit = input.limit.unwrap_or(128).clamp(1, 1024);
     let start = input
@@ -853,6 +855,7 @@ pub(crate) fn workspace_snapshot_from_canonical_candidates(
     let mut ordered_candidates = candidates
         .into_iter()
         .map(|(candidate, pricing)| {
+            let station_key_id = candidate.station_key_id.clone();
             let score_details = scores.get(&candidate.station_key_id).cloned();
             let score_status = score_statuses
                 .get(&candidate.station_key_id)
@@ -878,6 +881,7 @@ pub(crate) fn workspace_snapshot_from_canonical_candidates(
                 attempt_diagnostics,
                 circuit_snapshot,
                 cost_reference_multiplier,
+                planner_multiplier_by_key.get(&station_key_id).copied(),
             )
         })
         .collect::<Vec<_>>();
@@ -1014,12 +1018,14 @@ fn depleted_rank(value: Option<f64>, status: Option<&str>) -> u8 {
 mod tests {
     use super::{
         candidate_matches_group_scope, candidate_participation, circuit_diagnostics, depleted_rank,
-        workspace_snapshot_from_canonical_candidates, RoutingAvailabilityStatus,
-        RoutingCandidateGroupSnapshot, RoutingCandidateParticipationReason,
-        RoutingCandidateParticipationStatus, RoutingCandidatePlanDiagnostics,
-        RoutingCandidateScoreWindowSnapshot, RoutingPlannerEvaluationStatus, RoutingScoreStatus,
-        RoutingWorkspaceRevisionSnapshot, RoutingWorkspaceSnapshotInput,
+        workspace_pricing_context, workspace_snapshot_from_canonical_candidates,
+        RoutingAvailabilityStatus, RoutingCandidateGroupSnapshot,
+        RoutingCandidateParticipationReason, RoutingCandidateParticipationStatus,
+        RoutingCandidatePlanDiagnostics, RoutingCandidateScoreWindowSnapshot,
+        RoutingPlannerEvaluationStatus, RoutingScoreStatus, RoutingWorkspaceRevisionSnapshot,
+        RoutingWorkspaceSnapshotInput,
     };
+    use crate::application::operational_facts::pricing_projector::RoutingCostBasis;
     use crate::application::quality_projection::{
         rebuild_quality_summary_v3_at, QualityProjectionConfig, QUALITY_RECENT_WINDOW_MS,
     };
@@ -1103,7 +1109,6 @@ mod tests {
                 routing_tags: Vec::new(),
                 updated_at: "1".into(),
             },
-            health: None,
             balance_snapshot: None,
             economic_snapshot: None,
             api_key: None,
@@ -1120,6 +1125,30 @@ mod tests {
     #[test]
     fn low_positive_balance_stays_in_the_normal_display_tier() {
         assert_eq!(depleted_rank(Some(4.71), Some("low")), 0);
+    }
+
+    #[test]
+    fn model_less_workspace_uses_group_multiplier_proxy_for_pricing() {
+        let context = workspace_pricing_context(&request(None), None, Some(0.125));
+
+        assert_eq!(context.basis, RoutingCostBasis::MultiplierProxy);
+        assert_eq!(context.comparison_value, Some(0.125));
+        assert_eq!(context.reason, Some("cost_first_multiplier_proxy"));
+        assert_eq!(context.unit.as_deref(), Some("rate_multiplier"));
+        assert_eq!(context.status_label, "group_rate_only");
+    }
+
+    #[test]
+    fn invalid_or_missing_planner_multiplier_remains_unpriced() {
+        let request = request(None);
+        assert_eq!(
+            workspace_pricing_context(&request, None, None).basis,
+            RoutingCostBasis::Unpriced
+        );
+        assert_eq!(
+            workspace_pricing_context(&request, None, Some(f64::NAN)).basis,
+            RoutingCostBasis::Unpriced
+        );
     }
 
     #[test]
@@ -1459,6 +1488,7 @@ mod tests {
             },
             2_000,
             None,
+            &BTreeMap::new(),
         );
 
         assert_eq!(
@@ -1479,6 +1509,39 @@ mod tests {
     }
 }
 
+fn workspace_pricing_context(
+    request: &RouteRequestFacts,
+    pricing: Option<&ResolvedPricingContext>,
+    planner_multiplier: Option<f64>,
+) -> RequestCostComparisonContext {
+    let route_kind = match request.route_kind() {
+        crate::application::routing_engine::request::RouteKind::Inference => {
+            PricingRouteKind::Inference
+        }
+        crate::application::routing_engine::request::RouteKind::ModelCatalog => {
+            PricingRouteKind::ModelCatalog
+        }
+    };
+    let mut context = request_cost_comparison_context(route_kind, pricing);
+    // A model-less workspace request has no exact tariff lookup, but the
+    // planner still has a canonical group multiplier. Expose that same
+    // multiplier as a proxy pricing context so the UI does not report the
+    // cost factor as unavailable while the planner is using it.
+    if route_kind == PricingRouteKind::Inference && context.basis == RoutingCostBasis::Unpriced {
+        if let Some(multiplier) =
+            planner_multiplier.filter(|value| value.is_finite() && *value > 0.0)
+        {
+            context.basis = RoutingCostBasis::MultiplierProxy;
+            context.comparison_value = Some(multiplier);
+            context.reason = Some("cost_first_multiplier_proxy");
+            context.unit = Some("rate_multiplier".to_string());
+            context.status_label = "group_rate_only".to_string();
+            context.source_chain = vec!["planning_snapshot".to_string()];
+        }
+    }
+    context
+}
+
 fn candidate_from_canonical(
     candidate: CanonicalRoutingCandidate,
     pricing: Option<ResolvedPricingContext>,
@@ -1494,6 +1557,7 @@ fn candidate_from_canonical(
     attempt_diagnostics: &BTreeMap<String, RoutingAttemptCountDiagnostics>,
     circuit_snapshot: &StationKeyCircuitReadSnapshot,
     cost_reference_multiplier: Option<f64>,
+    planner_multiplier: Option<f64>,
 ) -> RoutingWorkspaceCandidate {
     let quality_scope = format!("station_key:{}", candidate.station_key_id);
     let quality_summary = quality_summaries.get(&quality_scope);
@@ -1536,6 +1600,18 @@ fn candidate_from_canonical(
                     .unwrap_or("missing")
             )
         });
+    let display_multiplier = planner_multiplier.or_else(|| {
+        pricing
+            .as_ref()
+            .and_then(|value| value.effective_rate_multiplier)
+            .or_else(|| {
+                let economics = candidate.economic_snapshot.as_ref()?;
+                effective_rate_multiplier(
+                    economics.rate_multiplier,
+                    economics.credit_per_cny.unwrap_or(1.0),
+                )
+            })
+    });
     let score_details = score_details.map(|mut details| {
         if let Some(summary) = quality_summary {
             let window_details = Some(summary.into());
@@ -1616,16 +1692,7 @@ fn candidate_from_canonical(
         details.cost.inputs = vec![
             score_input(
                 "密钥有效倍率",
-                pricing
-                    .as_ref()
-                    .and_then(|value| value.effective_rate_multiplier)
-                    .or_else(|| {
-                        let economics = candidate.economic_snapshot.as_ref()?;
-                        effective_rate_multiplier(
-                            economics.rate_multiplier,
-                            economics.credit_per_cny.unwrap_or(1.0),
-                        )
-                    })
+                display_multiplier
                     .map(|value| format!("{value:.4}x"))
                     .unwrap_or_else(|| "暂无数据".to_string()),
             ),
@@ -1702,6 +1769,7 @@ fn candidate_from_canonical(
             economics.credit_per_cny.unwrap_or(1.0),
         )
     });
+    let multiplier = planner_multiplier.or(multiplier);
     let ceiling_rejected = request
         .max_rate_multiplier()
         .zip(multiplier)
@@ -1713,8 +1781,7 @@ fn candidate_from_canonical(
         .as_ref()
         .and_then(|context| context.effective_rate_multiplier)
         .is_some();
-    let pricing_context =
-        request_cost_comparison_context(PricingRouteKind::Inference, pricing.as_ref());
+    let pricing_context = workspace_pricing_context(request, pricing.as_ref(), planner_multiplier);
     let capability = &candidate.capabilities;
     let model_allowed = request.requested_model().is_none_or(|model| {
         !capability
@@ -1843,6 +1910,8 @@ fn candidate_from_canonical(
             ceiling_rejected,
             reason: if ceiling_rejected {
                 "above_policy_ceiling".to_string()
+            } else if planner_multiplier.is_some() {
+                "planning_snapshot_effective_rate".to_string()
             } else if multiplier_source_is_pricing_context {
                 "pricing_context_effective_rate".to_string()
             } else {

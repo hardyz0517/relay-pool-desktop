@@ -15,7 +15,9 @@ use crate::{
         },
         credentials::CredentialService,
         error::ApplicationError,
-        routing::RoutingService,
+        routing_endpoint_ports::{
+            RoutingEndpointHealthStatus, RoutingEndpointHealthWrite, RoutingEndpointHealthWritePort,
+        },
         settings::SettingsService,
     },
     background_tasks::OperationId,
@@ -231,7 +233,7 @@ impl StationKeyModelDiscoveryResultStore {
 pub(crate) struct StationKeyConnectivityCommandFacade {
     collectors: Arc<CollectorService>,
     credentials: Arc<CredentialService>,
-    routing: Arc<RoutingService>,
+    endpoint_health: Arc<dyn RoutingEndpointHealthWritePort>,
     settings: Arc<SettingsService>,
     results: StationKeyConnectivityResultStore,
     model_discovery_results: StationKeyModelDiscoveryResultStore,
@@ -241,13 +243,13 @@ impl StationKeyConnectivityCommandFacade {
     pub(crate) fn new(
         collectors: Arc<CollectorService>,
         credentials: Arc<CredentialService>,
-        routing: Arc<RoutingService>,
+        endpoint_health: Arc<dyn RoutingEndpointHealthWritePort>,
         settings: Arc<SettingsService>,
     ) -> Self {
         Self {
             collectors,
             credentials,
-            routing,
+            endpoint_health,
             settings,
             results: StationKeyConnectivityResultStore::default(),
             model_discovery_results: StationKeyModelDiscoveryResultStore::default(),
@@ -356,15 +358,16 @@ impl StationKeyConnectivityCommandFacade {
         error_summary: Option<String>,
     ) -> impl std::future::Future<Output = Result<(), ApplicationError>> + Send + '_ {
         async move {
-            self.routing
-                .record_station_endpoint_health(
+            let status = RoutingEndpointHealthStatus::parse(&status)?;
+            self.endpoint_health
+                .write_endpoint_health(RoutingEndpointHealthWrite {
                     station_id,
-                    endpoint_revision,
+                    expected_endpoint_revision: endpoint_revision,
                     status,
                     latency_ms,
                     checked_at,
                     error_summary,
-                )
+                })
                 .await
                 .map(|_| ())
         }

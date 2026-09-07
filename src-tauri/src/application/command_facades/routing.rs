@@ -13,10 +13,17 @@ use crate::{
             routing_runtime::{RoutingRuntimeActivity, RoutingRuntimeOverlay},
             routing_workspace::{RoutingWorkspaceSnapshot, RoutingWorkspaceSnapshotInput},
         },
-        routing::RoutingService,
         routing_diagnostics_reader::RoutingDiagnosticsReader,
+        routing_endpoint_ports::{
+            RoutingEndpointHealthStatus, RoutingEndpointHealthWrite,
+            RoutingEndpointHealthWritePort, RoutingEndpointTargetReadPort,
+        },
         routing_policy_control_plane::RoutingPolicyMutationCoordinator,
         routing_policy_read::RoutingPolicyReadService,
+        routing_read_ports::{
+            RoutingCircuitStatusReadPort, RoutingProtectionReadPort, RoutingRuntimeOverlayReadPort,
+            RoutingSimulationReadPort, RoutingWorkspaceReadPort,
+        },
     },
     models::{
         document_sync::TrustedDocumentSource,
@@ -45,7 +52,13 @@ impl From<ApplicationError> for EndpointPingCommandError {
 
 #[derive(Clone)]
 pub(crate) struct RoutingCommandFacade {
-    routing: Arc<RoutingService>,
+    workspace_read: Arc<dyn RoutingWorkspaceReadPort>,
+    runtime_overlay_read: Arc<dyn RoutingRuntimeOverlayReadPort>,
+    protection_read: Arc<dyn RoutingProtectionReadPort>,
+    circuit_status_read: Arc<dyn RoutingCircuitStatusReadPort>,
+    simulation_read: Arc<dyn RoutingSimulationReadPort>,
+    endpoint_targets: Arc<dyn RoutingEndpointTargetReadPort>,
+    endpoint_health: Arc<dyn RoutingEndpointHealthWritePort>,
     routing_policy_read: Arc<RoutingPolicyReadService>,
     model_mapping: Arc<ModelMappingService>,
     routing_diagnostics: Arc<RoutingDiagnosticsReader>,
@@ -97,7 +110,13 @@ impl RoutingCommandFacade {
     }
 
     pub(crate) fn new(
-        routing: Arc<RoutingService>,
+        workspace_read: Arc<dyn RoutingWorkspaceReadPort>,
+        runtime_overlay_read: Arc<dyn RoutingRuntimeOverlayReadPort>,
+        protection_read: Arc<dyn RoutingProtectionReadPort>,
+        circuit_status_read: Arc<dyn RoutingCircuitStatusReadPort>,
+        simulation_read: Arc<dyn RoutingSimulationReadPort>,
+        endpoint_targets: Arc<dyn RoutingEndpointTargetReadPort>,
+        endpoint_health: Arc<dyn RoutingEndpointHealthWritePort>,
         routing_policy_read: Arc<RoutingPolicyReadService>,
         model_mapping: Arc<ModelMappingService>,
         routing_diagnostics: Arc<RoutingDiagnosticsReader>,
@@ -106,7 +125,13 @@ impl RoutingCommandFacade {
         proxy: Arc<ProxyRuntimeState>,
     ) -> Self {
         Self {
-            routing,
+            workspace_read,
+            runtime_overlay_read,
+            protection_read,
+            circuit_status_read,
+            simulation_read,
+            endpoint_targets,
+            endpoint_health,
             routing_policy_read,
             model_mapping,
             routing_diagnostics,
@@ -173,10 +198,7 @@ impl RoutingCommandFacade {
         ApplicationError,
     > {
         let now_ms = now_millis_for_services().min(i64::MAX as u128) as i64;
-        let mut status = self
-            .routing
-            .get_routing_protection_status(now_ms, &[], true)
-            .await?;
+        let mut status = self.protection_read.read_protection_status(now_ms).await?;
         status.timeouts = Some(self.get_proxy_timeout_facts());
         Ok(status)
     }
@@ -188,9 +210,7 @@ impl RoutingCommandFacade {
         ApplicationError,
     > {
         let now_ms = now_millis_for_services().min(i64::MAX as u128) as i64;
-        self.routing
-            .load_station_key_circuit_read_snapshot(now_ms)
-            .await
+        self.circuit_status_read.read_circuit_status(now_ms).await
     }
 
     pub(crate) fn get_proxy_timeout_facts(
@@ -229,14 +249,14 @@ impl RoutingCommandFacade {
         &self,
         input: RoutingWorkspaceSnapshotInput,
     ) -> Result<RoutingWorkspaceSnapshot, ApplicationError> {
-        self.routing.load_routing_workspace_snapshot(input).await
+        self.workspace_read.read_workspace_snapshot(input).await
     }
 
     pub(crate) async fn load_routing_runtime_overlay(
         &self,
     ) -> Result<RoutingRuntimeOverlay, ApplicationError> {
         let proxy: Arc<dyn RoutingRuntimeActivity> = self.proxy.clone();
-        self.routing.load_routing_runtime_overlay(proxy).await
+        self.runtime_overlay_read.read_runtime_overlay(proxy).await
     }
 
     pub(crate) async fn list_recent_route_decisions(
@@ -284,7 +304,7 @@ impl RoutingCommandFacade {
         &self,
         input: RouteSimulationInput,
     ) -> Result<RouteSimulationResult, ApplicationError> {
-        self.routing.simulate_route(input).await
+        self.simulation_read.read_simulation(input).await
     }
 
     pub(crate) async fn list_balance_snapshots_for_station(
@@ -301,8 +321,8 @@ impl RoutingCommandFacade {
         station_id: String,
     ) -> Result<EndpointPingResult, EndpointPingCommandError> {
         let target = self
-            .routing
-            .station_endpoint_probe_target(&station_id)
+            .endpoint_targets
+            .read_endpoint_probe_target(&station_id)
             .await?;
         let checked_at = now_millis_for_services().to_string();
         let api_base_url = target.api_base_url.clone();
@@ -313,18 +333,19 @@ impl RoutingCommandFacade {
             CancellationToken::new(),
         )
         .await;
+        let status = RoutingEndpointHealthStatus::parse(&probe.status)?;
         let health = self
-            .routing
-            .record_station_endpoint_health(
-                target.station_id,
-                target.endpoint_revision,
-                probe.status,
-                probe.latency_ms,
-                checked_at.clone(),
-                probe.error_summary,
-            )
+            .endpoint_health
+            .write_endpoint_health(RoutingEndpointHealthWrite {
+                station_id: target.station_id,
+                expected_endpoint_revision: target.endpoint_revision,
+                status,
+                latency_ms: probe.latency_ms,
+                checked_at: checked_at.clone(),
+                error_summary: probe.error_summary,
+            })
             .await
-            .map_err(|_| EndpointPingCommandError::ResultUnknown)?;
+            .map_err(endpoint_ping_write_error)?;
         Ok(EndpointPingResult {
             station_id: health.station_id,
             ok: probe.ok,
@@ -333,6 +354,16 @@ impl RoutingCommandFacade {
             checked_at: health.checked_at.unwrap_or(checked_at),
             error_summary: health.error_summary,
         })
+    }
+}
+
+fn endpoint_ping_write_error(error: ApplicationError) -> EndpointPingCommandError {
+    match error {
+        // The transaction may have committed before the client observed its
+        // result.  This is the only condition represented by ResultUnknown;
+        // stale/unavailable/constraint failures remain actionable categories.
+        ApplicationError::CommitOutcomeUnknown => EndpointPingCommandError::ResultUnknown,
+        error => EndpointPingCommandError::Application(error),
     }
 }
 
@@ -350,8 +381,12 @@ fn should_report_persisted_only(
 
 #[cfg(test)]
 mod tests {
-    use super::should_report_persisted_only;
-    use crate::application::routing_policy_read::RoutingPolicyPublicationStatus;
+    use super::{
+        endpoint_ping_write_error, should_report_persisted_only, EndpointPingCommandError,
+    };
+    use crate::application::{
+        error::ApplicationError, routing_policy_read::RoutingPolicyPublicationStatus,
+    };
 
     #[test]
     fn stopped_runtime_never_masks_failed_or_expired_publications() {
@@ -370,5 +405,21 @@ mod tests {
         ] {
             assert!(!should_report_persisted_only(false, status));
         }
+    }
+
+    #[test]
+    fn endpoint_ping_preserves_stale_and_unavailable_errors() {
+        assert!(matches!(
+            endpoint_ping_write_error(ApplicationError::StaleRevision),
+            EndpointPingCommandError::Application(ApplicationError::StaleRevision)
+        ));
+        assert!(matches!(
+            endpoint_ping_write_error(ApplicationError::Unavailable),
+            EndpointPingCommandError::Application(ApplicationError::Unavailable)
+        ));
+        assert!(matches!(
+            endpoint_ping_write_error(ApplicationError::CommitOutcomeUnknown),
+            EndpointPingCommandError::ResultUnknown
+        ));
     }
 }

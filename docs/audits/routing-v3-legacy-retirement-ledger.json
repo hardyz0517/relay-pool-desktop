@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "updatedAt": "2026-08-31",
+  "updatedAt": "2026-09-06",
   "readOwnerVersion": "routing-v3-circuit-read-v1",
   "rollbackFloor": "v3-read-side-cutover",
   "items": [
@@ -87,7 +87,10 @@
       "deletionCondition": "Not part of station-key circuit retirement; requires a separate endpoint-health design to remove.",
       "verificationCommand": "node scripts/routing-v3-legacy-retirement.test.mjs",
       "evidence": [
-        "src-tauri/src/persistence/stores/routing_store.rs"
+        "src-tauri/src/persistence/stores/routing_store.rs",
+        "src-tauri/src/application/routing_endpoint_ports.rs",
+        "src-tauri/src/services/endpoint_ping.rs",
+        "docs/audits/2026-09-06-routing-reliability-correction-implementation.md"
       ]
     },
     {
@@ -437,7 +440,9 @@
       "evidence": [
         "src-tauri/src/commands/routing_health.rs",
         "src-tauri/src/application/queries/routing_protection.rs",
-        "src-tauri/src/ipc/registry.rs"
+        "src-tauri/src/ipc/registry.rs",
+        "src-tauri/src/application/routing_read_ports.rs",
+        "docs/audits/2026-09-06-routing-reliability-correction-implementation.md"
       ]
     }
   ]

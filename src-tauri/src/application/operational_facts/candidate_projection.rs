@@ -38,7 +38,6 @@ use crate::{
         },
         routing_engine::{
             admission::CandidateAdmissionProfile, capacity::ProviderAccountConstraint,
-            routing_health::health_is_blocked,
         },
     },
     models::{
@@ -170,20 +169,15 @@ pub(crate) fn route_projection_from_runtime_candidate_with_pricing(
         pricing,
         balance: project_runtime_balance(candidate.balance_snapshot.as_ref(), now),
         capabilities: capability_projection_set(request, &candidate)?,
-        health: health_projection_set(request, &candidate, now)?,
+        health: health_projection_set(request, &candidate)?,
         capacity: capacity_projection(&candidate),
         backup_only: candidate.capabilities.only_use_as_backup,
         candidate_tags: candidate.capabilities.routing_tags.clone(),
         snapshot_id: format!("endpoint-revision-{}", candidate.station_endpoint_revision),
         fact_version_vector: format!(
-            "endpoint:{};capabilities:{};health:{};balance:{}",
+            "endpoint:{};capabilities:{};circuit:v3;balance:{}",
             candidate.station_endpoint_revision,
             candidate.capabilities.updated_at,
-            candidate
-                .health
-                .as_ref()
-                .map(|health| health.updated_at.as_str())
-                .unwrap_or("missing"),
             candidate
                 .balance_snapshot
                 .as_ref()
@@ -570,7 +564,6 @@ fn capability_projection(subject: CapabilitySubject, supported: bool) -> Capabil
 fn health_projection_set(
     request: &RouteRequestFacts,
     candidate: &CanonicalRoutingCandidate,
-    now: UnixMillis,
 ) -> Result<HealthProjectionSet, String> {
     let station_id =
         StationId::new(candidate.station_id.clone()).map_err(|error| error.to_string())?;
@@ -578,14 +571,6 @@ fn health_projection_set(
         StationKeyId::new(candidate.station_key_id.clone()).map_err(|error| error.to_string())?;
     let key_admission = if !candidate.schedulable {
         HealthAdmission::HardReject
-    } else if health_is_blocked(candidate.health.as_ref(), now.get()) {
-        HealthAdmission::SuppressDurableCooldown
-    } else if candidate
-        .health
-        .as_ref()
-        .is_some_and(|health| health.consecutive_failures > 0)
-    {
-        HealthAdmission::AdmitDegraded
     } else {
         HealthAdmission::Admit
     };
@@ -869,42 +854,6 @@ mod tests {
     }
 
     #[test]
-    fn runtime_candidate_projection_uses_live_health_block_window() {
-        let now_ms = 1_800_000_000_000;
-        let settings = RuntimeRoutingSettings {
-            max_rate_multiplier: None,
-            routing_group_scope: RoutingGroupFilter::AllGroups,
-            allow_depleted_fallback: false,
-            ..Default::default()
-        };
-        let request = route_request_facts_for_read_model(&settings, now_ms);
-        let mut candidate = runtime_candidate(RuntimeRoutingEconomicSnapshot::default());
-        candidate.health = Some(crate::models::routing::StationKeyHealth {
-            station_key_id: candidate.station_key_id.clone(),
-            last_success_at: None,
-            last_failure_at: None,
-            consecutive_failures: 0,
-            success_count: 1,
-            failure_count: 1,
-            avg_latency_ms: None,
-            last_error_summary: None,
-            cooldown_until: Some((now_ms - 1).to_string()),
-            updated_at: "2026-07-31T00:00:00Z".to_string(),
-        });
-
-        let projection =
-            route_projection_from_runtime_candidate(&request, candidate).expect("projection");
-
-        assert_ne!(
-            projection.health.station_key,
-            HealthAdmission::SuppressDurableCooldown
-        );
-        assert!(!projection
-            .hard_rejection_codes
-            .contains(&"health_hard_reject"));
-    }
-
-    #[test]
     fn runtime_candidate_projection_uses_token_base_price_over_multiplier_proxy() {
         let now_ms = 1_800_000_000_000;
         let settings = RuntimeRoutingSettings {
@@ -1018,7 +967,6 @@ mod tests {
                 routing_tags: Vec::new(),
                 updated_at: "2026-07-31T00:00:00Z".to_string(),
             },
-            health: None,
             balance_snapshot: None,
             economic_snapshot: Some(economic_snapshot),
             api_key: Some("sk-test".to_string()),

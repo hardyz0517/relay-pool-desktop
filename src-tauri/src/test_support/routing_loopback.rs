@@ -483,6 +483,7 @@ impl RoutingLoopbackHarness {
                 group_key_hash: group_key_hash.to_string(),
                 group_id_hash: Some(format!("id-{group_key_hash}")),
                 group_name: format!("Loopback group {group_key_hash}"),
+                description: None,
                 binding_status: BINDING_STATUS_AVAILABLE.to_string(),
                 default_rate_multiplier: None,
                 user_rate_multiplier: None,

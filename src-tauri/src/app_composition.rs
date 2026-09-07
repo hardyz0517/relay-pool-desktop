@@ -16,8 +16,13 @@ use crate::{
             StationKeyConnectivityCommandFacade,
         },
         data_directory::DataDirectoryPort,
+        routing_endpoint_ports::{RoutingEndpointHealthWritePort, RoutingEndpointTargetReadPort},
         routing_policy_control_plane::{
             RoutingPolicyFastActivationPort, RoutingPolicyMutationCoordinator,
+        },
+        routing_read_ports::{
+            RoutingCircuitStatusReadPort, RoutingProtectionReadPort, RoutingRuntimeOverlayReadPort,
+            RoutingSimulationReadPort, RoutingWorkspaceReadPort,
         },
     },
     background_tasks::{
@@ -187,7 +192,13 @@ pub(crate) fn compose_routing_command_facade(
     policy_mutations: Arc<RoutingPolicyMutationCoordinator>,
 ) -> RoutingCommandFacade {
     RoutingCommandFacade::new(
-        Arc::clone(&services.routing),
+        Arc::clone(&services.routing) as Arc<dyn RoutingWorkspaceReadPort>,
+        Arc::clone(&services.routing) as Arc<dyn RoutingRuntimeOverlayReadPort>,
+        Arc::clone(&services.routing) as Arc<dyn RoutingProtectionReadPort>,
+        Arc::clone(&services.routing) as Arc<dyn RoutingCircuitStatusReadPort>,
+        Arc::clone(&services.routing) as Arc<dyn RoutingSimulationReadPort>,
+        Arc::clone(&services.routing) as Arc<dyn RoutingEndpointTargetReadPort>,
+        Arc::clone(&services.routing) as Arc<dyn RoutingEndpointHealthWritePort>,
         Arc::clone(&services.routing_policy_read),
         Arc::clone(&services.model_mapping),
         Arc::clone(&services.routing_diagnostics),
@@ -377,7 +388,7 @@ pub(crate) fn compose_station_key_connectivity_command_facade(
     StationKeyConnectivityCommandFacade::new(
         Arc::clone(&services.collectors),
         Arc::clone(&services.credentials),
-        Arc::clone(&services.routing),
+        Arc::clone(&services.routing) as Arc<dyn RoutingEndpointHealthWritePort>,
         Arc::clone(&services.settings),
     )
 }

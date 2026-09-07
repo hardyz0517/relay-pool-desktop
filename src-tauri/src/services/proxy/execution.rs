@@ -5779,7 +5779,6 @@ mod tests {
                 routing_tags: Vec::new(),
                 updated_at: "0".to_string(),
             },
-            health: None,
             balance_snapshot: None,
             economic_snapshot: None,
             api_key: Some("sk-test".to_string()),

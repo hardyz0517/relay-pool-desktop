@@ -144,6 +144,21 @@
             "temporary": false
         },
         {
+            "from": "application::routing",
+            "to": "models::station_endpoints",
+            "temporary": false
+        },
+        {
+            "from": "application::routing",
+            "to": "application::routing_endpoint_ports",
+            "temporary": false
+        },
+        {
+            "from": "application::routing",
+            "to": "application::routing_read_ports",
+            "temporary": false
+        },
+        {
             "from": "background_tasks::exit",
             "to": "app_runtime_events",
             "temporary": false
@@ -421,6 +436,16 @@
         {
             "from": "app_composition",
             "to": "application::command_facades",
+            "temporary": false
+        },
+        {
+            "from": "app_composition",
+            "to": "application::routing_endpoint_ports",
+            "temporary": false
+        },
+        {
+            "from": "app_composition",
+            "to": "application::routing_read_ports",
             "temporary": false
         },
         {
@@ -2859,6 +2884,21 @@
             "temporary": false
         },
         {
+            "from": "application::command_facades::routing",
+            "to": "application::routing_endpoint_ports",
+            "temporary": false
+        },
+        {
+            "from": "application::command_facades::routing",
+            "to": "application::routing_read_ports",
+            "temporary": false
+        },
+        {
+            "from": "application::command_facades::station_key_connectivity",
+            "to": "application::routing_endpoint_ports",
+            "temporary": false
+        },
+        {
             "from": "application::command_facades::channel_status",
             "to": "models::monitoring",
             "temporary": false
@@ -3155,11 +3195,6 @@
         },
         {
             "from": "services::monitoring",
-            "to": "application::routing",
-            "temporary": false
-        },
-        {
-            "from": "services::monitoring",
             "to": "background_tasks",
             "temporary": false
         },
@@ -3271,6 +3306,11 @@
         {
             "from": "services::monitoring::runner",
             "to": "application::queries::routing_runtime",
+            "temporary": false
+        },
+        {
+            "from": "services::monitoring::runner",
+            "to": "application::routing_endpoint_ports",
             "temporary": false
         },
         {
@@ -6571,6 +6611,31 @@
         {
             "from": "models::routing_read_models",
             "to": "models::pricing",
+            "temporary": false
+        },
+        {
+            "from": "application::routing_endpoint_ports",
+            "to": "application::queries::routing_runtime",
+            "temporary": false
+        },
+        {
+            "from": "application::routing_read_ports",
+            "to": "application::queries::routing_protection",
+            "temporary": false
+        },
+        {
+            "from": "application::routing_read_ports",
+            "to": "application::queries::routing_runtime",
+            "temporary": false
+        },
+        {
+            "from": "application::routing_read_ports",
+            "to": "application::queries::routing_workspace",
+            "temporary": false
+        },
+        {
+            "from": "application::routing_read_ports",
+            "to": "application::queries::station_key_circuit_read",
             "temporary": false
         }
     ],

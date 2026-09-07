@@ -21,7 +21,10 @@ use crate::{
         },
         pagination::PageLimit,
         queries::routing_runtime::RoutingMonitoringTargetSnapshot,
-        routing::RoutingService,
+        routing_endpoint_ports::{
+            RoutingEndpointHealthStatus, RoutingEndpointHealthWrite,
+            RoutingEndpointHealthWritePort, RoutingMonitoringTargetReadPort,
+        },
     },
     background_tasks::{TaskFailure, TaskId, TaskRunContext, TaskSpec, TaskSupervisor},
     models::monitoring::{RunChannelMonitorReceipt, TriggerKind},
@@ -57,7 +60,8 @@ const ENDPOINT_PING_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) fn compose_monitoring_runner(services: &AppServices) -> Arc<MonitoringRunner> {
     Arc::new(MonitoringRunner::new(
         services.monitoring.clone(),
-        services.routing.clone(),
+        services.routing.clone() as Arc<dyn RoutingMonitoringTargetReadPort>,
+        services.routing.clone() as Arc<dyn RoutingEndpointHealthWritePort>,
         services.credentials.clone(),
         services.settings.clone(),
         AsyncOutboundClient::new(AsyncOutboundClientConfig::monitoring_budget()),
@@ -66,7 +70,8 @@ pub(crate) fn compose_monitoring_runner(services: &AppServices) -> Arc<Monitorin
 
 pub(crate) struct MonitoringRunner {
     monitoring: Arc<MonitoringService>,
-    routing: Arc<RoutingService>,
+    monitoring_targets: Arc<dyn RoutingMonitoringTargetReadPort>,
+    endpoint_health: Arc<dyn RoutingEndpointHealthWritePort>,
     credentials: Arc<CredentialService>,
     settings: Arc<crate::application::settings::SettingsService>,
     outbound: AsyncOutboundClient,
@@ -80,7 +85,8 @@ pub(crate) struct MonitoringRunner {
 impl MonitoringRunner {
     pub(crate) fn new(
         monitoring: Arc<MonitoringService>,
-        routing: Arc<RoutingService>,
+        monitoring_targets: Arc<dyn RoutingMonitoringTargetReadPort>,
+        endpoint_health: Arc<dyn RoutingEndpointHealthWritePort>,
         credentials: Arc<CredentialService>,
         settings: Arc<crate::application::settings::SettingsService>,
         outbound: AsyncOutboundClient,
@@ -88,7 +94,8 @@ impl MonitoringRunner {
         let (manual_tx, manual_rx) = mpsc::channel(MANUAL_QUEUE_CAPACITY);
         Self {
             monitoring,
-            routing,
+            monitoring_targets,
+            endpoint_health,
             credentials,
             settings,
             outbound,
@@ -208,8 +215,8 @@ impl MonitoringRunner {
             .await
             .map_err(|error| error.to_string())?;
         let routing_targets = self
-            .routing
-            .load_monitoring_target_snapshots()
+            .monitoring_targets
+            .read_monitoring_target_snapshots()
             .await
             .map_err(|error| error.to_string())?;
         let settings = self
@@ -327,7 +334,7 @@ impl MonitoringRunner {
             .into_iter()
             .map(|target| {
                 let outbound = self.outbound.clone();
-                let routing = Arc::clone(&self.routing);
+                let endpoint_health = Arc::clone(&self.endpoint_health);
                 let cancellation_token = prepared.cancellation_token.clone();
                 let proxy = prepared.proxy.clone();
                 async move {
@@ -343,15 +350,18 @@ impl MonitoringRunner {
                         return;
                     }
                     let checked_at = chrono::Utc::now().timestamp_millis().to_string();
-                    let _ = routing
-                        .record_station_endpoint_health(
-                            target.station_id,
-                            target.endpoint_revision,
-                            probe.status,
-                            probe.latency_ms,
+                    let Ok(status) = RoutingEndpointHealthStatus::parse(&probe.status) else {
+                        return;
+                    };
+                    let _ = endpoint_health
+                        .write_endpoint_health(RoutingEndpointHealthWrite {
+                            station_id: target.station_id,
+                            expected_endpoint_revision: target.endpoint_revision,
+                            status,
+                            latency_ms: probe.latency_ms,
                             checked_at,
-                            probe.error_summary,
-                        )
+                            error_summary: probe.error_summary,
+                        })
                         .await;
                 }
             })

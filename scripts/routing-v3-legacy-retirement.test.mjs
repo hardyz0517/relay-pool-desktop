@@ -326,10 +326,10 @@ const canonicalCandidate = runtimeRouting.match(
   /pub struct CanonicalRoutingCandidate\s*\{[\s\S]*?\n\}/u,
 );
 assert.ok(canonicalCandidate, "CanonicalRoutingCandidate must remain defined");
-assert.match(
+assert.doesNotMatch(
   canonicalCandidate[0],
-  /#\[cfg\(test\)\]\s*pub health:\s*Option<StationKeyHealth>/u,
-  "the canonical candidate health fixture must stay bounded to tests",
+  /StationKeyHealth|\bhealth:\s*Option</u,
+  "the canonical candidate must not carry the retired health snapshot shadow",
 );
 
 assert.match(
