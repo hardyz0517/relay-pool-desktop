@@ -2957,7 +2957,11 @@ mod tests {
     fn full_tasks_are_bounded_by_provider_capability() {
         assert_eq!(
             full_child_tasks(contract::ProviderKind::NewApi),
-            vec![CollectorTask::Balance, CollectorTask::Groups],
+            vec![
+                CollectorTask::Balance,
+                CollectorTask::Groups,
+                CollectorTask::PublishedStatus,
+            ],
         );
         assert_eq!(
             full_child_tasks(contract::ProviderKind::Sub2Api),
