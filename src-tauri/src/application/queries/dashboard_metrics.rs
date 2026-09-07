@@ -41,13 +41,13 @@ impl DashboardMetricsQuery {
         &self,
         input: DashboardRequestMetricsInput,
     ) -> Result<DashboardLiveRequestMetricsSnapshot, ApplicationError> {
+        self.repair_rollups_if_needed().await?;
         let captured_at_ms = self.clock.now_utc().timestamp_millis();
         validate_day_window(&input, captured_at_ms)?;
         let recent_start_ms = captured_at_ms
             .checked_sub(RECENT_WINDOW_MS)
             .ok_or(ApplicationError::ConstraintViolation)?;
         let end_exclusive_ms = fact_end_exclusive(captured_at_ms)?;
-        self.repair_rollups_if_needed().await?;
         let mut read = self.runtime.begin_read().await?;
         let result = self
             .repository
@@ -71,9 +71,9 @@ impl DashboardMetricsQuery {
     pub(crate) async fn load_cumulative(
         &self,
     ) -> Result<DashboardCumulativeRequestMetricsSnapshot, ApplicationError> {
+        self.repair_rollups_if_needed().await?;
         let captured_at_ms = self.clock.now_utc().timestamp_millis();
         let end_exclusive_ms = fact_end_exclusive(captured_at_ms)?;
-        self.repair_rollups_if_needed().await?;
         let mut read = self.runtime.begin_read().await?;
         let result = self
             .repository
@@ -89,6 +89,12 @@ impl DashboardMetricsQuery {
     }
 
     async fn repair_rollups_if_needed(&self) -> Result<(), ApplicationError> {
+        {
+            let mut read = self.runtime.begin_read().await?;
+            if !dashboard_rollups_rebuild_required(read.connection()).await? {
+                return Ok(());
+            }
+        }
         let mut write = self.runtime.begin_write().await?;
         if dashboard_rollups_rebuild_required(write.connection()).await? {
             rebuild_dashboard_metric_rollups(write.connection()).await?;

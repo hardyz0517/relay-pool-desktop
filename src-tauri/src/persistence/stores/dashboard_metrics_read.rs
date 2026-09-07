@@ -15,6 +15,7 @@ const MAX_CURRENCY_BYTES: usize = 16;
 const ROLLUP_BUCKET_MS: i64 = 1_000;
 const ROLLUP_KIND_SECOND: &str = "second";
 const ROLLUP_KIND_LIFETIME: &str = "lifetime";
+const ROLLUP_TAIL_LOOKBACK_MS: i64 = ROLLUP_BUCKET_MS;
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct DashboardLiveReadResult {
@@ -144,25 +145,30 @@ async fn load_period_window(
     end_ms: i64,
 ) -> Result<RawPeriod, PersistenceError> {
     let mut total = RawPeriod::default();
-    let full_start_ms = bucket_ceil_ms(start_ms);
-    let full_end_ms = bucket_floor_ms(end_ms);
+    let split = split_dashboard_read_window(start_ms, end_ms);
 
-    if full_start_ms < full_end_ms {
+    if split.has_rollup() {
         add_period_metrics(
             &mut total,
-            load_period_rollup(connection, ROLLUP_KIND_SECOND, full_start_ms, full_end_ms).await?,
+            load_period_rollup(
+                connection,
+                ROLLUP_KIND_SECOND,
+                split.rollup_start_ms,
+                split.rollup_end_ms,
+            )
+            .await?,
         )?;
     }
-    if start_ms < full_start_ms {
+    if split.has_head_raw() {
         add_period_metrics(
             &mut total,
-            load_period_raw(connection, start_ms, full_start_ms).await?,
+            load_period_raw(connection, split.head_raw_start_ms, split.head_raw_end_ms).await?,
         )?;
     }
-    if full_end_ms < end_ms {
+    if split.has_tail_raw() {
         add_period_metrics(
             &mut total,
-            load_period_raw(connection, full_end_ms, end_ms).await?,
+            load_period_raw(connection, split.tail_raw_start_ms, split.tail_raw_end_ms).await?,
         )?;
     }
     total.period.finish_averages();
