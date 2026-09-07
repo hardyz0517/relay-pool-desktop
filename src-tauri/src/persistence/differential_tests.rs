@@ -353,14 +353,68 @@ async fn station_endpoint_change_is_atomic_and_matches_v1_contract_boundary() {
 
     assert_eq!(updated.endpoint_revision, 2);
     assert!(
-        !updated.enabled,
-        "API origin changes must disable until revalidated"
+        updated.enabled,
+        "API origin changes keep the submitted enabled state"
     );
-    assert_eq!(updated.status, "disabled");
+    assert_eq!(updated.status, "unchecked");
     assert_eq!(fixture.endpoint_health_rows().await, 0);
     assert_eq!(fixture.station_key_health_rows().await, 0);
     assert_eq!(fixture.credential_session_source(&station.id).await, "none");
     assert_eq!(fixture.secret_rows().await, 0);
+}
+
+#[tokio::test]
+async fn station_api_origin_change_keeps_enabled_state_and_login_material() {
+    let fixture = V2Fixture::create().await;
+    let station_service = fixture.station_service(vec!["station-1"]).await;
+    let station = station_service
+        .create(CreateStationInput {
+            name: "Relay".to_string(),
+            station_type: "newapi".to_string(),
+            website_url: "https://console.example".to_string(),
+            api_base_url: "https://api.example/v1".to_string(),
+            api_key: "sk-test-station".to_string(),
+            collector_proxy_mode: "inherit".to_string(),
+            collector_proxy_url: None,
+            enabled: true,
+            credit_per_cny: 1.0,
+            low_balance_threshold_cny: Some(10.0),
+            collection_interval_minutes: 5,
+            note: None,
+        })
+        .await
+        .expect("create station");
+    fixture.seed_endpoint_state(&station.id).await;
+
+    let updated = station_service
+        .update_station(UpdateStationInput {
+            id: station.id.clone(),
+            name: station.name.clone(),
+            station_type: "newapi".to_string(),
+            website_url: "https://console.example".to_string(),
+            api_base_url: "https://api-next.example/v1".to_string(),
+            api_key: None,
+            collector_proxy_mode: "inherit".to_string(),
+            collector_proxy_url: None,
+            enabled: true,
+            credit_per_cny: 1.0,
+            low_balance_threshold_cny: Some(10.0),
+            collection_interval_minutes: 5,
+            note: None,
+        })
+        .await
+        .expect("update station api origin");
+
+    assert_eq!(updated.endpoint_revision, 2);
+    assert!(
+        updated.enabled,
+        "changing API base URL must not disable the station"
+    );
+    assert_eq!(updated.status, "unchecked");
+    assert_eq!(fixture.endpoint_health_rows().await, 0);
+    assert_eq!(fixture.station_key_health_rows().await, 0);
+    assert_eq!(fixture.credential_session_source(&station.id).await, "web");
+    assert_eq!(fixture.secret_rows().await, 2);
 }
 
 #[tokio::test]

@@ -303,9 +303,6 @@ async fn update_station(
     let website_origin_changed = endpoints_changed
         && !same_origin(&existing_website_url, &endpoints.website_url)
             .map_err(|_| invalid_persisted_station_endpoint())?;
-    let api_origin_changed = endpoints_changed
-        && !same_origin(&existing_api_base_url, &endpoints.api_base_url)
-            .map_err(|_| invalid_persisted_station_endpoint())?;
     // Station type selects provider rule and capacity semantics. Treat it as
     // execution configuration so an update fences already planned attempts.
     let station_type_changed = existing_station_type != change.input.station_type;
@@ -314,7 +311,6 @@ async fn update_station(
     } else {
         existing_endpoint_revision.max(1)
     };
-    let next_enabled = change.input.enabled && !api_origin_changed;
     let collector_proxy_mode = normalize_proxy_mode(&change.input.collector_proxy_mode, true);
     let collector_proxy_url = normalize_proxy_url(change.input.collector_proxy_url);
 
@@ -350,7 +346,7 @@ async fn update_station(
     .bind(&existing_secret_id)
     .bind(&collector_proxy_mode)
     .bind(&collector_proxy_url)
-    .bind(bool_to_i64(next_enabled))
+    .bind(bool_to_i64(change.input.enabled))
     .bind(change.input.credit_per_cny)
     .bind(change.input.low_balance_threshold_cny)
     .bind(i64::from(change.input.collection_interval_minutes))

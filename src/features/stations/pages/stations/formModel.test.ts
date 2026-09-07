@@ -153,7 +153,16 @@ describe("stations page form model", () => {
       ),
     ).toEqual([
       "前端网址 origin 变化后，保存的登录状态会被清除。",
-      "API origin 变化后，站点会被禁用，现有密钥将不会路由，直到重新验证并启用。",
     ]);
+    expect(
+      stationEndpointOriginWarnings(
+        station(),
+        {
+          ...emptyForm,
+          websiteUrl: "https://console.example",
+          apiBaseUrl: "https://api-next.example/v1",
+        },
+      ),
+    ).toEqual([]);
   });
 });
