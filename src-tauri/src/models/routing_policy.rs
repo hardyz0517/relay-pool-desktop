@@ -437,7 +437,7 @@ impl Default for TimeoutPolicyV2 {
             first_byte_seconds: 30.0,
             precommit_seconds: 60.0,
             buffered_execution_seconds: 300.0,
-            stream_idle_seconds: 90.0,
+            stream_idle_seconds: 180.0,
         }
     }
 }
@@ -1562,7 +1562,7 @@ mod tests {
         assert_eq!(policy.first_byte_seconds, 30.0);
         assert_eq!(policy.precommit_seconds, 60.0);
         assert_eq!(policy.buffered_execution_seconds, 300.0);
-        assert_eq!(policy.stream_idle_seconds, 90.0);
+        assert_eq!(policy.stream_idle_seconds, 180.0);
         assert!(policy.validate().is_ok());
 
         let mut invalid = policy.clone();

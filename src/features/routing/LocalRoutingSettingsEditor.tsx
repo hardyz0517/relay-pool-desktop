@@ -480,7 +480,7 @@ export function LocalRoutingSettingsEditor() {
               ["firstByteSeconds", "首字节超时", 1, 300, 30, "连接建立后等待上游开始返回内容的最长时间；超过后视为上游响应异常。"],
               ["precommitSeconds", "提交前超时", 1, 600, 60, "输出提交给客户端前允许消耗的总预算，包含排队、重新规划和请求尝试。"],
               ["bufferedExecutionSeconds", "缓冲执行超时", 1, 1_800, 300, "非流式请求在完整响应返回前允许执行的最长时间。"],
-              ["streamIdleSeconds", "流空闲超时", 1, 600, 90, "流式输出开始后两次输出之间允许的最长静默时间；触发后结束流，不自动重放已提交请求。"],
+              ["streamIdleSeconds", "流空闲超时", 1, 600, 180, "流式输出开始后两次输出之间允许的最长静默时间；触发后结束流，不自动重放已提交请求。"],
             ] as const).map(([key, label, min, max, defaultValue, description]) => {
               const error = timeoutFieldError(key);
               return (

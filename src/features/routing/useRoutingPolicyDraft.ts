@@ -137,7 +137,7 @@ export function createDefaultRoutingPolicyConfig(): RoutingPolicyConfigV3 {
       firstByteSeconds: 30,
       precommitSeconds: 60,
       bufferedExecutionSeconds: 300,
-      streamIdleSeconds: 90,
+      streamIdleSeconds: 180,
     },
   };
 }
