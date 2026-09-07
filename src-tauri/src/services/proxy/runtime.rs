@@ -1788,7 +1788,17 @@ mod tests {
             Some(1),
             "the selected key capacity lease must survive while the stream is active"
         );
-        let active_logs = fixture.request_logs().await;
+        let mut active_logs = fixture.request_logs().await;
+        for _ in 0..100 {
+            if active_logs.len() == 1
+                && active_logs[0].status == "in_progress"
+                && active_logs[0].lifecycle_status.as_deref() == Some("attempting")
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            active_logs = fixture.request_logs().await;
+        }
         assert_eq!(active_logs.len(), 1);
         assert_eq!(active_logs[0].status, "in_progress");
         assert_eq!(

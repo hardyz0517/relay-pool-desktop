@@ -1065,7 +1065,11 @@ mod tests {
     use crate::persistence::runtime::PersistenceRuntime;
 
     fn frozen_sql_checksum(bytes: &[u8]) -> String {
-        let normalized: Vec<u8> = bytes.iter().copied().filter(|byte| *byte != b'\r').collect();
+        let normalized: Vec<u8> = bytes
+            .iter()
+            .copied()
+            .filter(|byte| *byte != b'\r')
+            .collect();
         let mut hasher = Sha384::new();
         hasher.update(normalized);
         hasher
