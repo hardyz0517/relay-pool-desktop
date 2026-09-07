@@ -52,8 +52,8 @@ assert.match(
 assert.match(operationalQuery, /balance_kind/u, "operational facts must select typed balance kind");
 assert.match(
   operationalQuery,
-  /selected\.scope_rank\s*=\s*0[\s\S]*NOT EXISTS[\s\S]*key_current/u,
-  "operational facts must prefer the key fact and only fall back to account facts when absent",
+  /CASE[\s\S]*latest\.value\s+IS\s+NOT\s+NULL[\s\S]*scope_rank/u,
+  "operational facts must rank concrete key balances ahead of account fallback",
 );
 
 const assembler = await readFile(

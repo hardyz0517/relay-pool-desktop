@@ -756,8 +756,6 @@ fn row_to_runtime_candidate(row: sqlx::sqlite::SqliteRow) -> CanonicalRoutingCan
         station_name: row.get(runtime_candidate_column::STATION_NAME),
         key_name: row.get(runtime_candidate_column::KEY_NAME),
         capabilities: default_runtime_capabilities(&station_key_id),
-        #[cfg(test)]
-        health: None,
         balance_snapshot: None,
         economic_snapshot: Some(row_to_runtime_economic_snapshot(&row)),
         api_key: row
@@ -943,13 +941,24 @@ fn newest_balance(
     station: Option<&RankedRuntimeBalance>,
 ) -> Option<RuntimeRoutingBalance> {
     match (key, station) {
-        // A key-scoped quota is the narrowest fact for this route target.
-        // Station account balance is only a fallback when no key quota was
-        // observed; amount/status must never decide which scope wins.
-        (Some(key), _) => Some(key.balance),
+        // A key-scoped quota is the narrowest fact for this route target when
+        // it contains a concrete amount (or an explicit exhausted state).
+        // Incomplete key observations must fall back to the station account
+        // balance instead of surfacing a misleading textual "normal" state.
+        (Some(key), Some(_station)) if key_balance_is_usable(&key.balance) => Some(key.balance),
+        (Some(_), Some(station)) => Some(station.balance.clone()),
+        (Some(key), None) => Some(key.balance),
         (None, Some(station)) => Some(station.balance.clone()),
         (None, None) => None,
     }
+}
+
+fn key_balance_is_usable(balance: &RuntimeRoutingBalance) -> bool {
+    balance.value.is_some_and(f64::is_finite)
+        || matches!(
+            balance.status.trim().to_ascii_lowercase().as_str(),
+            "depleted" | "exhausted" | "empty"
+        )
 }
 
 fn row_to_model_alias(row: sqlx::sqlite::SqliteRow) -> ModelAlias {
@@ -1132,14 +1141,14 @@ mod tests {
     }
 
     #[test]
-    fn key_quota_with_unknown_amount_remains_visible_for_fail_closed_projection() {
+    fn key_quota_with_unknown_amount_falls_back_to_station_account_balance() {
         let key = ranked_balance(None, "normal", "3");
         let station = ranked_balance(Some(-0.05), "normal", "2");
 
         let selected = newest_balance(Some(key), Some(&station)).expect("balance");
 
-        assert_eq!(selected.value, None);
-        assert!(!selected.is_depleted());
+        assert_eq!(selected.value, Some(-0.05));
+        assert!(selected.is_depleted());
     }
 
     #[tokio::test]

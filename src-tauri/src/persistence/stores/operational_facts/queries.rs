@@ -109,7 +109,13 @@ impl OperationalFactStore {
                            latest.value, latest.currency, latest.status,
                            latest.evidence_confidence, latest.spendability_authority,
                            latest.observed_at_ms, latest.valid_until_ms,
-                           latest.updated_at, latest.created_at, 0 AS scope_rank
+                           latest.updated_at, latest.created_at,
+                           CASE
+                               WHEN latest.value IS NOT NULL
+                                    OR LOWER(TRIM(latest.status)) IN ('depleted', 'exhausted', 'empty')
+                               THEN 0
+                               ELSE 2
+                           END AS scope_rank
                     FROM balance_snapshots latest
                     WHERE latest.station_key_id = k.id
                       AND latest.scope = 'station_key'
@@ -124,13 +130,6 @@ impl OperationalFactStore {
                           LIMIT 1
                       )
                 ) selected
-                WHERE selected.scope_rank = 0
-                   OR NOT EXISTS (
-                          SELECT 1
-                          FROM balance_snapshots key_current
-                          WHERE key_current.station_key_id = k.id
-                            AND key_current.scope = 'station_key'
-                      )
                 ORDER BY selected.scope_rank,
                          selected.updated_at DESC,
                          selected.created_at DESC,
