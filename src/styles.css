@@ -159,6 +159,39 @@
   background-color: hsl(var(--channel-health-empty-bar));
 }
 
+.bg-latency-normal { background-color: hsl(var(--latency-normal)); }
+.bg-latency-notice { background-color: hsl(var(--latency-notice)); }
+.bg-latency-warning { background-color: hsl(var(--latency-warning)); }
+.bg-latency-critical { background-color: hsl(var(--latency-critical)); }
+.text-latency-normal-foreground { color: hsl(var(--latency-normal-foreground)); }
+.text-latency-notice-foreground { color: hsl(var(--latency-notice-foreground)); }
+.text-latency-warning-foreground { color: hsl(var(--latency-warning-foreground)); }
+.text-latency-critical-foreground { color: hsl(var(--latency-critical-foreground)); }
+.from-latency-normal {
+  --tw-gradient-from: hsl(var(--latency-normal)) var(--tw-gradient-from-position);
+  --tw-gradient-to: hsl(var(--latency-normal) / 0) var(--tw-gradient-to-position);
+  --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to);
+}
+.from-latency-notice {
+  --tw-gradient-from: hsl(var(--latency-notice)) var(--tw-gradient-from-position);
+  --tw-gradient-to: hsl(var(--latency-notice) / 0) var(--tw-gradient-to-position);
+  --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to);
+}
+.from-latency-warning {
+  --tw-gradient-from: hsl(var(--latency-warning)) var(--tw-gradient-from-position);
+  --tw-gradient-to: hsl(var(--latency-warning) / 0) var(--tw-gradient-to-position);
+  --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to);
+}
+.from-latency-critical {
+  --tw-gradient-from: hsl(var(--latency-critical)) var(--tw-gradient-from-position);
+  --tw-gradient-to: hsl(var(--latency-critical) / 0) var(--tw-gradient-to-position);
+  --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to);
+}
+.to-latency-normal { --tw-gradient-to: hsl(var(--latency-normal)) var(--tw-gradient-to-position); }
+.to-latency-notice { --tw-gradient-to: hsl(var(--latency-notice)) var(--tw-gradient-to-position); }
+.to-latency-warning { --tw-gradient-to: hsl(var(--latency-warning)) var(--tw-gradient-to-position); }
+.to-latency-critical { --tw-gradient-to: hsl(var(--latency-critical)) var(--tw-gradient-to-position); }
+
 html,
 body,
 #root {
