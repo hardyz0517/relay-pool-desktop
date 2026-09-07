@@ -104,6 +104,18 @@ describe("theme token contrast", () => {
     }
   });
 
+  it("keeps light request-log latency bars on the Sub2 emerald/amber/orange/red scale", () => {
+    const variables = parseVariables(themeBlock("light"));
+    expect(readToken(variables, "latency-normal")).toEqual([160, 84, 39]);
+    expect(readToken(variables, "latency-normal-foreground")).toEqual([161, 94, 30]);
+    expect(readToken(variables, "latency-notice")).toEqual([43, 96, 56]);
+    expect(readToken(variables, "latency-notice-foreground")).toEqual([32, 95, 44]);
+    expect(readToken(variables, "latency-warning")).toEqual([25, 95, 53]);
+    expect(readToken(variables, "latency-warning-foreground")).toEqual([21, 90, 48]);
+    expect(readToken(variables, "latency-critical")).toEqual([0, 84, 60]);
+    expect(readToken(variables, "latency-critical-foreground")).toEqual([0, 72, 51]);
+  });
+
   it("keeps light channel health indicators close to the Sub2 emerald scale", () => {
     const variables = parseVariables(themeBlock("light"));
     expect(readToken(variables, "channel-health-emphasis")).toEqual([142, 71, 45]);

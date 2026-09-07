@@ -233,30 +233,10 @@ function TokenUsageCell({ log }: { log: RequestLog }) {
 }
 
 const latencyTonePalette: Record<RequestLatencyTone, { bar: string; from: string; to: string; text: string }> = {
-  normal: {
-    bar: "bg-metric-emerald-foreground",
-    from: "from-metric-emerald-foreground",
-    to: "to-metric-emerald-foreground",
-    text: "text-metric-emerald-foreground",
-  },
-  notice: {
-    bar: "bg-metric-amber-foreground",
-    from: "from-metric-amber-foreground",
-    to: "to-metric-amber-foreground",
-    text: "text-metric-amber-foreground",
-  },
-  warning: {
-    bar: "bg-platform-anthropic-foreground",
-    from: "from-platform-anthropic-foreground",
-    to: "to-platform-anthropic-foreground",
-    text: "text-platform-anthropic-foreground",
-  },
-  critical: {
-    bar: "bg-danger-foreground",
-    from: "from-danger-foreground",
-    to: "to-danger-foreground",
-    text: "text-danger-foreground",
-  },
+  normal: { bar: "bg-latency-normal", from: "from-latency-normal", to: "to-latency-normal", text: "text-latency-normal-foreground" },
+  notice: { bar: "bg-latency-notice", from: "from-latency-notice", to: "to-latency-notice", text: "text-latency-notice-foreground" },
+  warning: { bar: "bg-latency-warning", from: "from-latency-warning", to: "to-latency-warning", text: "text-latency-warning-foreground" },
+  critical: { bar: "bg-latency-critical", from: "from-latency-critical", to: "to-latency-critical", text: "text-latency-critical-foreground" },
   muted: { bar: "bg-muted-foreground/40", from: "from-muted-foreground/40", to: "to-muted-foreground/40", text: "text-muted-foreground" },
 };
 

@@ -34,6 +34,24 @@ const config = {
         "channel-health-foreground": token("channel-health-foreground"),
         "channel-health-emphasis": token("channel-health-emphasis"),
         "channel-health-bar": token("channel-health-bar"),
+        latency: {
+          normal: {
+            DEFAULT: token("latency-normal"),
+            foreground: token("latency-normal-foreground"),
+          },
+          notice: {
+            DEFAULT: token("latency-notice"),
+            foreground: token("latency-notice-foreground"),
+          },
+          warning: {
+            DEFAULT: token("latency-warning"),
+            foreground: token("latency-warning-foreground"),
+          },
+          critical: {
+            DEFAULT: token("latency-critical"),
+            foreground: token("latency-critical-foreground"),
+          },
+        },
         "change-info-dot": cssToken("change-info-dot"),
         "on-solid": token("on-solid"),
         primary: {

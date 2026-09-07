@@ -43,6 +43,10 @@
   --channel-health-degraded-bar: 38 92% 50%;
   --channel-health-danger-bar: 0 84% 60%;
   --channel-health-empty-bar: 216 12% 84%;
+  --latency-normal: 160 84% 39%; --latency-normal-foreground: 161 94% 30%;
+  --latency-notice: 43 96% 56%; --latency-notice-foreground: 32 95% 44%;
+  --latency-warning: 25 95% 53%; --latency-warning-foreground: 21 90% 48%;
+  --latency-critical: 0 84% 60%; --latency-critical-foreground: 0 72% 51%;
   --on-solid: 0 0% 100%;
   --primary: 211 100% 42%;
   --primary-solid: 211 100% 42%;
@@ -102,6 +106,10 @@
   --channel-health-degraded-bar: 38 92% 50%;
   --channel-health-danger-bar: 0 84% 60%;
   --channel-health-empty-bar: 220 6% 32%;
+  --latency-normal: 160 70% 45%; --latency-normal-foreground: 160 76% 72%;
+  --latency-notice: 43 92% 56%; --latency-notice-foreground: 43 90% 70%;
+  --latency-warning: 25 90% 55%; --latency-warning-foreground: 25 85% 70%;
+  --latency-critical: 0 84% 60%; --latency-critical-foreground: 0 75% 72%;
   --on-solid: 0 0% 100%;
   --primary: 211 95% 70%;
   --primary-solid: 211 85% 45%;

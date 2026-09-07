@@ -112,7 +112,7 @@ describe("RequestLogTable", () => {
     expect(markup).toContain(">156.7K</span>");
   });
 
-  it("uses tokenized emerald/amber/orange bars instead of blue info tones", () => {
+  it("uses Sub2API emerald/amber/orange bars instead of blue info tones", () => {
     const markup = renderToStaticMarkup(
       <RequestLogTable
         rows={[
@@ -145,12 +145,12 @@ describe("RequestLogTable", () => {
       />,
     );
 
-    expect(markup).toContain("bg-gradient-to-b from-40% to-60% from-metric-emerald-foreground to-metric-emerald-foreground");
-    expect(markup).toContain("bg-gradient-to-b from-40% to-60% from-metric-amber-foreground to-metric-emerald-foreground");
-    expect(markup).toContain("bg-gradient-to-b from-40% to-60% from-platform-anthropic-foreground to-metric-amber-foreground");
-    expect(markup).toContain("text-metric-emerald-foreground");
-    expect(markup).toContain("text-metric-amber-foreground");
-    expect(markup).toContain("text-platform-anthropic-foreground");
+    expect(markup).toContain("bg-gradient-to-b from-40% to-60% from-latency-normal to-latency-normal");
+    expect(markup).toContain("bg-gradient-to-b from-40% to-60% from-latency-notice to-latency-normal");
+    expect(markup).toContain("bg-gradient-to-b from-40% to-60% from-latency-warning to-latency-notice");
+    expect(markup).toContain("text-latency-normal-foreground");
+    expect(markup).toContain("text-latency-notice-foreground");
+    expect(markup).toContain("text-latency-warning-foreground");
     expect(markup).not.toContain("bg-info-foreground");
     expect(markup).not.toContain("bg-success-foreground");
   });
