@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { Fragment, useMemo } from "react";
 import { ArrowDown, ArrowUp, Database } from "lucide-react";
 import { DataTableLite, Pagination, type DataTableColumn } from "@/components/ui";
 import { ModelMappingDisplay } from "@/components/status/ModelMappingDisplay";
@@ -17,8 +17,8 @@ import {
   formatRequestTokenCount,
   isRequestInProgress,
   latencyBreakdown,
+  latencyTone,
   reasoningEffortLabel,
-  requestLatencyTone,
   requestInputTokenCount,
   type RequestLatencyTone,
 } from "./requestLogViewModels";
@@ -86,7 +86,7 @@ export function RequestLogTable({
       {
         key: "latency",
         header: "延迟",
-        className: "text-center",
+        className: "w-[128px] min-w-[128px] max-w-[128px] text-center",
         render: (row) => <LatencyCell log={row} />,
       },
       {
@@ -236,42 +236,42 @@ function TokenUsageCell({ log }: { log: RequestLog }) {
   );
 }
 
+const latencyTonePalette: Record<RequestLatencyTone, { bar: string; from: string; to: string; text: string }> = {
+  normal: { bar: "bg-emerald-500", from: "from-emerald-500", to: "to-emerald-500", text: "text-emerald-600" },
+  notice: { bar: "bg-amber-400", from: "from-amber-400", to: "to-amber-400", text: "text-amber-600" },
+  warning: { bar: "bg-orange-500", from: "from-orange-500", to: "to-orange-500", text: "text-orange-600" },
+  critical: { bar: "bg-red-500", from: "from-red-500", to: "to-red-500", text: "text-red-600" },
+  muted: { bar: "bg-muted-foreground/40", from: "from-muted-foreground/40", to: "to-muted-foreground/40", text: "text-muted-foreground" },
+};
+
 function LatencyCell({ log }: { log: RequestLog }) {
-  const tone = requestLatencyTone(log);
+  const firstTone = latencyTone(log.firstTokenMs, "first_token");
+  const totalTone = latencyTone(log.durationMs, "total");
+  const barClass = log.firstTokenMs == null
+    ? latencyTonePalette[totalTone].bar
+    : `bg-gradient-to-b from-40% to-60% ${latencyTonePalette[firstTone].from} ${latencyTonePalette[totalTone].to}`;
+
   return (
-    <div className="relative min-h-[36px] w-full text-xs leading-4">
+    <div className="relative min-h-[36px] w-full min-w-0 overflow-hidden text-xs leading-4">
       <span
-        className={`absolute -left-1 top-1/2 h-9 w-1 -translate-y-1/2 rounded-full ${latencyToneBarClass(tone)}`}
+        className={`absolute left-0 top-1/2 h-9 w-1 -translate-y-1/2 rounded-full ${barClass}`}
         aria-hidden="true"
       />
-      <div className="absolute left-1/2 top-1/2 grid w-max -translate-x-1/2 -translate-y-1/2 gap-0.5">
-        {latencyBreakdown(log).map((row) => (
-          <div
-            key={row.label}
-            className="flex items-center gap-2 whitespace-nowrap"
-            title={row.title}
-          >
-            <span className="text-muted-foreground">{row.label}</span>
-            <span className={`font-medium ${latencyToneTextClass(row.tone)}`}>{row.value}</span>
-          </div>
-        ))}
+      <div className="absolute inset-y-0 left-3 right-0 grid content-center">
+        <div className="grid w-full grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2 gap-y-0.5">
+          {latencyBreakdown(log).map((row) => (
+            <Fragment key={row.label}>
+              <span className="text-left text-muted-foreground" title={row.title}>{row.label}</span>
+              <span
+                className={`text-left font-medium tabular-nums ${latencyTonePalette[row.tone].text}`}
+                title={row.title}
+              >
+                {row.value}
+              </span>
+            </Fragment>
+          ))}
+        </div>
       </div>
     </div>
   );
-}
-
-function latencyToneBarClass(tone: RequestLatencyTone) {
-  if (tone === "critical") return "bg-danger-foreground";
-  if (tone === "warning") return "bg-warning-foreground";
-  if (tone === "notice") return "bg-info-foreground";
-  if (tone === "muted") return "bg-muted-foreground/40";
-  return "bg-success-foreground";
-}
-
-function latencyToneTextClass(tone: RequestLatencyTone) {
-  if (tone === "critical") return "text-danger-foreground";
-  if (tone === "warning") return "text-warning-foreground";
-  if (tone === "notice") return "text-info-foreground";
-  if (tone === "muted") return "text-muted-foreground";
-  return "text-success-foreground";
 }

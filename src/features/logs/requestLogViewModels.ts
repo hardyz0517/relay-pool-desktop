@@ -7,6 +7,9 @@ import type { Station } from "@/lib/types/stations";
 export type RequestLatencyTone = "normal" | "notice" | "warning" | "critical" | "muted";
 export type RequestLatencyMetricKind = "first_token" | "total";
 
+const REQUEST_DURATION_TIMEOUT_MS = 60 * 60 * 1000;
+const REQUEST_DURATION_TIMEOUT_LABEL = "超时";
+
 const latencyToneSeverity: Record<RequestLatencyTone, number> = {
   muted: 0,
   normal: 1,
@@ -142,10 +145,13 @@ export function latencyTone(value: number | null, kind: RequestLatencyMetricKind
 
 function latencyToneTitle(value: number | null, kind: RequestLatencyMetricKind) {
   if (value == null) return "未记录";
-  if (kind === "first_token") {
-    return "首字延迟分档：<10s 正常，10-30s 偏慢，30-60s 慢，≥60s 严重";
+  const scale = kind === "first_token"
+    ? "首字延迟分档：<10s 正常，10-30s 偏慢，30-60s 慢，≥60s 严重"
+    : "总耗时分档：<60s 正常，60-180s 偏慢，180-300s 慢，≥300s 严重";
+  if (value >= REQUEST_DURATION_TIMEOUT_MS) {
+    return `${REQUEST_DURATION_TIMEOUT_LABEL}（${formatExactDuration(value)}）。${scale}`;
   }
-  return "总耗时分档：<60s 正常，60-180s 偏慢，180-300s 慢，≥300s 严重";
+  return scale;
 }
 
 function maxLatencyTone(tones: RequestLatencyTone[]) {
@@ -262,6 +268,11 @@ export function statusFallback(value: string | null | undefined) {
 
 function formatDuration(value: number | null) {
   if (value == null) return "-";
+  if (value >= REQUEST_DURATION_TIMEOUT_MS) return REQUEST_DURATION_TIMEOUT_LABEL;
+  return formatExactDuration(value);
+}
+
+function formatExactDuration(value: number) {
   return value >= 1000 ? `${(value / 1000).toFixed(2)}s` : `${value}ms`;
 }
 
