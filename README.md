@@ -12,7 +12,7 @@
 
 <p align='center'>
   <a href='https://github.com/hardyz0517/relay-pool-desktop/releases/latest'><img alt='版本' src='https://img.shields.io/github/v/release/hardyz0517/relay-pool-desktop?label=%E7%89%88%E6%9C%AC&color=2563eb' /></a>
-  <img alt='版本' src='https://img.shields.io/badge/%E7%89%88%E6%9C%AC-v0.4.6-0f766e' />
+  <img alt='版本' src='https://img.shields.io/badge/%E7%89%88%E6%9C%AC-v0.5.0-0f766e' />
   <img alt='状态' src='https://img.shields.io/badge/%E7%8A%B6%E6%80%81-%E6%8A%80%E6%9C%AF%E9%A2%84%E8%A7%88-f59e0b' />
   <img alt='平台' src='https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-Windows%20x64-111827' />
   <img alt='Tauri' src='https://img.shields.io/badge/Tauri-2.x-24c8db' />
@@ -32,7 +32,7 @@
 
 ---
 
-**当前版本：v0.4.6（技术预览）**。Relay Pool Desktop 是 Windows 本地桌面工具。接口、数据结构、兼容范围和安装方式仍可能变化，请在真实凭据环境中谨慎升级，并先保留必要备份。
+**当前版本：v0.5.0（技术预览）**。Relay Pool Desktop 是 Windows 本地桌面工具。接口、数据结构、兼容范围和安装方式仍可能变化，请在真实凭据环境中谨慎升级，并先保留必要备份。
 
 ## 适合谁
 
