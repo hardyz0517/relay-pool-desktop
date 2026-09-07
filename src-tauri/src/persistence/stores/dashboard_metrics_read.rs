@@ -139,6 +139,64 @@ struct RawCostMetrics {
     corrupt_cost_aggregate_count: u64,
 }
 
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct WindowSplit {
+    rollup_start_ms: i64,
+    rollup_end_ms: i64,
+    head_raw_start_ms: i64,
+    head_raw_end_ms: i64,
+    tail_raw_start_ms: i64,
+    tail_raw_end_ms: i64,
+}
+
+impl WindowSplit {
+    fn empty(at_ms: i64) -> Self {
+        Self {
+            rollup_start_ms: at_ms,
+            rollup_end_ms: at_ms,
+            head_raw_start_ms: at_ms,
+            head_raw_end_ms: at_ms,
+            tail_raw_start_ms: at_ms,
+            tail_raw_end_ms: at_ms,
+        }
+    }
+
+    fn has_rollup(self) -> bool {
+        self.rollup_start_ms < self.rollup_end_ms
+    }
+
+    fn has_head_raw(self) -> bool {
+        self.head_raw_start_ms < self.head_raw_end_ms
+    }
+
+    fn has_tail_raw(self) -> bool {
+        self.tail_raw_start_ms < self.tail_raw_end_ms
+    }
+}
+
+fn split_dashboard_read_window(start_ms: i64, end_ms: i64) -> WindowSplit {
+    if start_ms >= end_ms {
+        return WindowSplit::empty(start_ms);
+    }
+
+    let aligned_start_ms = bucket_ceil_ms(start_ms).clamp(start_ms, end_ms);
+    let trusted_rollup_end_ms = bucket_floor_ms(end_ms)
+        .saturating_sub(ROLLUP_TAIL_LOOKBACK_MS)
+        .clamp(start_ms, end_ms);
+    let rollup_start_ms = aligned_start_ms;
+    let rollup_end_ms = trusted_rollup_end_ms.max(rollup_start_ms).min(end_ms);
+
+    WindowSplit {
+        rollup_start_ms,
+        rollup_end_ms,
+        head_raw_start_ms: start_ms,
+        head_raw_end_ms: rollup_start_ms,
+        tail_raw_start_ms: rollup_end_ms,
+        tail_raw_end_ms: end_ms,
+    }
+}
+
 async fn load_period_window(
     connection: &mut SqliteConnection,
     start_ms: i64,
@@ -330,25 +388,30 @@ async fn load_costs_window(
     end_ms: i64,
 ) -> Result<RawCostMetrics, PersistenceError> {
     let mut total = RawCostMetrics::default();
-    let full_start_ms = bucket_ceil_ms(start_ms);
-    let full_end_ms = bucket_floor_ms(end_ms);
+    let split = split_dashboard_read_window(start_ms, end_ms);
 
-    if full_start_ms < full_end_ms {
+    if split.has_rollup() {
         add_cost_metrics(
             &mut total,
-            load_costs_rollup(connection, ROLLUP_KIND_SECOND, full_start_ms, full_end_ms).await?,
+            load_costs_rollup(
+                connection,
+                ROLLUP_KIND_SECOND,
+                split.rollup_start_ms,
+                split.rollup_end_ms,
+            )
+            .await?,
         )?;
     }
-    if start_ms < full_start_ms {
+    if split.has_head_raw() {
         add_cost_metrics(
             &mut total,
-            load_costs_raw(connection, start_ms, full_start_ms).await?,
+            load_costs_raw(connection, split.head_raw_start_ms, split.head_raw_end_ms).await?,
         )?;
     }
-    if full_end_ms < end_ms {
+    if split.has_tail_raw() {
         add_cost_metrics(
             &mut total,
-            load_costs_raw(connection, full_end_ms, end_ms).await?,
+            load_costs_raw(connection, split.tail_raw_start_ms, split.tail_raw_end_ms).await?,
         )?;
     }
     Ok(total)
@@ -1076,6 +1139,36 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn dashboard_read_window_rereads_the_last_closed_second_from_raw() {
+        let split = split_dashboard_read_window(0, 2_500);
+        assert_eq!(split.rollup_start_ms, 0);
+        assert_eq!(split.rollup_end_ms, 1_000);
+        assert!(!split.has_head_raw());
+        assert_eq!(split.tail_raw_start_ms, 1_000);
+        assert_eq!(split.tail_raw_end_ms, 2_500);
+    }
+
+    #[test]
+    fn dashboard_read_window_keeps_unaligned_prefix_on_raw_head() {
+        let split = split_dashboard_read_window(1_500, 5_000);
+        assert_eq!(split.head_raw_start_ms, 1_500);
+        assert_eq!(split.head_raw_end_ms, 2_000);
+        assert_eq!(split.rollup_start_ms, 2_000);
+        assert_eq!(split.rollup_end_ms, 4_000);
+        assert_eq!(split.tail_raw_start_ms, 4_000);
+        assert_eq!(split.tail_raw_end_ms, 5_000);
+    }
+
+    #[test]
+    fn dashboard_read_window_uses_raw_when_window_is_inside_one_second() {
+        let split = split_dashboard_read_window(1_500, 1_800);
+        assert!(!split.has_rollup());
+        assert_eq!(split.head_raw_start_ms, 1_500);
+        assert_eq!(split.head_raw_end_ms, 1_800);
+        assert!(!split.has_tail_raw());
+    }
+
     async fn test_connection() -> SqliteConnection {
         let mut connection = SqliteConnection::connect(":memory:").await.unwrap();
         connection
@@ -1248,6 +1341,39 @@ mod tests {
         status: Option<&str>,
         totals_by_currency_json: Option<&str>,
     ) {
+        insert_cost_record(
+            connection,
+            request_id,
+            status,
+            totals_by_currency_json,
+            true,
+        )
+        .await;
+    }
+
+    async fn insert_cost_without_rollup(
+        connection: &mut SqliteConnection,
+        request_id: &str,
+        status: Option<&str>,
+        totals_by_currency_json: Option<&str>,
+    ) {
+        insert_cost_record(
+            connection,
+            request_id,
+            status,
+            totals_by_currency_json,
+            false,
+        )
+        .await;
+    }
+
+    async fn insert_cost_record(
+        connection: &mut SqliteConnection,
+        request_id: &str,
+        status: Option<&str>,
+        totals_by_currency_json: Option<&str>,
+        apply_rollup: bool,
+    ) {
         let (compatibility_currency, compatibility_total_cost_micro) =
             match (status, totals_by_currency_json) {
                 (Some("complete_single_currency"), Some(json)) => {
@@ -1286,15 +1412,17 @@ mod tests {
         .execute(&mut *connection)
         .await
         .unwrap();
-        apply_cost_rollup_insert(
-            connection,
-            request_id,
-            status,
-            totals_by_currency_json,
-            compatibility_currency.as_deref(),
-            compatibility_total_cost_micro,
-        )
-        .await;
+        if apply_rollup {
+            apply_cost_rollup_insert(
+                connection,
+                request_id,
+                status,
+                totals_by_currency_json,
+                compatibility_currency.as_deref(),
+                compatibility_total_cost_micro,
+            )
+            .await;
+        }
     }
 
     #[derive(Debug, Default, Clone)]
@@ -2002,6 +2130,119 @@ mod tests {
         assert!(after_costs.metrics.cost_totals_complete);
         assert_eq!(after_costs.metrics.totals[0].currency, "USD");
         assert_eq!(after_costs.metrics.totals[0].amount_micro, 9_000);
+    }
+
+    #[tokio::test]
+    async fn stale_closed_second_cost_rollup_is_filled_from_raw_tail() {
+        let mut connection = test_connection().await;
+        insert_log(
+            &mut connection,
+            "settled",
+            Some(500),
+            Some(600),
+            "success",
+            "complete",
+            Some(1),
+            Some(1),
+            Some(2),
+            Some(100),
+            None,
+            Some("completed"),
+        )
+        .await;
+        insert_cost(
+            &mut connection,
+            "settled",
+            Some("complete_single_currency"),
+            Some(r#"{"USD":750000}"#),
+        )
+        .await;
+        insert_log(
+            &mut connection,
+            "fresh",
+            Some(1_500),
+            Some(1_700),
+            "success",
+            "complete",
+            Some(1),
+            Some(1),
+            Some(2),
+            Some(200),
+            None,
+            Some("completed"),
+        )
+        .await;
+        insert_cost_without_rollup(
+            &mut connection,
+            "fresh",
+            Some("complete_single_currency"),
+            Some(r#"{"USD":276900}"#),
+        )
+        .await;
+
+        let costs = load_costs_window(&mut connection, 0, 2_500).await.unwrap();
+
+        assert_eq!(costs.metrics.totals.len(), 1);
+        assert_eq!(costs.metrics.totals[0].currency, "USD");
+        assert_eq!(costs.metrics.totals[0].amount_micro, 1_026_900);
+        assert_eq!(costs.metrics.legacy_or_missing_aggregate_count, 0);
+        assert!(costs.metrics.cost_totals_complete);
+    }
+
+    #[tokio::test]
+    async fn last_closed_second_cost_is_not_double_counted_with_fresh_rollup() {
+        let mut connection = test_connection().await;
+        insert_log(
+            &mut connection,
+            "settled",
+            Some(500),
+            Some(600),
+            "success",
+            "complete",
+            Some(1),
+            Some(1),
+            Some(2),
+            Some(100),
+            None,
+            Some("completed"),
+        )
+        .await;
+        insert_cost(
+            &mut connection,
+            "settled",
+            Some("complete_single_currency"),
+            Some(r#"{"USD":750000}"#),
+        )
+        .await;
+        insert_log(
+            &mut connection,
+            "fresh",
+            Some(1_500),
+            Some(1_700),
+            "success",
+            "complete",
+            Some(1),
+            Some(1),
+            Some(2),
+            Some(200),
+            None,
+            Some("completed"),
+        )
+        .await;
+        insert_cost(
+            &mut connection,
+            "fresh",
+            Some("complete_single_currency"),
+            Some(r#"{"USD":276900}"#),
+        )
+        .await;
+
+        let costs = load_costs_window(&mut connection, 0, 2_500).await.unwrap();
+
+        assert_eq!(costs.metrics.totals.len(), 1);
+        assert_eq!(costs.metrics.totals[0].currency, "USD");
+        assert_eq!(costs.metrics.totals[0].amount_micro, 1_026_900);
+        assert!(costs.metrics.cost_totals_complete);
     }
 
     #[tokio::test]
