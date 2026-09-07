@@ -5,6 +5,10 @@ const requestCostFormatSource = await readFile(
   "src/features/dashboard/requestCostFormat.ts",
   "utf8",
 );
+const recentUsageSource = await readFile(
+  "src/features/dashboard/recentUsageViewModel.ts",
+  "utf8",
+);
 
 function assert(condition, message) {
   if (!condition) {
@@ -13,7 +17,7 @@ function assert(condition, message) {
 }
 
 assert(
-  /<section className="grid min-w-0 gap-3">\s*<header[^>]*>[\s\S]*?最近使用[\s\S]*?查看全部/.test(dashboardSource),
+  /<section className="grid min-w-0 gap-3"[^>]*>\s*<header[^>]*>[\s\S]*?最近使用[\s\S]*?查看全部/.test(dashboardSource),
   "dashboard recent usage should expose a compact title and view-all action",
 );
 
@@ -25,7 +29,7 @@ assert(
 );
 
 assert(
-  /dashboardLoaded\s*&&\s*requestLogs\.length\s*===\s*0/.test(dashboardSource),
+  /dashboardLoaded\s*&&\s*recentUsageLogs\.length\s*===\s*0/.test(dashboardSource),
   "dashboard recent usage should render empty state only after a successful workspace load",
 );
 
@@ -41,14 +45,24 @@ assert(
 
 assert(
   dashboardSource.includes("FlaskConical") &&
+    dashboardSource.includes('layout="inline"') &&
     dashboardSource.includes("formatRecentRequestCost") &&
     dashboardSource.includes("formatTokenCount"),
-  "dashboard request log rows should use the compact model/time + cost/token presentation",
+  "dashboard request log rows should use inline model mapping with cost and tokens",
 );
 
 assert(
-  /requestLogs\.slice\(0,\s*5\)\.map/.test(dashboardSource),
-  "dashboard recent usage should render at most five rows",
+  dashboardSource.includes("selectRecentUsageLogs") &&
+    /recentUsageLogs\.map/.test(dashboardSource) &&
+    !/requestLogs\.slice\(0,\s*5\)\.map/.test(dashboardSource),
+  "dashboard recent usage should render at most five settled request logs",
+);
+
+assert(
+  recentUsageSource.includes('status === "in_progress"') &&
+    recentUsageSource.includes('lifecycleStatus === "admitted"') &&
+    recentUsageSource.includes("RECENT_USAGE_LIMIT = 5"),
+  "dashboard recent usage should skip in-progress request logs and keep a five-row bound",
 );
 
 assert(

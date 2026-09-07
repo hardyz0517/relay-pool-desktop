@@ -13,17 +13,23 @@ assert(
     dashboardSource.includes("request.stationKeyId") &&
     dashboardSource.includes("requestStationName") &&
     dashboardSource.includes("stationNamesById"),
-  "dashboard recent usage rows should resolve both station and key names",
+  "dashboard recent usage rows should resolve station names from the request and key lookup",
 );
 
 assert(
-  /<ModelMappingDisplay[\s\S]*?requestedModel=\{request\.model\}[\s\S]*?resolvedModel=\{request\.resolvedUpstreamModel\}[\s\S]*?fallback=\{request\.path\}[\s\S]*?\{formatDateTime\(request\.startedAt\)\}[\s\S]*?\{requestStationName\} · \{requestKeyName\}/.test(
+  /<ModelMappingDisplay[\s\S]*?requestedModel=\{request\.model\}[\s\S]*?resolvedModel=\{request\.resolvedUpstreamModel\}[\s\S]*?fallback=\{request\.path\}[\s\S]*?layout="inline"[\s\S]*?formatRecentRequestCost[\s\S]*?\{formatDateTime\(request\.startedAt\)\}[\s\S]*?\{requestStationName\}/.test(
     dashboardSource,
-  ),
-  "dashboard recent usage rows should show requested and upstream models above the usage time, station, and key names",
+  ) &&
+    !dashboardSource.includes("requestKeyName") &&
+    !dashboardSource.includes("{requestStationName} · {requestKeyName}"),
+  "dashboard recent usage rows should show inline model mapping with cost, then time and station name without the specific key",
 );
 
 assert(
-  /min-w-\[88px\] text-right text-xs[\s\S]*?formatRecentRequestCost[\s\S]*?formatTokenCount\(request\.totalTokens\)/.test(dashboardSource),
-  "dashboard recent usage rows should place cost above tokens on the right",
+  dashboardSource.includes('layout="inline"') &&
+    dashboardSource.includes("items-baseline justify-between") &&
+    dashboardSource.includes("formatRecentRequestCost") &&
+    dashboardSource.includes("formatTokenCount(request.totalTokens)") &&
+    !dashboardSource.includes("min-w-[88px] text-right text-xs"),
+  "dashboard recent usage rows should place cost beside the model mapping and tokens beside the usage time",
 );

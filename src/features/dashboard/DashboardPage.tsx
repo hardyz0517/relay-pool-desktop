@@ -25,8 +25,10 @@ import {
   StatusBadge,
 } from "@/components/ui";
 import { readError } from "@/lib/errors";
+import { openExternalUrl } from "@/lib/api/external";
 import { parseTimestampLikeDate } from "@/lib/time";
 import type { KeyPoolItem } from "@/lib/types/stationKeys";
+import type { RoutingWorkspaceCandidate } from "@/lib/types/routing";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import {
   currentStationBalanceSnapshotsQueryOptions,
@@ -49,6 +51,7 @@ import {
 import type { AlertingIncident } from "@/lib/types/alerting";
 import { summarizeDashboardBalances } from "@/features/dashboard/dashboardBalanceSummary";
 import { formatRecentRequestCost } from "@/features/dashboard/requestCostFormat";
+import { selectRecentUsageLogs } from "@/features/dashboard/recentUsageViewModel";
 import { useUpdater } from "@/lib/updater/UpdaterProvider";
 import {
   amountMicroToMajorUnits,
@@ -65,7 +68,7 @@ import {
 const dashboardKeyHealthLabels: Record<DashboardKeyHealthStatus, string> = {
   unchecked: "未检测",
   healthy: "正常",
-  warning: "降级",
+  warning: "欠佳",
   error: "错误",
 };
 
@@ -102,6 +105,12 @@ type DashboardMetricsQueryLike = {
   isError: boolean;
   isFetching: boolean;
   isLoading: boolean;
+};
+
+type DashboardRoutingItem = {
+  key: KeyPoolItem;
+  candidate: RoutingWorkspaceCandidate | null;
+  score: number | null;
 };
 
 export function DashboardPage({
@@ -168,6 +177,10 @@ export function DashboardPage({
   );
 
   const requestLogs = requestLogsQuery.data ?? [];
+  const recentUsageLogs = useMemo(
+    () => selectRecentUsageLogs(requestLogs),
+    [requestLogs],
+  );
   const liveRequestMetrics = liveRequestMetricsQuery.data ?? null;
   const cumulativeRequestMetrics = cumulativeRequestMetricsQuery.data ?? null;
   const recentPerformance = liveRequestMetrics?.recent ?? null;
@@ -196,10 +209,14 @@ export function DashboardPage({
     () => new Map(
       (routingSnapshotQuery.data?.candidates ?? []).map((candidate) => [
         candidate.stationKeyId,
-        candidate.score,
+        getDashboardRoutingScore(candidate),
       ]),
     ),
     [routingSnapshotQuery.data],
+  );
+  const dashboardRoutingItems = useMemo(
+    () => buildDashboardRoutingItems(keyPoolItems, routingSnapshotQuery.data?.candidates),
+    [keyPoolItems, routingSnapshotQuery.data?.candidates],
   );
   const stations = stationsQuery.data ?? [];
   const balanceSnapshots = balancesQuery.data ?? [];
@@ -506,26 +523,23 @@ export function DashboardPage({
             </Button>
           ) : null}
         </div>
-        {(channelMonitorLatestSummaryQuery.isFetching || channelMonitorLatestSummaryQuery.isError || latestSummaryStale) && (
+        {/* Background polling stays silent so the dashboard layout remains stable while data refreshes. */}
+        {(channelMonitorLatestSummaryQuery.isError || latestSummaryStale) && (
           <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground" role="status">
             <span>
-              {channelMonitorLatestSummaryQuery.isFetching
-                ? "监控摘要更新中…"
-                : channelMonitorLatestSummaryQuery.isError
-                  ? channelMonitorLatestSummaryQuery.data
-                    ? `监控摘要更新失败，继续显示上次成功数据：${readError(channelMonitorLatestSummaryQuery.error)}`
-                    : `监控摘要读取失败：${readError(channelMonitorLatestSummaryQuery.error)}`
-                  : "监控摘要数据可能已过期"}
+              {channelMonitorLatestSummaryQuery.isError
+                ? channelMonitorLatestSummaryQuery.data
+                  ? `监控摘要更新失败，继续显示上次成功数据：${readError(channelMonitorLatestSummaryQuery.error)}`
+                  : `监控摘要读取失败：${readError(channelMonitorLatestSummaryQuery.error)}`
+                : "监控摘要数据可能已过期"}
             </span>
-            {!channelMonitorLatestSummaryQuery.isFetching ? (
-              <button
-                type="button"
-                className="shrink-0 text-primary underline-offset-2 hover:underline"
-                onClick={() => void channelMonitorLatestSummaryQuery.refetch()}
-              >
-                立即刷新
-              </button>
-            ) : null}
+            <button
+              type="button"
+              className="shrink-0 text-primary underline-offset-2 hover:underline"
+              onClick={() => void channelMonitorLatestSummaryQuery.refetch()}
+            >
+              立即刷新
+            </button>
           </div>
         )}
       </section>
@@ -549,7 +563,7 @@ export function DashboardPage({
             ) : null}
           </header>
         <div className="grid gap-3">
-          {dashboardLoaded && keyPoolItems.length === 0 ? (
+          {dashboardLoaded && dashboardRoutingItems.length === 0 ? (
             <div className="flex min-h-[164px] flex-col items-center justify-center rounded-[8px] border border-border bg-surface px-4 py-8 text-center shadow-surface">
               <div className="flex h-16 w-16 items-center justify-center rounded-[16px] bg-muted text-muted-foreground/45">
                 <Inbox className="h-7 w-7" strokeWidth={1.75} />
@@ -560,35 +574,53 @@ export function DashboardPage({
               </p>
             </div>
           ) : (
-            keyPoolItems.slice(0, 6).map((key) => (
-              <ObjectRow
-                key={key.id}
-                icon={<KeyRound className="h-4 w-4" />}
-                title={key.name}
-                subtitle={`${key.stationName} - ${key.stationApiBaseUrl}`}
-                badges={
-                  <StatusBadge tone={key.enabled ? "healthy" : "disabled"}>
-                    {key.enabled ? "可用" : "停用"}
-                  </StatusBadge>
-                }
-                metrics={[
-                  {
-                    label: "当前并发",
-                    value: (
-                      <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-[6px] bg-muted px-2 text-center text-foreground">
-                        {currentConcurrencyByKeyId.get(key.id) ?? "—"}
-                      </span>
-                    ),
-                    align: "center",
-                  },
-                  {
-                    label: "评分",
-                    value: formatDashboardRoutingScore(routingScoreByKeyId.get(key.id)),
-                    tone: routingScoreByKeyId.get(key.id) == null ? "neutral" : "good",
-                  },
-                ]}
-              />
-            ))
+            dashboardRoutingItems.slice(0, 6).map(({ key }) => {
+              const currentConcurrency = currentConcurrencyByKeyId.get(key.id);
+              return (
+                <ObjectRow
+                  key={key.id}
+                  icon={<KeyRound className="h-4 w-4" />}
+                  title={key.name}
+                  subtitle={
+                    <>
+                      <span>{key.stationName} - </span>
+                      <button
+                        type="button"
+                        aria-label={`在浏览器打开 ${key.stationName} API 地址`}
+                        title={key.stationApiBaseUrl}
+                        className="max-w-full truncate text-left text-xs text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void openExternalUrl(key.stationApiBaseUrl);
+                        }}
+                        onKeyDown={(event) => event.stopPropagation()}
+                      >
+                        {key.stationApiBaseUrl}
+                      </button>
+                    </>
+                  }
+                  metrics={[
+                    {
+                      label: "当前并发",
+                      value: (
+                        <StatusBadge
+                          tone={currentConcurrency != null && currentConcurrency > 0 ? "healthy" : "disabled"}
+                          className="rounded-[4px]"
+                        >
+                          {currentConcurrency == null ? "—" : String(currentConcurrency)}
+                        </StatusBadge>
+                      ),
+                      align: "center",
+                    },
+                    {
+                      label: "评分",
+                      value: formatDashboardRoutingScore(routingScoreByKeyId.get(key.id)),
+                      tone: routingScoreByKeyId.get(key.id) == null ? "neutral" : "good",
+                    },
+                  ]}
+                />
+              );
+            })
           )}
         </div>
         </section>
@@ -611,7 +643,7 @@ export function DashboardPage({
             ) : null}
           </header>
           <div className="grid gap-3">
-            {dashboardLoaded && requestLogs.length === 0 ? (
+            {dashboardLoaded && recentUsageLogs.length === 0 ? (
               <div className="flex min-h-[164px] flex-col items-center justify-center rounded-[8px] border border-border bg-surface px-4 py-8 text-center shadow-surface">
                 <div className="flex h-16 w-16 items-center justify-center rounded-[16px] bg-muted text-muted-foreground/45">
                   <Inbox className="h-7 w-7" strokeWidth={1.75} />
@@ -622,7 +654,7 @@ export function DashboardPage({
                 </p>
               </div>
             ) : (
-              requestLogs.slice(0, 5).map((request) => {
+              recentUsageLogs.map((request) => {
                 const requestKey = request.stationKeyId
                   ? requestKeyById.get(request.stationKeyId)
                   : null;
@@ -630,35 +662,35 @@ export function DashboardPage({
                   (request.stationId && stationNamesById.get(request.stationId)) ||
                   requestKey?.stationName ||
                   "未知站点";
-                const requestKeyName = requestKey?.name || "未知密钥";
                 return (
               <div
                 key={request.id}
-                className="grid min-h-[84px] min-w-0 grid-cols-[36px_minmax(0,1fr)_auto] items-center gap-3 rounded-[8px] border border-border bg-surface px-3 py-3 shadow-surface transition-colors hover:bg-surface-subtle"
+                className="grid min-w-0 grid-cols-[36px_minmax(0,1fr)] items-center gap-3 rounded-[8px] border border-border bg-surface px-3 py-3 shadow-surface transition-colors hover:bg-surface-subtle"
               >
                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-info-surface text-info-foreground">
                   <FlaskConical className="h-4 w-4" />
                 </div>
                 <div className="min-w-0">
-                  <ModelMappingDisplay
-                    requestedModel={request.model}
-                    resolvedModel={request.resolvedUpstreamModel}
-                    fallback={request.path}
-                    className="text-sm"
-                  />
-                  <div className="mt-0.5 truncate text-xs text-muted-foreground">
-                    {formatDateTime(request.startedAt)}
+                  <div className="flex min-w-0 items-baseline justify-between gap-3">
+                    <ModelMappingDisplay
+                      requestedModel={request.model}
+                      resolvedModel={request.resolvedUpstreamModel}
+                      fallback={request.path}
+                      layout="inline"
+                      className="min-w-0 flex-1 text-sm"
+                    />
+                    <div className="shrink-0 whitespace-nowrap text-xs font-semibold text-success-foreground">
+                      {formatRecentRequestCost(request.estimatedTotalCost, request.costCurrency, request.costStatus)}
+                    </div>
+                  </div>
+                  <div className="mt-0.5 flex min-w-0 items-baseline justify-between gap-3 text-xs text-muted-foreground">
+                    <div className="truncate">{formatDateTime(request.startedAt)}</div>
+                    <div className="shrink-0 whitespace-nowrap">
+                      {formatTokenCount(request.totalTokens)} tokens
+                    </div>
                   </div>
                   <div className="mt-0.5 truncate text-xs text-muted-foreground">
-                    {requestStationName} · {requestKeyName}
-                  </div>
-                </div>
-                <div className="min-w-[88px] text-right text-xs">
-                  <div className="whitespace-nowrap font-semibold text-success-foreground">
-                    {formatRecentRequestCost(request.estimatedTotalCost, request.costCurrency, request.costStatus)}
-                  </div>
-                  <div className="mt-1 whitespace-nowrap text-muted-foreground">
-                    {formatTokenCount(request.totalTokens)} tokens
+                    {requestStationName}
                   </div>
                 </div>
               </div>
@@ -705,6 +737,54 @@ function DashboardMetricTile({
       </div>
     </div>
   );
+}
+
+function buildDashboardRoutingItems(
+  keyPoolItems: readonly KeyPoolItem[],
+  candidates: readonly RoutingWorkspaceCandidate[] | undefined,
+): DashboardRoutingItem[] {
+  const keyById = new Map(keyPoolItems.map((key) => [key.id, key]));
+
+  // The routing workspace is the source of truth for the current attempt set
+  // and score. Until that snapshot is ready, keep the list useful by showing
+  // only administratively enabled/schedulable keys in their persisted order.
+  if (candidates !== undefined) {
+    return candidates
+      .filter((candidate) => (
+        candidate.scoreStatus === "scored"
+        && (candidate.participationStatus === "eligible"
+          || candidate.participationStatus === "conditionally_eligible")
+      ))
+      .flatMap((candidate) => {
+        const key = keyById.get(candidate.stationKeyId);
+        if (!key || !key.enabled || key.schedulable === false) return [];
+        return [{ key, candidate, score: getDashboardRoutingScore(candidate) }];
+      })
+      .sort(compareDashboardRoutingItems);
+  }
+
+  return keyPoolItems
+    .filter((key) => key.enabled && key.schedulable !== false)
+    .map((key) => ({ key, candidate: null, score: null }));
+}
+
+function getDashboardRoutingScore(
+  candidate: Pick<RoutingWorkspaceCandidate, "diagnostics" | "score">,
+) {
+  const value = candidate.diagnostics?.effectiveScore ?? candidate.score;
+  return value != null && Number.isFinite(value) ? value : null;
+}
+
+function compareDashboardRoutingItems(
+  left: DashboardRoutingItem,
+  right: DashboardRoutingItem,
+) {
+  if (left.score != null && right.score != null && left.score !== right.score) {
+    return right.score - left.score;
+  }
+  if (left.score != null && right.score == null) return -1;
+  if (left.score == null && right.score != null) return 1;
+  return left.key.id.localeCompare(right.key.id);
 }
 
 function parseLogDate(value: string) {
