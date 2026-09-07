@@ -112,7 +112,7 @@ describe("RequestLogTable", () => {
     expect(markup).toContain(">156.7K</span>");
   });
 
-  it("uses Sub2API emerald/amber/orange bars instead of blue info tones", () => {
+  it("uses tokenized emerald/amber/orange bars instead of blue info tones", () => {
     const markup = renderToStaticMarkup(
       <RequestLogTable
         rows={[
@@ -145,12 +145,12 @@ describe("RequestLogTable", () => {
       />,
     );
 
-    expect(markup).toContain("bg-gradient-to-b from-40% to-60% from-emerald-500 to-emerald-500");
-    expect(markup).toContain("bg-gradient-to-b from-40% to-60% from-amber-400 to-emerald-500");
-    expect(markup).toContain("bg-gradient-to-b from-40% to-60% from-orange-500 to-amber-400");
-    expect(markup).toContain("text-emerald-600");
-    expect(markup).toContain("text-amber-600");
-    expect(markup).toContain("text-orange-600");
+    expect(markup).toContain("bg-gradient-to-b from-40% to-60% from-metric-emerald-foreground to-metric-emerald-foreground");
+    expect(markup).toContain("bg-gradient-to-b from-40% to-60% from-metric-amber-foreground to-metric-emerald-foreground");
+    expect(markup).toContain("bg-gradient-to-b from-40% to-60% from-platform-anthropic-foreground to-metric-amber-foreground");
+    expect(markup).toContain("text-metric-emerald-foreground");
+    expect(markup).toContain("text-metric-amber-foreground");
+    expect(markup).toContain("text-platform-anthropic-foreground");
     expect(markup).not.toContain("bg-info-foreground");
     expect(markup).not.toContain("bg-success-foreground");
   });
