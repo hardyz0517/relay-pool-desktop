@@ -55,9 +55,11 @@ import { selectRecentUsageLogs } from "@/features/dashboard/recentUsageViewModel
 import { useUpdater } from "@/lib/updater/UpdaterProvider";
 import {
   amountMicroToMajorUnits,
+  formatCumulativeCostHover,
   getLocalDayMetricsInput,
-  hasCostQualityIssue,
+  lifetimeCostGapCount,
   msUntilNextLocalDay,
+  todayCostCompleteness,
 } from "@/features/dashboard/dashboardRequestMetricsViewModel";
 import type { DashboardCostMetrics, DashboardCostTotal, DashboardPeriodMetrics } from "@/lib/types/dashboardMetrics";
 import {
@@ -242,10 +244,6 @@ export function DashboardPage({
   const todayRequests = todayMetrics?.requestCount ?? null;
   const enabledKeyCount = keyPoolItems.filter((key) => key.enabled).length;
   const disabledKeyCount = keyPoolItems.length - enabledKeyCount;
-  const requestKeyById = useMemo(
-    () => new Map(keyPoolItems.map((key) => [key.id, key])),
-    [keyPoolItems],
-  );
   const stationNamesById = useMemo(
     () => new Map(stations.map((station) => [station.id, station.name] as const)),
     [stations],
@@ -316,6 +314,7 @@ export function DashboardPage({
               detail: (
                 <DashboardCostMetricDetail
                   current={todayCosts}
+                  currentPeriod={todayMetrics}
                   currentState={liveMetricsState}
                   cumulative={lifetimeCosts}
                   cumulativeState={cumulativeMetricsState}
@@ -574,7 +573,7 @@ export function DashboardPage({
               </p>
             </div>
           ) : (
-            dashboardRoutingItems.slice(0, 6).map(({ key }) => {
+            dashboardRoutingItems.slice(0, 5).map(({ key }) => {
               const currentConcurrency = currentConcurrencyByKeyId.get(key.id);
               return (
                 <ObjectRow
@@ -635,7 +634,7 @@ export function DashboardPage({
                 size="sm"
                 variant="ghost"
                 className="shrink-0 text-muted-foreground"
-                onClick={onOpenRequestLogs}
+                onClick={() => onOpenRequestLogs()}
               >
                 查看全部
                 <ChevronRight className="h-3.5 w-3.5" />
@@ -654,15 +653,7 @@ export function DashboardPage({
                 </p>
               </div>
             ) : (
-              recentUsageLogs.map((request) => {
-                const requestKey = request.stationKeyId
-                  ? requestKeyById.get(request.stationKeyId)
-                  : null;
-                const requestStationName =
-                  (request.stationId && stationNamesById.get(request.stationId)) ||
-                  requestKey?.stationName ||
-                  "未知站点";
-                return (
+              recentUsageLogs.map((request) => (
               <div
                 key={request.id}
                 className="grid min-w-0 grid-cols-[36px_minmax(0,1fr)] items-center gap-3 rounded-[8px] border border-border bg-surface px-3 py-3 shadow-surface transition-colors hover:bg-surface-subtle"
@@ -689,13 +680,9 @@ export function DashboardPage({
                       {formatTokenCount(request.totalTokens)} tokens
                     </div>
                   </div>
-                  <div className="mt-0.5 truncate text-xs text-muted-foreground">
-                    {requestStationName}
-                  </div>
                 </div>
               </div>
-                );
-              })
+              ))
             )}
           </div>
         </section>
@@ -812,7 +799,15 @@ function formatUsdAmount(value: number) {
   return `$${value.toFixed(value >= 100 ? 2 : 4)}`;
 }
 
-function DashboardCostTotals({ totals, compact = false }: { totals: DashboardCostTotal[]; compact?: boolean }) {
+function DashboardCostTotals({
+  totals,
+  compact = false,
+  title = "实际花费",
+}: {
+  totals: DashboardCostTotal[];
+  compact?: boolean;
+  title?: string;
+}) {
   const displayTotals = totals.length > 0
     ? totals
     : [{ currency: "USD", amountMicro: 0, requestCount: 0 }];
@@ -825,7 +820,7 @@ function DashboardCostTotals({ totals, compact = false }: { totals: DashboardCos
         return (
           <span key={total.currency}>
             {index > 0 ? <span className="text-muted-foreground/70"> · </span> : null}
-            <span className={compact ? "text-platform-image-foreground" : undefined} title="实际花费">
+            <span className={compact ? "text-platform-image-foreground" : undefined} title={title}>
               {prefix}{amountMicroToMajorUnits(total).toFixed(4)}
             </span>
           </span>
@@ -837,32 +832,36 @@ function DashboardCostTotals({ totals, compact = false }: { totals: DashboardCos
 
 function DashboardCostMetricDetail({
   current,
+  currentPeriod,
   currentState,
   cumulative,
   cumulativeState,
 }: {
   current: DashboardCostMetrics | null;
+  currentPeriod: DashboardPeriodMetrics | null;
   currentState: DashboardMetricsQueryState;
   cumulative: DashboardCostMetrics | null;
   cumulativeState: DashboardMetricsQueryState;
 }) {
-  const diagnostics: string[] = [];
-  if (current && hasCostQualityIssue(current)) {
-    diagnostics.push("今日成本不完整");
-  }
-  if (cumulative && hasCostQualityIssue(cumulative)) {
-    diagnostics.push("累计成本不完整");
-  }
+  const todaySummary = current && currentPeriod
+    ? todayCostCompleteness(
+      current,
+      currentPeriod.missingUsageRequestCount,
+    )
+    : null;
+  const lifetimeGaps = cumulative ? lifetimeCostGapCount(cumulative) : 0;
+  const cumulativeHover = formatCumulativeCostHover(todaySummary, lifetimeGaps) || "实际花费";
   return (
     <>
-      <span>累计 </span>
-      {cumulative ? (
-        <DashboardCostTotals totals={cumulative.totals} compact />
-      ) : (
-        <span>{cumulativeState.value}</span>
-      )}
+      <span title={cumulativeHover}>
+        累计{" "}
+        {cumulative ? (
+          <DashboardCostTotals totals={cumulative.totals} compact title={cumulativeHover} />
+        ) : (
+          <span>{cumulativeState.value}</span>
+        )}
+      </span>
       {!current ? <span> · 今日 {currentState.detail}</span> : null}
-      {diagnostics.map((diagnostic) => <span key={diagnostic}> · {diagnostic}</span>)}
     </>
   );
 }

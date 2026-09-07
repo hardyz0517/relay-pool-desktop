@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   amountMicroToMajorUnits,
+  formatCumulativeCostHover,
+  formatTodayCostCompleteness,
   getLocalDayMetricsInput,
   hasCostQualityIssue,
+  lifetimeCostGapCount,
   msUntilNextLocalDay,
+  todayCostCompleteness,
+  todayCostGapParts,
 } from "./dashboardRequestMetricsViewModel";
 
 describe("dashboardRequestMetricsViewModel", () => {
@@ -50,5 +55,62 @@ describe("dashboardRequestMetricsViewModel", () => {
       noAttemptsCount: 0,
       legacyOrMissingAggregateCount: 0,
     })).toBe(true);
+  });
+
+  it("explains today cost gaps without treating in-progress as incomplete", () => {
+    const summary = todayCostCompleteness({
+      totals: [],
+      costTotalsComplete: false,
+      completeSingleCurrencyCount: 12,
+      completeMixedCurrencyCount: 0,
+      incompleteCount: 4,
+      notApplicableCount: 0,
+      noAttemptsCount: 0,
+      legacyOrMissingAggregateCount: 1,
+    }, 3);
+    expect(summary).toEqual({
+      priced: 12,
+      missingUsage: 3,
+      missingPrice: 1,
+      missingAggregate: 1,
+    });
+    expect(formatTodayCostCompleteness(summary)).toBe("已计价 12 · 缺用量 3 · 缺基准价 1 · 缺汇总 1");
+    expect(todayCostGapParts(summary)).toEqual(["缺用量 3", "缺基准价 1", "缺汇总 1"]);
+    expect(formatTodayCostCompleteness({
+      priced: 4,
+      missingUsage: 0,
+      missingPrice: 0,
+      missingAggregate: 0,
+    })).toBe("已计价 4");
+    expect(todayCostGapParts({
+      priced: 4,
+      missingUsage: 0,
+      missingPrice: 0,
+      missingAggregate: 0,
+    })).toEqual([]);
+    expect(formatCumulativeCostHover(summary, 155)).toBe("已计价 12 · 缺用量 3 · 缺基准价 1 · 缺汇总 1 · 历史成本缺口 155 条");
+    expect(formatCumulativeCostHover({
+      priced: 422,
+      missingUsage: 0,
+      missingPrice: 0,
+      missingAggregate: 0,
+    }, 155)).toBe("已计价 422 · 历史成本缺口 155 条");
+    expect(formatCumulativeCostHover({
+      priced: 422,
+      missingUsage: 19,
+      missingPrice: 0,
+      missingAggregate: 0,
+    }, 0)).toBe("已计价 422 · 缺用量 19");
+    expect(formatCumulativeCostHover(null, 0)).toBe("");
+    expect(lifetimeCostGapCount({
+      totals: [],
+      costTotalsComplete: false,
+      completeSingleCurrencyCount: 20,
+      completeMixedCurrencyCount: 0,
+      incompleteCount: 1,
+      notApplicableCount: 0,
+      noAttemptsCount: 0,
+      legacyOrMissingAggregateCount: 2,
+    })).toBe(3);
   });
 });

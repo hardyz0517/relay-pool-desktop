@@ -25,8 +25,8 @@ assert(
 );
 
 assert(
-  /dashboardRoutingItems\.slice\(0,\s*6\)\.map/.test(dashboardSource),
-  "dashboard route queue should render at most six key rows",
+  /dashboardRoutingItems\.slice\(0,\s*5\)\.map/.test(dashboardSource),
+  "dashboard route queue should render at most five key rows",
 );
 
 assert(

@@ -108,6 +108,13 @@ impl DashboardMetricsReadRepository {
             subtract_period_metrics(&mut lifetime_period, future_period.period)?;
             subtract_cost_metrics(&mut lifetime_costs.metrics, future_costs.metrics)?;
         }
+        overlay_terminal_missing_aggregates(
+            read.connection(),
+            1,
+            captured_at_ms,
+            &mut lifetime_costs.metrics,
+        )
+        .await?;
         lifetime_costs.metrics.cost_totals_complete = lifetime_costs.metrics.incomplete_count == 0
             && lifetime_costs.metrics.legacy_or_missing_aggregate_count == 0
             && corrupt_cost_aggregate_count == 0;
@@ -138,7 +145,6 @@ struct RawCostMetrics {
     metrics: DashboardCostMetrics,
     corrupt_cost_aggregate_count: u64,
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct WindowSplit {
@@ -382,6 +388,30 @@ async fn load_period_raw(
     })
 }
 
+async fn overlay_terminal_missing_aggregates(
+    connection: &mut SqliteConnection,
+    start_ms: i64,
+    end_ms: i64,
+    metrics: &mut DashboardCostMetrics,
+) -> Result<(), PersistenceError> {
+    let count: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM request_logs l
+        LEFT JOIN routing_request_cost_aggregates a ON a.request_id = l.id
+        WHERE l.received_at_ms >= ? AND l.received_at_ms < ?
+          AND l.terminal_at_ms IS NOT NULL
+          AND a.request_id IS NULL
+        "#,
+    )
+    .bind(start_ms)
+    .bind(end_ms)
+    .fetch_one(&mut *connection)
+    .await?;
+    metrics.legacy_or_missing_aggregate_count = non_negative(count)?;
+    Ok(())
+}
+
 async fn load_costs_window(
     connection: &mut SqliteConnection,
     start_ms: i64,
@@ -414,6 +444,10 @@ async fn load_costs_window(
             load_costs_raw(connection, split.tail_raw_start_ms, split.tail_raw_end_ms).await?,
         )?;
     }
+    overlay_terminal_missing_aggregates(connection, start_ms, end_ms, &mut total.metrics).await?;
+    total.metrics.cost_totals_complete = total.metrics.incomplete_count == 0
+        && total.metrics.legacy_or_missing_aggregate_count == 0
+        && total.corrupt_cost_aggregate_count == 0;
     Ok(total)
 }
 
@@ -506,7 +540,7 @@ async fn load_costs_raw(
     let counts = sqlx::query(
         r#"
         SELECT
-            COALESCE(SUM(CASE WHEN a.request_id IS NULL THEN 1 ELSE 0 END), 0) AS legacy_or_missing_aggregate_count,
+            COALESCE(SUM(CASE WHEN a.request_id IS NULL AND l.terminal_at_ms IS NOT NULL THEN 1 ELSE 0 END), 0) AS legacy_or_missing_aggregate_count,
             COALESCE(SUM(CASE WHEN a.status = 'complete_single_currency' THEN 1 ELSE 0 END), 0) AS complete_single_currency_count,
             COALESCE(SUM(CASE WHEN a.status = 'complete_mixed_currency' THEN 1 ELSE 0 END), 0) AS complete_mixed_currency_count,
             COALESCE(SUM(CASE WHEN a.status = 'incomplete' THEN 1 ELSE 0 END), 0) AS incomplete_count,
@@ -2130,6 +2164,33 @@ mod tests {
         assert!(after_costs.metrics.cost_totals_complete);
         assert_eq!(after_costs.metrics.totals[0].currency, "USD");
         assert_eq!(after_costs.metrics.totals[0].amount_micro, 9_000);
+    }
+
+    #[tokio::test]
+    async fn in_progress_requests_do_not_mark_today_cost_totals_incomplete() {
+        let mut connection = test_connection().await;
+        insert_log(
+            &mut connection,
+            "live",
+            Some(1_000),
+            None,
+            "in_progress",
+            "in_progress",
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("admitted"),
+        )
+        .await;
+
+        let costs = load_costs_window(&mut connection, 1_000, 2_000)
+            .await
+            .unwrap();
+        assert_eq!(costs.metrics.legacy_or_missing_aggregate_count, 0);
+        assert_eq!(costs.metrics.incomplete_count, 0);
+        assert!(costs.metrics.cost_totals_complete);
     }
 
     #[tokio::test]

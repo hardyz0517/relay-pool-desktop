@@ -29,3 +29,48 @@ export function hasCostQualityIssue(metrics: DashboardCostMetrics) {
     metrics.incompleteCount > 0 ||
     metrics.legacyOrMissingAggregateCount > 0;
 }
+
+export type TodayCostCompleteness = {
+  priced: number;
+  missingUsage: number;
+  missingPrice: number;
+  missingAggregate: number;
+};
+
+export function todayCostCompleteness(
+  costs: DashboardCostMetrics,
+  missingUsageRequestCount: number,
+): TodayCostCompleteness {
+  return {
+    priced: costs.completeSingleCurrencyCount + costs.completeMixedCurrencyCount,
+    missingUsage: missingUsageRequestCount,
+    missingPrice: Math.max(0, costs.incompleteCount - missingUsageRequestCount),
+    missingAggregate: costs.legacyOrMissingAggregateCount,
+  };
+}
+
+export function formatTodayCostCompleteness(summary: TodayCostCompleteness) {
+  return [`已计价 ${summary.priced}`, ...todayCostGapParts(summary)].join(" · ");
+}
+
+export function todayCostGapParts(summary: TodayCostCompleteness) {
+  const parts: string[] = [];
+  if (summary.missingUsage > 0) parts.push(`缺用量 ${summary.missingUsage}`);
+  if (summary.missingPrice > 0) parts.push(`缺基准价 ${summary.missingPrice}`);
+  if (summary.missingAggregate > 0) parts.push(`缺汇总 ${summary.missingAggregate}`);
+  return parts;
+}
+
+export function formatCumulativeCostHover(
+  summary: TodayCostCompleteness | null,
+  lifetimeGaps: number,
+) {
+  const parts: string[] = [];
+  if (summary) parts.push(formatTodayCostCompleteness(summary));
+  if (lifetimeGaps > 0) parts.push(`历史成本缺口 ${lifetimeGaps} 条`);
+  return parts.join(" · ");
+}
+
+export function lifetimeCostGapCount(metrics: DashboardCostMetrics) {
+  return metrics.incompleteCount + metrics.legacyOrMissingAggregateCount;
+}

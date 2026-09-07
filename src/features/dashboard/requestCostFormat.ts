@@ -16,7 +16,13 @@ function formatCurrencyCost(
     return "未定价";
   }
   if (value == null) {
-    return "-";
+    if (costStatus === "missing_usage" || costStatus === "stream_usage_missing" || costStatus === "unknown_usage") {
+      return "用量未知";
+    }
+    if (costStatus === "incomplete" || costStatus === "pricing_incomplete" || costStatus === "unpriced" || costStatus === "missing_model_price") {
+      return "计费信息不完整";
+    }
+    return "用量未知";
   }
   const symbol = currencySymbol(currency ?? "USD") || "$";
   const formattedValue = formatValue(value);

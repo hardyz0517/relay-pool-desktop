@@ -1,6 +1,10 @@
 import { readFile } from "node:fs/promises";
 
 const dashboardSource = await readFile("src/features/dashboard/DashboardPage.tsx", "utf8");
+const recentUsageSource = dashboardSource.slice(
+  dashboardSource.indexOf("recentUsageLogs.map"),
+  dashboardSource.indexOf("</section>", dashboardSource.indexOf("recentUsageLogs.map")),
+);
 
 function assert(condition, message) {
   if (!condition) {
@@ -9,20 +13,20 @@ function assert(condition, message) {
 }
 
 assert(
-    dashboardSource.includes("requestKeyById") &&
-    dashboardSource.includes("request.stationKeyId") &&
-    dashboardSource.includes("requestStationName") &&
-    dashboardSource.includes("stationNamesById"),
-  "dashboard recent usage rows should resolve station names from the request and key lookup",
+  /<ModelMappingDisplay[\s\S]*?requestedModel=\{request\.model\}[\s\S]*?resolvedModel=\{request\.resolvedUpstreamModel\}[\s\S]*?fallback=\{request\.path\}[\s\S]*?layout="inline"[\s\S]*?formatRecentRequestCost[\s\S]*?\{formatDateTime\(request\.startedAt\)\}/.test(
+    recentUsageSource,
+  ),
+  "dashboard recent usage rows should show inline model mapping with cost on the same line, above time and tokens",
 );
 
 assert(
-  /<ModelMappingDisplay[\s\S]*?requestedModel=\{request\.model\}[\s\S]*?resolvedModel=\{request\.resolvedUpstreamModel\}[\s\S]*?fallback=\{request\.path\}[\s\S]*?layout="inline"[\s\S]*?formatRecentRequestCost[\s\S]*?\{formatDateTime\(request\.startedAt\)\}[\s\S]*?\{requestStationName\}/.test(
-    dashboardSource,
-  ) &&
-    !dashboardSource.includes("requestKeyName") &&
-    !dashboardSource.includes("{requestStationName} · {requestKeyName}"),
-  "dashboard recent usage rows should show inline model mapping with cost, then time and station name without the specific key",
+  !recentUsageSource.includes("requestKeyById") &&
+    !recentUsageSource.includes("requestKeyName") &&
+    !recentUsageSource.includes("requestStationName") &&
+    !recentUsageSource.includes("stationNamesById") &&
+    !recentUsageSource.includes("stationName") &&
+    !dashboardSource.includes("requestKeyById"),
+  "dashboard recent usage rows should not show station provider or key identity",
 );
 
 assert(

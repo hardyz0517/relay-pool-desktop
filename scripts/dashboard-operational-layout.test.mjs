@@ -19,7 +19,7 @@ assert.match(
   "queue and recent usage should keep the 60/40 split at the minimum desktop window width",
 );
 assert.equal((dashboardSource.match(/查看全部/g) ?? []).length, 2);
-assert.match(dashboardSource, /keyPoolItems\.slice\(0, 5\)/);
+assert.match(dashboardSource, /dashboardRoutingItems\.slice\(0, 5\)/);
 assert.match(dashboardSource, /selectRecentUsageLogs/);
 assert.match(dashboardSource, /recentUsageLogs\.map/);
 assert.match(appSource, /const openRequestLogs = useCallback[\s\S]*?navigateTo\("logs"\)/);
