@@ -21,8 +21,8 @@ const declaredTables = extractCatalogTables(catalogSource);
 
 assert.equal(
   actualTables.size,
-  66,
-  "portable migration v1 expects the current 66 persisted user tables, including station-published status facts",
+  115,
+  "portable migration v1 expects the current 115 persisted user tables, including station-published status facts",
 );
 assert.deepEqual(
   [...declaredTables.keys()].sort(),

@@ -35,7 +35,7 @@ use crate::{
         shared_capabilities::StationGroupOption,
         station_published_status::{
             PublishedStatusBatch, PublishedStatusCompleteness, PublishedStatusSourceState,
-            STATION_PUBLISHED_STATUS_SOURCE_KIND,
+            NEWAPI_PERF_METRICS_SOURCE_KIND, STATION_PUBLISHED_STATUS_SOURCE_KIND,
         },
         stations::Station,
     },
@@ -181,6 +181,7 @@ pub(crate) struct CanonicalGroupFact {
     pub group_id: Option<String>,
     pub group_key_hash: String,
     pub group_name: String,
+    pub description: Option<String>,
     pub source: String,
     pub confidence: f64,
     pub inferred_group_category: Option<String>,
@@ -194,6 +195,7 @@ pub(crate) struct CanonicalRateFact {
     pub group_id: Option<String>,
     pub group_key_hash: String,
     pub group_name: String,
+    pub description: Option<String>,
     pub default_rate_multiplier: Option<f64>,
     pub user_rate_multiplier: Option<f64>,
     pub effective_rate_multiplier: Option<f64>,
@@ -1084,6 +1086,7 @@ impl CollectorService {
                         group_key_hash: group.group_key_hash.clone(),
                         group_id_hash: group.group_id.clone(),
                         group_name: group.group_name.clone(),
+                        description: group.description.clone(),
                         binding_status: "available".to_string(),
                         default_rate_multiplier: None,
                         user_rate_multiplier: None,
@@ -1125,6 +1128,7 @@ impl CollectorService {
                         group_key_hash: rate.group_key_hash.clone(),
                         group_id_hash: rate.group_id.clone(),
                         group_name: rate.group_name.clone(),
+                        description: rate.description.clone(),
                         binding_status: if rate.station_key_id.is_some() {
                             "bound".to_string()
                         } else {
@@ -1167,6 +1171,7 @@ impl CollectorService {
                         binding_kind: binding_kind.to_string(),
                         group_key_hash: rate.group_key_hash.clone(),
                         group_name: rate.group_name.clone(),
+                        description: rate.description.clone(),
                         default_rate_multiplier: rate.default_rate_multiplier,
                         user_rate_multiplier: rate.user_rate_multiplier,
                         effective_rate_multiplier: rate.effective_rate_multiplier,
@@ -1469,13 +1474,25 @@ async fn apply_station_published_status(
     now_ms: i64,
 ) -> Result<(), crate::persistence::error::PersistenceError> {
     let batch = request.facts.published_status.as_ref();
+    let source_kind = batch
+        .map(|batch| batch.source_kind.as_str())
+        .unwrap_or_else(|| {
+            if request.adapter.eq_ignore_ascii_case("newapi") {
+                NEWAPI_PERF_METRICS_SOURCE_KIND
+            } else {
+                STATION_PUBLISHED_STATUS_SOURCE_KIND
+            }
+        });
     if let Some(batch) = batch {
         batch
             .validate()
             .map_err(|_| crate::persistence::error::PersistenceError::ConstraintViolation)?;
         if batch.station_id != request.station_id
             || batch.endpoint_revision != request.endpoint_revision
-            || batch.source_kind != STATION_PUBLISHED_STATUS_SOURCE_KIND
+            || !matches!(
+                batch.source_kind.as_str(),
+                STATION_PUBLISHED_STATUS_SOURCE_KIND | NEWAPI_PERF_METRICS_SOURCE_KIND
+            )
         {
             return Err(crate::persistence::error::PersistenceError::ConstraintViolation);
         }
@@ -1494,7 +1511,7 @@ async fn apply_station_published_status(
     let source = PublishedStatusSourceWrite {
         station_id: request.station_id.clone(),
         endpoint_revision: request.endpoint_revision,
-        source_kind: STATION_PUBLISHED_STATUS_SOURCE_KIND.to_string(),
+        source_kind: source_kind.to_string(),
         source_state: source_state.as_str().to_string(),
         last_attempt_at: now.to_string(),
         last_success_at: successful_read.then(|| now.to_string()),
@@ -1520,7 +1537,7 @@ async fn apply_station_published_status(
                 write,
                 &request.station_id,
                 request.endpoint_revision,
-                STATION_PUBLISHED_STATUS_SOURCE_KIND,
+                source_kind,
             )
             .await?;
     }
@@ -1538,7 +1555,7 @@ async fn apply_station_published_status(
                     id: ids.next_id(),
                     station_id: request.station_id.clone(),
                     endpoint_revision: request.endpoint_revision,
-                    source_kind: STATION_PUBLISHED_STATUS_SOURCE_KIND.to_string(),
+                    source_kind: source_kind.to_string(),
                     upstream_monitor_id: monitor.upstream_monitor_id.clone(),
                     identity_kind: monitor.identity_kind.as_str().to_string(),
                     name: monitor.name.clone(),
@@ -1551,6 +1568,9 @@ async fn apply_station_published_status(
                     source_status: monitor.source_status.clone(),
                     current_latency_ms: monitor.current_latency_ms,
                     current_ping_latency_ms: monitor.current_ping_latency_ms,
+                    current_ttft_ms: monitor.current_ttft_ms,
+                    current_tps: monitor.current_tps,
+                    current_success_rate_percent: monitor.current_success_rate_percent,
                     upstream_checked_at_ms: monitor.upstream_checked_at_ms,
                     last_seen_run_id: run_id.to_string(),
                     last_seen_at: now.to_string(),
@@ -1573,6 +1593,9 @@ async fn apply_station_published_status(
                         source_status: sample.source_status.clone(),
                         latency_ms: sample.latency_ms,
                         ping_latency_ms: sample.ping_latency_ms,
+                        ttft_ms: sample.ttft_ms,
+                        tps: sample.tps,
+                        success_rate_percent: sample.success_rate_percent,
                         safe_message: sample.safe_message.clone(),
                         first_seen_run_id: run_id.to_string(),
                         last_seen_run_id: run_id.to_string(),
@@ -1589,7 +1612,7 @@ async fn apply_station_published_status(
                 write,
                 &request.station_id,
                 request.endpoint_revision,
-                STATION_PUBLISHED_STATUS_SOURCE_KIND,
+                source_kind,
                 &seen_monitor_ids,
                 now,
             )
@@ -1600,7 +1623,7 @@ async fn apply_station_published_status(
             write,
             &request.station_id,
             request.endpoint_revision,
-            STATION_PUBLISHED_STATUS_SOURCE_KIND,
+            source_kind,
         )
         .await?;
     let missing_cutoff = now_ms.saturating_sub(30 * 24 * 60 * 60 * 1_000).to_string();
@@ -1609,7 +1632,7 @@ async fn apply_station_published_status(
             write,
             &request.station_id,
             request.endpoint_revision,
-            STATION_PUBLISHED_STATUS_SOURCE_KIND,
+            source_kind,
             &missing_cutoff,
         )
         .await?;
@@ -1957,6 +1980,7 @@ fn normalize_station_group_binding(
         group_key_hash: required_trimmed(input.group_key_hash)?,
         group_id_hash: optional_trimmed(input.group_id_hash),
         group_name: required_trimmed(input.group_name)?,
+        description: normalize_optional_group_description(input.description),
         binding_status,
         default_rate_multiplier,
         user_rate_multiplier,
@@ -1983,6 +2007,15 @@ fn optional_trimmed(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+fn normalize_optional_group_description(value: Option<String>) -> Option<String> {
+    value.map(|value| value.trim().to_string()).filter(|value| {
+        !value.is_empty()
+            && value.as_bytes().len()
+                <= crate::services::collectors::facts::MAX_GROUP_DESCRIPTION_BYTES
+            && !value.contains('\0')
+    })
 }
 
 fn validated_multiplier(value: Option<f64>) -> Result<Option<f64>, ApplicationError> {
@@ -3513,6 +3546,7 @@ mod tests {
             group_key_hash: "manual-group-hash".to_string(),
             group_id_hash: Some("manual-group-id".to_string()),
             group_name: "Manual Group".to_string(),
+            description: None,
             binding_status: BINDING_STATUS_AVAILABLE.to_string(),
             default_rate_multiplier: None,
             user_rate_multiplier: Some(0.9),
@@ -4891,6 +4925,7 @@ mod tests {
             group_id: Some("conflict-group-id".to_string()),
             group_key_hash: "conflict-group-hash".to_string(),
             group_name: "must roll back".to_string(),
+            description: None,
             source: "test".to_string(),
             confidence: 1.0,
             inferred_group_category: Some("gpt".to_string()),
@@ -5410,6 +5445,9 @@ mod tests {
                 source_status: "healthy".to_string(),
                 current_latency_ms: Some(20),
                 current_ping_latency_ms: Some(3),
+                current_ttft_ms: None,
+                current_tps: None,
+                current_success_rate_percent: None,
                 upstream_checked_at_ms: Some(1_700_000_000_000),
                 samples: vec![PublishedMonitorSampleFact {
                     model: "fixture-model".to_string(),
@@ -5417,6 +5455,9 @@ mod tests {
                     source_status: "healthy".to_string(),
                     latency_ms: Some(20),
                     ping_latency_ms: Some(3),
+                    ttft_ms: None,
+                    tps: None,
+                    success_rate_percent: None,
                     checked_at_ms: 1_700_000_000_000,
                     safe_message: None,
                 }],
@@ -5602,6 +5643,7 @@ mod tests {
                         group_id: Some("remote-group-id".to_string()),
                         group_key_hash: "remote-group-hash".to_string(),
                         group_name: "Remote Group".to_string(),
+                        description: None,
                         default_rate_multiplier: Some(0.75),
                         user_rate_multiplier: None,
                         effective_rate_multiplier: Some(0.75),
@@ -5917,6 +5959,7 @@ mod tests {
                         group_id: initial_binding.group_id_hash.clone(),
                         group_key_hash: initial_binding.group_key_hash.clone(),
                         group_name: initial_binding.group_name.clone(),
+                        description: None,
                         default_rate_multiplier: Some(0.05),
                         user_rate_multiplier: Some(0.05),
                         effective_rate_multiplier: Some(0.05),
@@ -6079,6 +6122,7 @@ mod tests {
                 group_id: Some(format!("group-{case}")),
                 group_key_hash: format!("group-hash-{case}"),
                 group_name: format!("Group {case}"),
+                description: None,
                 source: "fault_fixture".to_string(),
                 confidence: 1.0,
                 inferred_group_category: Some("gpt".to_string()),

@@ -13,6 +13,7 @@ use zeroize::Zeroize;
 
 use crate::{
     models::remote_keys::{RemoteKeyMatchStatus, RemoteStationKey},
+    models::station_published_status::NEWAPI_PERF_METRICS_SOURCE_KIND,
     outbound::{
         OutboundFailureKind, OutboundHeaderPolicy, OutboundHeaders, OutboundRequest,
         OutboundRetryPolicy, SecretHeaderValue,
@@ -46,9 +47,13 @@ pub const SUPPORTED_COLLECTOR_TASKS: &[CollectorTaskKind] = &[
     CollectorTaskKind::Detect,
     CollectorTaskKind::Balance,
     CollectorTaskKind::Groups,
+    CollectorTaskKind::PublishedStatus,
 ];
-pub const FULL_COLLECTOR_TASKS: &[CollectorTaskKind] =
-    &[CollectorTaskKind::Balance, CollectorTaskKind::Groups];
+pub const FULL_COLLECTOR_TASKS: &[CollectorTaskKind] = &[
+    CollectorTaskKind::Balance,
+    CollectorTaskKind::Groups,
+    CollectorTaskKind::PublishedStatus,
+];
 
 pub struct NewApiCollectorDriver;
 
@@ -71,9 +76,7 @@ impl CollectorDriver for NewApiCollectorDriver {
                 CollectorTaskKind::Detect => Ok(detect_output()),
                 CollectorTaskKind::Balance => collect_balance(context).await,
                 CollectorTaskKind::Groups => collect_groups(context).await,
-                CollectorTaskKind::PublishedStatus => Err(DriverFailure::unsupported(
-                    "NewAPI does not publish a supported channel monitor status API",
-                )),
+                CollectorTaskKind::PublishedStatus => collect_published_status(context).await,
             };
             if result.is_err() {
                 emit_driver_failure_event();
@@ -443,6 +446,150 @@ async fn collect_groups(context: &CollectorContext<'_>) -> Result<DriverOutput, 
         diagnostics: RedactedDiagnostics {
             summary: Some(json!({"groupCount": group_count, "rateCount": rate_count}).to_string()),
             raw_json_redacted: Some(redact_value(&payload)),
+        },
+    })
+}
+
+/// NewAPI has no channel-monitor inventory endpoint. Its supported source is
+/// the authenticated performance API: `/api/perf-metrics/summary` supplies the
+/// visible model set, then `/api/perf-metrics?model=...` returns the real
+/// model × group bucket series. The bounded fan-out preserves that dimension
+/// without scraping the web UI or inventing probe measurements.
+async fn collect_published_status(
+    context: &CollectorContext<'_>,
+) -> Result<DriverOutput, DriverFailure> {
+    const HOURS: u16 = 24;
+    const MAX_MODELS: usize = 128;
+    let website_url = website_url(context)?;
+    let (summary_payload, summary_endpoint) = execute_json(
+        context,
+        EndpointRole::Models,
+        &website_url,
+        "/api/perf-metrics/summary?hours=24",
+        true,
+    )
+    .await?;
+    let summary_data = parsers::envelope_data(&summary_payload).map_err(|error| {
+        malformed(
+            EndpointRole::Models,
+            Some(summary_endpoint.clone()),
+            error.message,
+        )
+    })?;
+    let model_entries = summary_data
+        .get("models")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            malformed(
+                EndpointRole::Models,
+                Some(summary_endpoint.clone()),
+                "NewAPI performance summary is missing models",
+            )
+        })?;
+    let models_truncated = model_entries.len() > MAX_MODELS;
+    let models = model_entries
+        .iter()
+        .filter_map(|model| model.get("model_name").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .take(MAX_MODELS)
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+
+    let mut payloads = Vec::with_capacity(models.len());
+    let mut evidence = vec![summary_endpoint];
+    let mut failed_models = 0usize;
+    let mut first_failure = None;
+    for model in models {
+        let encoded = url::form_urlencoded::byte_serialize(model.as_bytes()).collect::<String>();
+        match execute_json(
+            context,
+            EndpointRole::Models,
+            &website_url,
+            &format!("/api/perf-metrics?model={encoded}&hours={HOURS}"),
+            true,
+        )
+        .await
+        {
+            Ok((payload, endpoint)) => {
+                payloads.push(payload);
+                evidence.push(endpoint);
+            }
+            Err(failure) => {
+                failed_models = failed_models.saturating_add(1);
+                if first_failure.is_none() {
+                    first_failure = Some(failure);
+                }
+            }
+        }
+    }
+
+    if payloads.is_empty() && model_entries.is_empty() {
+        let facts = parsers::parse_perf_status_batch(
+            &context.station.station_id,
+            context.station.endpoint_revision,
+            std::iter::empty(),
+            chrono::Utc::now().timestamp_millis(),
+        )
+        .map_err(|error| malformed(EndpointRole::Models, None, error))?;
+        return Ok(DriverOutput {
+            facts: CollectorFacts {
+                published_status: Some(facts),
+                ..CollectorFacts::default()
+            },
+            evidence,
+            status: DriverOutputStatus::Success,
+            diagnostics: RedactedDiagnostics {
+                summary: Some(
+                    json!({"source": NEWAPI_PERF_METRICS_SOURCE_KIND, "modelCount": 0}).to_string(),
+                ),
+                raw_json_redacted: None,
+            },
+        });
+    }
+    if payloads.is_empty() {
+        return Err(first_failure.unwrap_or_else(|| {
+            DriverFailure::unsupported("NewAPI performance metrics returned no readable model data")
+        }));
+    }
+    let mut batch = parsers::parse_perf_status_batch(
+        &context.station.station_id,
+        context.station.endpoint_revision,
+        payloads,
+        chrono::Utc::now().timestamp_millis(),
+    )
+    .map_err(|error| malformed(EndpointRole::Models, None, error))?;
+    if failed_models > 0 || models_truncated {
+        batch.source_state =
+            crate::models::station_published_status::PublishedStatusSourceState::Degraded;
+        batch.completeness =
+            crate::models::station_published_status::PublishedStatusCompleteness::Partial;
+    }
+    let status = if failed_models > 0 || models_truncated {
+        DriverOutputStatus::Partial
+    } else {
+        DriverOutputStatus::Success
+    };
+    let monitor_count = batch.monitors.len();
+    Ok(DriverOutput {
+        facts: CollectorFacts {
+            published_status: Some(batch),
+            ..CollectorFacts::default()
+        },
+        evidence,
+        status,
+        diagnostics: RedactedDiagnostics {
+            summary: Some(
+                json!({
+                    "source": NEWAPI_PERF_METRICS_SOURCE_KIND,
+                    "monitorCount": monitor_count,
+                    "failedModelCount": failed_models,
+                    "modelListTruncated": models_truncated,
+                    "hours": HOURS,
+                })
+                .to_string(),
+            ),
+            raw_json_redacted: None,
         },
     })
 }
@@ -2251,19 +2398,139 @@ mod tests {
         assert!(output.facts.rates.is_empty());
     }
 
+    #[tokio::test]
+    async fn collect_published_status_reads_model_summary_then_group_metrics() {
+        let server = TestHttpServer::sequence(vec![
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {"models": [{"model_name": "gpt-test"}]}
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "model_name": "gpt-test",
+                        "groups": [{
+                            "group": "vip",
+                            "avg_latency_ms": 1200,
+                            "avg_ttft_ms": 400,
+                            "success_rate": 95.0,
+                            "avg_tps": 42.5,
+                            "series": [{
+                                "ts": 1700000000,
+                                "avg_latency_ms": 1200,
+                                "avg_ttft_ms": 400,
+                                "success_rate": 95.0,
+                                "avg_tps": 42.5
+                            }]
+                        }]
+                    }
+                }),
+            )),
+        ]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor("newapi-access-token");
+        let context = test_context(&server.base_url, &secrets, &outbound);
+
+        let output = NewApiCollectorDriver
+            .collect(&context, CollectorTaskKind::PublishedStatus)
+            .await
+            .expect("published status collect");
+        let requests = server.finish();
+
+        assert_eq!(output.status, DriverOutputStatus::Success);
+        let batch = output
+            .facts
+            .published_status
+            .expect("published status batch");
+        assert_eq!(batch.monitors.len(), 1);
+        assert_eq!(batch.monitors[0].primary_model, "gpt-test");
+        assert_eq!(batch.monitors[0].group_name.as_deref(), Some("vip"));
+        assert_eq!(batch.monitors[0].current_success_rate_percent, Some(95.0));
+        assert_eq!(requests.len(), 2);
+        assert!(requests[0].starts_with("GET /api/perf-metrics/summary?hours=24 "));
+        assert!(requests[1].starts_with("GET /api/perf-metrics?model=gpt-test&hours=24 "));
+    }
+
+    #[tokio::test]
+    async fn collect_published_status_preserves_detail_failure_kind_when_all_models_fail() {
+        let server = TestHttpServer::sequence(vec![
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {"models": [{"model_name": "gpt-test"}]}
+                }),
+            )),
+            Some(json_response(
+                401,
+                json!({"success": false, "message": "unauthorized", "data": null}),
+            )),
+        ]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor("newapi-access-token");
+        let context = test_context(&server.base_url, &secrets, &outbound);
+
+        let failure = NewApiCollectorDriver
+            .collect(&context, CollectorTaskKind::PublishedStatus)
+            .await
+            .expect_err("all model detail requests should preserve their typed failure");
+        let requests = server.finish();
+
+        assert_eq!(failure.kind, DriverFailureKind::AuthRejected);
+        assert_eq!(requests.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn collect_published_status_returns_empty_for_empty_model_summary() {
+        let server = TestHttpServer::sequence(vec![Some(json_response(
+            200,
+            json!({"success": true, "data": {"models": []}}),
+        ))]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor("newapi-access-token");
+        let context = test_context(&server.base_url, &secrets, &outbound);
+
+        let output = NewApiCollectorDriver
+            .collect(&context, CollectorTaskKind::PublishedStatus)
+            .await
+            .expect("empty model summary is a valid empty result");
+        let requests = server.finish();
+
+        assert_eq!(output.status, DriverOutputStatus::Success);
+        assert_eq!(
+            output
+                .facts
+                .published_status
+                .expect("published status batch")
+                .source_state,
+            crate::models::station_published_status::PublishedStatusSourceState::Empty
+        );
+        assert_eq!(requests.len(), 1);
+    }
+
     #[test]
-    fn newapi_collector_tasks_align_with_sub2api_station_boundary() {
+    fn newapi_collector_tasks_include_authenticated_performance_status() {
         assert_eq!(
             SUPPORTED_COLLECTOR_TASKS,
             &[
                 CollectorTaskKind::Detect,
                 CollectorTaskKind::Balance,
                 CollectorTaskKind::Groups,
+                CollectorTaskKind::PublishedStatus,
             ]
         );
         assert_eq!(
             FULL_COLLECTOR_TASKS,
-            &[CollectorTaskKind::Balance, CollectorTaskKind::Groups]
+            &[
+                CollectorTaskKind::Balance,
+                CollectorTaskKind::Groups,
+                CollectorTaskKind::PublishedStatus,
+            ]
         );
     }
 

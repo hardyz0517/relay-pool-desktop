@@ -1214,6 +1214,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn schema_78_to_current_adds_newapi_success_rate_columns() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join("relay-pool-v2.sqlite3");
+        initialize_database_through(&path, 78).await;
+
+        let before = migration_pool_existing(&path)
+            .await
+            .expect("schema 78 pool");
+        let monitor_success_rate: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('station_published_monitors')
+             WHERE name = 'current_success_rate_percent'",
+        )
+        .fetch_one(&before)
+        .await
+        .expect("check monitor column before upgrade");
+        let sample_success_rate: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('station_published_monitor_samples')
+             WHERE name = 'success_rate_percent'",
+        )
+        .fetch_one(&before)
+        .await
+        .expect("check sample column before upgrade");
+        before.close().await;
+        assert_eq!(monitor_success_rate, 0);
+        assert_eq!(sample_success_rate, 0);
+
+        upgrade_existing_v2_database(&path)
+            .await
+            .expect("upgrade schema 78")
+            .expect("schema 78 upgrade creates backup");
+
+        let after = migration_pool_existing(&path)
+            .await
+            .expect("current schema pool");
+        let monitor_success_rate: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('station_published_monitors')
+             WHERE name = 'current_success_rate_percent'",
+        )
+        .fetch_one(&after)
+        .await
+        .expect("check monitor column after upgrade");
+        let sample_success_rate: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('station_published_monitor_samples')
+             WHERE name = 'success_rate_percent'",
+        )
+        .fetch_one(&after)
+        .await
+        .expect("check sample column after upgrade");
+        after.close().await;
+        assert_eq!(monitor_success_rate, 1);
+        assert_eq!(sample_success_rate, 1);
+        assert_eq!(
+            database_schema_version(&path).await,
+            current_schema_version()
+        );
+    }
+
+    #[tokio::test]
     async fn existing_schema_is_backed_up_and_migrated_to_current() {
         let root = tempfile::tempdir().expect("tempdir");
         let path = root.path().join("relay-pool-v2.sqlite3");

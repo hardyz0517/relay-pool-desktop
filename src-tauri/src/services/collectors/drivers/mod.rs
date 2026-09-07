@@ -98,8 +98,12 @@ mod tests {
             "sub2api",
             CollectorTaskKind::PublishedStatus,
         ));
-        assert!(!station_type_supports_collector_task(
+        assert!(station_type_supports_collector_task(
             "newapi",
+            CollectorTaskKind::PublishedStatus,
+        ));
+        assert!(!station_type_supports_collector_task(
+            "openai-compatible",
             CollectorTaskKind::PublishedStatus,
         ));
     }

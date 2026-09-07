@@ -853,7 +853,7 @@ async fn list_group_bindings(
     let rows = sqlx::query(
         r#"
         SELECT id, station_id, station_key_id, binding_kind, parent_group_binding_id,
-               group_key_hash, group_id_hash, group_name, binding_status,
+               group_key_hash, group_id_hash, group_name, description, binding_status,
                default_rate_multiplier, user_rate_multiplier, effective_rate_multiplier,
                inferred_group_category, group_category_override, rate_source, confidence,
                last_seen_at, last_checked_at, last_rate_changed_at, raw_json_redacted,
@@ -886,7 +886,7 @@ async fn list_latest_group_rates(
             FROM group_rate_records r INDEXED BY idx_group_rate_records_comparison
         )
         SELECT id, station_id, station_key_id, group_binding_id, binding_kind,
-               group_key_hash, group_name, default_rate_multiplier, user_rate_multiplier,
+               group_key_hash, group_name, description, default_rate_multiplier, user_rate_multiplier,
                effective_rate_multiplier, inferred_group_category, source, confidence,
                raw_json_redacted, checked_at, created_at
         FROM ranked
@@ -1170,6 +1170,7 @@ fn row_to_group_binding(
         group_key_hash: row.get("group_key_hash"),
         group_id_hash: row.get("group_id_hash"),
         group_name: row.get("group_name"),
+        description: row.get("description"),
         binding_status: row.get("binding_status"),
         default_rate_multiplier: row.get("default_rate_multiplier"),
         user_rate_multiplier: row.get("user_rate_multiplier"),
@@ -1196,6 +1197,7 @@ fn row_to_group_rate(row: sqlx::sqlite::SqliteRow) -> Result<GroupRateRecord, Pe
         binding_kind: row.get("binding_kind"),
         group_key_hash: row.get("group_key_hash"),
         group_name: row.get("group_name"),
+        description: row.get("description"),
         default_rate_multiplier: row.get("default_rate_multiplier"),
         user_rate_multiplier: row.get("user_rate_multiplier"),
         effective_rate_multiplier: row.get("effective_rate_multiplier"),

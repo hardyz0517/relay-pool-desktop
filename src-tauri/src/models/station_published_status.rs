@@ -4,6 +4,10 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 pub const STATION_PUBLISHED_STATUS_SOURCE_KIND: &str = "sub2api_channel_monitors";
+/// NewAPI exposes request-derived performance buckets rather than channel
+/// monitor records. Keep this source namespace separate so provider facts can
+/// evolve without being mistaken for Sub2API's published monitor contract.
+pub const NEWAPI_PERF_METRICS_SOURCE_KIND: &str = "newapi_perf_metrics";
 pub const MAX_PUBLISHED_STATUS_MONITORS: usize = 512;
 pub const MAX_PUBLISHED_STATUS_SAMPLES_PER_MODEL: usize = 60;
 pub const MAX_PUBLISHED_STATUS_TIMELINE_INPUT: usize = 240;
@@ -83,13 +87,19 @@ impl PublishedMonitorIdentityKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct PublishedMonitorSampleFact {
     pub model: String,
     pub outcome: PublishedSampleOutcome,
     pub source_status: String,
     pub latency_ms: Option<i64>,
     pub ping_latency_ms: Option<i64>,
+    /// Provider-reported time to first token. NewAPI supplies this metric;
+    /// other providers leave it absent rather than deriving a value.
+    pub ttft_ms: Option<i64>,
+    /// Provider-reported output throughput in tokens per second.
+    pub tps: Option<f64>,
+    pub success_rate_percent: Option<f64>,
     pub checked_at_ms: i64,
     pub safe_message: Option<String>,
 }
@@ -107,6 +117,9 @@ pub struct PublishedMonitorFact {
     pub source_status: String,
     pub current_latency_ms: Option<i64>,
     pub current_ping_latency_ms: Option<i64>,
+    pub current_ttft_ms: Option<i64>,
+    pub current_tps: Option<f64>,
+    pub current_success_rate_percent: Option<f64>,
     pub upstream_checked_at_ms: Option<i64>,
     pub samples: Vec<PublishedMonitorSampleFact>,
 }
@@ -267,6 +280,8 @@ impl PublishedMonitorFact {
         )?;
         validate_latency(self.current_latency_ms, "current_latency_ms")?;
         validate_latency(self.current_ping_latency_ms, "current_ping_latency_ms")?;
+        validate_metric(self.current_ttft_ms, self.current_tps)?;
+        validate_success_rate(self.current_success_rate_percent)?;
         if let Some(checked_at_ms) = self.upstream_checked_at_ms {
             validate_checked_at(checked_at_ms)?;
         }
@@ -325,6 +340,8 @@ impl PublishedMonitorSampleFact {
         )?;
         validate_latency(self.latency_ms, "latency_ms")?;
         validate_latency(self.ping_latency_ms, "ping_latency_ms")?;
+        validate_metric(self.ttft_ms, self.tps)?;
+        validate_success_rate(self.success_rate_percent)?;
         validate_checked_at(self.checked_at_ms)?;
         if let Some(message) = self.safe_message.as_deref() {
             validate_required(
@@ -390,6 +407,28 @@ fn validate_latency(
     Ok(())
 }
 
+fn validate_metric(
+    ttft_ms: Option<i64>,
+    tps: Option<f64>,
+) -> Result<(), PublishedStatusValidationError> {
+    if ttft_ms.is_some_and(|value| !(0..=MAX_PUBLISHED_STATUS_LATENCY_MS).contains(&value)) {
+        return Err(PublishedStatusValidationError::InvalidLatency("ttft_ms"));
+    }
+    if tps.is_some_and(|value| !value.is_finite() || value < 0.0 || value > 1_000_000.0) {
+        return Err(PublishedStatusValidationError::InvalidLatency("tps"));
+    }
+    Ok(())
+}
+
+fn validate_success_rate(value: Option<f64>) -> Result<(), PublishedStatusValidationError> {
+    if value.is_some_and(|value| !value.is_finite() || !(0.0..=100.0).contains(&value)) {
+        return Err(PublishedStatusValidationError::InvalidLatency(
+            "success_rate_percent",
+        ));
+    }
+    Ok(())
+}
+
 fn validate_checked_at(value: i64) -> Result<(), PublishedStatusValidationError> {
     ((0..=MAX_PUBLISHED_STATUS_TIMESTAMP_MS).contains(&value))
         .then_some(())
@@ -407,6 +446,9 @@ mod tests {
             source_status: "healthy".to_string(),
             latency_ms: Some(20),
             ping_latency_ms: Some(3),
+            ttft_ms: None,
+            tps: None,
+            success_rate_percent: None,
             checked_at_ms,
             safe_message: None,
         }
@@ -425,6 +467,9 @@ mod tests {
             source_status: "healthy".to_string(),
             current_latency_ms: Some(20),
             current_ping_latency_ms: Some(3),
+            current_ttft_ms: None,
+            current_tps: None,
+            current_success_rate_percent: None,
             upstream_checked_at_ms: Some(1_700_000_000_000),
             samples: vec![sample(1_700_000_000_000)],
         }

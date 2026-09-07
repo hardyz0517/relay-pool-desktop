@@ -75,6 +75,7 @@ pub struct StationGroupOption {
     pub group_binding_id: Option<String>,
     pub group_id_hash: Option<String>,
     pub group_name: String,
+    pub description: Option<String>,
     pub rate_multiplier: Option<f64>,
     pub inferred_group_category: Option<String>,
     pub group_category_override: Option<String>,

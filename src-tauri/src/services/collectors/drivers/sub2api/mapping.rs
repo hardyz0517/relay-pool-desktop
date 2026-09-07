@@ -274,6 +274,7 @@ fn parse_optional_i64(value: Option<&Value>) -> Option<i64> {
 struct AvailableGroup {
     group_id: Option<String>,
     group_name: String,
+    description: Option<String>,
     default_rate_multiplier: Option<f64>,
     raw_json_redacted: Option<Value>,
 }
@@ -306,6 +307,7 @@ pub fn parse_group_rate_facts(
             group_id: group_id.clone(),
             group_key_hash: group_key_hash.clone(),
             group_name: group.group_name.clone(),
+            description: group.description.clone(),
             visibility: "available".to_string(),
             inferred_group_category: Some(inferred_group_category.clone()),
             source: "sub2api_groups_available".to_string(),
@@ -318,6 +320,7 @@ pub fn parse_group_rate_facts(
             group_id,
             group_key_hash,
             group_name: group.group_name,
+            description: group.description,
             default_rate_multiplier: group.default_rate_multiplier,
             user_rate_multiplier: user_rate,
             effective_rate_multiplier: effective,
@@ -353,6 +356,7 @@ fn collect_available_groups(payload: &Value) -> Vec<AvailableGroup> {
                 return Some(AvailableGroup {
                     group_id: Some(group_name.clone()),
                     group_name,
+                    description: None,
                     default_rate_multiplier: None,
                     raw_json_redacted: Some(crate::services::secrets::mask::redact_value(value)),
                 });
@@ -366,6 +370,9 @@ fn collect_available_groups(payload: &Value) -> Vec<AvailableGroup> {
             Some(AvailableGroup {
                 group_id,
                 group_name,
+                description: crate::services::collectors::facts::normalize_group_description(
+                    value.get("description"),
+                ),
                 default_rate_multiplier: numeric_field(
                     value,
                     &[
@@ -752,6 +759,7 @@ pub(crate) fn add_single_group_key_bindings(facts: &mut CollectorFacts, keys: &[
             group_id: group.group_id.clone(),
             group_key_hash: group.group_key_hash.clone(),
             group_name: group.group_name.clone(),
+            description: group.description.clone(),
             default_rate_multiplier: station_rate
                 .as_ref()
                 .and_then(|rate| rate.default_rate_multiplier),
@@ -1473,15 +1481,47 @@ mod tests {
     fn group_rate_parser_keeps_available_group_and_rate() {
         let facts = parse_group_rate_facts(
             "station-1",
-            &json!({"data": [{"id": "vip", "name": "VIP"}]}),
+            &json!({"data": [{"id": "vip", "name": "VIP", "description": "  Premium models  "}]}),
             &json!({"data": {"vip": 1.5}}),
             500_000.0,
         );
 
         assert_eq!(facts.groups.len(), 1);
         assert_eq!(facts.groups[0].group_name, "VIP");
+        assert_eq!(
+            facts.groups[0].description.as_deref(),
+            Some("Premium models")
+        );
         assert_eq!(facts.rates.len(), 1);
+        assert_eq!(
+            facts.rates[0].description.as_deref(),
+            Some("Premium models")
+        );
         assert_eq!(facts.rates[0].effective_rate_multiplier, Some(1.5));
+    }
+
+    #[test]
+    fn group_description_is_bounded_and_does_not_change_identity() {
+        let short = parse_group_rate_facts(
+            "station-1",
+            &json!({"data": [{"id": "vip", "name": "VIP", "description": "short"}]}),
+            &json!({"data": {"vip": 1.5}}),
+            500_000.0,
+        );
+        let oversized = parse_group_rate_facts(
+            "station-1",
+            &json!({"data": [{"id": "vip", "name": "VIP", "description": "x".repeat(1025)}]}),
+            &json!({"data": {"vip": 1.5}}),
+            500_000.0,
+        );
+
+        assert_eq!(
+            short.groups[0].group_key_hash,
+            oversized.groups[0].group_key_hash
+        );
+        assert_eq!(short.groups[0].description.as_deref(), Some("short"));
+        assert_eq!(oversized.groups[0].description, None);
+        assert_eq!(oversized.rates[0].description, None);
     }
 
     #[test]

@@ -14,6 +14,9 @@ export type StationPublishedStatusSampleDto = {
   outcome: "available" | "degraded" | "unavailable" | "unknown";
   latencyMs: number | null;
   pingLatencyMs: number | null;
+  ttftMs?: number | null;
+  tps?: number | null;
+  successRatePercent?: number | null;
 };
 
 export type StationPublishedStatusRowDto = {
@@ -29,6 +32,9 @@ export type StationPublishedStatusRowDto = {
   currentOutcome: "available" | "degraded" | "unavailable" | "unknown";
   currentLatencyMs: number | null;
   currentPingLatencyMs: number | null;
+  currentTtftMs?: number | null;
+  currentTps?: number | null;
+  currentSuccessRatePercent?: number | null;
   recentAvailabilityPercent: number | null;
   upstreamCheckedAtMs: number | null;
   samples: StationPublishedStatusSampleDto[];

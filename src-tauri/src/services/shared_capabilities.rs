@@ -70,6 +70,10 @@ pub fn station_group_options_from_facts(
                 group_binding_id: Some(binding.id),
                 group_id_hash,
                 group_name: binding.group_name,
+                description: binding
+                    .description
+                    .clone()
+                    .or_else(|| rate.and_then(|record| record.description.clone())),
                 rate_multiplier,
                 inferred_group_category: Some(inferred_group_category),
                 group_category_override,
@@ -171,6 +175,7 @@ mod tests {
             group_key_hash: group_key_hash.to_string(),
             group_id_hash: group_id_hash.map(ToString::to_string),
             group_name: "Default".to_string(),
+            description: None,
             binding_status: BINDING_STATUS_AVAILABLE.to_string(),
             default_rate_multiplier: Some(1.0),
             user_rate_multiplier: None,
@@ -197,6 +202,7 @@ mod tests {
             binding_kind: BINDING_KIND_STATION_GROUP.to_string(),
             group_key_hash: group_key_hash.to_string(),
             group_name: "Default".to_string(),
+            description: None,
             default_rate_multiplier: Some(1.2),
             user_rate_multiplier: None,
             effective_rate_multiplier: Some(1.1),

@@ -328,6 +328,8 @@ pub struct UpsertStationGroupBindingInputDto {
     pub group_key_hash: String,
     pub group_id_hash: Option<String>,
     pub group_name: String,
+    #[serde(default)]
+    pub description: Option<String>,
     pub binding_status: BindingStatusDto,
     pub default_rate_multiplier: Option<f64>,
     pub user_rate_multiplier: Option<f64>,
@@ -356,6 +358,7 @@ impl UpsertStationGroupBindingInputDto {
             MAX_TEXT_BYTES,
         )?;
         validate_text("groupName", &input.group_name, MAX_TEXT_BYTES, false)?;
+        validate_optional_text("description", input.description.as_deref(), MAX_TEXT_BYTES)?;
         for (field, value) in [
             ("defaultRateMultiplier", input.default_rate_multiplier),
             ("userRateMultiplier", input.user_rate_multiplier),
@@ -382,6 +385,7 @@ impl UpsertStationGroupBindingInputDto {
             group_key_hash: self.group_key_hash,
             group_id_hash: self.group_id_hash,
             group_name: self.group_name,
+            description: self.description,
             binding_status: self.binding_status.into_string(),
             default_rate_multiplier: self.default_rate_multiplier,
             user_rate_multiplier: self.user_rate_multiplier,
@@ -650,6 +654,7 @@ fn fixture_station_group_binding() -> StationGroupBinding {
         group_key_hash: "group-hash-1".into(),
         group_id_hash: Some("group-id-hash-1".into()),
         group_name: "default".into(),
+        description: None,
         binding_status: "available".into(),
         default_rate_multiplier: Some(1.0),
         user_rate_multiplier: None,
@@ -674,6 +679,7 @@ fn fixture_station_group_option() -> StationGroupOption {
         group_binding_id: Some("binding-1".into()),
         group_id_hash: Some("group-id-hash-1".into()),
         group_name: "default".into(),
+        description: None,
         rate_multiplier: Some(1.0),
         inferred_group_category: Some("gpt".into()),
         group_category_override: None,
@@ -693,6 +699,7 @@ fn fixture_group_rate_record() -> GroupRateRecord {
         binding_kind: "station_group".into(),
         group_key_hash: "group-hash-1".into(),
         group_name: "default".into(),
+        description: None,
         default_rate_multiplier: Some(1.0),
         user_rate_multiplier: None,
         effective_rate_multiplier: Some(1.0),

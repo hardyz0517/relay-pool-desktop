@@ -18,6 +18,7 @@ export type StationGroupCurrentFact = {
   groupKeyHash: string | null;
   groupIdHash: string | null;
   groupName: string;
+  description: string | null;
   bindingStatus: string;
   available: boolean;
   rateMultiplier: number | null;
@@ -119,6 +120,7 @@ export function buildStationGroupOptionsFromCurrentFacts(
       groupBindingId: fact.groupBindingId,
       groupIdHash: fact.groupIdHash,
       groupName: fact.groupName,
+      description: fact.description,
       rateMultiplier: fact.rateMultiplier,
       inferredGroupCategory: fact.inferredGroupCategory,
       groupCategoryOverride: fact.groupCategoryOverride,
@@ -151,6 +153,7 @@ function factFromBinding(
     groupKeyHash: binding.groupKeyHash,
     groupIdHash: binding.groupIdHash,
     groupName: binding.groupName,
+    description: binding.description ?? latestRate?.description ?? null,
     bindingStatus: binding.bindingStatus,
     available: binding.bindingStatus !== "missing" && binding.bindingStatus !== "disabled",
     rateMultiplier: firstNumber(
@@ -185,6 +188,7 @@ function factFromRate(rate: GroupRateRecord, identityKey: string): StationGroupC
     groupKeyHash: rate.groupKeyHash,
     groupIdHash: null,
     groupName: rate.groupName,
+    description: rate.description ?? null,
     bindingStatus: "rate_only",
     available: true,
     rateMultiplier: firstNumber(

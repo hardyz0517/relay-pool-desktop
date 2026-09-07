@@ -156,6 +156,9 @@ export function normalizeStationPublishedStatusWorkspace(
       currentOutcome: row.currentOutcome,
       currentLatencyMs: row.currentLatencyMs,
       currentPingLatencyMs: row.currentPingLatencyMs,
+      currentTtftMs: row.currentTtftMs ?? null,
+      currentTps: row.currentTps ?? null,
+      currentSuccessRatePercent: row.currentSuccessRatePercent ?? null,
       recentAvailabilityPercent: row.recentAvailabilityPercent,
       upstreamCheckedAtMs: row.upstreamCheckedAtMs,
       recentSamples: row.samples.flatMap((sample, index) => {
@@ -165,6 +168,9 @@ export function normalizeStationPublishedStatusWorkspace(
           outcome: sample.outcome,
           latencyMs: sample.latencyMs,
           pingLatencyMs: sample.pingLatencyMs,
+          ttftMs: sample.ttftMs ?? null,
+          tps: sample.tps ?? null,
+          successRatePercent: sample.successRatePercent ?? null,
           checkedAtMs: sample.checkedAtMs,
         }];
       }),
@@ -203,6 +209,9 @@ export function normalizeStationPublishedStatusOverview(
       currentOutcome: row.currentOutcome,
       currentLatencyMs: row.currentLatencyMs,
       currentPingLatencyMs: row.currentPingLatencyMs,
+      currentTtftMs: row.currentTtftMs ?? null,
+      currentTps: row.currentTps ?? null,
+      currentSuccessRatePercent: row.currentSuccessRatePercent ?? null,
       recentAvailabilityPercent: row.recentAvailabilityPercent,
       upstreamCheckedAtMs: row.upstreamCheckedAtMs,
       recentSamples: row.samples.map((sample, index) => ({

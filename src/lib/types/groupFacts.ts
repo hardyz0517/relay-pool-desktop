@@ -19,6 +19,8 @@ export type StationGroupBinding = {
   groupKeyHash: string;
   groupIdHash: string | null;
   groupName: string;
+  /** Optional for compatibility with pre-0077 backends; normalized reads use null. */
+  description?: string | null;
   bindingStatus: BindingStatus;
   defaultRateMultiplier: number | null;
   userRateMultiplier: number | null;
@@ -43,6 +45,8 @@ export type GroupRateRecord = {
   bindingKind: BindingKind;
   groupKeyHash: string;
   groupName: string;
+  /** Optional for compatibility with pre-0077 backends; normalized reads use null. */
+  description?: string | null;
   defaultRateMultiplier: number | null;
   userRateMultiplier: number | null;
   effectiveRateMultiplier: number | null;
@@ -62,6 +66,7 @@ export type UpsertStationGroupBindingInput = {
   groupKeyHash: string;
   groupIdHash: string | null;
   groupName: string;
+  description?: string | null;
   bindingStatus: "available" | "bound" | "missing" | "disabled" | "manual_legacy";
   defaultRateMultiplier: number | null;
   userRateMultiplier: number | null;
@@ -79,6 +84,8 @@ export type StationGroupOption = {
   groupBindingId: string | null;
   groupIdHash: string | null;
   groupName: string;
+  /** Optional for compatibility with pre-0077 backends; normalized reads use null. */
+  description?: string | null;
   rateMultiplier: number | null;
   inferredGroupCategory: StationGroupCategory | null;
   groupCategoryOverride: StationGroupCategory | null;

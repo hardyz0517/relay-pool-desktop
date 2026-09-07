@@ -1,8 +1,16 @@
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
+use crate::models::station_published_status::{
+    PublishedMonitorFact, PublishedMonitorIdentityKind, PublishedMonitorSampleFact,
+    PublishedSampleOutcome, PublishedStatusBatch, PublishedStatusCompleteness,
+    PublishedStatusSourceState, MAX_PUBLISHED_STATUS_LATENCY_MS, MAX_PUBLISHED_STATUS_MONITORS,
+    MAX_PUBLISHED_STATUS_SAMPLES_PER_MODEL, MAX_PUBLISHED_STATUS_TIMESTAMP_MS,
+    NEWAPI_PERF_METRICS_SOURCE_KIND,
+};
 use crate::services::collectors::facts::{
-    CollectedBalanceFact, CollectedGroupFact, CollectedRateFact, CollectorFacts,
-    NORMALIZED_BALANCE_CURRENCY,
+    normalize_group_description, CollectedBalanceFact, CollectedGroupFact, CollectedRateFact,
+    CollectorFacts, NORMALIZED_BALANCE_CURRENCY,
 };
 use crate::services::group_categories::infer_group_category;
 
@@ -136,6 +144,7 @@ pub(crate) fn parse_group_facts(station_id: &str, data: &Value) -> CollectorFact
         let group_key_hash =
             stable_group_key_hash(station_id, "newapi", Some(group_name), group_name);
         let rate = parse_optional_f64(value.get("ratio"));
+        let description = normalize_group_description(value.get("desc"));
         let raw_json_redacted = crate::services::secrets::mask::redact_value(value);
         let inferred_group_category = infer_group_category(group_name, Some(&raw_json_redacted));
         facts.groups.push(CollectedGroupFact {
@@ -143,6 +152,7 @@ pub(crate) fn parse_group_facts(station_id: &str, data: &Value) -> CollectorFact
             group_id: Some(group_name.clone()),
             group_key_hash: group_key_hash.clone(),
             group_name: group_name.clone(),
+            description: description.clone(),
             visibility: "available".to_string(),
             inferred_group_category: Some(inferred_group_category.clone()),
             source: "newapi_user_groups".to_string(),
@@ -155,6 +165,7 @@ pub(crate) fn parse_group_facts(station_id: &str, data: &Value) -> CollectorFact
             group_id: Some(group_name.clone()),
             group_key_hash,
             group_name: group_name.clone(),
+            description,
             default_rate_multiplier: None,
             user_rate_multiplier: None,
             effective_rate_multiplier: rate,
@@ -167,6 +178,184 @@ pub(crate) fn parse_group_facts(station_id: &str, data: &Value) -> CollectorFact
     }
 
     facts
+}
+
+/// Adapts NewAPI's request-derived performance response into the shared
+/// published-status fact envelope. NewAPI's actual grain is
+/// `(model_name, group, bucket_ts)`; each model/group pair is therefore kept as
+/// a distinct monitor identity and each returned bucket becomes one sample.
+pub(crate) fn parse_perf_status_batch(
+    station_id: &str,
+    endpoint_revision: i64,
+    payloads: impl IntoIterator<Item = Value>,
+    collected_at_ms: i64,
+) -> Result<PublishedStatusBatch, String> {
+    let mut monitors = Vec::new();
+    let mut truncated = false;
+    for payload in payloads {
+        let data = envelope_data(&payload).map_err(|error| error.message)?;
+        let model_name = data
+            .get("model_name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "NewAPI performance response is missing model_name".to_string())?;
+        let groups = data
+            .get("groups")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "NewAPI performance response is missing groups".to_string())?;
+        for group in groups {
+            if monitors.len() >= MAX_PUBLISHED_STATUS_MONITORS {
+                truncated = true;
+                break;
+            }
+            let group_name = group
+                .get("group")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| "NewAPI performance group is missing group".to_string())?;
+            let series = group
+                .get("series")
+                .and_then(Value::as_array)
+                .ok_or_else(|| "NewAPI performance group is missing series".to_string())?;
+            let mut samples = series
+                .iter()
+                .filter_map(|point| {
+                    let ts = point.get("ts").and_then(as_i64)?;
+                    let checked_at_ms = ts.checked_mul(1_000)?;
+                    if !(0..=MAX_PUBLISHED_STATUS_TIMESTAMP_MS).contains(&checked_at_ms) {
+                        return None;
+                    }
+                    let success_rate = point.get("success_rate").and_then(as_f64);
+                    let outcome = outcome_from_success_rate(success_rate);
+                    Some(PublishedMonitorSampleFact {
+                        model: model_name.to_string(),
+                        outcome,
+                        source_status: "success_rate_derived".to_string(),
+                        latency_ms: positive_i64(point.get("avg_latency_ms").and_then(as_i64)),
+                        ping_latency_ms: None,
+                        ttft_ms: metric_i64(point.get("avg_ttft_ms").and_then(as_i64)),
+                        tps: metric_f64(point.get("avg_tps").and_then(as_f64)),
+                        success_rate_percent: bounded_success_rate(success_rate),
+                        checked_at_ms,
+                        safe_message: None,
+                    })
+                })
+                .collect::<Vec<_>>();
+            // The shared published-status contract retains the newest 60
+            // buckets per monitor. NewAPI can return a minute-level series
+            // for a 24-hour window (well above that bound), so trim oldest
+            // buckets before validating the batch instead of rejecting an
+            // otherwise valid response.
+            samples.sort_by_key(|sample| sample.checked_at_ms);
+            if samples.len() > MAX_PUBLISHED_STATUS_SAMPLES_PER_MODEL {
+                let discard = samples.len() - MAX_PUBLISHED_STATUS_SAMPLES_PER_MODEL;
+                samples.drain(0..discard);
+            }
+            let current_latency_ms = positive_i64(group.get("avg_latency_ms").and_then(as_i64));
+            let current_ttft_ms = metric_i64(group.get("avg_ttft_ms").and_then(as_i64));
+            let current_tps = metric_f64(group.get("avg_tps").and_then(as_f64));
+            let current_success_rate_percent =
+                bounded_success_rate(group.get("success_rate").and_then(as_f64));
+            let latest_checked_at_ms = samples.iter().map(|sample| sample.checked_at_ms).max();
+            let current_outcome =
+                outcome_from_success_rate(group.get("success_rate").and_then(as_f64));
+            let identity_seed = format!("{station_id}\n{model_name}\n{group_name}");
+            let upstream_monitor_id = format!(
+                "newapi:{}",
+                format!("{:x}", Sha256::digest(identity_seed.as_bytes()))
+            );
+            monitors.push(PublishedMonitorFact {
+                upstream_monitor_id,
+                identity_kind: PublishedMonitorIdentityKind::DerivedFallback,
+                name: format!("{model_name} · {group_name}"),
+                provider: "newapi".to_string(),
+                group_name: Some(group_name.to_string()),
+                primary_model: model_name.to_string(),
+                extra_models: Vec::new(),
+                current_outcome,
+                source_status: "success_rate_derived".to_string(),
+                current_latency_ms,
+                current_ping_latency_ms: None,
+                current_ttft_ms,
+                current_tps,
+                current_success_rate_percent,
+                upstream_checked_at_ms: latest_checked_at_ms,
+                samples,
+            });
+        }
+    }
+    monitors.sort_by(|left, right| {
+        left.primary_model
+            .cmp(&right.primary_model)
+            .then_with(|| left.group_name.cmp(&right.group_name))
+    });
+    let source_state = if monitors.is_empty() {
+        PublishedStatusSourceState::Empty
+    } else if truncated {
+        PublishedStatusSourceState::Degraded
+    } else {
+        PublishedStatusSourceState::Available
+    };
+    let batch = PublishedStatusBatch {
+        station_id: station_id.to_string(),
+        endpoint_revision,
+        source_kind: NEWAPI_PERF_METRICS_SOURCE_KIND.to_string(),
+        source_state,
+        completeness: if truncated {
+            PublishedStatusCompleteness::Partial
+        } else {
+            PublishedStatusCompleteness::Complete
+        },
+        monitors,
+        collected_at_ms,
+        safe_error_kind: None,
+    };
+    batch.validate().map_err(|error| error.to_string())?;
+    Ok(batch)
+}
+
+fn as_i64(value: &Value) -> Option<i64> {
+    value
+        .as_i64()
+        .or_else(|| value.as_u64().and_then(|v| i64::try_from(v).ok()))
+}
+
+fn as_f64(value: &Value) -> Option<f64> {
+    value
+        .as_f64()
+        .or_else(|| value.as_str()?.parse::<f64>().ok())
+        .filter(|v| v.is_finite())
+}
+
+fn positive_i64(value: Option<i64>) -> Option<i64> {
+    value.filter(|value| (1..=MAX_PUBLISHED_STATUS_LATENCY_MS).contains(value))
+}
+
+fn metric_i64(value: Option<i64>) -> Option<i64> {
+    // NewAPI's aggregate helpers return zero when the metric has no samples
+    // (for example, non-streaming requests have no TTFT). Treat that as
+    // missing rather than presenting a fabricated zero measurement.
+    value.filter(|value| (1..=MAX_PUBLISHED_STATUS_LATENCY_MS).contains(value))
+}
+
+fn metric_f64(value: Option<f64>) -> Option<f64> {
+    // Likewise, avgTps returns zero when no output-token denominator exists.
+    value.filter(|value| value.is_finite() && (f64::EPSILON..=1_000_000.0).contains(value))
+}
+
+fn bounded_success_rate(value: Option<f64>) -> Option<f64> {
+    value.filter(|value| value.is_finite() && (0.0..=100.0).contains(value))
+}
+
+fn outcome_from_success_rate(rate: Option<f64>) -> PublishedSampleOutcome {
+    match rate {
+        Some(value) if value >= 100.0 => PublishedSampleOutcome::Available,
+        Some(value) if value > 0.0 => PublishedSampleOutcome::Degraded,
+        Some(_) => PublishedSampleOutcome::Unavailable,
+        None => PublishedSampleOutcome::Unknown,
+    }
 }
 
 fn apply_credit_per_cny(value: Option<f64>, credit_per_cny: f64) -> Option<f64> {
@@ -255,6 +444,80 @@ mod tests {
         assert_eq!(envelope_data(&payload).expect("data")["quota"], 750000);
         let failed = json!({"success": false, "message": "not logged in", "data": null});
         assert_eq!(envelope_data(&failed).unwrap_err().message, "not logged in");
+    }
+
+    #[test]
+    fn performance_response_preserves_model_group_and_bucket_dimensions() {
+        let payload = json!({
+            "success": true,
+            "data": {
+                "model_name": "gpt-test",
+                "groups": [{
+                    "group": "vip",
+                    "avg_latency_ms": 1200,
+                    "avg_ttft_ms": 400,
+                    "success_rate": 95.0,
+                    "avg_tps": 42.5,
+                    "series": [
+                        {"ts": 1700000000, "avg_latency_ms": 1000, "success_rate": 100.0, "avg_ttft_ms": 300, "avg_tps": 40.0},
+                        {"ts": 1700003600, "avg_latency_ms": 1400, "success_rate": 90.0, "avg_ttft_ms": 500, "avg_tps": 45.0}
+                    ]
+                }]
+            }
+        });
+        let batch = parse_perf_status_batch("station", 1, [payload], 1_700_000_400_000)
+            .expect("performance payload parses");
+        assert_eq!(batch.source_kind, NEWAPI_PERF_METRICS_SOURCE_KIND);
+        assert_eq!(batch.monitors.len(), 1);
+        let monitor = &batch.monitors[0];
+        assert_eq!(monitor.primary_model, "gpt-test");
+        assert_eq!(monitor.group_name.as_deref(), Some("vip"));
+        assert_eq!(monitor.samples.len(), 2);
+        assert_eq!(monitor.samples[0].checked_at_ms, 1_700_000_000_000);
+        assert_eq!(monitor.samples[1].outcome, PublishedSampleOutcome::Degraded);
+        assert_eq!(monitor.current_latency_ms, Some(1200));
+        assert_eq!(monitor.current_ttft_ms, Some(400));
+        assert_eq!(monitor.current_tps, Some(42.5));
+        assert_eq!(monitor.current_success_rate_percent, Some(95.0));
+        assert_eq!(monitor.current_ping_latency_ms, None);
+        assert_eq!(monitor.samples[1].ttft_ms, Some(500));
+        assert_eq!(monitor.samples[1].tps, Some(45.0));
+        assert_eq!(monitor.samples[1].success_rate_percent, Some(90.0));
+    }
+
+    #[test]
+    fn performance_series_retains_only_newest_shared_history_window() {
+        let series = (0..65)
+            .map(|index| {
+                json!({
+                    "ts": 1_700_000_000i64 + index,
+                    "avg_latency_ms": 100,
+                    "success_rate": 100.0,
+                    "avg_ttft_ms": 20,
+                    "avg_tps": 10.0
+                })
+            })
+            .collect::<Vec<_>>();
+        let payload = json!({
+            "success": true,
+            "data": {
+                "model_name": "gpt-test",
+                "groups": [{"group": "vip", "series": series}]
+            }
+        });
+
+        let batch = parse_perf_status_batch("station", 1, [payload], 1_700_000_000_000)
+            .expect("performance payload parses");
+        let samples = &batch.monitors[0].samples;
+        assert_eq!(samples.len(), MAX_PUBLISHED_STATUS_SAMPLES_PER_MODEL);
+        assert_eq!(
+            samples.first().map(|sample| sample.checked_at_ms),
+            Some(1_700_000_005_000)
+        );
+        assert_eq!(
+            samples.last().map(|sample| sample.checked_at_ms),
+            Some(1_700_000_064_000)
+        );
     }
 
     #[test]
@@ -431,6 +694,9 @@ mod tests {
             }),
         );
         assert_eq!(facts.groups.len(), 2);
+        assert!(facts.groups.iter().any(|group| {
+            group.group_name == "default" && group.description.as_deref() == Some("Default")
+        }));
         assert!(facts
             .groups
             .iter()
@@ -447,6 +713,22 @@ mod tests {
         assert_eq!(default_rate.default_rate_multiplier, None);
         assert_eq!(default_rate.user_rate_multiplier, None);
         assert_eq!(default_rate.effective_rate_multiplier, Some(1.0));
+        assert_eq!(default_rate.description.as_deref(), Some("Default"));
+    }
+
+    #[test]
+    fn group_description_rejects_missing_non_string_and_oversized_values() {
+        let facts = parse_group_facts(
+            "station-1",
+            &json!({
+                "missing": {"ratio": 1.0},
+                "number": {"desc": 42, "ratio": 1.0},
+                "oversized": {"desc": "x".repeat(1025), "ratio": 1.0}
+            }),
+        );
+
+        assert!(facts.groups.iter().all(|group| group.description.is_none()));
+        assert!(facts.rates.iter().all(|rate| rate.description.is_none()));
     }
 
     #[test]

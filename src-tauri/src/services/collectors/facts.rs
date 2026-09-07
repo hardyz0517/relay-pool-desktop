@@ -3,6 +3,19 @@ use serde_json::Value;
 use crate::models::station_published_status::PublishedStatusBatch;
 
 pub const NORMALIZED_BALANCE_CURRENCY: &str = "USD";
+pub const MAX_GROUP_DESCRIPTION_BYTES: usize = 1024;
+
+/// Accept only an explicitly supplied, bounded description from a provider
+/// response. Descriptions are display metadata, so malformed/oversized values
+/// are treated as absent rather than guessed from other fields.
+pub(crate) fn normalize_group_description(value: Option<&Value>) -> Option<String> {
+    let text = value.and_then(Value::as_str)?.trim();
+    if text.is_empty() || text.as_bytes().len() > MAX_GROUP_DESCRIPTION_BYTES || text.contains('\0')
+    {
+        return None;
+    }
+    Some(text.to_string())
+}
 
 #[derive(Debug, Clone)]
 pub struct CollectedBalanceFact {
@@ -42,6 +55,7 @@ pub struct CollectedGroupFact {
     pub group_id: Option<String>,
     pub group_key_hash: String,
     pub group_name: String,
+    pub description: Option<String>,
     pub visibility: String,
     pub inferred_group_category: Option<String>,
     pub source: String,
@@ -56,6 +70,7 @@ pub struct CollectedRateFact {
     pub group_id: Option<String>,
     pub group_key_hash: String,
     pub group_name: String,
+    pub description: Option<String>,
     pub default_rate_multiplier: Option<f64>,
     pub user_rate_multiplier: Option<f64>,
     pub effective_rate_multiplier: Option<f64>,

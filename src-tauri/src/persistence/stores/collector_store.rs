@@ -133,6 +133,7 @@ pub(crate) struct GroupWrite {
     pub group_key_hash: String,
     pub group_id_hash: Option<String>,
     pub group_name: String,
+    pub description: Option<String>,
     pub binding_status: String,
     pub default_rate_multiplier: Option<f64>,
     pub user_rate_multiplier: Option<f64>,
@@ -156,6 +157,7 @@ pub(crate) struct StationGroupBindingWrite {
     pub group_key_hash: String,
     pub group_id_hash: Option<String>,
     pub group_name: String,
+    pub description: Option<String>,
     pub binding_status: String,
     pub default_rate_multiplier: Option<f64>,
     pub user_rate_multiplier: Option<f64>,
@@ -205,6 +207,7 @@ pub(crate) struct RateWrite {
     pub binding_kind: String,
     pub group_key_hash: String,
     pub group_name: String,
+    pub description: Option<String>,
     pub default_rate_multiplier: Option<f64>,
     pub user_rate_multiplier: Option<f64>,
     pub effective_rate_multiplier: Option<f64>,
@@ -595,7 +598,7 @@ impl CollectorStore {
         let rows = sqlx::query(
             r#"
             SELECT id, station_id, station_key_id, binding_kind, parent_group_binding_id,
-                   group_key_hash, group_id_hash, group_name, binding_status,
+                   group_key_hash, group_id_hash, group_name, description, binding_status,
                    default_rate_multiplier, user_rate_multiplier, effective_rate_multiplier,
                    inferred_group_category, group_category_override, rate_source, confidence,
                    last_seen_at, last_checked_at, last_rate_changed_at, raw_json_redacted,
@@ -622,7 +625,7 @@ impl CollectorStore {
         let rows = sqlx::query(
             r#"
             SELECT id, station_id, station_key_id, binding_kind, parent_group_binding_id,
-                   group_key_hash, group_id_hash, group_name, binding_status,
+                   group_key_hash, group_id_hash, group_name, description, binding_status,
                    default_rate_multiplier, user_rate_multiplier, effective_rate_multiplier,
                    inferred_group_category, group_category_override, rate_source, confidence,
                    last_seen_at, last_checked_at, last_rate_changed_at, raw_json_redacted,
@@ -652,7 +655,7 @@ impl CollectorStore {
         let rows = sqlx::query(
             r#"
             SELECT id, station_id, station_key_id, group_binding_id, binding_kind,
-                   group_key_hash, group_name, default_rate_multiplier, user_rate_multiplier,
+                   group_key_hash, group_name, description, default_rate_multiplier, user_rate_multiplier,
                    effective_rate_multiplier, inferred_group_category, source, confidence,
                    raw_json_redacted, checked_at, created_at
             FROM group_rate_records
@@ -690,7 +693,7 @@ impl CollectorStore {
                 WHERE r.station_id = ?1 AND r.binding_kind = 'station_group'
             )
             SELECT id, station_id, station_key_id, group_binding_id, binding_kind,
-                   group_key_hash, group_name, default_rate_multiplier, user_rate_multiplier,
+                   group_key_hash, group_name, description, default_rate_multiplier, user_rate_multiplier,
                    effective_rate_multiplier, inferred_group_category, source, confidence,
                    raw_json_redacted, checked_at, created_at
             FROM ranked
@@ -1302,20 +1305,21 @@ impl CollectorStore {
             r#"
             INSERT INTO station_group_bindings (
                 id, station_id, station_key_id, binding_kind, parent_group_binding_id,
-                group_key_hash, group_id_hash, group_name, binding_status,
+                group_key_hash, group_id_hash, group_name, description, binding_status,
                 default_rate_multiplier, user_rate_multiplier, effective_rate_multiplier,
                 inferred_group_category, group_category_override, rate_source, confidence,
                 last_seen_at, last_checked_at, last_rate_changed_at, raw_json_redacted,
                 created_at, updated_at
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                ?15, ?16, ?17, ?18, NULL, ?19, ?18, ?18
+                ?15, ?16, ?17, ?18, ?19, NULL, ?20, ?19, ?19
             )
             ON CONFLICT(id) DO UPDATE SET
                 station_key_id = excluded.station_key_id,
                 parent_group_binding_id = excluded.parent_group_binding_id,
                 group_id_hash = excluded.group_id_hash,
                 group_name = excluded.group_name,
+                description = excluded.description,
                 binding_status = CASE
                     WHEN station_group_bindings.binding_status = 'bound'
                          AND excluded.binding_status NOT IN ('missing', 'disabled')
@@ -1356,6 +1360,7 @@ impl CollectorStore {
         .bind(&binding.group_key_hash)
         .bind(&binding.group_id_hash)
         .bind(&binding.group_name)
+        .bind(&binding.description)
         .bind(&binding.binding_status)
         .bind(binding.default_rate_multiplier)
         .bind(binding.user_rate_multiplier)
@@ -1550,15 +1555,16 @@ impl CollectorStore {
         sqlx::query(
             "INSERT INTO station_group_bindings (
                 id, station_id, station_key_id, binding_kind, group_key_hash, group_id_hash,
-                group_name, binding_status, default_rate_multiplier, user_rate_multiplier,
+                group_name, description, binding_status, default_rate_multiplier, user_rate_multiplier,
                 effective_rate_multiplier, inferred_group_category, rate_source, confidence,
                 last_seen_at, last_checked_at, last_rate_changed_at, last_seen_run_id,
                 raw_json_redacted, created_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-                       ?14, ?15, ?16, NULL, ?17, ?18, ?16, ?16)
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+                       ?15, ?16, ?17, NULL, ?18, ?19, ?17, ?17)
              ON CONFLICT(id) DO UPDATE SET
                 group_id_hash = excluded.group_id_hash,
                 group_name = excluded.group_name,
+                description = excluded.description,
                 binding_status = CASE
                     WHEN station_group_bindings.binding_status = 'bound'
                          AND excluded.binding_status = 'available'
@@ -1582,6 +1588,7 @@ impl CollectorStore {
         .bind(&group.group_key_hash)
         .bind(&group.group_id_hash)
         .bind(&group.group_name)
+        .bind(&group.description)
         .bind(&group.binding_status)
         .bind(group.default_rate_multiplier)
         .bind(group.user_rate_multiplier)
@@ -1743,7 +1750,7 @@ impl CollectorStore {
         rate: &RateWrite,
     ) -> Result<Option<RateTransition>, PersistenceError> {
         let previous = sqlx::query(
-            "SELECT effective_rate_multiplier FROM group_rate_records
+            "SELECT effective_rate_multiplier, description FROM group_rate_records
              WHERE group_binding_id = ?1 ORDER BY checked_at DESC, id DESC LIMIT 1",
         )
         .bind(&rate.group_binding_id)
@@ -1752,7 +1759,12 @@ impl CollectorStore {
         let old = previous
             .as_ref()
             .and_then(|row| row.get::<Option<f64>, _>("effective_rate_multiplier"));
-        if previous.is_some() && old == rate.effective_rate_multiplier {
+        let previous_description = previous
+            .as_ref()
+            .and_then(|row| row.get::<Option<String>, _>("description"));
+        let rate_changed = previous.is_none() || old != rate.effective_rate_multiplier;
+        let description_changed = previous_description.as_deref() != rate.description.as_deref();
+        if !rate_changed && !description_changed {
             return Ok(None);
         }
         let raw_json = rate
@@ -1764,10 +1776,10 @@ impl CollectorStore {
         sqlx::query(
             "INSERT INTO group_rate_records (
                 id, station_id, station_key_id, group_binding_id, binding_kind,
-                group_key_hash, group_name, default_rate_multiplier, user_rate_multiplier,
+                group_key_hash, group_name, description, default_rate_multiplier, user_rate_multiplier,
                 effective_rate_multiplier, inferred_group_category, source, confidence,
                 raw_json_redacted, checked_at, created_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
         )
         .bind(&rate.id)
         .bind(&rate.station_id)
@@ -1776,6 +1788,7 @@ impl CollectorStore {
         .bind(&rate.binding_kind)
         .bind(&rate.group_key_hash)
         .bind(&rate.group_name)
+        .bind(&rate.description)
         .bind(rate.default_rate_multiplier)
         .bind(rate.user_rate_multiplier)
         .bind(rate.effective_rate_multiplier)
@@ -1787,20 +1800,24 @@ impl CollectorStore {
         .bind(&rate.created_at)
         .execute(session.connection())
         .await?;
-        sqlx::query(
-            "UPDATE station_group_bindings SET last_rate_changed_at = ?1, updated_at = ?1
-             WHERE id = ?2",
-        )
-        .bind(&rate.created_at)
-        .bind(&rate.group_binding_id)
-        .execute(session.connection())
-        .await?;
-        Ok(Some(RateTransition {
-            group_binding_id: rate.group_binding_id.clone(),
-            group_name: rate.group_name.clone(),
-            old_effective_rate_multiplier: old,
-            new_effective_rate_multiplier: rate.effective_rate_multiplier,
-        }))
+        if rate_changed {
+            sqlx::query(
+                "UPDATE station_group_bindings SET last_rate_changed_at = ?1, updated_at = ?1
+                 WHERE id = ?2",
+            )
+            .bind(&rate.created_at)
+            .bind(&rate.group_binding_id)
+            .execute(session.connection())
+            .await?;
+            Ok(Some(RateTransition {
+                group_binding_id: rate.group_binding_id.clone(),
+                group_name: rate.group_name.clone(),
+                old_effective_rate_multiplier: old,
+                new_effective_rate_multiplier: rate.effective_rate_multiplier,
+            }))
+        } else {
+            Ok(None)
+        }
     }
 
     #[cfg(test)]
@@ -1958,7 +1975,7 @@ impl CollectorStore {
         let row = sqlx::query(
             r#"
             SELECT id, station_id, station_key_id, binding_kind, parent_group_binding_id,
-                   group_key_hash, group_id_hash, group_name, binding_status,
+                   group_key_hash, group_id_hash, group_name, description, binding_status,
                    default_rate_multiplier, user_rate_multiplier, effective_rate_multiplier,
                    inferred_group_category, group_category_override, rate_source, confidence,
                    last_seen_at, last_checked_at, last_rate_changed_at, raw_json_redacted,
@@ -2112,6 +2129,7 @@ fn row_to_station_group_binding(
         group_key_hash: row.try_get("group_key_hash")?,
         group_id_hash: row.try_get("group_id_hash")?,
         group_name: row.try_get("group_name")?,
+        description: row.try_get("description")?,
         binding_status: row.try_get("binding_status")?,
         default_rate_multiplier: row.try_get("default_rate_multiplier")?,
         user_rate_multiplier: row.try_get("user_rate_multiplier")?,
@@ -2140,6 +2158,7 @@ fn row_to_group_rate_record(
         binding_kind: row.try_get("binding_kind")?,
         group_key_hash: row.try_get("group_key_hash")?,
         group_name: row.try_get("group_name")?,
+        description: row.try_get("description")?,
         default_rate_multiplier: row.try_get("default_rate_multiplier")?,
         user_rate_multiplier: row.try_get("user_rate_multiplier")?,
         effective_rate_multiplier: row.try_get("effective_rate_multiplier")?,

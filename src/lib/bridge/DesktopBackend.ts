@@ -840,6 +840,7 @@ function normalizeGroupBinding(
 ): Awaited<ReturnType<BackendClient["groupFacts"]["upsertStationGroupBinding"]>> {
   return {
     ...binding,
+    description: binding.description ?? null,
     inferredGroupCategory: normalizeGroupCategory(binding.inferredGroupCategory),
     groupCategoryOverride: normalizeGroupCategory(binding.groupCategoryOverride),
   };
@@ -850,6 +851,7 @@ function normalizeGroupOption(
 ): Awaited<ReturnType<BackendClient["groupFacts"]["listStationGroupOptions"]>>[number] {
   return {
     ...option,
+    description: option.description ?? null,
     inferredGroupCategory: normalizeGroupCategory(option.inferredGroupCategory),
     groupCategoryOverride: normalizeGroupCategory(option.groupCategoryOverride),
     effectiveGroupCategory: normalizeGroupCategory(option.effectiveGroupCategory) ?? "unknown",
@@ -861,6 +863,7 @@ function normalizeGroupRateRecord(
 ): Awaited<ReturnType<BackendClient["groupFacts"]["listGroupRateRecords"]>>[number] {
   return {
     ...record,
+    description: record.description ?? null,
     inferredGroupCategory: normalizeGroupCategory(record.inferredGroupCategory),
   };
 }

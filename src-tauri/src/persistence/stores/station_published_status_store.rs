@@ -51,6 +51,9 @@ pub(crate) struct PublishedMonitorWrite {
     pub(crate) source_status: String,
     pub(crate) current_latency_ms: Option<i64>,
     pub(crate) current_ping_latency_ms: Option<i64>,
+    pub(crate) current_ttft_ms: Option<i64>,
+    pub(crate) current_tps: Option<f64>,
+    pub(crate) current_success_rate_percent: Option<f64>,
     pub(crate) upstream_checked_at_ms: Option<i64>,
     pub(crate) last_seen_run_id: String,
     pub(crate) last_seen_at: String,
@@ -68,6 +71,9 @@ pub(crate) struct PublishedMonitorSampleWrite {
     pub(crate) source_status: String,
     pub(crate) latency_ms: Option<i64>,
     pub(crate) ping_latency_ms: Option<i64>,
+    pub(crate) ttft_ms: Option<i64>,
+    pub(crate) tps: Option<f64>,
+    pub(crate) success_rate_percent: Option<f64>,
     pub(crate) safe_message: Option<String>,
     pub(crate) first_seen_run_id: String,
     pub(crate) last_seen_run_id: String,
@@ -108,6 +114,9 @@ pub(crate) struct PublishedMonitorRow {
     pub(crate) source_status: String,
     pub(crate) current_latency_ms: Option<i64>,
     pub(crate) current_ping_latency_ms: Option<i64>,
+    pub(crate) current_ttft_ms: Option<i64>,
+    pub(crate) current_tps: Option<f64>,
+    pub(crate) current_success_rate_percent: Option<f64>,
     pub(crate) upstream_checked_at_ms: Option<i64>,
     pub(crate) last_seen_run_id: String,
     pub(crate) last_seen_at: String,
@@ -125,6 +134,9 @@ pub(crate) struct PublishedMonitorSampleRow {
     pub(crate) source_status: String,
     pub(crate) latency_ms: Option<i64>,
     pub(crate) ping_latency_ms: Option<i64>,
+    pub(crate) ttft_ms: Option<i64>,
+    pub(crate) tps: Option<f64>,
+    pub(crate) success_rate_percent: Option<f64>,
     pub(crate) safe_message: Option<String>,
     pub(crate) first_seen_run_id: String,
     pub(crate) last_seen_run_id: String,
@@ -179,7 +191,7 @@ impl StationPublishedStatusStore {
 
         let limit = i64::from(monitor_limit.min(MAX_PUBLISHED_STATUS_MONITORS));
         let mut mq = QueryBuilder::<Sqlite>::new(
-            "SELECT m.id, m.station_id, m.endpoint_revision, m.source_kind, m.upstream_monitor_id, m.identity_kind, m.name, m.provider, m.group_name, m.primary_model, m.extra_models_json, m.presence_status, m.current_outcome, m.source_status, m.current_latency_ms, m.current_ping_latency_ms, CAST(m.upstream_checked_at AS INTEGER) AS upstream_checked_at, m.last_seen_run_id, m.last_seen_at, m.created_at, m.updated_at FROM station_published_monitors m JOIN stations st ON st.id = m.station_id AND st.endpoint_revision = m.endpoint_revision JOIN station_published_status_sources s ON s.station_id = m.station_id AND s.endpoint_revision = m.endpoint_revision AND s.source_kind = m.source_kind WHERE m.presence_status = 'current' AND m.source_kind IN (",
+            "SELECT m.id, m.station_id, m.endpoint_revision, m.source_kind, m.upstream_monitor_id, m.identity_kind, m.name, m.provider, m.group_name, m.primary_model, m.extra_models_json, m.presence_status, m.current_outcome, m.source_status, m.current_latency_ms, m.current_ping_latency_ms, m.current_ttft_ms, m.current_tps, m.current_success_rate_percent, CAST(m.upstream_checked_at AS INTEGER) AS upstream_checked_at, m.last_seen_run_id, m.last_seen_at, m.created_at, m.updated_at FROM station_published_monitors m JOIN stations st ON st.id = m.station_id AND st.endpoint_revision = m.endpoint_revision JOIN station_published_status_sources s ON s.station_id = m.station_id AND s.endpoint_revision = m.endpoint_revision AND s.source_kind = m.source_kind WHERE m.presence_status = 'current' AND m.source_kind IN (",
         );
         let mut msep = mq.separated(",");
         for kind in source_kinds {
@@ -193,7 +205,7 @@ impl StationPublishedStatusStore {
         }
         if !monitors.is_empty() && sample_limit > 0 {
             let mut sq = QueryBuilder::<Sqlite>::new(
-                "SELECT id, monitor_id, model, CAST(checked_at AS INTEGER) AS checked_at, outcome, source_status, latency_ms, ping_latency_ms, safe_message, first_seen_run_id, last_seen_run_id, created_at, updated_at FROM (SELECT sample.*, ROW_NUMBER() OVER (PARTITION BY sample.monitor_id, sample.model ORDER BY CAST(sample.checked_at AS INTEGER) DESC, sample.id DESC) AS rn FROM station_published_monitor_samples sample JOIN station_published_monitors monitor ON monitor.id = sample.monitor_id WHERE monitor.presence_status = 'current' AND monitor.primary_model = sample.model AND monitor.id IN (",
+                "SELECT id, monitor_id, model, CAST(checked_at AS INTEGER) AS checked_at, outcome, source_status, latency_ms, ping_latency_ms, ttft_ms, tps, success_rate_percent, safe_message, first_seen_run_id, last_seen_run_id, created_at, updated_at FROM (SELECT sample.*, ROW_NUMBER() OVER (PARTITION BY sample.monitor_id, sample.model ORDER BY CAST(sample.checked_at AS INTEGER) DESC, sample.id DESC) AS rn FROM station_published_monitor_samples sample JOIN station_published_monitors monitor ON monitor.id = sample.monitor_id WHERE monitor.presence_status = 'current' AND monitor.primary_model = sample.model AND monitor.id IN (",
             );
             let mut ssep = sq.separated(",");
             for monitor in &monitors {
@@ -287,11 +299,11 @@ impl StationPublishedStatusStore {
                 id, station_id, endpoint_revision, source_kind, upstream_monitor_id,
                 identity_kind, name, provider, group_name, primary_model, extra_models_json,
                 presence_status, current_outcome, source_status, current_latency_ms,
-                current_ping_latency_ms, availability_7d_percent, upstream_checked_at,
+                current_ping_latency_ms, current_ttft_ms, current_tps, current_success_rate_percent, availability_7d_percent, upstream_checked_at,
                 last_seen_run_id, last_seen_at, created_at, updated_at
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
-                'current', ?12, ?13, ?14, ?15, NULL, ?16, ?17, ?18, ?19, ?20
+                'current', ?12, ?13, ?14, ?15, ?16, ?17, ?18, NULL, ?19, ?20, ?21, ?22, ?23
             )
             ON CONFLICT(station_id, endpoint_revision, source_kind, upstream_monitor_id)
             DO UPDATE SET
@@ -306,6 +318,9 @@ impl StationPublishedStatusStore {
                 source_status = excluded.source_status,
                 current_latency_ms = excluded.current_latency_ms,
                 current_ping_latency_ms = excluded.current_ping_latency_ms,
+                current_ttft_ms = excluded.current_ttft_ms,
+                current_tps = excluded.current_tps,
+                current_success_rate_percent = excluded.current_success_rate_percent,
                 availability_7d_percent = NULL,
                 upstream_checked_at = excluded.upstream_checked_at,
                 last_seen_run_id = excluded.last_seen_run_id,
@@ -328,6 +343,9 @@ impl StationPublishedStatusStore {
         .bind(&monitor.source_status)
         .bind(monitor.current_latency_ms)
         .bind(monitor.current_ping_latency_ms)
+        .bind(monitor.current_ttft_ms)
+        .bind(monitor.current_tps)
+        .bind(monitor.current_success_rate_percent)
         // Migration 41 deliberately stores timestamps as TEXT. Persist a
         // canonical decimal representation so the read path can decode both
         // existing and newly written facts consistently.
@@ -372,14 +390,17 @@ impl StationPublishedStatusStore {
             r#"
             INSERT INTO station_published_monitor_samples (
                 id, monitor_id, model, checked_at, outcome, source_status, latency_ms,
-                ping_latency_ms, safe_message, first_seen_run_id, last_seen_run_id,
+                ping_latency_ms, ttft_ms, tps, success_rate_percent, safe_message, first_seen_run_id, last_seen_run_id,
                 created_at, updated_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
             ON CONFLICT(monitor_id, model, checked_at) DO UPDATE SET
                 outcome = excluded.outcome,
                 source_status = excluded.source_status,
                 latency_ms = excluded.latency_ms,
                 ping_latency_ms = excluded.ping_latency_ms,
+                ttft_ms = excluded.ttft_ms,
+                tps = excluded.tps,
+                success_rate_percent = excluded.success_rate_percent,
                 safe_message = excluded.safe_message,
                 last_seen_run_id = excluded.last_seen_run_id,
                 updated_at = excluded.updated_at
@@ -393,6 +414,9 @@ impl StationPublishedStatusStore {
         .bind(&sample.source_status)
         .bind(sample.latency_ms)
         .bind(sample.ping_latency_ms)
+        .bind(sample.ttft_ms)
+        .bind(sample.tps)
+        .bind(sample.success_rate_percent)
         .bind(&sample.safe_message)
         .bind(&sample.first_seen_run_id)
         .bind(&sample.last_seen_run_id)
@@ -578,7 +602,8 @@ impl StationPublishedStatusStore {
             SELECT id, station_id, endpoint_revision, source_kind, upstream_monitor_id,
                    identity_kind, name, provider, group_name, primary_model, extra_models_json,
                    presence_status, current_outcome, source_status, current_latency_ms,
-                    current_ping_latency_ms, CAST(upstream_checked_at AS INTEGER) AS upstream_checked_at,
+                    current_ping_latency_ms, current_ttft_ms, current_tps, current_success_rate_percent,
+                    CAST(upstream_checked_at AS INTEGER) AS upstream_checked_at,
                    last_seen_run_id, last_seen_at, created_at, updated_at
             FROM station_published_monitors
             WHERE station_id = ?1
@@ -634,7 +659,7 @@ impl StationPublishedStatusStore {
             )
             SELECT id, monitor_id, model, CAST(checked_at AS INTEGER) AS checked_at,
                    outcome, source_status, latency_ms,
-                   ping_latency_ms, safe_message, first_seen_run_id, last_seen_run_id,
+                   ping_latency_ms, ttft_ms, tps, success_rate_percent, safe_message, first_seen_run_id, last_seen_run_id,
                    created_at, updated_at
             FROM ranked_samples
             WHERE row_number <= ?5
@@ -715,6 +740,9 @@ fn row_to_monitor(row: sqlx::sqlite::SqliteRow) -> Result<PublishedMonitorRow, P
         source_status: row.try_get("source_status")?,
         current_latency_ms: row.try_get("current_latency_ms")?,
         current_ping_latency_ms: row.try_get("current_ping_latency_ms")?,
+        current_ttft_ms: row.try_get("current_ttft_ms")?,
+        current_tps: row.try_get("current_tps")?,
+        current_success_rate_percent: row.try_get("current_success_rate_percent")?,
         upstream_checked_at_ms: row.try_get("upstream_checked_at")?,
         last_seen_run_id: row.try_get("last_seen_run_id")?,
         last_seen_at: row.try_get("last_seen_at")?,
@@ -735,6 +763,9 @@ fn row_to_sample(
         source_status: row.try_get("source_status")?,
         latency_ms: row.try_get("latency_ms")?,
         ping_latency_ms: row.try_get("ping_latency_ms")?,
+        ttft_ms: row.try_get("ttft_ms")?,
+        tps: row.try_get("tps")?,
+        success_rate_percent: row.try_get("success_rate_percent")?,
         safe_message: row.try_get("safe_message")?,
         first_seen_run_id: row.try_get("first_seen_run_id")?,
         last_seen_run_id: row.try_get("last_seen_run_id")?,
@@ -1238,6 +1269,9 @@ mod tests {
             source_status: "available".into(),
             current_latency_ms: Some(1),
             current_ping_latency_ms: Some(1),
+            current_ttft_ms: None,
+            current_tps: None,
+            current_success_rate_percent: None,
             upstream_checked_at_ms: Some(1_700_000_000_000),
             last_seen_run_id: "run-1".into(),
             last_seen_at: "2026-08-16T00:00:00.000Z".into(),
@@ -1256,6 +1290,9 @@ mod tests {
             source_status: "available".into(),
             latency_ms: Some(1),
             ping_latency_ms: Some(1),
+            ttft_ms: None,
+            tps: None,
+            success_rate_percent: None,
             safe_message: None,
             first_seen_run_id: "run-1".into(),
             last_seen_run_id: "run-1".into(),

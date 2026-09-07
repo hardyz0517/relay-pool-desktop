@@ -7,7 +7,7 @@ use crate::{
     application::{clock::Clock, error::ApplicationError},
     models::station_published_status::{
         MAX_PUBLISHED_STATUS_MONITORS, MAX_PUBLISHED_STATUS_SAMPLES_PER_MODEL,
-        STATION_PUBLISHED_STATUS_SOURCE_KIND,
+        NEWAPI_PERF_METRICS_SOURCE_KIND, STATION_PUBLISHED_STATUS_SOURCE_KIND,
     },
     persistence::{
         runtime::PersistenceHandle,
@@ -145,6 +145,9 @@ pub(crate) struct StationPublishedStatusMonitor {
     pub(crate) current_outcome: String,
     pub(crate) current_latency_ms: Option<i64>,
     pub(crate) current_ping_latency_ms: Option<i64>,
+    pub(crate) current_ttft_ms: Option<i64>,
+    pub(crate) current_tps: Option<f64>,
+    pub(crate) current_success_rate_percent: Option<f64>,
     pub(crate) recent_availability_percent: Option<f64>,
     pub(crate) upstream_checked_at_ms: Option<i64>,
     pub(crate) samples: Vec<StationPublishedStatusSample>,
@@ -158,6 +161,9 @@ pub(crate) struct StationPublishedStatusSample {
     pub(crate) outcome: String,
     pub(crate) latency_ms: Option<i64>,
     pub(crate) ping_latency_ms: Option<i64>,
+    pub(crate) ttft_ms: Option<i64>,
+    pub(crate) tps: Option<f64>,
+    pub(crate) success_rate_percent: Option<f64>,
 }
 
 impl StationPublishedStatusQuery {
@@ -196,7 +202,7 @@ impl StationPublishedStatusQuery {
                 &mut read,
                 &station.id,
                 station.endpoint_revision,
-                STATION_PUBLISHED_STATUS_SOURCE_KIND,
+                source_kind_for_station_type(&station.station_type),
                 MAX_PUBLISHED_STATUS_MONITORS as u32,
                 MAX_PUBLISHED_STATUS_SAMPLES_PER_MODEL as u32,
             )
@@ -220,6 +226,9 @@ impl StationPublishedStatusQuery {
         }
         let mut read = self.runtime.begin_read().await?;
         let stations = self.stations.list(&mut read).await?;
+        // The cross-station overview powers the existing official-status
+        // page. Keep its published Sub2API contract unchanged; NewAPI's
+        // model/group performance view is scoped to station detail only.
         let descriptors = vec![PublishedStatusSourceDescriptor {
             station_type: "sub2api".to_string(),
             source_kind: STATION_PUBLISHED_STATUS_SOURCE_KIND.to_string(),
@@ -316,6 +325,9 @@ impl StationPublishedStatusQuery {
                         outcome: s.outcome.clone(),
                         latency_ms: s.latency_ms,
                         ping_latency_ms: s.ping_latency_ms,
+                        ttft_ms: s.ttft_ms,
+                        tps: s.tps,
+                        success_rate_percent: s.success_rate_percent,
                     })
                     .collect();
                 let monitor_view = project_monitor(monitor, samples);
@@ -519,6 +531,14 @@ fn unsupported_workspace(
     }
 }
 
+fn source_kind_for_station_type(station_type: &str) -> &'static str {
+    if station_type.eq_ignore_ascii_case("newapi") {
+        NEWAPI_PERF_METRICS_SOURCE_KIND
+    } else {
+        STATION_PUBLISHED_STATUS_SOURCE_KIND
+    }
+}
+
 fn workspace_from_rows(
     station_id: String,
     endpoint_revision: i64,
@@ -603,6 +623,9 @@ fn project_monitor(
         current_outcome: monitor.current_outcome.clone(),
         current_latency_ms: monitor.current_latency_ms,
         current_ping_latency_ms: monitor.current_ping_latency_ms,
+        current_ttft_ms: monitor.current_ttft_ms,
+        current_tps: monitor.current_tps,
+        current_success_rate_percent: monitor.current_success_rate_percent,
         recent_availability_percent: recent_availability_percent(&samples),
         upstream_checked_at_ms: monitor.upstream_checked_at_ms,
         samples,
@@ -624,6 +647,9 @@ fn samples_by_monitor(
             outcome: sample.outcome,
             latency_ms: sample.latency_ms,
             ping_latency_ms: sample.ping_latency_ms,
+            ttft_ms: sample.ttft_ms,
+            tps: sample.tps,
+            success_rate_percent: sample.success_rate_percent,
         });
     }
     samples
@@ -631,11 +657,22 @@ fn samples_by_monitor(
 
 fn recent_availability_percent(samples: &[StationPublishedStatusSample]) -> Option<f64> {
     (!samples.is_empty()).then(|| {
-        let available = samples
+        let measured = samples
             .iter()
-            .filter(|sample| sample.outcome == "available")
-            .count();
-        available as f64 * 100.0 / samples.len() as f64
+            .filter_map(|sample| sample.success_rate_percent)
+            .filter(|value| value.is_finite());
+        let (sum, count) = measured.fold((0.0, 0usize), |(sum, count), value| {
+            (sum + value, count + 1)
+        });
+        if count > 0 {
+            sum / count as f64
+        } else {
+            let available = samples
+                .iter()
+                .filter(|sample| sample.outcome == "available")
+                .count();
+            available as f64 * 100.0 / samples.len() as f64
+        }
     })
 }
 
@@ -880,6 +917,9 @@ mod tests {
             source_status: outcome.into(),
             current_latency_ms: Some(10),
             current_ping_latency_ms: Some(5),
+            current_ttft_ms: None,
+            current_tps: None,
+            current_success_rate_percent: None,
             upstream_checked_at_ms: Some(upstream_checked_at_ms),
             last_seen_run_id: "run-1".into(),
             last_seen_at: "0".into(),
@@ -895,6 +935,9 @@ mod tests {
             outcome: outcome.to_string(),
             latency_ms: None,
             ping_latency_ms: None,
+            ttft_ms: None,
+            tps: None,
+            success_rate_percent: None,
         }
     }
 }

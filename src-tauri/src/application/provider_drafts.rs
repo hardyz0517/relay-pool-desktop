@@ -490,6 +490,7 @@ impl ProviderDraftService {
                                     group_key_hash,
                                     group_id_hash: group.group_id_hash.clone(),
                                     group_name: group.group_name.clone(),
+                                    description: None,
                                     binding_status: BINDING_STATUS_AVAILABLE.to_string(),
                                     default_rate_multiplier: (group.source == "remote").then_some(group.rate_multiplier).flatten(),
                                     user_rate_multiplier: (group.source == "manual").then_some(group.rate_multiplier).flatten(),
@@ -764,6 +765,7 @@ impl ProviderDraftService {
                 group_key_hash: group.group_key_hash,
                 group_id_hash: group.group_id_hash,
                 group_name: group.group_name,
+                description: None,
                 binding_status: BINDING_STATUS_AVAILABLE.to_string(),
                 default_rate_multiplier: (group.source == "remote")
                     .then_some(group.rate_multiplier)

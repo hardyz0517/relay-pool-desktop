@@ -17,6 +17,9 @@ export type StationPublishedStatusSample = {
   outcome: StationPublishedStatusOutcome;
   latencyMs: number | null;
   pingLatencyMs: number | null;
+  ttftMs?: number | null;
+  tps?: number | null;
+  successRatePercent?: number | null;
   checkedAtMs: number;
 };
 
@@ -32,6 +35,9 @@ export type StationPublishedStatusRow = {
   currentOutcome: StationPublishedStatusOutcome;
   currentLatencyMs: number | null;
   currentPingLatencyMs: number | null;
+  currentTtftMs?: number | null;
+  currentTps?: number | null;
+  currentSuccessRatePercent?: number | null;
   recentAvailabilityPercent: number | null;
   upstreamCheckedAtMs: number | null;
   recentSamples: StationPublishedStatusSample[];
