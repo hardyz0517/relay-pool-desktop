@@ -170,6 +170,12 @@ describe("StationPublishedStatusSection", () => {
     ]);
     const modelTrend = host.querySelector('[aria-label="gpt-5.5 最近 60 个性能 bucket"]');
     expect(modelTrend?.className).toContain("grid w-full");
+    const newApiTable = host.querySelector("table");
+    expect(newApiTable?.className).toContain("min-w-[980px]");
+    expect(Array.from(newApiTable?.querySelectorAll("col") ?? []).map((col) => col.className)).toEqual([
+      "", "w-[180px]", "w-[105px]", "w-[120px]", "w-[340px]",
+    ]);
+    expect(modelTrend?.parentElement?.className).not.toContain("min-w-[320px]");
     expect(host.textContent).not.toContain("gpt-5.5 · default");
     const modelRow = Array.from(host.querySelectorAll("tr[aria-expanded]"))
       .find((row) => row.textContent?.includes("gpt-5.5") && row.textContent?.includes("2 个分组"));

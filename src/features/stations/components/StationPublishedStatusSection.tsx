@@ -265,13 +265,13 @@ function NewApiGroupedStatusViews({ rows, view }: { rows: StationPublishedStatus
 
   return (
     <div className="overflow-x-auto">
-      <table className="min-w-[1100px] w-full table-fixed border-collapse text-left text-xs">
+      <table className="min-w-[980px] w-full table-fixed border-collapse text-left text-xs">
         <colgroup>
-          <col className="w-[280px]" />
+          <col />
           <col className="w-[180px]" />
           <col className="w-[105px]" />
-          <col className="w-[180px]" />
-          <col />
+          <col className="w-[120px]" />
+          <col className="w-[340px]" />
         </colgroup>
         <thead className="border-b border-border bg-surface-subtle text-muted-foreground">
           <tr>
@@ -401,10 +401,8 @@ function NewApiMetricCells({
           secondaryTitle={formatRawNumber(tps)}
         />
       </TableCell>
-      <TableCell className={cn("pr-4", cellClassName)}>
-        <div className="min-w-[320px] w-full">
-          <StatusTrend cells={trend} slotCount={60} ariaLabel={trendAriaLabel} />
-        </div>
+      <TableCell className={cellClassName}>
+        <StatusTrend cells={trend} slotCount={60} ariaLabel={trendAriaLabel} />
       </TableCell>
     </>
   );
