@@ -14,7 +14,7 @@ export type RoutingCircuitState = "closed" | "open" | "half_open";
 
 export type ParticipationDisplay = {
   label: string;
-  tone: "healthy" | "warning" | "disabled";
+  tone: "healthy" | "warning" | "error" | "disabled";
 };
 
 export type LatestDecisionDisplay = {
@@ -105,9 +105,9 @@ export function buildParticipationDisplay(
   recoverySuccesses: number | null = null,
 ): ParticipationDisplay {
   const byReason: Record<RoutingCandidateParticipationReason, ParticipationDisplay> = {
-    ready: { label: "可参与", tone: "healthy" },
+    ready: { label: "正常", tone: "healthy" },
     administratively_disabled: { label: "已暂停路由", tone: "disabled" },
-    planner_excluded: { label: "未进入规划", tone: "warning" },
+    planner_excluded: { label: "未进入规划", tone: "error" },
     planner_unavailable: { label: "规划状态不可用", tone: "disabled" },
     candidate_limit_exceeded: { label: "候选上限外", tone: "warning" },
     circuit_persistence_unavailable: { label: "熔断状态不可用", tone: "disabled" },

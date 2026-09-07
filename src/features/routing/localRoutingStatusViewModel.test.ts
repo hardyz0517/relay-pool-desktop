@@ -51,8 +51,12 @@ function candidate(overrides: Partial<RoutingCandidateView> = {}): RoutingCandid
 describe("local routing status view model", () => {
   it("maps backend participation reasons without inferring eligibility", () => {
     expect(buildParticipationDisplay("eligible", "ready")).toEqual({
-      label: "可参与",
+      label: "正常",
       tone: "healthy",
+    });
+    expect(buildParticipationDisplay("excluded", "planner_excluded")).toEqual({
+      label: "未进入规划",
+      tone: "error",
     });
     expect(buildParticipationDisplay("excluded", "circuit_half_open_lease_occupied")).toEqual({
       label: "半开探测进行中",

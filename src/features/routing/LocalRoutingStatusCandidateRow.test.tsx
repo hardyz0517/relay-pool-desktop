@@ -5,7 +5,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
 import type { RoutingWorkspaceCandidate } from "@/lib/types/routing";
 import type { RoutingCandidateView } from "@/lib/types/routingWorkspace";
-import { LocalRoutingStatusCandidateRow, ScoreBreakdown } from "./LocalRoutingStatusCandidateRow";
+import {
+  LocalRoutingStatusCandidateHeader,
+  LocalRoutingStatusCandidateRow,
+  ScoreBreakdown,
+} from "./LocalRoutingStatusCandidateRow";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -14,6 +18,20 @@ afterEach(() => {
 });
 
 describe("ScoreBreakdown", () => {
+  it("separates the effective planner score from the base score", () => {
+    const host = renderBreakdown(scoreDetails(), 9_700);
+
+    expect(host.textContent).toContain("有效评分（带亲和加成）97 分");
+    expect(host.textContent).toContain("基础分 95 分");
+  });
+
+  it("does not label a score as affinity-adjusted when no bonus was applied", () => {
+    const host = renderBreakdown(scoreDetails(), 9_500);
+
+    expect(host.textContent).toContain("有效评分95 分");
+    expect(host.textContent).not.toContain("带亲和加成");
+  });
+
   it("renders expanded formulas as structured math", () => {
     const host = renderBreakdown(scoreDetails());
 
@@ -116,6 +134,59 @@ describe("ScoreBreakdown", () => {
 });
 
 describe("LocalRoutingStatusCandidateRow concurrency", () => {
+  it("displays the effective planner score when it differs from the base score", () => {
+    const markup = renderToStaticMarkup(
+      <LocalRoutingStatusCandidateRow
+        candidate={candidate({
+          score: 9_000,
+          diagnostics: {
+            ...circuitDiagnostics("closed", null),
+            effectiveScore: 9_500,
+            baseScore: 9_000,
+          },
+        })}
+        attemptOrder={1}
+        nowMs={0}
+      />,
+    );
+
+    const document = new DOMParser().parseFromString(markup, "text/html");
+    const scoreButton = [...document.querySelectorAll("button")].find((element) =>
+      element.getAttribute("aria-label") === "查看密钥的评分计算",
+    );
+
+    expect(scoreButton?.textContent).toBe("95 分");
+    expect(scoreButton?.textContent).not.toBe("90 分");
+  });
+
+  it("renders the planner attempt ordinal rather than the display row index", () => {
+    const markup = renderToStaticMarkup(
+      <LocalRoutingStatusCandidateRow
+        candidate={candidate()}
+        order={9}
+        attemptOrder={2}
+        nowMs={0}
+      />,
+    );
+
+    expect(markup).toContain(">#2<");
+    expect(markup).not.toContain(">#9<");
+  });
+
+  it("leaves the attempt ordinal blank for candidates excluded from routing", () => {
+    const markup = renderToStaticMarkup(
+      <LocalRoutingStatusCandidateRow
+        candidate={candidate({ participationStatus: "excluded", participationReason: "planner_excluded" })}
+        order={9}
+        attemptOrder={null}
+        nowMs={0}
+      />,
+    );
+
+    expect(markup).toContain("当前请求不会尝试此密钥");
+    expect(markup).toContain(">#-<");
+  });
+
   it("labels the key provider without appending the endpoint kind", () => {
     const markup = renderToStaticMarkup(
       <LocalRoutingStatusCandidateRow
@@ -138,11 +209,47 @@ describe("LocalRoutingStatusCandidateRow concurrency", () => {
       />,
     );
     const document = new DOMParser().parseFromString(markup, "text/html");
-    const badge = [...document.querySelectorAll("span")].find((element) => element.textContent === "可参与");
+    const badge = [...document.querySelectorAll("span")].find((element) => element.textContent === "正常");
 
     expect(badge).toBeDefined();
     expect(badge?.className).toContain("rounded-[4px]");
     expect(badge?.className).not.toContain("rounded-full");
+  });
+
+  it("uses the danger tone for candidates excluded before planning", () => {
+    const markup = renderToStaticMarkup(
+      <LocalRoutingStatusCandidateRow
+        candidate={candidate({ participationStatus: "excluded", participationReason: "planner_excluded" })}
+        order={1}
+        nowMs={0}
+      />,
+    );
+    const document = new DOMParser().parseFromString(markup, "text/html");
+    const badge = [...document.querySelectorAll("span")].find((element) => element.textContent === "未进入规划");
+
+    expect(badge).toBeDefined();
+    expect(badge?.className).toContain("bg-danger-surface");
+    expect(badge?.className).toContain("text-danger-foreground");
+  });
+
+  it("uses the danger tone for planner exclusion reasons below the badge", () => {
+    const markup = renderToStaticMarkup(
+      <LocalRoutingStatusCandidateRow
+        candidate={candidate({
+          participationStatus: "excluded",
+          participationReason: "planner_excluded",
+          scoreStatus: "unavailable",
+          plannerExclusionCodes: ["balance_depleted"],
+        })}
+        order={1}
+        nowMs={0}
+      />,
+    );
+    const document = new DOMParser().parseFromString(markup, "text/html");
+    const reason = [...document.querySelectorAll("div")].find((element) => element.textContent === "余额不足");
+
+    expect(reason).toBeDefined();
+    expect(reason?.className).toContain("text-danger-foreground");
   });
 
   it("renders backend participation reasons for paused, recovery, and unavailable candidates", () => {
@@ -183,7 +290,11 @@ describe("LocalRoutingStatusCandidateRow concurrency", () => {
   it("shows the circuit countdown, half-open state, and closed placeholder", () => {
     const openMarkup = renderToStaticMarkup(
       <LocalRoutingStatusCandidateRow
-        candidate={candidate({ diagnostics: circuitDiagnostics("open", 301_000) })}
+        candidate={candidate({
+          diagnostics: circuitDiagnostics("open", 301_000),
+          participationStatus: "excluded",
+          participationReason: "circuit_open_cooldown",
+        })}
         order={1}
         nowMs={0}
       />,
@@ -213,10 +324,79 @@ describe("LocalRoutingStatusCandidateRow concurrency", () => {
       />,
     );
 
-    expect(openMarkup).toContain("05:01");
+    expect(openMarkup).toContain("已熔断");
+    expect(openMarkup).toContain("剩余05:01");
     expect(halfOpenMarkup).toContain("半开");
     expect(halfOpenMarkup).toContain("已成功 1 次");
-    expect(new DOMParser().parseFromString(closedMarkup, "text/html").body.textContent).toContain("-");
+    expect(new DOMParser().parseFromString(closedMarkup, "text/html").body.textContent).not.toContain("已熔断");
+  });
+
+  it("projects an expired open circuit as logical half-open", () => {
+    const markup = renderToStaticMarkup(
+      <LocalRoutingStatusCandidateRow
+        candidate={candidate({
+          diagnostics: circuitDiagnostics("open", 1_000),
+          participationStatus: "excluded",
+          participationReason: "circuit_open_cooldown",
+        })}
+        order={1}
+        nowMs={1_000}
+      />,
+    );
+
+    expect(markup).toContain("半开待探测");
+    expect(markup).not.toContain("已熔断");
+    expect(markup).not.toContain("00:00");
+  });
+
+  it("does not mask planner failures with circuit state", () => {
+    const markup = renderToStaticMarkup(
+      <LocalRoutingStatusCandidateRow
+        candidate={candidate({
+          diagnostics: circuitDiagnostics("open", 1_000),
+          scoreStatus: "unavailable",
+          participationStatus: "unavailable",
+          participationReason: "planner_unavailable",
+        })}
+        order={1}
+        nowMs={1_000}
+      />,
+    );
+
+    expect(markup).toContain("规划状态不可用");
+    expect(markup).not.toContain("半开待探测");
+  });
+
+  it("uses a dash when a key has no score", () => {
+    const markup = renderToStaticMarkup(
+      <LocalRoutingStatusCandidateRow
+        candidate={candidate({ scoreStatus: "unavailable", score: null })}
+        order={1}
+        nowMs={0}
+      />,
+    );
+    const document = new DOMParser().parseFromString(markup, "text/html");
+    const scoreButton = [...document.querySelectorAll("button")].find((element) =>
+      element.getAttribute("aria-label") === "查看密钥的评分计算",
+    );
+
+    expect(scoreButton?.textContent).toBe("—");
+    expect(scoreButton?.className).toContain("min-w-8");
+    expect(scoreButton?.className).toContain("no-underline");
+    expect(markup).not.toContain("未进入评分");
+  });
+
+  it("calls the participation column status and removes the cooldown column", () => {
+    const markup = renderToStaticMarkup(
+      <>
+        <LocalRoutingStatusCandidateHeader />
+        <LocalRoutingStatusCandidateRow candidate={candidate()} order={1} nowMs={0} />
+      </>,
+    );
+    const document = new DOMParser().parseFromString(markup, "text/html");
+
+    expect(document.body.textContent).toContain("状态");
+    expect(document.body.textContent).not.toContain("冷却");
   });
 
   it("highlights active concurrency with a square green badge", () => {
@@ -255,11 +435,14 @@ describe("LocalRoutingStatusCandidateRow concurrency", () => {
   });
 });
 
-function renderBreakdown(details: NonNullable<RoutingWorkspaceCandidate["scoreDetails"]>) {
+function renderBreakdown(
+  details: NonNullable<RoutingWorkspaceCandidate["scoreDetails"]>,
+  effectiveScore?: number | null,
+) {
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
-  act(() => root.render(<ScoreBreakdown details={details} />));
+  act(() => root.render(<ScoreBreakdown details={details} effectiveScore={effectiveScore} />));
   return host;
 }
 

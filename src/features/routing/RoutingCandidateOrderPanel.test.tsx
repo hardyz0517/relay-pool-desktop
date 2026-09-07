@@ -6,8 +6,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "@/components/ui";
 import { queryKeys } from "@/lib/query/queryKeys";
 import type { KeyPoolItem } from "@/lib/types/stationKeys";
-import type { RoutingWorkspaceView } from "@/lib/types/routingWorkspace";
-import { RoutingCandidateOrderPanel } from "./RoutingCandidateOrderPanel";
+import type { RoutingCandidateView, RoutingWorkspaceView } from "@/lib/types/routingWorkspace";
+import { buildRoutingAttemptOrder, RoutingCandidateOrderPanel, sortCandidateIdsByScore } from "./RoutingCandidateOrderPanel";
 
 const mocks = vi.hoisted(() => ({
   dragEnd: null as ((event: unknown) => Promise<void>) | null,
@@ -39,7 +39,9 @@ vi.mock("@/lib/api/stationKeys", () => ({ reorderKeyPool: mocks.reorder }));
 vi.mock("@/lib/query/routingQuerySynchronization", () => ({ synchronizeRoutingQueriesAfterMutation: mocks.synchronize }));
 vi.mock("./LocalRoutingStatusCandidateRow", () => ({
   LocalRoutingStatusCandidateHeader: () => <div data-testid="candidate-header" />,
-  LocalRoutingStatusCandidateRow: ({ candidate }: { candidate: { stationKeyId: string } }) => <div data-candidate-id={candidate.stationKeyId} />,
+  LocalRoutingStatusCandidateRow: ({ candidate, attemptOrder }: { candidate: { stationKeyId: string }; attemptOrder: number | null }) => (
+    <div data-candidate-id={candidate.stationKeyId} data-attempt-order={attemptOrder ?? "none"} />
+  ),
 }));
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -53,6 +55,21 @@ afterEach(() => {
 });
 
 describe("RoutingCandidateOrderPanel", () => {
+  it("assigns ordinals from planner score instead of the display order", () => {
+    const { host, root, queryClient } = renderPanel();
+
+    expect(Array.from(host.querySelectorAll("[data-candidate-id]"))
+      .map((node) => [node.getAttribute("data-candidate-id"), node.getAttribute("data-attempt-order")]))
+      .toEqual([
+        ["key-2", "3"],
+        ["key-1", "1"],
+        ["key-3", "2"],
+      ]);
+
+    act(() => root.unmount());
+    queryClient.clear();
+  });
+
   it("does not render disabled keys in the routing queue", () => {
     const items = keyPoolItems();
     items[1] = { ...items[1], enabled: false } as KeyPoolItem;
@@ -88,7 +105,7 @@ describe("RoutingCandidateOrderPanel", () => {
     const savedItems = [oldItems[1], oldItems[2], oldItems[0]];
     mocks.reorder.mockResolvedValue(savedItems);
     mocks.synchronize.mockResolvedValue({ refreshed: true, errors: [] });
-    const { host, root, queryClient } = renderPanel();
+    const { root, queryClient } = renderPanel();
 
     const staleRequest = deferred<KeyPoolItem[]>();
     const staleFetch = queryClient
@@ -107,6 +124,45 @@ describe("RoutingCandidateOrderPanel", () => {
 
     await act(async () => root.unmount());
     queryClient.clear();
+  });
+});
+
+describe("buildRoutingAttemptOrder", () => {
+  it("uses effective planner score instead of the displayed base score", () => {
+    const candidates = workspace().candidates;
+    const result = buildRoutingAttemptOrder([
+      { ...candidates[0], stationKeyId: "base-lower", score: 9_000, diagnostics: diagnostics(9_700, 9_000) },
+      { ...candidates[1], stationKeyId: "base-higher", score: 9_600, diagnostics: diagnostics(9_500, 9_600) },
+    ]);
+
+    expect([...result.entries()]).toEqual([
+      ["base-lower", 1],
+      ["base-higher", 2],
+    ]);
+  });
+
+  it("excludes non-participating candidates and uses a stable id tie-break", () => {
+    const candidates = workspace().candidates;
+    const result = buildRoutingAttemptOrder([
+      { ...candidates[0], stationKeyId: "z-key", score: 9_000 },
+      { ...candidates[1], stationKeyId: "a-key", score: 9_000 },
+      { ...candidates[2], stationKeyId: "excluded", score: 10_000, participationStatus: "excluded" },
+      { ...candidates[2], stationKeyId: "unavailable", score: 11_000, scoreStatus: "unavailable" },
+    ]);
+
+    expect([...result.entries()]).toEqual([["a-key", 1], ["z-key", 2]]);
+  });
+});
+
+describe("sortCandidateIdsByScore", () => {
+  it("sorts by the same effective score used for attempt ordinals", () => {
+    const candidates = workspace().candidates;
+    const candidateById = new Map([
+      ["key-1", { ...candidates[0], score: 9_000, diagnostics: diagnostics(9_700, 9_000) }],
+      ["key-2", { ...candidates[1], score: 9_600, diagnostics: diagnostics(9_500, 9_600) }],
+    ]);
+
+    expect(sortCandidateIdsByScore(["key-1", "key-2"], candidateById)).toEqual(["key-1", "key-2"]);
   });
 });
 
@@ -178,4 +234,34 @@ function workspace(): RoutingWorkspaceView {
       lastDecisionAt: null,
     },
   } as RoutingWorkspaceView;
+}
+
+function diagnostics(
+  effectiveScore: number,
+  baseScore: number,
+): NonNullable<RoutingCandidateView["diagnostics"]> {
+  return {
+    effectiveScore,
+    baseScore,
+    quality: null,
+    attempts: {
+      rawRealAttemptCount: 0,
+      deduplicatedRealRequestCount: 0,
+    },
+    circuit: {
+      state: "closed",
+      stateRevision: null,
+      lifecycleRevision: null,
+      policyRevision: null,
+      persistenceStatus: "available",
+      stateRowPresent: false,
+      consecutiveFailures: null,
+      reopenLevel: 0,
+      cooldownUntilMs: null,
+      cooldownRemainingMs: null,
+      halfOpenLeaseInFlight: false,
+      halfOpenLeaseExpiresAtMs: null,
+      recoverySuccesses: null,
+    },
+  };
 }

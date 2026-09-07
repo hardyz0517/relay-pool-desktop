@@ -415,7 +415,7 @@ function protectionExplanationLabel(key: string) {
   const labels: Record<string, string> = {
     "routing.protection.none_active": "当前没有保护条目",
     "routing.protection.closed_monitoring": "未打开保护，持续监控中",
-    "routing.protection.degraded": "保护降级，持续监控中",
+    "routing.protection.degraded": "保护欠佳，持续监控中",
     "routing.protection.cooldown": "保护冷却中，暂时抑制候选",
     "routing.protection.blocked": "保护已阻断候选",
     "routing.protection.open": "保护已打开，暂时抑制候选",

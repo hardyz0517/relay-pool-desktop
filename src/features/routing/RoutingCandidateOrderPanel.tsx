@@ -30,6 +30,7 @@ import {
   LocalRoutingStatusCandidateRow,
 } from "./LocalRoutingStatusCandidateRow";
 import { buildEditableRoutingCandidates } from "./editableRoutingCandidates";
+import { getRoutingEffectiveScore } from "./routingScore";
 
 type ReorderSyncState = "idle" | "saving" | "synced" | "failed";
 
@@ -88,6 +89,10 @@ export function RoutingCandidateOrderPanel({
       return candidate && candidate.enabled !== false ? [candidate] : [];
     }),
     [candidateById, candidateIds],
+  );
+  const attemptOrderById = useMemo(
+    () => buildRoutingAttemptOrder([...candidateById.values()]),
+    [candidateById],
   );
   const syncLabel = syncLabels[syncState];
 
@@ -205,8 +210,14 @@ export function RoutingCandidateOrderPanel({
             <div className="overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface">
               <LocalRoutingStatusCandidateHeader sortable />
               <div className="divide-y divide-border">
-                {candidates.map((candidate, index) => (
-                  <SortableStatusCandidateRow key={candidate.stationKeyId} candidate={candidate} order={index + 1} nowMs={nowMs} disabled={syncState === "saving"} />
+                {candidates.map((candidate) => (
+                  <SortableStatusCandidateRow
+                    key={candidate.stationKeyId}
+                    candidate={candidate}
+                    attemptOrder={attemptOrderById.get(candidate.stationKeyId) ?? null}
+                    nowMs={nowMs}
+                    disabled={syncState === "saving"}
+                  />
                 ))}
               </div>
             </div>
@@ -226,12 +237,10 @@ export function sortCandidateIdsByScore(
   candidateById: ReadonlyMap<string, RoutingCandidateView>,
 ) {
   return [...candidateIds].sort((leftId, rightId) => {
-    const leftScore = candidateById.get(leftId)?.score;
-    const rightScore = candidateById.get(rightId)?.score;
-    if (leftScore == null && rightScore == null) return 0;
-    if (leftScore == null) return 1;
-    if (rightScore == null) return -1;
-    return rightScore - leftScore;
+    const left = candidateById.get(leftId);
+    const right = candidateById.get(rightId);
+    if (!left || !right) return left ? -1 : right ? 1 : 0;
+    return compareRoutingAttemptCandidates(left, right);
   });
 }
 
@@ -250,12 +259,55 @@ function mergeVisibleCandidateOrder(
   });
 }
 
-function SortableStatusCandidateRow({ candidate, order, nowMs, disabled }: { candidate: RoutingCandidateView; order: number; nowMs: number; disabled: boolean }) {
+/**
+ * Projects the deterministic order used by the routing planner onto the
+ * editable queue. The queue itself remains in persisted key-pool order so it
+ * can still be dragged; the ordinal shown in each row must not be derived
+ * from that display order.
+ *
+ * Candidates that cannot participate in the current request do not receive
+ * an ordinal because routing will never attempt them. Eligible and
+ * conditionally eligible candidates are ordered by the planner's effective
+ * score (descending), with a stable station-key id tie-break. A missing score
+ * is kept after finite scores and then ordered by the same stable id fallback.
+ */
+export function buildRoutingAttemptOrder(
+  candidates: readonly RoutingCandidateView[],
+): ReadonlyMap<string, number> {
+  const routable = candidates
+    .filter((candidate) => (
+      candidate.enabled !== false
+      && candidate.scoreStatus === "scored"
+      && (candidate.participationStatus === "eligible"
+        || candidate.participationStatus === "conditionally_eligible")
+    ))
+    .sort(compareRoutingAttemptCandidates);
+
+  return new Map(routable.map((candidate, index) => [candidate.stationKeyId, index + 1]));
+}
+
+function compareRoutingAttemptCandidates(
+  left: RoutingCandidateView,
+  right: RoutingCandidateView,
+) {
+  const leftScore = getRoutingEffectiveScore(left);
+  const rightScore = getRoutingEffectiveScore(right);
+  if (leftScore != null && rightScore != null && leftScore !== rightScore) {
+    return rightScore - leftScore;
+  }
+  if (leftScore != null && rightScore == null) return -1;
+  if (leftScore == null && rightScore != null) return 1;
+  if (left.stationKeyId < right.stationKeyId) return -1;
+  if (left.stationKeyId > right.stationKeyId) return 1;
+  return 0;
+}
+
+function SortableStatusCandidateRow({ candidate, attemptOrder, nowMs, disabled }: { candidate: RoutingCandidateView; attemptOrder: number | null; nowMs: number; disabled: boolean }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: candidate.stationKeyId, disabled });
   const style: CSSProperties = { transform: CSS.Transform.toString(transform), transition };
   return (
     <div ref={setNodeRef} style={style} className={cn("will-change-transform", isDragging && "opacity-60")}>
-      <LocalRoutingStatusCandidateRow candidate={candidate} order={order} nowMs={nowMs} dragDisabled={disabled} dragAttributes={attributes} dragListeners={listeners} />
+      <LocalRoutingStatusCandidateRow candidate={candidate} attemptOrder={attemptOrder} nowMs={nowMs} dragDisabled={disabled} dragAttributes={attributes} dragListeners={listeners} />
     </div>
   );
 }

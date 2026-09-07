@@ -10,6 +10,7 @@ import {
   buildCooldownDisplay,
   buildParticipationDisplay,
 } from "./localRoutingStatusViewModel";
+import { getRoutingEffectiveScore } from "./routingScore";
 
 type MathMlIntrinsicProps = Record<string, unknown>;
 
@@ -37,7 +38,10 @@ declare global {
 
 type LocalRoutingStatusCandidateRowProps = {
   candidate: LocalRoutingCandidate;
-  order: number;
+  /** Deterministic planner rank; null means this candidate will not be tried. */
+  attemptOrder?: number | null;
+  /** @deprecated Kept for callers outside the queue while they migrate. */
+  order?: number;
   nowMs: number;
   dragDisabled?: boolean;
   dragAttributes?: DraggableAttributes;
@@ -49,16 +53,15 @@ export function LocalRoutingStatusCandidateHeader({ sortable = false }: { sortab
     <div className={cn(
       "hidden min-h-9 items-center gap-3 border-b border-border bg-surface-subtle px-3 py-2 text-[11px] font-medium text-muted-foreground md:grid",
       sortable
-        ? "grid-cols-[24px_minmax(220px,1.6fr)_minmax(110px,.75fr)_minmax(88px,.55fr)_minmax(96px,.6fr)_minmax(80px,.5fr)_minmax(76px,.45fr)_minmax(72px,.45fr)]"
-        : "grid-cols-[minmax(220px,1.6fr)_minmax(110px,.75fr)_minmax(88px,.55fr)_minmax(96px,.6fr)_minmax(80px,.5fr)_minmax(76px,.45fr)_minmax(72px,.45fr)]",
+        ? "grid-cols-[24px_minmax(220px,1.6fr)_minmax(110px,.75fr)_minmax(88px,.55fr)_minmax(96px,.6fr)_minmax(80px,.5fr)_minmax(72px,.45fr)]"
+        : "grid-cols-[minmax(220px,1.6fr)_minmax(110px,.75fr)_minmax(88px,.55fr)_minmax(96px,.6fr)_minmax(80px,.5fr)_minmax(72px,.45fr)]",
     )}>
       {sortable ? <span aria-hidden="true" /> : null}
       <span>候选密钥</span>
-      <span className="text-center">参与状态</span>
-      <span className="text-center">密钥评分</span>
+      <span className="text-center">状态</span>
+      <span className="text-center">有效评分</span>
       <span className="text-center">有效倍率</span>
       <span className="text-center">余额</span>
-      <span className="text-center">冷却</span>
       <span className="text-center" title="每秒刷新">当前并发</span>
     </div>
   );
@@ -66,12 +69,14 @@ export function LocalRoutingStatusCandidateHeader({ sortable = false }: { sortab
 
 export function LocalRoutingStatusCandidateRow({
   candidate,
+  attemptOrder,
   order,
   nowMs,
   dragDisabled = false,
   dragAttributes,
   dragListeners,
 }: LocalRoutingStatusCandidateRowProps) {
+  const displayedAttemptOrder = attemptOrder === undefined ? order ?? null : attemptOrder;
   const isSortable = Boolean(dragAttributes || dragListeners);
   const circuit = candidate.diagnostics?.circuit;
   const cooldown = circuit?.persistenceStatus === "unavailable"
@@ -79,6 +84,7 @@ export function LocalRoutingStatusCandidateRow({
     : buildCooldownDisplay(circuit?.state, circuit?.cooldownUntilMs ?? null, nowMs);
   const displayFacts = buildCandidateDisplayFacts(candidate);
   const scoreStatus = candidate.scoreStatus;
+  const effectiveScore = getRoutingEffectiveScore(candidate);
   const participation = buildParticipationDisplay(
     candidate.participationStatus,
     candidate.participationReason,
@@ -89,14 +95,35 @@ export function LocalRoutingStatusCandidateRow({
     && circuit.recoverySuccesses > 0
     ? `已成功 ${circuit.recoverySuccesses} 次`
     : null;
+  // The durable reducer intentionally keeps an elapsed circuit in `open`
+  // until the next real request acquires the Half-Open lease.  Use the live
+  // countdown to distinguish an actively cooling circuit from that logical
+  // Half-Open projection; otherwise the UI gets stuck at “已熔断 / 剩余00:00”.
+  const circuitParticipationReason = candidate.participationReason === "circuit_open_cooldown"
+    || candidate.participationReason === "circuit_recovery_ready";
+  const circuitOpen = circuit?.persistenceStatus === "available"
+    && circuit.state === "open"
+    && circuitParticipationReason;
+  const circuitCooling = circuitOpen && cooldown.remainingSeconds !== 0;
+  const circuitRecoveryReady = circuitOpen && cooldown.remainingSeconds === 0;
+  const statusLabel = circuitCooling
+    ? "已熔断"
+    : circuitRecoveryReady
+      ? "半开待探测"
+      : participationSecondaryLabel
+        ? "半开待下次探测"
+        : participation.label;
+  const statusSecondaryLabel = circuitCooling && cooldown.remainingSeconds != null
+    ? `剩余${cooldown.label}`
+    : participationSecondaryLabel;
   const [scoreDialogOpen, setScoreDialogOpen] = useState(false);
 
   return (
     <div className={cn(
       "grid min-h-[68px] gap-3 px-3 py-2.5 md:items-center",
       isSortable
-        ? "md:grid-cols-[24px_minmax(220px,1.6fr)_minmax(110px,.75fr)_minmax(88px,.55fr)_minmax(96px,.6fr)_minmax(80px,.5fr)_minmax(76px,.45fr)_minmax(72px,.45fr)]"
-        : "md:grid-cols-[minmax(220px,1.6fr)_minmax(110px,.75fr)_minmax(88px,.55fr)_minmax(96px,.6fr)_minmax(80px,.5fr)_minmax(76px,.45fr)_minmax(72px,.45fr)]",
+        ? "md:grid-cols-[24px_minmax(220px,1.6fr)_minmax(110px,.75fr)_minmax(88px,.55fr)_minmax(96px,.6fr)_minmax(80px,.5fr)_minmax(72px,.45fr)]"
+        : "md:grid-cols-[minmax(220px,1.6fr)_minmax(110px,.75fr)_minmax(88px,.55fr)_minmax(96px,.6fr)_minmax(80px,.5fr)_minmax(72px,.45fr)]",
     )}>
       {isSortable ? (
         <button
@@ -117,7 +144,13 @@ export function LocalRoutingStatusCandidateRow({
       ) : null}
       <div className="min-w-0">
         <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold text-muted-foreground">#{order}</span>
+          <span
+            className="text-xs font-semibold text-muted-foreground"
+            aria-label={displayedAttemptOrder == null ? "当前请求不会尝试此密钥" : `路由第${displayedAttemptOrder}次尝试`}
+            title={displayedAttemptOrder == null ? "当前请求不会尝试此密钥" : "路由尝试顺序"}
+          >
+            {displayedAttemptOrder == null ? "#-" : `#${displayedAttemptOrder}`}
+          </span>
           <span className="truncate text-[13px] font-semibold text-foreground">
             {candidate.keyName}
           </span>
@@ -126,29 +159,35 @@ export function LocalRoutingStatusCandidateRow({
           供应商：{candidate.stationName}
         </div>
       </div>
-      <MetricCell label="参与状态">
+      <MetricCell label="状态">
         <div className="flex min-w-0 flex-col items-center gap-0.5">
-          <StatusBadge tone={participation.tone} className="max-w-full whitespace-nowrap rounded-[4px] px-1.5 text-[11px]">
-            {participationSecondaryLabel ? "半开待下次探测" : participation.label}
+          <StatusBadge tone={circuitCooling || circuitRecoveryReady ? "warning" : participation.tone} className="max-w-full whitespace-nowrap rounded-[4px] px-1.5 text-[11px]">
+            {statusLabel}
           </StatusBadge>
-          {participationSecondaryLabel ? (
+          {statusSecondaryLabel ? (
             <span className="self-end whitespace-nowrap text-[10px] font-medium leading-4 text-warning-foreground">
-              {participationSecondaryLabel}
+              {statusSecondaryLabel}
             </span>
           ) : null}
         </div>
         {scoreStatus !== "scored" && displayFacts.rejectReasonLabel ? (
-          <div className="mt-1 text-xs text-warning-foreground">
+          <div className={cn(
+            "mt-1 text-xs",
+            participation.tone === "error" ? "text-danger-foreground" : "text-warning-foreground",
+          )}>
             {displayFacts.rejectReasonLabel}
           </div>
         ) : null}
       </MetricCell>
-      <MetricCell label="密钥评分">
+      <MetricCell label="有效评分">
         <button
           type="button"
           className={cn(
-            "rounded px-1.5 py-0.5 text-[13px] font-semibold underline decoration-info-foreground/40 underline-offset-2 hover:bg-selected",
-            candidate.score == null ? "text-muted-foreground" : "text-info-foreground",
+            "rounded px-1.5 py-0.5 text-[13px] font-semibold",
+            scoreStatus === "scored"
+              ? "underline decoration-info-foreground/40 underline-offset-2 hover:bg-selected"
+              : "min-w-8 text-muted-foreground no-underline",
+            scoreStatus !== "scored" || effectiveScore == null ? "text-muted-foreground" : "text-info-foreground",
           )}
           aria-label={`查看${candidate.keyName}的评分计算`}
           title="查看评分计算"
@@ -159,7 +198,7 @@ export function LocalRoutingStatusCandidateRow({
             if (scoreStatus === "scored") setScoreDialogOpen(true);
           }}
         >
-          {formatCandidateScore(candidate.score, scoreStatus)}
+          {formatCandidateScore(effectiveScore, scoreStatus)}
         </button>
       </MetricCell>
       <MetricCell label="有效倍率" value={displayFacts.multiplierLabel} detail={displayFacts.multiplierDetail} />
@@ -177,15 +216,6 @@ export function LocalRoutingStatusCandidateRow({
         }
         detail={displayFacts.balanceDetail}
       />
-      <MetricCell
-        label="冷却"
-        value={
-          <span className="whitespace-nowrap tabular-nums">
-            {cooldown.remainingSeconds != null && cooldown.remainingSeconds > 0 ? cooldown.label : "-"}
-          </span>
-        }
-        tone={cooldown.remainingSeconds != null && cooldown.remainingSeconds > 0 ? "warning" : "neutral"}
-      />
       <MetricCell label="当前并发">
         <StatusBadge
           tone={candidate.currentConcurrency != null && candidate.currentConcurrency > 0 ? "healthy" : "disabled"}
@@ -198,6 +228,7 @@ export function LocalRoutingStatusCandidateRow({
         open={scoreDialogOpen}
         keyName={candidate.keyName}
         details={candidate.scoreDetails}
+        effectiveScore={effectiveScore}
         onClose={() => setScoreDialogOpen(false)}
       />
     </div>
@@ -208,11 +239,13 @@ function ScoreDetailsDialog({
   open,
   keyName,
   details,
+  effectiveScore,
   onClose,
 }: {
   open: boolean;
   keyName: string;
   details: LocalRoutingCandidate["scoreDetails"];
+  effectiveScore: number | null;
   onClose: () => void;
 }) {
   useEffect(() => {
@@ -252,7 +285,7 @@ function ScoreDetailsDialog({
           </button>
         </div>
         <div className="max-h-[calc(100vh-180px)] overflow-auto">
-          <ScoreBreakdown details={details} />
+          <ScoreBreakdown details={details} effectiveScore={effectiveScore} />
         </div>
       </div>
     </div>,
@@ -260,27 +293,21 @@ function ScoreDetailsDialog({
   );
 }
 
-function scoreStatusLabel(status: LocalRoutingCandidate["scoreStatus"]) {
-  switch (status) {
-    case "scored": return "可参与";
-    case "candidate_limit": return "候选上限外";
-    case "unavailable": return "评分暂不可用";
-    default: return "未进入评分";
-  }
-}
-
 function formatCandidateScore(
   score: number | null,
   status: LocalRoutingCandidate["scoreStatus"],
 ) {
-  if (status !== "scored") return scoreStatusLabel(status);
+  if (status !== "scored") return "—";
   return score == null ? "—" : `${Math.round(score / 100)} 分`;
 }
 
 export function ScoreBreakdown({
   details,
+  effectiveScore,
 }: {
   details: LocalRoutingCandidate["scoreDetails"];
+  /** Final planner score after affinity; defaults to the base score for standalone callers. */
+  effectiveScore?: number | null;
 }) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
@@ -315,11 +342,17 @@ export function ScoreBreakdown({
     },
   ] as const;
 
+  const displayedEffectiveScore = effectiveScore ?? details.total;
+  const affinityBonusApplied = displayedEffectiveScore > details.total;
+
   return (
     <div className="grid gap-4 p-5 text-sm">
       <section className="border-b border-border pb-4" aria-labelledby="score-summary-title">
-        <div id="score-summary-title" className="text-xs font-medium text-muted-foreground">最终评分</div>
-        <div className="mt-1 text-2xl font-semibold tabular-nums text-info-foreground">{Math.round(details.total / 100)} 分</div>
+        <div id="score-summary-title" className="text-xs font-medium text-muted-foreground">
+          {affinityBonusApplied ? "有效评分（带亲和加成）" : "有效评分"}
+        </div>
+        <div className="mt-1 text-2xl font-semibold tabular-nums text-info-foreground">{formatCandidateScore(displayedEffectiveScore, "scored")}</div>
+        <div className="mt-1 text-xs tabular-nums text-muted-foreground">基础分 {formatCandidateScore(details.total, "scored")}</div>
         <div className="mt-2 text-xs leading-5 text-muted-foreground">
           主要贡献：{factors.map(({ label, factor }) => `${label} ${formatContribution(factor.contribution)}`).join(" · ")}
         </div>
