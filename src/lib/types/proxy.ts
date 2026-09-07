@@ -66,3 +66,5 @@ export type RequestLog = {
   economicContextJson: string | null;
   createdAt: string;
 };
+
+export type RequestLogCostGapFilter = "missing_usage" | "missing_price" | "missing_aggregate";

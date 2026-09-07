@@ -36,17 +36,21 @@ import {
   formatTokenTotal,
   normalizationLabel,
   paginateRequestLogs,
+  matchesRequestLogCostGap,
   pricingStatusLabel,
   requestTraceRows,
   statusFallback,
+  type RequestLogCostGapFilter,
 } from "./requestLogViewModels";
 
 type LogsPageProps = {
   deepLink?: VersionedRequestLogDeepLink | null;
+  costGapFilter?: RequestLogCostGapFilter | null;
+  onClearCostGapFilter?: () => void;
   onOpenRoutingDeepLink?: (link: { kind: "request"; requestLogId: string; source: "request_log" }) => void;
 };
 
-export function LogsPage({ deepLink, onOpenRoutingDeepLink }: LogsPageProps = {}) {
+export function LogsPage({ deepLink, costGapFilter, onClearCostGapFilter, onOpenRoutingDeepLink }: LogsPageProps = {}) {
   const toast = useToast();
   const queryClient = useQueryClient();
   const proxyStatusQuery = useActivityQuery(proxyStatusQueryOptions(false));
@@ -70,9 +74,17 @@ export function LogsPage({ deepLink, onOpenRoutingDeepLink }: LogsPageProps = {}
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const appliedDeepLinkRef = useRef<string | null>(null);
 
+  useEffect(() => {
+    setPage(1);
+  }, [costGapFilter]);
+
+  const visibleLogs = useMemo(
+    () => costGapFilter ? logs.filter((log) => matchesRequestLogCostGap(log, costGapFilter)) : logs,
+    [costGapFilter, logs],
+  );
   const pageInfo = useMemo(
-    () => paginateRequestLogs(logs, page, pageSize),
-    [logs, page, pageSize],
+    () => paginateRequestLogs(visibleLogs, page, pageSize),
+    [visibleLogs, page, pageSize],
   );
   const selected = pageInfo.logs.find((log) => log.id === selectedId) ?? (selectedId ? null : pageInfo.logs[0] ?? null);
   const keyById = useMemo(() => new Map(keys.map((key) => [key.id, key] as const)), [keys]);
@@ -168,10 +180,25 @@ export function LogsPage({ deepLink, onOpenRoutingDeepLink }: LogsPageProps = {}
             className="overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface shadow-[var(--surface-shadow)]"
           >
             {error && <div className="border-b border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">{error}</div>}
+            {costGapFilter ? (
+              <div className="flex items-center justify-between gap-2 border-b border-border bg-surface-subtle px-3 py-2 text-xs text-muted-foreground">
+                <span>当前筛选：{costGapFilterLabel(costGapFilter)} · 共 {visibleLogs.length} 条</span>
+                {onClearCostGapFilter ? (
+                  <Button type="button" size="sm" variant="ghost" onClick={onClearCostGapFilter}>
+                    清除筛选
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
             {logs.length === 0 ? (
               <EmptyState
                 title={loading ? "正在读取使用记录" : "暂无使用记录"}
                 description="启动本地代理并从外部工具发起请求后，这里会出现记录。"
+              />
+            ) : visibleLogs.length === 0 ? (
+              <EmptyState
+                title="没有匹配的使用记录"
+                description={costGapFilter ? `当前筛选「${costGapFilterLabel(costGapFilter)}」没有结果。` : "没有可显示的使用记录。"}
               />
             ) : (
               <RequestLogTable
@@ -352,6 +379,12 @@ function parseRejectedCandidates(json: string | null): RejectedCandidateLog[] {
   } catch {
     return [];
   }
+}
+
+function costGapFilterLabel(filter: RequestLogCostGapFilter) {
+  if (filter === "missing_usage") return "缺用量";
+  if (filter === "missing_price") return "缺基准价";
+  return "缺汇总";
 }
 
 function formatJson(value: string) {

@@ -122,4 +122,28 @@ describe("LogsPage pagination", () => {
     expect(host.querySelector('[data-tour="logs-display-controls"]')).not.toBeNull();
     expect(host.querySelector('[data-tour="logs-list"]')).not.toBeNull();
   });
+
+  it("filters terminal cost gaps and can clear the dashboard deep link", () => {
+    mockState.logs = [
+      { id: "priced", status: "success", totalTokens: 12, estimatedTotalCost: 0.01, costStatus: "complete_single_currency" } as RequestLog,
+      { id: "missing-usage", status: "success", totalTokens: null, estimatedTotalCost: null, costStatus: "stream_usage_missing" } as RequestLog,
+      { id: "in-progress", status: "in_progress", totalTokens: null, estimatedTotalCost: null, costStatus: null } as RequestLog,
+    ];
+    const onClearCostGapFilter = vi.fn();
+    act(() => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <ToastProvider>
+            <LogsPage costGapFilter="missing_usage" onClearCostGapFilter={onClearCostGapFilter} />
+          </ToastProvider>
+        </QueryClientProvider>,
+      );
+    });
+
+    expect(host.textContent).toContain("当前筛选：缺用量 · 共 1 条");
+    const clearButton = Array.from(host.querySelectorAll("button")).find((button) => button.textContent === "清除筛选");
+    expect(clearButton).toBeDefined();
+    act(() => clearButton?.click());
+    expect(onClearCostGapFilter).toHaveBeenCalledTimes(1);
+  });
 });

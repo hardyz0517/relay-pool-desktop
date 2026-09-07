@@ -1,6 +1,6 @@
 import { parseTimestampLikeDate } from "@/lib/time";
 import { effectiveRateMultiplierForCredit, formatRate } from "@/lib/formatters";
-import type { RequestLog } from "@/lib/types/proxy";
+import type { RequestLog, RequestLogCostGapFilter } from "@/lib/types/proxy";
 import type { KeyPoolItem } from "@/lib/types/stationKeys";
 import type { Station } from "@/lib/types/stations";
 
@@ -223,17 +223,63 @@ export function paginateRequestLogs(logs: RequestLog[], page: number, pageSize: 
   };
 }
 
+export type { RequestLogCostGapFilter } from "@/lib/types/proxy";
+
+export type RequestLogCostDisplay =
+  | "in_progress"
+  | "zero"
+  | "priced"
+  | "missing_usage"
+  | "missing_price";
+
+export function requestLogCostDisplay(log: RequestLog): RequestLogCostDisplay {
+  if (isRequestInProgress(log) && log.estimatedTotalCost == null) return "in_progress";
+  if (log.totalTokens === 0 && log.estimatedTotalCost == null) return "zero";
+  if (log.estimatedTotalCost != null) return "priced";
+  if (log.totalTokens == null) return "missing_usage";
+  return "missing_price";
+}
+
 export function formatTokenTotal(log: RequestLog) {
   if (log.totalTokens == null) {
-    return log.costStatus === "unknown_usage" ? "用量未知" : "暂无";
+    return isRequestInProgress(log) ? "处理中" : "用量未知";
   }
   return `${log.totalTokens.toLocaleString("zh-CN")} t`;
 }
 
 export function formatRequestCost(log: RequestLog) {
-  if (log.totalTokens === 0 && log.estimatedTotalCost == null) return "$0.000000";
-  if (log.estimatedTotalCost == null) return pricingStatusLabel(log.costStatus);
-  return `$${log.estimatedTotalCost.toFixed(6)}`;
+  switch (requestLogCostDisplay(log)) {
+    case "in_progress":
+      return "处理中";
+    case "zero":
+      return "$0.000000";
+    case "priced":
+      return `$${(log.estimatedTotalCost ?? 0).toFixed(6)}`;
+    case "missing_usage":
+      return "用量未知";
+    case "missing_price":
+      return "计费信息不完整";
+  }
+}
+
+function isMissingUsageStatus(status: string | null | undefined) {
+  return status === "missing_usage"
+    || status === "stream_usage_missing"
+    || status === "unknown_usage";
+}
+
+export function matchesRequestLogCostGap(log: RequestLog, filter: RequestLogCostGapFilter) {
+  if (isRequestInProgress(log)) return false;
+  if (filter === "missing_usage") {
+    return requestLogCostDisplay(log) === "missing_usage" || isMissingUsageStatus(log.costStatus);
+  }
+  if (filter === "missing_price") {
+    return requestLogCostDisplay(log) === "missing_price"
+      && log.costStatus !== "not_applicable"
+      && log.costStatus !== "no_attempts"
+      && !isMissingUsageStatus(log.costStatus);
+  }
+  return log.costStatus == null || log.costStatus === "";
 }
 
 export function pricingStatusLabel(value: string | null | undefined) {

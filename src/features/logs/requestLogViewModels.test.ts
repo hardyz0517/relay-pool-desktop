@@ -8,6 +8,7 @@ import {
   formatKeyRate,
   formatRequestCost,
   latencyBreakdown,
+  matchesRequestLogCostGap,
   requestInputTokenCount,
   pricingStatusLabel,
 } from "./requestLogViewModels";
@@ -77,8 +78,67 @@ describe("formatKeyRate", () => {
 describe("formatRequestCost", () => {
   it("renders explicitly observed zero-token usage as zero cost", () => {
     expect(
-      formatRequestCost({ totalTokens: 0, estimatedTotalCost: null, costStatus: null } as RequestLog),
+      formatRequestCost({ totalTokens: 0, estimatedTotalCost: null, costStatus: null, status: "success" } as RequestLog),
     ).toBe("$0.000000");
+  });
+
+  it("never falls back to a generic unknown fee label", () => {
+    expect(
+      formatRequestCost({ totalTokens: null, estimatedTotalCost: null, costStatus: null, status: "failed" } as RequestLog),
+    ).toBe("用量未知");
+    expect(
+      formatRequestCost({
+        totalTokens: 12,
+        estimatedTotalCost: null,
+        costStatus: "incomplete",
+        status: "success",
+      } as RequestLog),
+    ).toBe("计费信息不完整");
+    expect(
+      formatRequestCost({
+        totalTokens: 12,
+        estimatedTotalCost: null,
+        costStatus: "missing_model_price",
+        status: "success",
+      } as RequestLog),
+    ).toBe("计费信息不完整");
+    expect(
+      formatRequestCost({
+        totalTokens: null,
+        estimatedTotalCost: null,
+        costStatus: null,
+        status: "in_progress",
+      } as RequestLog),
+    ).toBe("处理中");
+  });
+});
+
+describe("matchesRequestLogCostGap", () => {
+  it("classifies terminal cost gaps without treating in-progress rows as incomplete", () => {
+    expect(
+      matchesRequestLogCostGap(
+        { totalTokens: null, estimatedTotalCost: null, costStatus: null, status: "in_progress" } as RequestLog,
+        "missing_usage",
+      ),
+    ).toBe(false);
+    expect(
+      matchesRequestLogCostGap(
+        { totalTokens: null, estimatedTotalCost: null, costStatus: "stream_usage_missing", status: "success" } as RequestLog,
+        "missing_usage",
+      ),
+    ).toBe(true);
+    expect(
+      matchesRequestLogCostGap(
+        { totalTokens: 12, estimatedTotalCost: null, costStatus: "incomplete", status: "success" } as RequestLog,
+        "missing_price",
+      ),
+    ).toBe(true);
+    expect(
+      matchesRequestLogCostGap(
+        { totalTokens: 12, estimatedTotalCost: null, costStatus: null, status: "success" } as RequestLog,
+        "missing_aggregate",
+      ),
+    ).toBe(true);
   });
 });
 
