@@ -46,6 +46,7 @@
     "verify:release:prebundle": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1 -Profile release -ReleasePhase prebundle",
     "verify:release:postbundle": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1 -Profile release -ReleasePhase postbundle",
     "theme:audit": "node scripts/theme-audit.mjs",
+    "test:ui-copy": "node scripts/ui-copy-terminology.test.mjs",
     "preview": "vite preview --host 127.0.0.1",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",

@@ -333,7 +333,7 @@ export function statusLabel(tone: StatusTone) {
     case "available":
       return "正常";
     case "degraded":
-      return "降级";
+      return "欠佳";
     case "unavailable":
       return "错误";
     case "skipped":
@@ -472,7 +472,7 @@ function bucketToCell(bucket: ChannelStatusBucket, modelLabel: string): TrendCel
       `时间：${timeLabel}`,
       `状态：${availabilityLabel}`,
       `总耗时：${latencyLabel}`,
-      `样本：${bucket.counts.total} · 正常 ${bucket.counts.available} · 降级 ${bucket.counts.degraded} · 错误 ${bucket.counts.unavailable} · 跳过 ${bucket.counts.skipped} · 排除 ${bucket.counts.excluded}`,
+      `样本：${bucket.counts.total} · 正常 ${bucket.counts.available} · 欠佳 ${bucket.counts.degraded} · 错误 ${bucket.counts.unavailable} · 跳过 ${bucket.counts.skipped} · 排除 ${bucket.counts.excluded}`,
       bucket.counts.excluded > 0
         ? `排除原因：${Object.entries(bucket.exclusionCounts).map(([reason, count]) => `${reason}:${count}`).join(", ")}`
         : null,
@@ -576,7 +576,7 @@ function outcomeLabel(outcome: ChannelStatusOutcome) {
     case "available":
       return "正常";
     case "degraded":
-      return "降级";
+      return "欠佳";
     case "unavailable":
       return "错误";
     case "skipped":
@@ -591,7 +591,7 @@ function bucketStateLabel(state: ChannelStatusBucket["state"]) {
     case "available":
       return "正常";
     case "degraded":
-      return "降级";
+      return "欠佳";
     case "unavailable":
       return "错误";
     case "skipped_only":

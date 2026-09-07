@@ -304,7 +304,7 @@ export function PricingPage({ onOpenRoutingDeepLink }: PricingPageProps) {
                 options={[
                   { value: "all", label: "全部结果" },
                   { value: "success", label: "仅正常" },
-                  { value: "degraded", label: "仅降级" },
+                  { value: "degraded", label: "仅欠佳" },
                   { value: "failure", label: "仅失败" },
                   { value: "skipped", label: "仅跳过" },
                   { value: "running", label: "运行中" },
@@ -476,7 +476,7 @@ function PricingMonitorStatus({
     running: { label: "运行中", className: "border-info-border bg-info-surface text-info-foreground" },
     untested: { label: "未测试", className: "border-border bg-muted text-muted-foreground" },
     available: { label: "正常", className: "border-success-border bg-success-surface text-success-foreground" },
-    degraded: { label: "降级", className: "border-warning-border bg-warning-surface text-warning-foreground" },
+    degraded: { label: "欠佳", className: "border-warning-border bg-warning-surface text-warning-foreground" },
     unavailable: { label: "失败", className: "border-danger-border bg-danger-surface text-danger-foreground" },
     skipped: { label: "跳过", className: "border-border bg-muted text-muted-foreground" },
     unavailable_data: { label: "暂不可用", className: "border-warning-border bg-warning-surface text-warning-foreground" },

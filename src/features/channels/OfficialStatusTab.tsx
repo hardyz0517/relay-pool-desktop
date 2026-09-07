@@ -187,7 +187,7 @@ function OfficialStatusToolbar({
           options={[
             { value: "all", label: "全部监控状态" },
             { value: "available", label: "可用" },
-            { value: "degraded", label: "降级" },
+            { value: "degraded", label: "欠佳" },
             { value: "unavailable", label: "错误" },
             { value: "unknown", label: "未知" },
           ]}

@@ -49,7 +49,7 @@ const fullSteps = [
   step("full-routing-candidates", "routing", "routing-status", "候选密钥", "候选结果由资格、可靠性、速度、成本和偏好等多个因素共同决定。", "routing-status-tab"),
   step("full-pricing-comparison", "pricing", "pricing-comparison", "成本条件比较", "实际倍率用于比较不同中转站分组的成本条件，但需要结合 Key 可用性共同判断。"),
   step("full-channels-tabs", "channels", "channels-tabs", "三类状态来源", "本地状态、上游官方状态与主动探针来自不同事实来源，不能互相替代。"),
-  step("full-channels-local", "channels", "channels-local-results", "本地状态结果", "这里观察本地监控得到的正常、降级、错误、跳过或无数据等结果。", "channels-local-tab"),
+  step("full-channels-local", "channels", "channels-local-results", "本地状态结果", "这里观察本地监控得到的正常、欠佳、错误、跳过或无数据等结果。", "channels-local-tab"),
   step("full-changes-list", "changes", "changes-list", "变更时间线", "重要告警、恢复和信息类变化按时间集中呈现，便于持续关注运行变化。"),
   step("full-logs-list", "logs", "logs-list", "请求使用记录", "每次经过本地入口的请求都可在这里追溯结果、耗时、用量和成本信息。"),
   step("full-settings-proxy", "settings", "settings-local-proxy", "统一本地入口", "客户端通过固定的 OpenAI-compatible 本地入口接入 Relay Pool；教程不会启动或停止代理。"),
@@ -88,7 +88,7 @@ const keyPoolSteps = [
   step("key-pool-toolbar", "keyPool", "key-pool-toolbar", "过滤密钥", "可按中转站和启用状态缩小范围；新增 Key 只作为入口说明。"),
   step("key-pool-list", "keyPool", "key-pool-list", "密钥池", "每一项都是连接上游的独立凭据单元，Key 与中转站保持从属关系。"),
   step("key-pool-state-columns", "keyPool", "key-pool-list", "状态与调度", "列表中的启用状态与调度资格含义不同，启用的 Key 也可能暂时不能参与路由。"),
-  step("key-pool-monitor-column", "keyPool", "key-pool-list", "监控结论", "列表中的未检测、检测中、正常、降级和错误用于观察连通性与健康，不等于站点官方状态。"),
+  step("key-pool-monitor-column", "keyPool", "key-pool-list", "监控结论", "列表中的未检测、检测中、正常、欠佳和错误用于观察连通性与健康，不等于站点官方状态。"),
   step("key-pool-provider-actions", "keyPool", "key-pool-list", "归属与维护", "有数据时，列表会显示中转站归属和维护入口；教程不会发起真实连通性测试。"),
 ] as const;
 
@@ -113,7 +113,7 @@ const pricingSteps = [
 const channelsSteps = [
   step("channels-tabs", "channels", "channels-tabs", "三类状态视图", "本地状态、官方状态和探针管理来自不同事实来源，不能互相替代。"),
   step("channels-local-toolbar", "channels", "channels-local-toolbar", "本地观测范围", "时间范围、启用状态和结果筛选控制当前本地监控记录的观察范围。", "channels-local-tab"),
-  step("channels-local-results", "channels", "channels-local-results", "本地状态结果", "正常、降级、错误、跳过和无数据表示本地监控得到的不同结果。", "channels-local-tab"),
+  step("channels-local-results", "channels", "channels-local-results", "本地状态结果", "正常、欠佳、错误、跳过和无数据表示本地监控得到的不同结果。", "channels-local-tab"),
   step("channels-official-summary", "channels", "channels-official-summary", "上游官方状态", "该视图来自中转站公开或已采集的官方 Monitor，不由本地主动探针计算。", "channels-official-tab"),
   step("channels-official-results", "channels", "channels-official-results", "采集与服务状态", "服务可用性和数据采集状态是两件事；过期或采集失败时可能保留上次有效结果。", "channels-official-tab"),
   step("channels-monitoring-list", "channels", "channels-monitoring-list", "探针配置", "这里管理本地主动检测对象、范围和结果；教程不会新建、运行或取消探针。", "channels-monitoring-tab"),

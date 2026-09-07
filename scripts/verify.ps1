@@ -43,6 +43,7 @@ function Invoke-ArchitectureGates {
     Invoke-Checked "Architecture bypass fixtures" node @("scripts/architecture/check-fixtures.mjs")
     Invoke-Checked "Station collection authority" node @("scripts/station-collection-authority.test.mjs")
     Invoke-Checked "Balance scope authority" node @("scripts/balance-scope-authority.test.mjs")
+    Invoke-Checked "UI terminology" node @("scripts/ui-copy-terminology.test.mjs")
     Invoke-Checked "TypeScript boundaries" node @("scripts/architecture/check-typescript-boundaries.mjs")
     Invoke-Checked "Rust test topology" node @("scripts/architecture/check-rust-test-topology.mjs")
     Invoke-Checked "Generated IPC bindings" $pnpm @("generate:bindings", "--check")

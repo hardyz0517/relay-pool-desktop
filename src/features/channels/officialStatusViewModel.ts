@@ -39,5 +39,5 @@ export function sourceStateLabel(value: StationPublishedStatusSourceState): stri
   return value === "available" ? "正常" : value === "degraded" ? "部分解析" : value === "failed" ? "失败" : value === "authorization_required" ? "需要授权" : "未知";
 }
 function sampleTone(value: StationPublishedStatusOutcome): StatusTrendTone { return value === "available" || value === "degraded" || value === "unavailable" ? value : "missing"; }
-function outcomeLabel(value: StationPublishedStatusOutcome) { return value === "available" ? "正常" : value === "degraded" ? "降级" : value === "unavailable" ? "错误" : "未知"; }
+function outcomeLabel(value: StationPublishedStatusOutcome) { return value === "available" ? "正常" : value === "degraded" ? "欠佳" : value === "unavailable" ? "错误" : "未知"; }
 function formatTime(value: number | null) { return value == null ? "--" : new Date(value).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }); }

@@ -126,7 +126,7 @@ describe("KeyConnectivityTestDialog", () => {
       },
     });
 
-    expect(responsesFallback.map((line) => line.text)).toContain("已降级为非流式 Responses，测试成功");
+    expect(responsesFallback.map((line) => line.text)).toContain("已切换为非流式 Responses，测试成功");
     expect(chatFallback.map((line) => line.text)).toContain("已回退到 Chat Completions，测试成功");
     expect(chatFallback.map((line) => line.text)).toContain("协议 Chat Completions · 标准 API 请求档案 · 42ms");
   });

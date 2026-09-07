@@ -8,7 +8,7 @@ export type KeyPoolMonitorStatus = {
 
 const outcomeStatus: Record<ChannelStatusOutcome, KeyPoolMonitorStatus> = {
   available: { label: "正常", tone: "healthy" },
-  degraded: { label: "降级", tone: "warning" },
+  degraded: { label: "欠佳", tone: "warning" },
   unavailable: { label: "错误", tone: "error" },
   skipped: { label: "跳过", tone: "disabled" },
   missing: { label: "未检测", tone: "info" },

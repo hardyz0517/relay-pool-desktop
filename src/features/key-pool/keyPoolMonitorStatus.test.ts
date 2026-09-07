@@ -30,7 +30,7 @@ describe("keyPoolMonitorStatus", () => {
   it("maps channel status facts into key-pool status badges", () => {
     expect(keyPoolMonitorStatus(monitor(), [])).toEqual({ label: "未检测", tone: "info" });
     expect(keyPoolMonitorStatus(monitor(), [statusRow("available")])).toEqual({ label: "正常", tone: "healthy" });
-    expect(keyPoolMonitorStatus(monitor(), [statusRow("degraded")])).toEqual({ label: "降级", tone: "warning" });
+    expect(keyPoolMonitorStatus(monitor(), [statusRow("degraded")])).toEqual({ label: "欠佳", tone: "warning" });
     expect(keyPoolMonitorStatus(monitor(), [statusRow("unavailable")])).toEqual({ label: "错误", tone: "error" });
     expect(keyPoolMonitorStatus(monitor(), [statusRow("missing", true)])).toEqual({ label: "检测中", tone: "info" });
   });

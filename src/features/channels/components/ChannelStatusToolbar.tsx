@@ -101,7 +101,7 @@ export function ChannelStatusToolbar({
           options={[
             { value: "all", label: "全部状态" },
             { value: "available", label: "正常" },
-            { value: "degraded", label: "降级" },
+            { value: "degraded", label: "欠佳" },
             { value: "unavailable", label: "错误" },
             { value: "skipped", label: "跳过" },
             { value: "missing", label: "无数据" },

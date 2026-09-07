@@ -113,7 +113,7 @@ describe("channel status V2 view model", () => {
     row.selectedWindow.latestOutcome = "available";
     const view = buildRowView(row, "last24h");
 
-    expect(view.currentLabel).toBe("降级");
+    expect(view.currentLabel).toBe("欠佳");
     expect(view.groupName).toBe("plus");
     expect(view.visualPlatform).toBe("openai");
     expect(view.availabilityPercent).toBe(92.5);

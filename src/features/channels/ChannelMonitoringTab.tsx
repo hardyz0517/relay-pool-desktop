@@ -685,7 +685,7 @@ function TableHeadCell({
 }
 
 type PrimaryModelStatusView = {
-  label: "正常" | "降级" | "失败" | "未运行";
+  label: "正常" | "欠佳" | "失败" | "未运行";
   tone: "healthy" | "warning" | "error" | "info";
 };
 
@@ -700,13 +700,13 @@ function getPrimaryModelStatusView(
     return { label: "失败", tone: "error" };
   }
   if (latest.outcome === "degraded" || latest.outcome === "missing") {
-    return { label: "降级", tone: "warning" };
+    return { label: "欠佳", tone: "warning" };
   }
   const normalizedPrimary = normalizeModelName(primaryModel);
   const effectiveModel = normalizeModelName(latest.effectiveModel);
   const usedDifferentModel = latest.usedFallback ||
     Boolean(effectiveModel && effectiveModel !== normalizedPrimary);
-  return usedDifferentModel ? { label: "降级", tone: "warning" } : { label: "正常", tone: "healthy" };
+  return usedDifferentModel ? { label: "欠佳", tone: "warning" } : { label: "正常", tone: "healthy" };
 }
 
 function normalizeModelName(model: string | null) {

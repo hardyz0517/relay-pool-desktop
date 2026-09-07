@@ -75,7 +75,7 @@ export function RuntimeDiagnosticsPage() {
           <FilterInput label="Interaction ID" value={interactionId} onChange={(value) => updateFilter(() => setInteractionId(value))} />
         </div>
         {query.isError && <div role="alert" className="border border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">运行诊断暂时不可用，请稍后重试。</div>}
-        {page?.sinkDegraded && <div className="border border-warning-border bg-warning-surface px-3 py-2 text-sm text-warning-foreground">日志写入处于降级状态，部分事件可能缺失。</div>}
+        {page?.sinkDegraded && <div className="border border-warning-border bg-warning-surface px-3 py-2 text-sm text-warning-foreground">日志写入处于欠佳状态，部分事件可能缺失。</div>}
         {page && <RuntimeHealthSummary page={page} />}
         {query.isPending && !page ? <EmptyState title="正在读取运行诊断" /> : page && page.events.length === 0 ? <EmptyState title="没有匹配的运行事件" description={page.issueCount ? "部分日志片段无法安全解析，已被隔离。" : "调整筛选条件后重试。"} /> : page && <RuntimeEventTable events={page.events} />}
         <div className="flex items-center justify-between text-xs text-muted-foreground">
@@ -89,7 +89,7 @@ export function RuntimeDiagnosticsPage() {
 
 function RuntimeHealthSummary({ page }: { page: RuntimeDiagnosticsPageDto }) {
   return <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4" aria-label="日志健康摘要">
-    <SummaryItem label="写入器" value={page.sinkDegraded ? "降级" : "正常"} tone={page.sinkDegraded ? "text-warning-foreground" : "text-success-foreground"} />
+    <SummaryItem label="写入器" value={page.sinkDegraded ? "欠佳" : "正常"} tone={page.sinkDegraded ? "text-warning-foreground" : "text-success-foreground"} />
     <SummaryItem label="丢弃 / 拒绝" value={`${page.droppedCount} / ${page.rejectedCount}`} />
     <SummaryItem label="恢复片段" value={`${page.recoveryRecovered}/${page.recoveryExamined}（跳过 ${page.recoverySkipped}）`} />
     <SummaryItem label="保留清理" value={`${page.retentionDeleted}/${page.retentionConsidered}（未知 ${page.retentionSkippedUnknown}）`} />

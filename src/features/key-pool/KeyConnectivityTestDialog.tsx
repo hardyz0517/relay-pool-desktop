@@ -212,7 +212,7 @@ export function buildConnectivityConsoleLines({
     const statusLine = protocolFallback
       ? "已回退到 Chat Completions，测试成功"
       : streamFallback
-        ? "已降级为非流式 Responses，测试成功"
+        ? "已切换为非流式 Responses，测试成功"
       : result.ok
         ? "测试成功"
         : "测试未通过";
