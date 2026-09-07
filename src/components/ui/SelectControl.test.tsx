@@ -133,6 +133,8 @@ describe("SelectControl positioning", () => {
     expect(menu.style.top).toBe("");
     expect(menu.style.bottom).toBe("238px");
     expect(menu.style.maxHeight).toBe("320px");
+    expect(menu.className).toContain("origin-bottom");
+    expect(menu.className).toContain("selectMenuInFromBottom");
 
     await act(async () => root.unmount());
   });

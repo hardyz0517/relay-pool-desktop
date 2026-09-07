@@ -7,6 +7,7 @@ import {
   ConfirmDialog,
   EmptyState,
   IconButton,
+  PageSizeSelect,
   Pagination,
   SegmentedControl,
   SelectControl,
@@ -434,7 +435,7 @@ export function ChangeCenterPage({
             )}
           </div>
           {shouldShowPagination ? <div data-testid="change-center-pagination-surface" className="mt-4 flex min-h-12 flex-wrap items-center justify-between gap-3 border border-border bg-surface px-3 py-2 text-xs text-muted-foreground">
-            <div className="flex flex-wrap items-center gap-3"><span>第 {pageInfo.currentPage} 页：{pageInfo.startIndex}-{pageInfo.endIndex}</span><label className="flex items-center gap-2"><span>每页数量</span><select aria-label="每页数量" value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); resetPagination(); }} className="h-8 rounded-[4px] border border-border bg-surface px-2 text-sm text-foreground outline-none focus:border-ring">{PAGE_SIZE_OPTIONS.map((size) => <option key={size} value={size}>{size}</option>)}</select></label></div>
+            <div className="flex flex-wrap items-center gap-3"><span>第 {pageInfo.currentPage} 页：{pageInfo.startIndex}-{pageInfo.endIndex}</span><label className="flex items-center gap-2"><span>每页数量</span><PageSizeSelect ariaLabel="每页数量" value={pageSize} options={PAGE_SIZE_OPTIONS} onChange={(nextPageSize) => { setPageSize(nextPageSize); resetPagination(); }} /></label></div>
             <Pagination ariaLabel="变更中心分页" page={pageInfo.currentPage} totalPages={pageInfo.totalPages} disabled={activeQuery.isFetching || jumpingPage != null} onPageChange={changePage} />
           </div> : null}
         </div>

@@ -95,6 +95,14 @@ describe("OfficialStatusTab", () => {
     expect(mocks.controller?.changePage).toHaveBeenCalledWith(2);
     expect(host.querySelector<HTMLInputElement>('[aria-label="搜索官方状态"]')).not.toBeNull();
     expect(host.querySelector('nav[aria-label="官方状态分页"]')).not.toBeNull();
+    expect(host.querySelector("select")).toBeNull();
+
+    const pageSize = host.querySelector<HTMLButtonElement>('button[aria-label="每页数量"]');
+    expect(pageSize?.textContent).toContain("100");
+    act(() => pageSize?.click());
+    const sizeOption = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="option"]')).find((option) => option.textContent === "20");
+    act(() => sizeOption?.click());
+    expect(mocks.controller?.setPageSize).toHaveBeenCalledWith(20);
   });
 
   it("disables pagination after a failed page with no retained data", () => {

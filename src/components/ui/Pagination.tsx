@@ -1,6 +1,9 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import { SelectControl } from "./SelectControl";
 
 export type PaginationItem = number | "ellipsis";
+
+const DEFAULT_PAGE_SIZE_OPTIONS = [20, 50, 100] as const;
 
 type PaginationProps = {
   ariaLabel: string;
@@ -8,6 +11,14 @@ type PaginationProps = {
   totalPages: number;
   disabled?: boolean;
   onPageChange: (page: number) => void;
+};
+
+type PageSizeSelectProps = {
+  value: number;
+  onChange: (pageSize: number) => void;
+  options?: readonly number[];
+  ariaLabel?: string;
+  disabled?: boolean;
 };
 
 function safePageNumber(value: number) {
@@ -41,6 +52,27 @@ export function buildPaginationItems(page: number, totalPages: number): Paginati
   });
 
   return items;
+}
+
+export function PageSizeSelect({
+  value,
+  onChange,
+  options = DEFAULT_PAGE_SIZE_OPTIONS,
+  ariaLabel = "每页数量",
+  disabled = false,
+}: PageSizeSelectProps) {
+  return (
+    <SelectControl
+      ariaLabel={ariaLabel}
+      value={String(value)}
+      options={options.map((size) => ({ value: String(size), label: String(size) }))}
+      onChange={(nextPageSize) => onChange(Number(nextPageSize))}
+      disabled={disabled}
+      size="compact"
+      className="tabular-nums"
+      menuClassName="tabular-nums"
+    />
+  );
 }
 
 export function Pagination({ ariaLabel, page, totalPages, disabled = false, onPageChange }: PaginationProps) {

@@ -25,6 +25,8 @@ export type SelectOption<T extends string = string> = {
   disabled?: boolean;
 };
 
+export type SelectControlSize = "default" | "compact";
+
 type SelectControlProps<T extends string = string> = {
   value: T;
   options: SelectOption<T>[];
@@ -36,6 +38,7 @@ type SelectControlProps<T extends string = string> = {
   searchPlaceholder?: string;
   emptyLabel?: ReactNode;
   disabled?: boolean;
+  size?: SelectControlSize;
   className?: string;
   menuClassName?: string;
   menuAlign?: "start" | "end";
@@ -46,7 +49,8 @@ type MenuPosition = {
   bottom: number | null;
   left: number;
   top: number | null;
-  width: number;
+  width: number | "max-content";
+  maxWidth: number;
   maxHeight: number;
 };
 
@@ -64,6 +68,7 @@ export function SelectControl<T extends string>({
   searchPlaceholder = "搜索...",
   emptyLabel = "无匹配项",
   disabled = false,
+  size = "default",
   className,
   menuClassName,
   menuAlign = "start",
@@ -116,7 +121,7 @@ export function SelectControl<T extends string>({
       return;
     }
     updatePosition();
-  }, [filteredOptions.length, menuAlign, menuMinWidth, open, searchable]);
+  }, [filteredOptions.length, menuAlign, menuMinWidth, open, searchable, size]);
 
   useEffect(() => {
     if (!open) {
@@ -217,20 +222,20 @@ export function SelectControl<T extends string>({
     const maxHeight = Math.min(MAX_MENU_HEIGHT, openAbove ? spaceAbove : spaceBelow);
     // A caller may request a wider menu for rich option labels, but it must remain inside
     // the viewport so the portal does not create an unreachable horizontal overflow.
-    const menuWidth = Math.min(
-      Math.max(rect.width, menuMinWidth),
-      Math.max(0, window.innerWidth - viewportPadding * 2),
-    );
-    const preferredLeft = menuAlign === "end" ? rect.right - menuWidth : rect.left;
+    const viewportMax = Math.max(0, window.innerWidth - viewportPadding * 2);
+    const fitContent = size === "compact";
+    const menuWidth = fitContent ? null : Math.min(Math.max(rect.width, menuMinWidth), viewportMax);
+    const preferredLeft = menuWidth != null && menuAlign === "end" ? rect.right - menuWidth : rect.left;
+    const maxLeft = menuWidth == null
+      ? window.innerWidth - viewportPadding - 48
+      : window.innerWidth - menuWidth - viewportPadding;
 
     setPosition({
       bottom: openAbove ? window.innerHeight - rect.top + gap : null,
-      left: Math.max(
-        viewportPadding,
-        Math.min(preferredLeft, window.innerWidth - menuWidth - viewportPadding),
-      ),
+      left: Math.max(viewportPadding, Math.min(preferredLeft, maxLeft)),
       top: openAbove ? null : rect.bottom + gap,
-      width: menuWidth,
+      width: menuWidth ?? "max-content",
+      maxWidth: viewportMax,
       maxHeight,
     });
   }
@@ -339,7 +344,8 @@ export function SelectControl<T extends string>({
         onClick={() => !disabled && setOpen((current) => !current)}
         onKeyDown={handleTriggerKeyDown}
         className={cn(
-          "inline-flex h-8 min-w-[132px] cursor-pointer items-center justify-between gap-2 rounded-[var(--surface-radius)] border border-border bg-surface px-3 text-left text-sm text-foreground shadow-surface outline-none transition duration-150 hover:border-ring/30 hover:bg-hover focus:border-ring/40 focus:ring-2 focus:ring-ring/20 disabled:cursor-not-allowed disabled:opacity-60",
+          "inline-flex h-8 cursor-pointer items-center justify-between gap-2 rounded-[var(--surface-radius)] border border-border bg-surface text-left text-sm text-foreground outline-none transition duration-150 hover:border-ring/30 hover:bg-hover focus:border-ring/40 focus:ring-2 focus:ring-ring/20 disabled:cursor-not-allowed disabled:opacity-60",
+          size === "compact" ? "min-w-0 px-2 shadow-none" : "min-w-[132px] px-3 shadow-surface",
           open && "border-ring/40 bg-surface ring-2 ring-ring/20",
           className,
         )}
@@ -354,7 +360,8 @@ export function SelectControl<T extends string>({
         </span>
         <ChevronDown
           className={cn(
-            "h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-150",
+            "shrink-0 text-muted-foreground transition-transform duration-200 ease-out",
+            size === "compact" ? "h-3.5 w-3.5" : "h-4 w-4",
             open && "rotate-180 text-foreground",
           )}
         />
@@ -369,7 +376,11 @@ export function SelectControl<T extends string>({
           aria-label={ariaLabel}
           onKeyDown={handleMenuKeyDown}
           className={cn(
-            "fixed z-[80] overflow-auto rounded-[var(--surface-radius)] border border-border bg-popover p-1 text-sm text-foreground shadow-popover outline-none [scrollbar-width:none] motion-safe:animate-[selectMenuIn_140ms_ease-out] [&::-webkit-scrollbar]:hidden",
+            "fixed z-[80] overflow-auto rounded-[var(--surface-radius)] border border-border bg-popover p-1 text-sm text-foreground shadow-popover outline-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+            size === "compact" && "w-max",
+            position.bottom != null
+              ? "origin-bottom motion-safe:animate-[selectMenuInFromBottom_180ms_cubic-bezier(0.16,1,0.3,1)]"
+              : "origin-top motion-safe:animate-[selectMenuIn_180ms_cubic-bezier(0.16,1,0.3,1)]",
             menuClassName,
           )}
           style={{
@@ -377,6 +388,7 @@ export function SelectControl<T extends string>({
             left: position.left,
             top: position.top ?? undefined,
             width: position.width,
+            maxWidth: position.maxWidth,
             maxHeight: position.maxHeight,
           }}
         >
@@ -444,20 +456,22 @@ export function SelectControl<T extends string>({
                   }}
                   onClick={() => chooseOption(option)}
                   className={cn(
-                    "flex min-h-8 w-full cursor-pointer items-center justify-between gap-3 rounded-[calc(var(--surface-radius)-3px)] px-2.5 py-1.5 text-left disabled:cursor-not-allowed disabled:opacity-45",
+                    "flex min-h-8 cursor-pointer items-center rounded-[calc(var(--surface-radius)-3px)] text-left transition-colors duration-100 disabled:cursor-not-allowed disabled:opacity-45",
+                    size === "compact" ? "w-full justify-start gap-1.5 px-2 py-1.5" : "w-full justify-between gap-3 px-2.5 py-1.5",
                     usingPointerHighlight
                       ? "hover:bg-selected hover:text-selected-foreground"
                       : active && "bg-selected text-selected-foreground",
                     selected && "font-medium",
                   )}
                 >
-                  <span className="flex min-w-0 flex-1 items-center gap-2">
+                  <span className={cn("flex min-w-0 items-center gap-2", size !== "compact" && "flex-1")}>
                     {option.leadingIcon ? (
                       <span className="shrink-0 text-muted-foreground">{option.leadingIcon}</span>
                     ) : null}
                     <span
                       className={cn(
-                        "min-w-0 flex-1",
+                        "min-w-0",
+                        size !== "compact" && "flex-1",
                         option.descriptionPlacement === "end" && "flex items-center justify-between gap-3",
                       )}
                     >
@@ -476,7 +490,11 @@ export function SelectControl<T extends string>({
                       ) : null}
                     </span>
                   </span>
-                  {selected ? <Check className="h-4 w-4 shrink-0 text-primary" /> : null}
+                  {selected ? (
+                    <Check className={cn("shrink-0 text-primary", size === "compact" ? "h-3.5 w-3.5" : "h-4 w-4")} />
+                  ) : size === "compact" ? (
+                    <span className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  ) : null}
                 </button>
               </Fragment>
             );

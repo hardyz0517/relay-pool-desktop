@@ -16,6 +16,7 @@ import { StatusTrend } from "@/components/status/StatusTrend";
 import {
   Button,
   EmptyState,
+  PageSizeSelect,
   Pagination,
   SegmentedControl,
   SelectControl,
@@ -110,16 +111,12 @@ export function OfficialStatusTab() {
             </span>
             <label className="flex items-center gap-2">
               <span>每页数量</span>
-              <select
-                aria-label="每页数量"
+              <PageSizeSelect
+                ariaLabel="每页数量"
                 value={controller.pageSize}
-                onChange={(event) => controller.setPageSize(Number(event.target.value))}
-                className="h-8 rounded-[4px] border border-border bg-surface px-2 text-sm text-foreground outline-none focus:border-ring"
-              >
-                {OFFICIAL_STATUS_PAGE_SIZE_OPTIONS.map((size) => (
-                  <option key={size} value={size}>{size}</option>
-                ))}
-              </select>
+                options={OFFICIAL_STATUS_PAGE_SIZE_OPTIONS}
+                onChange={controller.setPageSize}
+              />
             </label>
           </div>
           <Pagination

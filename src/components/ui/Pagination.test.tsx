@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
-import { Pagination, buildPaginationItems } from "./Pagination";
+import { PageSizeSelect, Pagination, buildPaginationItems } from "./Pagination";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -39,5 +39,47 @@ describe("Pagination", () => {
     expect(onPageChange).toHaveBeenNthCalledWith(2, 2);
 
     await act(async () => root.unmount());
+  });
+
+  it("reuses SelectControl for compact page-size choices", async () => {
+    const onChange = vi.fn();
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(
+        <PageSizeSelect
+          ariaLabel="每页记录数"
+          value={20}
+          options={[20, 50, 100]}
+          onChange={onChange}
+        />,
+      );
+    });
+
+    const trigger = host.querySelector<HTMLButtonElement>('button[aria-label="每页记录数"]')!;
+    expect(host.querySelector("select")).toBeNull();
+    expect(trigger.className).toContain("min-w-0");
+    expect(trigger.className).toContain("shadow-none");
+
+    await act(async () => trigger.click());
+    const menu = document.querySelector<HTMLElement>('[role="listbox"]')!;
+    const selectedOption = document.querySelector<HTMLButtonElement>('[role="option"][aria-selected="true"]')!;
+    expect(menu.className).toContain("w-max");
+    expect(menu.style.width).toBe("max-content");
+    expect(selectedOption.className).toContain("w-full");
+    expect(selectedOption.className).toContain("justify-start");
+    expect(selectedOption.className).toContain("gap-1.5");
+    expect(selectedOption.className).not.toContain("justify-between");
+    const hovered = document.querySelectorAll<HTMLButtonElement>('[role="option"]')[1]!;
+    expect(hovered.className).toContain("w-full");
+    expect(Array.from(document.querySelectorAll('[role="listbox"] [role="option"]')).map((option) => option.textContent)).toEqual(["20", "50", "100"]);
+
+    await act(async () => document.querySelectorAll<HTMLButtonElement>('[role="option"]')[1]?.click());
+    expect(onChange).toHaveBeenCalledWith(50);
+
+    await act(async () => root.unmount());
+    host.remove();
   });
 });

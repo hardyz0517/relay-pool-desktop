@@ -1,6 +1,6 @@
 import { Fragment, useMemo } from "react";
 import { ArrowDown, ArrowUp, Database } from "lucide-react";
-import { DataTableLite, Pagination, type DataTableColumn } from "@/components/ui";
+import { DataTableLite, PageSizeSelect, Pagination, type DataTableColumn } from "@/components/ui";
 import { ModelMappingDisplay } from "@/components/status/ModelMappingDisplay";
 import type { RequestLog } from "@/lib/types/proxy";
 import type { KeyPoolItem } from "@/lib/types/stationKeys";
@@ -171,16 +171,12 @@ export function RequestLogPagination({
         <span>第 {pageInfo.startIndex}-{pageInfo.endIndex} 条 / 共 {pageInfo.totalCount} 条</span>
         <label className="flex items-center gap-2">
           <span>每页</span>
-          <select
-            aria-label="每页记录数"
+          <PageSizeSelect
+            ariaLabel="每页记录数"
             value={pageSize}
-            onChange={(event) => onPageSizeChange(Number(event.target.value))}
-            className="h-8 rounded-[4px] border border-border bg-surface px-2 text-sm text-foreground outline-none transition-colors focus:border-ring focus:ring-2 focus:ring-ring/20"
-          >
-            {[20, 50, 100].map((size) => (
-              <option key={size} value={size}>{size}</option>
-            ))}
-          </select>
+            options={[20, 50, 100]}
+            onChange={onPageSizeChange}
+          />
         </label>
       </div>
 

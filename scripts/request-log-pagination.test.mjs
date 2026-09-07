@@ -81,15 +81,19 @@ assert.ok(
 
 assert.ok(
   tableSource.includes("<Pagination") &&
+    tableSource.includes("<PageSizeSelect") &&
+    !tableSource.includes("<select") &&
     tableSource.includes('ariaLabel="使用记录分页"') &&
     tableSource.includes("totalPages={pageInfo.totalPages}") &&
     tableSource.includes("每页") &&
     tableSource.includes("[20, 50, 100]") &&
     paginationSource.includes("buildPaginationItems") &&
+    paginationSource.includes("SelectControl") &&
+    paginationSource.includes('size="compact"') &&
     paginationSource.includes('aria-label="上一页"') &&
     paginationSource.includes('aria-label="下一页"') &&
     paginationSource.includes('aria-current={item === safePage ? "page" : undefined}'),
-  "request log pagination should provide page-size controls and shared classic numbered navigation",
+  "request log pagination should provide page-size controls through the shared SelectControl and classic numbered navigation",
 );
 
 assert.ok(
