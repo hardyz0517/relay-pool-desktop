@@ -242,6 +242,33 @@ async fn startup_reconciliation_marks_in_progress_requests_trace_incomplete_with
     assert_eq!(cost.get::<String, _>(2), "missing_usage");
     assert_eq!(cost.get::<Option<i64>, _>(3), None);
 
+    let aggregate = sqlx::query(
+        "SELECT status, totals_by_currency_json, incomplete_attempts_json
+         FROM routing_request_cost_aggregates WHERE request_id = 'req-reconcile'",
+    )
+    .fetch_one(&mut *connection)
+    .await
+    .expect("request cost aggregate");
+    assert_eq!(aggregate.get::<String, _>(0), "incomplete");
+    assert_eq!(aggregate.get::<String, _>(1), "{}");
+    assert!(aggregate.get::<String, _>(2).contains("missing_usage"));
+
+    let log_cost: String = sqlx::query_scalar(
+        "SELECT cost_status FROM request_logs WHERE request_id = 'req-reconcile'",
+    )
+    .fetch_one(&mut *connection)
+    .await
+    .expect("reconciled cost status");
+    assert_eq!(log_cost, "incomplete");
+
+    let complete_cost: String = sqlx::query_scalar(
+        "SELECT cost_status FROM request_logs WHERE request_id = 'req-complete'",
+    )
+    .fetch_one(&mut *connection)
+    .await
+    .expect("completed cost status");
+    assert_eq!(complete_cost, "no_attempts");
+
     let outcome = sqlx::query(
         "SELECT terminal_kind, terminal_code, classification, request_accepted,
                 replay_disposition, billing_state, retry_disposition,
@@ -331,6 +358,44 @@ async fn startup_reconciliation_uses_bounded_batches_and_durable_progress() {
         .await
         .expect("completion batch");
     assert_eq!(done.report.requests_interrupted, 0);
+    let completed: i64 = sqlx::query_scalar(
+        "SELECT completed FROM routing_lifecycle_reconciliation_progress WHERE singleton_key = 1",
+    )
+    .fetch_one(&mut *connection)
+    .await
+    .expect("completed flag");
+    assert_eq!(completed, 1);
+}
+
+#[tokio::test]
+async fn startup_reconciliation_backfills_terminal_rows_missing_cost_aggregates() {
+    let pool = test_pool().await;
+    seed_completed_request(&pool, "req-missing-aggregate").await;
+    seed_terminal_attempt(&pool, "req-missing-aggregate", 0).await;
+
+    let mut connection = pool.acquire().await.expect("connection");
+    let first = reconcile_startup_interrupted_batch(&mut connection, 7_000, 16)
+        .await
+        .expect("backfill missing aggregates");
+    assert!(!first.has_more);
+    assert_eq!(first.report.requests_interrupted, 0);
+
+    let aggregate = sqlx::query(
+        "SELECT status FROM routing_request_cost_aggregates WHERE request_id = 'req-missing-aggregate'",
+    )
+    .fetch_one(&mut *connection)
+    .await
+    .expect("backfilled aggregate");
+    assert_eq!(aggregate.get::<String, _>(0), "incomplete");
+
+    let cost_status: String = sqlx::query_scalar(
+        "SELECT cost_status FROM request_logs WHERE id = 'req-missing-aggregate'",
+    )
+    .fetch_one(&mut *connection)
+    .await
+    .expect("projected cost status");
+    assert_eq!(cost_status, "incomplete");
+
     let completed: i64 = sqlx::query_scalar(
         "SELECT completed FROM routing_lifecycle_reconciliation_progress WHERE singleton_key = 1",
     )

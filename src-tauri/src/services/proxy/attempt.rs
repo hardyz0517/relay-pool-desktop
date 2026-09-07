@@ -21,7 +21,7 @@ use crate::{
         },
         outcome_orchestrator::{
             attempt_cost_commit_record, interrupted_attempt_cost,
-            request_cost_aggregate_commit_record,
+            missing_usage_request_cost_aggregate, request_cost_aggregate_commit_record,
         },
     },
     observability::correlation,
@@ -106,6 +106,9 @@ impl DualTerminalFinalizationLease {
                         attempt.reservation,
                     )
                 });
+        let unpersisted_ordinal = attempt
+            .as_ref()
+            .map(|(record, _)| record.context.attempt_id.ordinal);
         let correlation_id = correlation::current_or_new();
         Some(tokio::spawn(async move {
             let attempt_persisted = if let Some((attempt_record, attempt_reservation)) = attempt {
@@ -131,16 +134,23 @@ impl DualTerminalFinalizationLease {
                 true
             };
 
-            if attempt_persisted {
-                if let Some(costs) = costs {
-                    if !costs.write(&record).await {
-                        record_finalization_failure(
-                            "proxy.finalization.cost_persistence_failed",
-                            &correlation_id,
-                        );
-                    }
+            if let Some(costs) = costs {
+                let cost_ok = if attempt_persisted {
+                    costs.write(&record).await
+                } else {
+                    costs
+                        .write_unpersisted_attempt_gap(&record, unpersisted_ordinal)
+                        .await
+                };
+                if !cost_ok {
+                    record_finalization_failure(
+                        "proxy.finalization.cost_persistence_failed",
+                        &correlation_id,
+                    );
                 }
+            }
 
+            if attempt_persisted {
                 let final_record = match outcome {
                     FinalizationOutcome::Completed => record.complete(delivery),
                     FinalizationOutcome::Failed { code, detail } => {
@@ -160,7 +170,6 @@ impl DualTerminalFinalizationLease {
                     Some("selected_attempt_terminal_persistence_failed".to_string()),
                 );
                 persist_request_terminal(request, final_record, &correlation_id).await;
-                return;
             }
         }))
     }
@@ -225,6 +234,7 @@ impl CostFinalizationReservations {
                 )
             })
             .collect::<Vec<_>>();
+        let mut persisted = true;
         for (ordinal, reservation) in self.attempt_costs {
             let record = durable_costs
                 .iter()
@@ -235,22 +245,94 @@ impl CostFinalizationReservations {
                 });
             match reservation.send(record).await {
                 Ok(Ok(_)) => {}
-                Ok(Err(_)) | Err(_) => return false,
+                Ok(Err(_)) | Err(_) => persisted = false,
             }
         }
 
-        let Ok(aggregate) = aggregate_request_costs(
+        let aggregate = match aggregate_request_costs(
             &attempted_ordinals
                 .iter()
                 .map(|ordinal| AttemptId::new(request_id.clone(), *ordinal))
                 .collect::<Vec<_>>(),
             &durable_costs,
-        ) else {
-            return false;
+        ) {
+            Ok(aggregate) => request_cost_aggregate_commit_record(request_id, &aggregate, now_ms),
+            Err(_) => {
+                persisted = false;
+                missing_usage_request_cost_aggregate(request_id, &attempted_ordinals, now_ms)
+            }
         };
-        let aggregate = request_cost_aggregate_commit_record(request_id, &aggregate, now_ms);
         match self.aggregate.send(aggregate).await {
-            Ok(Ok(_)) => true,
+            Ok(Ok(_)) => persisted,
+            Ok(Err(_)) | Err(_) => false,
+        }
+    }
+
+    async fn write_unpersisted_attempt_gap(
+        self,
+        record: &PendingFinalRequestRecord,
+        unpersisted_ordinal: Option<u16>,
+    ) -> bool {
+        let now_ms = now_millis_for_services() as i64;
+        let request_id = record.context().request_id.clone();
+        let attempted_ordinals = self
+            .attempt_costs
+            .iter()
+            .map(|(ordinal, _)| *ordinal)
+            .collect::<Vec<_>>();
+        let persistable_ordinals = attempted_ordinals
+            .iter()
+            .copied()
+            .filter(|ordinal| unpersisted_ordinal != Some(*ordinal))
+            .collect::<Vec<_>>();
+        let durable_costs = persistable_ordinals
+            .iter()
+            .map(|ordinal| {
+                self.cost_snapshot_for_ordinal(
+                    AttemptId::new(request_id.clone(), *ordinal),
+                    record.annotations(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut persisted = true;
+        for (ordinal, reservation) in self.attempt_costs {
+            if unpersisted_ordinal == Some(ordinal) {
+                drop(reservation);
+                continue;
+            }
+            let cost_record = durable_costs
+                .iter()
+                .find(|snapshot| snapshot.attempt_id.ordinal == ordinal)
+                .map(|snapshot| attempt_cost_commit_record(snapshot, now_ms))
+                .unwrap_or_else(|| {
+                    interrupted_attempt_cost(AttemptId::new(request_id.clone(), ordinal), now_ms)
+                });
+            match reservation.send(cost_record).await {
+                Ok(Ok(_)) => {}
+                Ok(Err(_)) | Err(_) => persisted = false,
+            }
+        }
+        let aggregate = if persistable_ordinals.is_empty() {
+            missing_usage_request_cost_aggregate(request_id, &attempted_ordinals, now_ms)
+        } else {
+            match aggregate_request_costs(
+                &persistable_ordinals
+                    .iter()
+                    .map(|ordinal| AttemptId::new(request_id.clone(), *ordinal))
+                    .collect::<Vec<_>>(),
+                &durable_costs,
+            ) {
+                Ok(aggregate) => {
+                    request_cost_aggregate_commit_record(request_id, &aggregate, now_ms)
+                }
+                Err(_) => {
+                    persisted = false;
+                    missing_usage_request_cost_aggregate(request_id, &persistable_ordinals, now_ms)
+                }
+            }
+        };
+        match self.aggregate.send(aggregate).await {
+            Ok(Ok(_)) => persisted,
             Ok(Err(_)) | Err(_) => false,
         }
     }
@@ -305,14 +387,25 @@ impl SelectedAttemptCostSnapshot {
         }
 
         let Some(usage) = complete_usage(annotations) else {
+            let (usage_status, cost_status) = if annotations.stream {
+                (
+                    AttemptUsageStatus::StreamUsageMissing,
+                    AttemptCostStatus::StreamUsageMissing,
+                )
+            } else {
+                (
+                    AttemptUsageStatus::MissingUsage,
+                    AttemptCostStatus::MissingUsage,
+                )
+            };
             return AttemptCostSnapshot::unavailable(
                 attempt_id,
                 pricing,
                 AttemptUsageSnapshot {
-                    status: AttemptUsageStatus::MissingUsage,
+                    status: usage_status,
                     tokens: None,
                 },
-                AttemptCostStatus::MissingUsage,
+                cost_status,
             )
             .expect("missing-usage cost snapshot");
         };

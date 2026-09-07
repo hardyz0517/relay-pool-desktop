@@ -27,7 +27,7 @@ use super::{
         writer::{AttemptWriteReservation, RequestTerminalReservation},
     },
     limits::RequestLease,
-    observability::{ObservedUsage, SseUsageObserver},
+    observability::{ObservedUsage, SseUsageObserver, TRAILING_USAGE_WAIT},
     protocol::{
         chat_sse::ChatSseMachine, responses_sse::ResponsesSseMachine, ProtocolFailure,
         ProtocolMachine, ProtocolTerminal,
@@ -40,7 +40,7 @@ use crate::{
     services::time::now_millis_for_services,
 };
 
-const DEFAULT_STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
+const DEFAULT_STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(180);
 
 enum FinalizationState {
     Lifecycle(PendingFinalRequestRecord),
@@ -257,6 +257,7 @@ fn finalizing_stream_with_target(
         pending_terminal: None,
         idle_timeout,
         sleep: None,
+        trailing_usage_wait: None,
         completed: false,
         body_bytes: 0,
         first_token_ms: None,
@@ -277,6 +278,7 @@ struct LifecycleBody {
     pending_terminal: Option<ProtocolTerminal>,
     idle_timeout: Duration,
     sleep: Option<Pin<Box<Sleep>>>,
+    trailing_usage_wait: Option<Pin<Box<Sleep>>>,
     completed: bool,
     body_bytes: i64,
     first_token_ms: Option<i64>,
@@ -308,6 +310,9 @@ impl LifecycleBody {
             self.finalize_protocol_terminal(terminal, DeliveryTerminal::BodyCompleted);
             return Poll::Ready(None);
         }
+        if self.trailing_usage_wait.is_some() {
+            return self.poll_trailing_usage(cx);
+        }
         if self.sleep.is_none() {
             self.reset_idle_sleep();
         }
@@ -322,8 +327,17 @@ impl LifecycleBody {
                     }
                 };
                 if let Some(terminal) = terminal {
-                    self.pending_terminal = Some(terminal);
-                    self.sleep = None;
+                    if matches!(terminal, ProtocolTerminal::Completed)
+                        && self.observer.usage().is_none()
+                        && self.is_chat_stream()
+                    {
+                        self.trailing_usage_wait =
+                            Some(Box::pin(tokio::time::sleep(TRAILING_USAGE_WAIT)));
+                        self.sleep = None;
+                    } else {
+                        self.pending_terminal = Some(terminal);
+                        self.sleep = None;
+                    }
                 } else {
                     self.reset_idle_sleep();
                 }
@@ -400,6 +414,65 @@ impl LifecycleBody {
             completion_source,
             DeliveryTerminal::BodyCompleted,
         );
+    }
+
+    fn is_chat_stream(&self) -> bool {
+        matches!(
+            &self.state,
+            Some(FinalizationState::Lifecycle(record))
+                if record.context().local_path == "/v1/chat/completions"
+        )
+    }
+
+    fn poll_trailing_usage(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Bytes, ProxyFailure>>> {
+        loop {
+            match self.stream.as_mut().poll_next(cx) {
+                Poll::Ready(Some(Ok(bytes))) => {
+                    if let Err(failure) = self.observe_trailing_chunk(&bytes) {
+                        self.trailing_usage_wait = None;
+                        self.finalize_failure(&failure, "body_protocol_error");
+                        return Poll::Ready(Some(Err(failure)));
+                    }
+                    if self.observer.usage().is_some() {
+                        self.complete_trailing_usage();
+                        return Poll::Ready(None);
+                    }
+                }
+                Poll::Ready(Some(Err(_))) | Poll::Ready(None) => {
+                    self.complete_trailing_usage();
+                    return Poll::Ready(None);
+                }
+                Poll::Pending => {
+                    if self
+                        .trailing_usage_wait
+                        .as_mut()
+                        .is_some_and(|sleep| sleep.as_mut().poll(cx).is_ready())
+                    {
+                        self.complete_trailing_usage();
+                        return Poll::Ready(None);
+                    }
+                    return Poll::Pending;
+                }
+            }
+        }
+    }
+
+    fn complete_trailing_usage(&mut self) {
+        self.trailing_usage_wait = None;
+        self.finalize_protocol_terminal(
+            ProtocolTerminal::Completed,
+            DeliveryTerminal::BodyCompleted,
+        );
+    }
+
+    fn observe_trailing_chunk(&mut self, bytes: &Bytes) -> Result<(), ProxyFailure> {
+        // [DONE] already committed success to the client. Trailing bytes are
+        // only observed for usage; they must not reopen protocol terminal rules.
+        self.observer.push(bytes);
+        Ok(())
     }
 
     fn observe_chunk(&mut self, bytes: &Bytes) -> Result<Option<ProtocolTerminal>, ProxyFailure> {
@@ -625,6 +698,11 @@ impl Drop for LifecycleBody {
         if !self.completed {
             if let Some(terminal) = self.pending_terminal.take() {
                 self.finalize_protocol_terminal(terminal, DeliveryTerminal::DownstreamDropped);
+            } else if self.trailing_usage_wait.take().is_some() {
+                self.finalize_protocol_terminal(
+                    ProtocolTerminal::Completed,
+                    DeliveryTerminal::DownstreamDropped,
+                );
             } else {
                 self.finalize_downstream_drop();
             }
@@ -1471,6 +1549,122 @@ data: [DONE]
             record.annotations.failure_source.as_deref(),
             Some("upstream")
         );
+
+        drop(writer);
+        worker.join().await.expect("worker join");
+    }
+
+    #[tokio::test]
+    async fn chat_trailing_usage_after_done_is_recorded() {
+        let fixture =
+            LifecycleBodyFixture::new("response-body-chat-trailing-usage", "/v1/chat/completions")
+                .await;
+        let LifecycleBodyFixture {
+            store,
+            writer,
+            worker,
+            request_terminal,
+            selected_attempt,
+            request_lease,
+            record,
+            ..
+        } = fixture;
+        let done = Bytes::from_static(
+            br#"data: {"choices":[{"delta":{"content":"hi"}}]}
+
+data: [DONE]
+
+"#,
+        );
+        let usage = Bytes::from_static(
+            br#"data: {"choices":[],"usage":{"prompt_tokens":4,"completion_tokens":1,"total_tokens":5}}
+
+"#,
+        );
+        let mut body = dual_terminal_lifecycle_finalizing_stream_with_idle_timeout(
+            Box::pin(futures_util::stream::iter(vec![
+                Ok(done.clone()),
+                Ok(usage.clone()),
+            ])),
+            record,
+            request_terminal,
+            selected_attempt,
+            None,
+            request_lease,
+            std::time::Duration::from_secs(1),
+        );
+
+        assert_eq!(body.next().await.unwrap().unwrap(), done);
+        assert!(body.next().await.is_none());
+        store.wait_for_calls(1).await;
+
+        let record = store.last_request().expect("request terminal");
+        assert!(matches!(
+            record.terminal.terminal,
+            RequestTerminal::Completed(_)
+        ));
+        assert_eq!(record.annotations.prompt_tokens, Some(4));
+        assert_eq!(record.annotations.completion_tokens, Some(1));
+        assert_eq!(record.annotations.total_tokens, Some(5));
+
+        drop(writer);
+        worker.join().await.expect("worker join");
+    }
+
+    #[tokio::test]
+    async fn chat_trailing_usage_after_done_ignores_protocol_after_terminal() {
+        let fixture = LifecycleBodyFixture::new(
+            "response-body-chat-trailing-usage-after-terminal",
+            "/v1/chat/completions",
+        )
+        .await;
+        let LifecycleBodyFixture {
+            store,
+            writer,
+            worker,
+            request_terminal,
+            selected_attempt,
+            request_lease,
+            record,
+            ..
+        } = fixture;
+        let done = Bytes::from_static(
+            br#"data: {"choices":[{"delta":{"content":"hi"}}]}
+
+data: [DONE]
+
+"#,
+        );
+        let usage = Bytes::from_static(
+            br#"data: {"choices":[{"delta":{"content":"!"}}],"usage":{"prompt_tokens":4,"completion_tokens":1,"total_tokens":5}}
+
+"#,
+        );
+        let mut body = dual_terminal_lifecycle_finalizing_stream_with_idle_timeout(
+            Box::pin(futures_util::stream::iter(vec![
+                Ok(done.clone()),
+                Ok(usage.clone()),
+            ])),
+            record,
+            request_terminal,
+            selected_attempt,
+            None,
+            request_lease,
+            std::time::Duration::from_secs(1),
+        );
+
+        assert_eq!(body.next().await.unwrap().unwrap(), done);
+        assert!(body.next().await.is_none());
+        store.wait_for_calls(1).await;
+
+        let record = store.last_request().expect("request terminal");
+        assert!(matches!(
+            record.terminal.terminal,
+            RequestTerminal::Completed(_)
+        ));
+        assert_eq!(record.annotations.prompt_tokens, Some(4));
+        assert_eq!(record.annotations.completion_tokens, Some(1));
+        assert_eq!(record.annotations.total_tokens, Some(5));
 
         drop(writer);
         worker.join().await.expect("worker join");

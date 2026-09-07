@@ -30,7 +30,9 @@ use crate::{
             },
             routing_repository::RoutingRepository,
             server::{self, RunningServer},
-            transport_policy::{TransportPolicySnapshot, TransportPolicyStore},
+            transport_policy::{
+                effective_stream_idle_timeout, TransportPolicySnapshot, TransportPolicyStore,
+            },
             upstream::UpstreamClientPool,
         },
         time::now_millis_for_services,
@@ -646,7 +648,12 @@ impl IngressExecutor for ProxyExecutor {
         let proxy_correlation = correlation::CorrelationId::for_proxy_request(&request.request_id);
         let lifecycle_writer = self.lifecycle_writer.clone();
         let engine = self.engine.clone();
-        let stream_idle_timeout = request.transport_policy().stream_idle_timeout;
+        let stream_idle_timeout = effective_stream_idle_timeout(
+            request.transport_policy().stream_idle_timeout,
+            request.model.as_deref(),
+            request.reasoning_effort.as_deref(),
+            request.requirements.uses_reasoning,
+        );
         let Some(admission) = request.take_lifecycle_admission() else {
             return Box::pin(correlation::in_scope(
                 "proxy.request",

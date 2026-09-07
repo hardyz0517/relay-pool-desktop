@@ -1,5 +1,7 @@
 use serde_json::{json, Value};
 
+use super::observability::ensure_include_usage;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResponsesChatFallbackError {
     PreviousResponseUnsupported,
@@ -68,13 +70,8 @@ fn normalize_for_chat_with_stream(
     output.insert("messages".to_string(), build_messages(body)?);
     if stream {
         output.insert("stream".to_string(), Value::Bool(true));
-        output
-            .entry("stream_options".to_string())
-            .or_insert_with(|| {
-                json!({
-                    "include_usage": true,
-                })
-            });
+        copy(body, &mut output, "stream_options", "stream_options");
+        ensure_include_usage(&mut output);
     }
     if let Some(tools) = body.get("tools") {
         output.insert("tools".to_string(), convert_function_tools(tools)?);
@@ -360,6 +357,28 @@ mod tests {
         assert_eq!(chat["reasoning_effort"], "high");
         assert_eq!(chat["messages"][0]["role"], "developer");
         assert_eq!(chat["tools"][0]["function"]["name"], "read_file");
+    }
+
+    #[test]
+    fn streaming_fallback_merges_include_usage_without_overriding_existing_flag() {
+        let injected = normalize_for_chat_streaming(&json!({
+            "model": "gpt-test",
+            "stream": true,
+            "input": "hi",
+            "stream_options": { "include_obfuscation": true }
+        }))
+        .expect("stream options merge");
+        assert_eq!(injected["stream_options"]["include_usage"], true);
+        assert_eq!(injected["stream_options"]["include_obfuscation"], true);
+
+        let preserved = normalize_for_chat_streaming(&json!({
+            "model": "gpt-test",
+            "stream": true,
+            "input": "hi",
+            "stream_options": { "include_usage": false }
+        }))
+        .expect("existing include_usage is preserved");
+        assert_eq!(preserved["stream_options"]["include_usage"], false);
     }
 
     #[test]

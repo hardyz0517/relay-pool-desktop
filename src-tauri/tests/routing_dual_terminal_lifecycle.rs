@@ -89,16 +89,17 @@ mod services {
 
 use services::proxy::{
     attempt::{
-        DownstreamRequestFinalizationLease, DualTerminalFinalizationLease,
-        UpstreamAttemptFinalizationLease,
+        CostFinalizationReservations, DownstreamRequestFinalizationLease,
+        DualTerminalFinalizationLease, UpstreamAttemptFinalizationLease,
     },
     finalization::FinalizationOutcome,
     lifecycle::{
         attempt::{AttemptContext, AttemptTerminal, AttemptTerminalRecord},
         delivery::DeliveryTerminal,
         ports::{
-            AttemptCommitAck, LifecycleWriteError, RequestCommitAck, RequestLifecycleStore,
-            RequestStartAck,
+            AttemptCommitAck, AttemptCostCommitAck, AttemptCostCommitRecord, LifecycleWriteError,
+            RequestCommitAck, RequestCostAggregateCommitAck, RequestCostAggregateCommitRecord,
+            RequestLifecycleStore, RequestStartAck,
         },
         request::{
             AttemptId, FinalRequestRecord, PendingFinalRequestRecord, RequestContextSnapshot,
@@ -121,6 +122,7 @@ struct AckGatedStore {
     events: Arc<Mutex<Vec<Event>>>,
     attempts: Arc<Mutex<Vec<AttemptTerminalRecord>>>,
     requests: Arc<Mutex<Vec<FinalRequestRecord>>>,
+    aggregates: Arc<Mutex<Vec<RequestCostAggregateCommitRecord>>>,
     attempt_started: Arc<Notify>,
     attempt_release: Arc<Notify>,
     fail_attempt: bool,
@@ -148,6 +150,10 @@ impl AckGatedStore {
 
     fn last_request(&self) -> Option<FinalRequestRecord> {
         self.requests.lock().expect("requests").last().cloned()
+    }
+
+    fn last_aggregate(&self) -> Option<RequestCostAggregateCommitRecord> {
+        self.aggregates.lock().expect("aggregates").last().cloned()
     }
 
     async fn wait_for_attempt_calls(&self, expected: usize) {
@@ -229,6 +235,24 @@ impl RequestLifecycleStore for AckGatedStore {
                 .push(Event::Request(record.context.request_id.clone()));
             requests.lock().expect("requests").push(record);
             Ok(RequestCommitAck { finalized: true })
+        })
+    }
+
+    fn finish_attempt_cost(
+        &self,
+        _record: AttemptCostCommitRecord,
+    ) -> BoxFuture<'static, Result<AttemptCostCommitAck, LifecycleWriteError>> {
+        Box::pin(async { Ok(AttemptCostCommitAck { inserted: true }) })
+    }
+
+    fn finish_request_cost_aggregate(
+        &self,
+        record: RequestCostAggregateCommitRecord,
+    ) -> BoxFuture<'static, Result<RequestCostAggregateCommitAck, LifecycleWriteError>> {
+        let aggregates = Arc::clone(&self.aggregates);
+        Box::pin(async move {
+            aggregates.lock().expect("aggregates").push(record);
+            Ok(RequestCostAggregateCommitAck { inserted: true })
         })
     }
 }
@@ -356,6 +380,72 @@ async fn attempt_ack_failure_records_interrupted_request_terminal_and_releases_r
         3,
         "attempt ack failure must record a fail-closed request terminal"
     );
+
+    drop(writer);
+    worker.join().await.expect("worker join");
+}
+
+#[tokio::test]
+async fn attempt_ack_failure_still_writes_incomplete_request_cost_aggregate() {
+    let store = Arc::new(AckGatedStore::with_attempt_failure());
+    let (writer, worker) = LifecycleWriter::start(16, store.clone()).expect("writer");
+    let active_requests = Arc::new(AtomicU32::new(0));
+
+    let request = writer.try_reserve_request().expect("request reservation");
+    let context = context("dual-terminal-attempt-ack-cost-gap");
+    let (request_terminal, start_ack) = request.send_start(RequestStartRecord {
+        context: context.clone(),
+    });
+    start_ack
+        .await
+        .expect("start ack channel")
+        .expect("start ack");
+
+    let attempt_reservation = writer.try_reserve_attempt().expect("attempt reservation");
+    let attempt_cost = writer
+        .try_reserve_attempt_cost()
+        .expect("attempt cost reservation");
+    let aggregate = writer
+        .try_reserve_request_cost_aggregate()
+        .expect("aggregate reservation");
+    let request_lease = request_lease(Arc::clone(&active_requests)).await;
+    let finalizer = DualTerminalFinalizationLease::new(
+        DownstreamRequestFinalizationLease::new(request_terminal, request_lease),
+        Some(UpstreamAttemptFinalizationLease::new(
+            attempt_reservation,
+            attempt_context(&context),
+        )),
+        Some(CostFinalizationReservations::new(
+            vec![(0, attempt_cost)],
+            aggregate,
+            None,
+        )),
+    );
+    let join = finalizer
+        .finalize(
+            pending_record(context),
+            DeliveryTerminal::BodyCompleted,
+            FinalizationOutcome::Completed,
+            Some(AttemptTerminal::Succeeded),
+            true,
+        )
+        .expect("finalization job");
+
+    join.await.expect("finalization job join");
+    store.wait_for_attempt_calls(1).await;
+    store.wait_for_request_calls(1).await;
+
+    let request = store.last_request().expect("interrupted request terminal");
+    assert!(matches!(
+        request.terminal.terminal,
+        RequestTerminal::Interrupted(_)
+    ));
+    let aggregate = store.last_aggregate().expect("incomplete aggregate");
+    assert_eq!(aggregate.request_id, "dual-terminal-attempt-ack-cost-gap");
+    assert_eq!(aggregate.status, "incomplete");
+    assert_eq!(aggregate.totals_by_currency_json, "{}");
+    assert!(aggregate.incomplete_attempts_json.contains("missing_usage"));
+    assert_eq!(active_requests.load(Ordering::SeqCst), 0);
 
     drop(writer);
     worker.join().await.expect("worker join");

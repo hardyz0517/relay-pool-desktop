@@ -37,18 +37,17 @@ impl ResponsesSseMachine {
 
 impl ProtocolMachine for ResponsesSseMachine {
     fn observe_chunk(&mut self, bytes: &Bytes) -> Result<ProtocolProgress, ProtocolFailure> {
-        if self.terminal.is_some() && !bytes.is_empty() {
-            return Err(terminal_already_seen());
-        }
-
         let _scratch = self.decoder.try_reserve_scratch(bytes.len())?;
         let decoded = self.decoder.push(bytes)?;
         let mut events = Vec::with_capacity(decoded.len());
         for event in decoded {
-            if self.terminal.is_some() {
-                return Err(terminal_already_seen());
-            }
             let kind = classify_event(&event)?;
+            if let Some(terminal) = self.terminal {
+                if !allow_event_after_terminal(terminal, kind) {
+                    return Err(terminal_already_seen());
+                }
+                continue;
+            }
             if let ProtocolEventKind::Terminal(terminal) = kind {
                 self.terminal = Some(terminal);
             }
@@ -91,7 +90,7 @@ fn classify_event(event: &DecodedSseEvent) -> Result<ProtocolEventKind, Protocol
         return Ok(ProtocolEventKind::Heartbeat);
     }
     if event.data.trim() == "[DONE]" {
-        return Ok(ProtocolEventKind::Terminal(ProtocolTerminal::Completed));
+        return Ok(ProtocolEventKind::Control);
     }
     let value = json_event_value(event)?;
     let event_type = value
@@ -129,6 +128,16 @@ fn classify_event(event: &DecodedSseEvent) -> Result<ProtocolEventKind, Protocol
     }
 }
 
+fn allow_event_after_terminal(terminal: ProtocolTerminal, kind: ProtocolEventKind) -> bool {
+    matches!(
+        (terminal, kind),
+        (
+            ProtocolTerminal::Completed,
+            ProtocolEventKind::Heartbeat | ProtocolEventKind::Control
+        )
+    )
+}
+
 fn terminal_already_seen() -> ProtocolFailure {
     ProtocolFailure {
         code: "protocol_terminal_already_seen",
@@ -151,6 +160,38 @@ mod tests {
             ))
             .expect("event");
         assert_eq!(progress.terminal(), Some(ProtocolTerminal::Completed));
+        assert_eq!(
+            machine.finish_eof().expect("eof"),
+            ProtocolTerminal::Completed
+        );
+    }
+
+    #[test]
+    fn done_is_not_a_success_terminal() {
+        let mut machine = ResponsesSseMachine::new();
+        let progress = machine
+            .observe_chunk(&Bytes::from_static(b"data: [DONE]\n\n"))
+            .expect("done is control");
+        assert_eq!(progress.terminal(), None);
+        assert_eq!(
+            machine.finish_eof().expect("eof"),
+            ProtocolTerminal::Incomplete
+        );
+    }
+
+    #[test]
+    fn completed_then_done_stays_successful() {
+        let mut machine = ResponsesSseMachine::new();
+        machine
+            .observe_chunk(&Bytes::from_static(
+                br#"data: {"type":"response.completed","response":{"output":[]}}
+
+"#,
+            ))
+            .expect("completed");
+        machine
+            .observe_chunk(&Bytes::from_static(b"data: [DONE]\n\n"))
+            .expect("trailing done");
         assert_eq!(
             machine.finish_eof().expect("eof"),
             ProtocolTerminal::Completed

@@ -13,6 +13,7 @@ use crate::{
 use super::{
     adapters::responses::upstream_responses_path,
     error::{FailureSource, ProxyFailure, ProxyFailureCode, RetryClass},
+    observability::{ensure_include_usage, needs_include_usage_injection},
     protocol::{
         CompletionPolicy, DownstreamTransform, ResponsePlan, TransportMode, UpstreamProtocol,
     },
@@ -72,7 +73,11 @@ impl EndpointAdapter {
                         "application/json"
                     }),
                 ),
-                body: rewrite_json_model(&request.body, mapped_model)?,
+                body: rewrite_json_model_with_stream_usage(
+                    &request.body,
+                    mapped_model,
+                    request.stream,
+                )?,
                 response_plan: response_plan(
                     if request.stream {
                         TransportMode::Streaming
@@ -152,7 +157,7 @@ fn prepare_responses(
                     "application/json"
                 }),
             ),
-            body: rewrite_json_value_model(normalized, mapped_model)?,
+            body: rewrite_json_value_model(normalized, mapped_model, false)?,
             response_plan: response_plan(
                 if request.stream {
                     TransportMode::Streaming
@@ -257,26 +262,37 @@ fn upstream_headers(forwarded: &HeaderMap, accept: Option<&'static str>) -> Head
 }
 
 fn rewrite_json_model(body: &Bytes, mapped_model: Option<&str>) -> Result<Bytes, ProxyFailure> {
-    if mapped_model.is_none() {
+    rewrite_json_model_with_stream_usage(body, mapped_model, false)
+}
+
+fn rewrite_json_model_with_stream_usage(
+    body: &Bytes,
+    mapped_model: Option<&str>,
+    inject_include_usage: bool,
+) -> Result<Bytes, ProxyFailure> {
+    let value = parse_json_body(body)?;
+    if mapped_model.is_none() && !needs_include_usage_injection(&value, inject_include_usage) {
         // The execution retry loop may prepare this request more than once. Keep
         // the ingress-owned immutable allocation when no target-specific rewrite
         // is needed; target-specific model aliases still require a fresh body.
-        parse_json_body(body)?;
         return Ok(body.clone());
     }
-    let value = parse_json_body(body)?;
-    rewrite_json_value_model(value, mapped_model)
+    rewrite_json_value_model(value, mapped_model, inject_include_usage)
 }
 
 fn rewrite_json_value_model(
     mut value: Value,
     mapped_model: Option<&str>,
+    inject_include_usage: bool,
 ) -> Result<Bytes, ProxyFailure> {
+    let Some(object) = value.as_object_mut() else {
+        return Err(invalid_body_failure("request body must be a JSON object"));
+    };
     if let Some(mapped_model) = mapped_model {
-        let Some(object) = value.as_object_mut() else {
-            return Err(invalid_body_failure("request body must be a JSON object"));
-        };
         object.insert("model".to_string(), Value::String(mapped_model.to_string()));
+    }
+    if inject_include_usage {
+        ensure_include_usage(object);
     }
     serde_json::to_vec(&value)
         .map(Bytes::from)
@@ -487,6 +503,10 @@ mod tests {
             .prepare_for_format(&chat, UpstreamApiFormat::Auto, Some("upstream-model"))
             .unwrap();
         assert_eq!(chat.path, "/v1/chat/completions");
+        assert_eq!(
+            serde_json::from_slice::<Value>(&chat.body).unwrap()["stream_options"]["include_usage"],
+            true
+        );
         assert_eq!(
             chat.response_plan,
             response_plan(

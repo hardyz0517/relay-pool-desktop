@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, VecDeque},
+    future::Future,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -8,9 +9,11 @@ use bytes::Bytes;
 use futures_util::Stream;
 use http::StatusCode;
 use serde_json::{json, Value};
+use tokio::time::Sleep;
 
 use super::{
     error::{FailureSource, ProxyFailure, ProxyFailureCode, RetryClass},
+    observability::{ObservedUsage, SseUsageObserver, TRAILING_USAGE_WAIT},
     request::ByteStream,
 };
 
@@ -21,16 +24,20 @@ pub(crate) fn chat_sse_to_responses_stream(stream: ByteStream, model: Option<&st
     Box::pin(ChatToResponsesStream {
         inner: stream,
         decoder: ResponsesChatStreamDecoder::new(model.unwrap_or("unknown-model"), &response_id),
+        observer: SseUsageObserver::default(),
         pending: VecDeque::new(),
         upstream_done: false,
+        trailing_wait: None,
     })
 }
 
 struct ChatToResponsesStream {
     inner: ByteStream,
     decoder: ResponsesChatStreamDecoder,
+    observer: SseUsageObserver,
     pending: VecDeque<Bytes>,
     upstream_done: bool,
+    trailing_wait: Option<Pin<Box<Sleep>>>,
 }
 
 impl Stream for ChatToResponsesStream {
@@ -46,19 +53,54 @@ impl Stream for ChatToResponsesStream {
             }
 
             match self.inner.as_mut().poll_next(cx) {
-                Poll::Ready(Some(Ok(bytes))) => match self.decoder.push(&bytes) {
-                    Ok(chunks) => self.pending.extend(chunks),
-                    Err(failure) => return Poll::Ready(Some(Err(failure))),
-                },
+                Poll::Ready(Some(Ok(bytes))) => {
+                    self.observer.push(&bytes);
+                    if let Some(usage) = self.observer.usage().cloned() {
+                        self.decoder.note_observed_usage(usage);
+                    }
+                    match self.decoder.push(&bytes) {
+                        Ok(chunks) => {
+                            self.pending.extend(chunks);
+                            if !self.decoder.waiting_for_trailing_usage() {
+                                self.trailing_wait = None;
+                            }
+                        }
+                        Err(failure) => return Poll::Ready(Some(Err(failure))),
+                    }
+                }
                 Poll::Ready(Some(Err(failure))) => return Poll::Ready(Some(Err(failure))),
                 Poll::Ready(None) => match self.decoder.finish() {
                     Ok(chunks) => {
                         self.pending.extend(chunks);
                         self.upstream_done = true;
+                        self.trailing_wait = None;
                     }
                     Err(failure) => return Poll::Ready(Some(Err(failure))),
                 },
-                Poll::Pending => return Poll::Pending,
+                Poll::Pending => {
+                    if self.decoder.waiting_for_trailing_usage() {
+                        if self.trailing_wait.is_none() {
+                            self.trailing_wait =
+                                Some(Box::pin(tokio::time::sleep(TRAILING_USAGE_WAIT)));
+                        }
+                        if self
+                            .trailing_wait
+                            .as_mut()
+                            .is_some_and(|sleep| sleep.as_mut().poll(cx).is_ready())
+                        {
+                            match self.decoder.finish() {
+                                Ok(chunks) => {
+                                    self.pending.extend(chunks);
+                                    self.upstream_done = true;
+                                    self.trailing_wait = None;
+                                    continue;
+                                }
+                                Err(failure) => return Poll::Ready(Some(Err(failure))),
+                            }
+                        }
+                    }
+                    return Poll::Pending;
+                }
             }
         }
     }
@@ -75,7 +117,8 @@ pub(crate) struct ResponsesChatStreamDecoder {
     tool_calls: BTreeMap<i64, ToolCallState>,
     created: bool,
     completed: bool,
-    usage: Option<Value>,
+    done_seen: bool,
+    usage: Option<ObservedUsage>,
     sequence_number: i64,
 }
 
@@ -100,6 +143,7 @@ impl ResponsesChatStreamDecoder {
             tool_calls: BTreeMap::new(),
             created: false,
             completed: false,
+            done_seen: false,
             usage: None,
             sequence_number: 0,
         }
@@ -143,14 +187,18 @@ impl ResponsesChatStreamDecoder {
             return Ok(Vec::new());
         }
         if data.trim() == "[DONE]" {
-            return self.complete_once();
+            self.done_seen = true;
+            if self.usage.is_some() {
+                return self.complete_once();
+            }
+            return Ok(Vec::new());
         }
 
         let value = serde_json::from_str::<Value>(&data).map_err(|error| {
             stream_failure(format!("upstream chat SSE data was not JSON: {error}"))
         })?;
-        if let Some(usage) = value.get("usage").cloned() {
-            self.usage = Some(normalize_usage(usage));
+        if let Some(usage) = ObservedUsage::from_json(&value) {
+            self.usage = Some(usage);
         }
 
         let mut output = Vec::new();
@@ -240,7 +288,18 @@ impl ResponsesChatStreamDecoder {
                 }
             }
         }
+        if self.done_seen && self.usage.is_some() {
+            output.extend(self.complete_once()?);
+        }
         Ok(output)
+    }
+
+    pub(crate) fn waiting_for_trailing_usage(&self) -> bool {
+        self.done_seen && !self.completed && self.usage.is_none()
+    }
+
+    pub(crate) fn note_observed_usage(&mut self, usage: ObservedUsage) {
+        self.usage = Some(usage);
     }
 
     fn message_output_index(&mut self) -> i64 {
@@ -349,7 +408,11 @@ impl ResponsesChatStreamDecoder {
                     "status": "completed",
                     "output": response_output,
                     "output_text": self.text,
-                    "usage": self.usage.clone().unwrap_or(Value::Null),
+                    "usage": self
+                        .usage
+                        .as_ref()
+                        .map(ObservedUsage::to_json)
+                        .unwrap_or(Value::Null),
                 }
             }),
         )?);
@@ -378,28 +441,6 @@ fn function_call_item(tool_call: &ToolCallState, status: &str) -> Value {
         "name": tool_call.name,
         "arguments": tool_call.arguments,
     })
-}
-
-fn normalize_usage(usage: Value) -> Value {
-    let input_tokens = integer(&usage, &["input_tokens", "prompt_tokens"]);
-    let output_tokens = integer(&usage, &["output_tokens", "completion_tokens"]);
-    let total_tokens = integer(&usage, &["total_tokens"]).or_else(|| {
-        input_tokens
-            .zip(output_tokens)
-            .map(|(input, output)| input + output)
-    });
-    json!({
-        "input_tokens": input_tokens,
-        "output_tokens": output_tokens,
-        "total_tokens": total_tokens,
-        "prompt_tokens": input_tokens,
-        "completion_tokens": output_tokens,
-    })
-}
-
-fn integer(value: &Value, keys: &[&str]) -> Option<i64> {
-    keys.iter()
-        .find_map(|key| value.get(*key).and_then(Value::as_i64))
 }
 
 fn find_event_boundary(bytes: &[u8]) -> Option<(usize, usize)> {
@@ -454,6 +495,21 @@ mod tests {
     }
 
     #[test]
+    fn chat_sse_decoder_preserves_cache_tokens_from_upstream_usage() {
+        let mut decoder = ResponsesChatStreamDecoder::new("gpt-test", "resp_cache");
+        let payload = br#"data: {"choices":[{"delta":{"content":"hi"}}],"usage":{"prompt_tokens":20,"completion_tokens":2,"total_tokens":22,"prompt_tokens_details":{"cached_tokens":8,"cache_write_tokens":3}}}
+
+data: [DONE]
+
+"#;
+        let text = String::from_utf8(decoder.push(payload).expect("usage with cache").concat())
+            .expect("utf8");
+        assert!(text.contains("\"cache_read_tokens\":8"));
+        assert!(text.contains("\"cache_creation_tokens\":3"));
+        assert!(text.contains("\"cached_tokens\":8"));
+    }
+
+    #[test]
     fn chat_sse_decoder_rejects_malformed_json() {
         let mut decoder = ResponsesChatStreamDecoder::new("gpt-test", "resp_test");
 
@@ -477,7 +533,8 @@ mod tests {
         let second = decoder
             .push(b"data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"Get-Location\\\"}\"}}]}}]}\n\ndata: [DONE]\n\n")
             .expect("final tool chunk");
-        let text = String::from_utf8([first, second].concat().concat()).expect("utf8");
+        let finished = decoder.finish().expect("finish after done without usage");
+        let text = String::from_utf8([first, second, finished].concat().concat()).expect("utf8");
 
         assert!(text.contains("response.output_item.added"));
         assert!(text.contains("response.function_call_arguments.delta"));
@@ -489,5 +546,40 @@ mod tests {
         assert!(text.contains("{\\\"command\\\":\\\"Get-Location\\\"}"));
         assert!(!text.contains("call_unknown"));
         assert!(text.contains("\"sequence_number\":"));
+    }
+
+    #[test]
+    fn chat_sse_decoder_keeps_done_open_until_trailing_usage_or_finish() {
+        let mut decoder = ResponsesChatStreamDecoder::new("gpt-test", "resp_trail");
+        let first = decoder
+            .push(b"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\ndata: [DONE]\n\n")
+            .expect("done without usage");
+        assert!(!String::from_utf8(first.concat())
+            .unwrap()
+            .contains("response.completed"));
+        assert!(decoder.waiting_for_trailing_usage());
+
+        let second = decoder
+            .push(b"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":1,\"total_tokens\":3}}\n\n")
+            .expect("trailing usage");
+        let text = String::from_utf8(second.concat()).expect("utf8");
+        assert!(text.contains("response.completed"));
+        assert!(text.contains("input_tokens"));
+        assert!(!decoder.waiting_for_trailing_usage());
+    }
+
+    #[test]
+    fn null_usage_does_not_count_as_observed_usage() {
+        let mut decoder = ResponsesChatStreamDecoder::new("gpt-test", "resp_null_usage");
+        let first = decoder
+            .push(b"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}],\"usage\":null}\n\ndata: [DONE]\n\n")
+            .expect("done with null usage");
+        assert!(!String::from_utf8(first.concat())
+            .unwrap()
+            .contains("response.completed"));
+        assert!(decoder.waiting_for_trailing_usage());
+        let finished = decoder.finish().expect("finish without numeric usage");
+        let text = String::from_utf8(finished.concat()).expect("utf8");
+        assert!(text.contains("response.completed"));
     }
 }

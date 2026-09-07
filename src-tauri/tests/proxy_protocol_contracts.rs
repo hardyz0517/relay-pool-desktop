@@ -435,10 +435,18 @@ fn named_heartbeat_with_data_does_not_commit_and_responses_done_completes() {
             .expect("heartbeat"),
         BootstrapDisposition::Pending
     );
-    assert!(matches!(
+    assert_eq!(
         bootstrap
             .observe_chunk(&Bytes::from_static(b"data: [DONE]\n\n"))
-            .expect("done"),
+            .expect("done is not responses success"),
+        BootstrapDisposition::Pending
+    );
+    assert!(matches!(
+        bootstrap
+            .observe_chunk(&Bytes::from_static(
+                b"data: {\"type\":\"response.completed\"}\n\n",
+            ))
+            .expect("completed"),
         BootstrapDisposition::Emit {
             terminal: Some(ProtocolTerminal::Completed),
             ..

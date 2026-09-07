@@ -70,6 +70,34 @@ pub(crate) fn request_cost_aggregate_commit_record(
     }
 }
 
+pub(crate) fn missing_usage_request_cost_aggregate(
+    request_id: impl Into<String>,
+    attempted_ordinals: &[u16],
+    written_at_ms: i64,
+) -> RequestCostAggregateCommitRecord {
+    let request_id = request_id.into();
+    let incomplete = attempted_ordinals
+        .iter()
+        .map(|ordinal| {
+            json!({
+                "request_id": request_id,
+                "ordinal": ordinal,
+                "status": "missing_usage",
+            })
+        })
+        .collect::<Vec<_>>();
+    RequestCostAggregateCommitRecord {
+        request_id,
+        status: "incomplete".to_string(),
+        totals_by_currency_json: "{}".to_string(),
+        compatibility_currency: None,
+        compatibility_total_cost_micro: None,
+        incomplete_attempts_json: serde_json::to_string(&incomplete)
+            .expect("incomplete attempts serialize"),
+        written_at_ms,
+    }
+}
+
 pub(crate) fn interrupted_attempt_cost(
     attempt_id: AttemptId,
     created_at_ms: i64,

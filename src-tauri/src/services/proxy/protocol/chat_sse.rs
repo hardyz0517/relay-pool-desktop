@@ -37,18 +37,17 @@ impl ChatSseMachine {
 
 impl ProtocolMachine for ChatSseMachine {
     fn observe_chunk(&mut self, bytes: &Bytes) -> Result<ProtocolProgress, ProtocolFailure> {
-        if self.terminal.is_some() && !bytes.is_empty() {
-            return Err(terminal_already_seen());
-        }
-
         let _scratch = self.decoder.try_reserve_scratch(bytes.len())?;
         let decoded = self.decoder.push(bytes)?;
         let mut events = Vec::with_capacity(decoded.len());
         for event in decoded {
-            if self.terminal.is_some() {
-                return Err(terminal_already_seen());
-            }
             let kind = classify_event(&event)?;
+            if let Some(terminal) = self.terminal {
+                if !allow_event_after_terminal(terminal, kind) {
+                    return Err(terminal_already_seen());
+                }
+                continue;
+            }
             if let ProtocolEventKind::Terminal(terminal) = kind {
                 self.terminal = Some(terminal);
             }
@@ -117,18 +116,38 @@ fn is_chat_control_event(value: &Value) -> bool {
     if choices.is_empty() {
         return true;
     }
-    choices.iter().all(|choice| {
-        choice.get("finish_reason").is_none_or(Value::is_null)
-            && choice
-                .get("delta")
-                .and_then(Value::as_object)
-                .is_some_and(|delta| {
-                    delta.is_empty()
-                        || delta
-                            .keys()
-                            .all(|key| matches!(key.as_str(), "role" | "name"))
+    let no_output = choices.iter().all(choice_has_no_output_delta);
+    if no_output && value.get("usage").is_some() {
+        return true;
+    }
+    no_output
+        && choices
+            .iter()
+            .all(|choice| choice.get("finish_reason").is_none_or(Value::is_null))
+}
+
+fn choice_has_no_output_delta(choice: &Value) -> bool {
+    choice
+        .get("delta")
+        .and_then(Value::as_object)
+        .is_none_or(|delta| {
+            delta.is_empty()
+                || delta.iter().all(|(key, value)| match key.as_str() {
+                    "role" | "name" => true,
+                    "content" => value.as_str().is_some_and(str::is_empty),
+                    _ => false,
                 })
-    })
+        })
+}
+
+fn allow_event_after_terminal(terminal: ProtocolTerminal, kind: ProtocolEventKind) -> bool {
+    matches!(
+        (terminal, kind),
+        (
+            ProtocolTerminal::Completed,
+            ProtocolEventKind::Heartbeat | ProtocolEventKind::Control
+        )
+    )
 }
 
 fn terminal_already_seen() -> ProtocolFailure {
@@ -177,6 +196,36 @@ mod tests {
             .expect("buffer partial event");
         let error = machine.finish_eof().expect_err("partial must fail");
         assert_eq!(error.code, "partial_protocol_event");
+    }
+
+    #[test]
+    fn usage_only_chunk_after_done_is_retained() {
+        let mut machine = ChatSseMachine::new();
+        machine
+            .observe_chunk(&Bytes::from_static(b"data: [DONE]\n\n"))
+            .expect("done");
+        let progress = machine
+            .observe_chunk(&Bytes::from_static(
+                b"data: {\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":1,\"total_tokens\":4}}\n\n",
+            ))
+            .expect("trailing usage");
+        assert_eq!(progress.terminal(), None);
+        let with_finish_reason = machine
+            .observe_chunk(&Bytes::from_static(
+                b"data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":1,\"total_tokens\":4}}\n\n",
+            ))
+            .expect("usage with finish_reason after done");
+        assert_eq!(with_finish_reason.terminal(), None);
+        let with_empty_content = machine
+            .observe_chunk(&Bytes::from_static(
+                b"data: {\"choices\":[{\"delta\":{\"content\":\"\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":1,\"total_tokens\":4}}\n\n",
+            ))
+            .expect("usage with empty content after done");
+        assert_eq!(with_empty_content.terminal(), None);
+        assert_eq!(
+            machine.finish_eof().expect("eof"),
+            ProtocolTerminal::Completed
+        );
     }
 
     #[test]

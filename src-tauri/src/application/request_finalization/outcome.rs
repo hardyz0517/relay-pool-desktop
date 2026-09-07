@@ -100,13 +100,6 @@ pub(crate) struct AttemptUsageSnapshot {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "contract=request-finalization.usage-status; owner=application/request_finalization; remove_when=outcome persistence drops stream-specific missing usage states"
-    )
-)]
 pub(crate) enum AttemptUsageStatus {
     Complete,
     MissingUsage,

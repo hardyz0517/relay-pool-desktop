@@ -101,6 +101,36 @@ impl TransportPolicySnapshot {
     }
 }
 
+const REASONING_STREAM_IDLE_FLOOR: Duration = Duration::from_secs(300);
+
+pub(crate) fn effective_stream_idle_timeout(
+    configured: Duration,
+    model: Option<&str>,
+    reasoning_effort: Option<&str>,
+    uses_reasoning: bool,
+) -> Duration {
+    if uses_reasoning || reasoning_effort.is_some() || is_reasoning_model(model) {
+        configured.max(REASONING_STREAM_IDLE_FLOOR)
+    } else {
+        configured
+    }
+}
+
+fn is_reasoning_model(model: Option<&str>) -> bool {
+    let Some(model) = model.map(str::trim) else {
+        return false;
+    };
+    if model.is_empty() {
+        return false;
+    }
+    let lower = model.to_ascii_lowercase();
+    lower.starts_with("gpt-5")
+        || lower.contains("grok")
+        || lower.starts_with("o1")
+        || lower.starts_with("o3")
+        || lower.starts_with("o4")
+}
+
 impl Default for TransportPolicySnapshot {
     fn default() -> Self {
         Self {
@@ -109,7 +139,7 @@ impl Default for TransportPolicySnapshot {
             connect_timeout: Duration::from_secs(10),
             first_byte_timeout: Duration::from_secs(30),
             buffered_execution_timeout: Duration::from_secs(300),
-            stream_idle_timeout: Duration::from_secs(90),
+            stream_idle_timeout: Duration::from_secs(180),
             request_deadline: Duration::from_secs(60),
             upstream_pool_idle_timeout: Duration::from_secs(90),
         }
@@ -220,6 +250,35 @@ mod tests {
         stale.connect_timeout = Duration::from_secs(1);
         assert!(!store.publish_if_newer(stale).expect("stale publish"));
         assert_eq!(store.load().connect_timeout, Duration::from_secs(3));
+    }
+
+    #[test]
+    fn reasoning_models_raise_the_stream_idle_floor() {
+        let configured = Duration::from_secs(90);
+        assert_eq!(
+            effective_stream_idle_timeout(configured, Some("gpt-4.1"), None, false),
+            configured
+        );
+        assert_eq!(
+            effective_stream_idle_timeout(configured, Some("gpt-5.4"), None, false),
+            Duration::from_secs(300)
+        );
+        assert_eq!(
+            effective_stream_idle_timeout(configured, Some("grok-4"), None, false),
+            Duration::from_secs(300)
+        );
+        assert_eq!(
+            effective_stream_idle_timeout(configured, Some("o3-mini"), None, false),
+            Duration::from_secs(300)
+        );
+        assert_eq!(
+            effective_stream_idle_timeout(Duration::from_secs(420), Some("gpt-5"), None, false),
+            Duration::from_secs(420)
+        );
+        assert_eq!(
+            effective_stream_idle_timeout(configured, Some("gpt-4.1"), Some("high"), false),
+            Duration::from_secs(300)
+        );
     }
 
     #[test]

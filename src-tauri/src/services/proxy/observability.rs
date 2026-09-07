@@ -1,4 +1,7 @@
-use serde_json::Value;
+use serde_json::{json, Map, Value};
+use std::time::Duration;
+
+pub(crate) const TRAILING_USAGE_WAIT: Duration = Duration::from_millis(300);
 
 const MAX_PENDING_SSE_BYTES: usize = 256 * 1024;
 
@@ -78,6 +81,38 @@ impl ObservedUsage {
             cache_read_tokens,
         })
     }
+
+    pub fn to_json(&self) -> Value {
+        let mut usage = Map::new();
+        if let Some(value) = self.input_tokens {
+            usage.insert("input_tokens".to_string(), json!(value));
+            usage.insert("prompt_tokens".to_string(), json!(value));
+        }
+        if let Some(value) = self.output_tokens {
+            usage.insert("output_tokens".to_string(), json!(value));
+            usage.insert("completion_tokens".to_string(), json!(value));
+        }
+        if let Some(value) = self.total_tokens {
+            usage.insert("total_tokens".to_string(), json!(value));
+        }
+        if let Some(value) = self.cache_creation_tokens {
+            usage.insert("cache_creation_tokens".to_string(), json!(value));
+        }
+        if let Some(value) = self.cache_read_tokens {
+            usage.insert("cache_read_tokens".to_string(), json!(value));
+        }
+        let mut details = Map::new();
+        if let Some(value) = self.cache_read_tokens {
+            details.insert("cached_tokens".to_string(), json!(value));
+        }
+        if let Some(value) = self.cache_creation_tokens {
+            details.insert("cache_write_tokens".to_string(), json!(value));
+        }
+        if !details.is_empty() {
+            usage.insert("input_tokens_details".to_string(), Value::Object(details));
+        }
+        Value::Object(usage)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -132,6 +167,32 @@ impl SseUsageObserver {
             if let Some(usage) = ObservedUsage::from_json(&value) {
                 self.usage = Some(usage);
             }
+        }
+    }
+}
+
+pub(crate) fn needs_include_usage_injection(value: &Value, inject_include_usage: bool) -> bool {
+    if !inject_include_usage {
+        return false;
+    }
+    match value.get("stream_options") {
+        Some(Value::Object(options)) => !options.contains_key("include_usage"),
+        Some(_) => false,
+        None => true,
+    }
+}
+
+pub(crate) fn ensure_include_usage(output: &mut Map<String, Value>) {
+    match output.get_mut("stream_options") {
+        Some(Value::Object(options)) => {
+            options.entry("include_usage").or_insert(Value::Bool(true));
+        }
+        Some(_) => {}
+        None => {
+            output.insert(
+                "stream_options".to_string(),
+                json!({ "include_usage": true }),
+            );
         }
     }
 }
@@ -252,6 +313,11 @@ mod tests {
 
         assert_eq!(usage.cache_read_tokens, Some(1920));
         assert_eq!(usage.cache_creation_tokens, Some(64));
+        let encoded = usage.to_json();
+        let roundtrip = ObservedUsage::from_json(&json!({ "usage": encoded })).expect("roundtrip");
+        assert_eq!(roundtrip.cache_read_tokens, Some(1920));
+        assert_eq!(roundtrip.cache_creation_tokens, Some(64));
+        assert_eq!(roundtrip.total_tokens, Some(2306));
     }
 
     #[test]
@@ -266,6 +332,27 @@ mod tests {
         assert_eq!(usage.output_tokens, Some(3));
         assert_eq!(usage.total_tokens, Some(10));
         assert_eq!(usage.cache_read_tokens, Some(2));
+    }
+
+    #[test]
+    fn ensure_include_usage_preserves_existing_flag() {
+        let mut missing = serde_json::Map::new();
+        ensure_include_usage(&mut missing);
+        assert_eq!(missing["stream_options"]["include_usage"], true);
+
+        let mut existing = serde_json::Map::new();
+        existing.insert(
+            "stream_options".to_string(),
+            json!({ "include_usage": false, "include_obfuscation": true }),
+        );
+        ensure_include_usage(&mut existing);
+        assert_eq!(existing["stream_options"]["include_usage"], false);
+        assert_eq!(existing["stream_options"]["include_obfuscation"], true);
+        assert!(needs_include_usage_injection(&json!({}), true));
+        assert!(!needs_include_usage_injection(
+            &json!({ "stream_options": { "include_usage": false } }),
+            true
+        ));
     }
 
     #[test]
